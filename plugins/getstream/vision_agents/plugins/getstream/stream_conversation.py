@@ -14,6 +14,17 @@ from vision_agents.core.agents.conversation import (
 
 logger = logging.getLogger(__name__)
 
+# Where a message came from, so a message the agent has already dealt with is not mistaken
+# for one addressed to it. The Go agent writes the same field, and a message without it is
+# one a person typed.
+SOURCE_SPEECH = "speech"
+SOURCE_AGENT = "agent"
+
+
+def _source_of(message: Message) -> str:
+    """What a message is written as, from the role it was recorded under."""
+    return SOURCE_AGENT if message.role == "assistant" else SOURCE_SPEECH
+
 
 class StreamConversation(Conversation):
     """Persists the message history to a Stream channel with automatic chunking.
@@ -64,7 +75,17 @@ class StreamConversation(Conversation):
         Returns immediately so the caller (e.g. an LLM-delta hot path) is not
         blocked on the REST round-trip. Tasks queue on ``_sync_lock`` to
         preserve write ordering against the same channel.
+
+        A message with no sender stays in the conversation but is not written:
+        Stream Chat refuses a server-side message without a user. Text typed
+        into a call through the router arrives that way, as a line heard from
+        nobody in particular.
         """
+        if not message.user_id:
+            logger.debug(
+                "Not writing message %s to Stream Chat: it has no sender", message.id
+            )
+            return
         task = asyncio.create_task(self._sync_with_lock(message, state, completed))
         self._pending_syncs.add(task)
         task.add_done_callback(self._pending_syncs.discard)
@@ -121,6 +142,7 @@ class StreamConversation(Conversation):
                     "chunk_group": message.id,
                     "chunk_index": i,
                     "total_chunks": len(chunks),
+                    "source": _source_of(message),
                 },
             )
 
@@ -177,6 +199,7 @@ class StreamConversation(Conversation):
                             "chunk_group": message.id,
                             "chunk_index": i,
                             "total_chunks": new_chunk_count,
+                            "source": _source_of(message),
                         },
                     )
                     logger.debug(
@@ -194,6 +217,7 @@ class StreamConversation(Conversation):
                             "chunk_group": message.id,
                             "chunk_index": i,
                             "total_chunks": new_chunk_count,
+                            "source": _source_of(message),
                         },
                     )
                     logger.debug(
@@ -217,6 +241,7 @@ class StreamConversation(Conversation):
                         "chunk_group": message.id,
                         "chunk_index": i,
                         "total_chunks": new_chunk_count,
+                        "source": _source_of(message),
                     },
                 )
 

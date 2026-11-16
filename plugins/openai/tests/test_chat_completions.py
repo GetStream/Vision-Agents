@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 import numpy as np
 import openai
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from av import VideoFrame
 from openai.types.chat.chat_completion_chunk import (
     ChatCompletionChunk,
@@ -16,9 +18,14 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDelta,
 )
 from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import SEVERAL_SPEAKERS
 from vision_agents.plugins.openai import ChatCompletionsLLM, ChatCompletionsVLM
 
-from vision_agents.testing import collect_simple_response
+from vision_agents.testing import answer, collect_simple_response
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
 
 @pytest.fixture()
@@ -43,6 +50,36 @@ async def vlm(openai_client_mock, conversation):
     llm_ = ChatCompletionsVLM(client=openai_client_mock, model="test")
     llm_.set_conversation(conversation)
     return llm_
+
+
+@pytest.fixture
+async def openai_api() -> AsyncIterator[
+    tuple[openai.AsyncOpenAI, list[dict[str, object]]]
+]:
+    """A real server standing in for OpenAI: a client of it, and every request body sent.
+
+    Every answer is an empty stream: the tests are about requests.
+    """
+    bodies: list[dict[str, object]] = []
+
+    async def stream(request: web.Request) -> web.StreamResponse:
+        bodies.append(await request.json())
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", stream)
+    server = TestServer(app)
+    await server.start_server()
+    client = openai.AsyncOpenAI(
+        api_key="test", base_url=str(server.make_url("/v1")), max_retries=0
+    )
+    yield client, bodies
+    await client.close()
+    await server.close()
 
 
 class TestChatCompletionsVLM:
@@ -97,6 +134,41 @@ class TestChatCompletionsVLM:
         assert final.text == ""
         assert final.original is None
 
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, object]]]
+    ):
+        client, bodies = openai_api
+        conversation = InMemoryConversation("", [])
+        vlm = ChatCompletionsVLM(client=client, model="test")
+        vlm.set_conversation(conversation)
+        vlm.set_instructions("be brief")
+
+        await answer(vlm, conversation, ALICE, "Hi")
+        await answer(vlm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (9653cb696) sent for the same two turns.
+        assert bodies[-1]["messages"] == [
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Are you there?"},
+        ]
+
+        await answer(vlm, conversation, BOB, "Me too")
+        await answer(vlm, conversation, ALICE, "Who is that?")
+        sent = bodies[-1]["messages"]
+        assert isinstance(sent, list)
+        assert sent[0] == {
+            "role": "system",
+            "content": "be brief\n\n" + SEVERAL_SPEAKERS,
+        }
+        assert sent[3:] == [
+            {"role": "user", "content": "Are you there?"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Alice: Who is that?"},
+        ]
+
 
 class TestChatCompletionsLLM:
     async def test_simple_response_success(self, llm, conversation, openai_client_mock):
@@ -128,6 +200,41 @@ class TestChatCompletionsLLM:
         assert messages[1]["content"] == "message2"
         assert messages[2]["content"] == "prompt"
         assert messages[2]["role"] == "user"
+
+    async def test_who_spoke_is_named_once_a_second_person_has(
+        self, openai_api: tuple[openai.AsyncOpenAI, list[dict[str, object]]]
+    ):
+        client, bodies = openai_api
+        conversation = InMemoryConversation("", [])
+        llm = ChatCompletionsLLM(client=client, model="test")
+        llm.set_conversation(conversation)
+        llm.set_instructions("be brief")
+
+        await answer(llm, conversation, ALICE, "Hi")
+        await answer(llm, conversation, ALICE, "Are you there?")
+        # One person: what the base sha (9653cb696) sent for the same two turns.
+        assert bodies[-1]["messages"] == [
+            {"role": "system", "content": "be brief"},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Are you there?"},
+        ]
+
+        await answer(llm, conversation, BOB, "Me too")
+        await answer(llm, conversation, ALICE, "Who is that?")
+        sent = bodies[-1]["messages"]
+        assert isinstance(sent, list)
+        assert sent[0] == {
+            "role": "system",
+            "content": "be brief\n\n" + SEVERAL_SPEAKERS,
+        }
+        assert sent[3:] == [
+            {"role": "user", "content": "Are you there?"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Bob: Me too"},
+            {"role": "assistant", "content": "Ok"},
+            {"role": "user", "content": "Alice: Who is that?"},
+        ]
 
     async def test_simple_response_model_failure(
         self, llm, conversation, openai_client_mock

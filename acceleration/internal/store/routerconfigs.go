@@ -1,0 +1,166 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// CreateRouterConfig stores a new config and fills in its id and timestamps.
+func (s *Store) CreateRouterConfig(ctx context.Context, config *RouterConfig) error {
+	if config.CustomerID == "" {
+		return stack.Wrap(errors.New("store: customer id is required"))
+	}
+	if config.Name == "" {
+		return stack.Wrap(errors.New("store: a router config needs a name"))
+	}
+
+	config.ID = newID()
+	now := time.Now().UTC()
+	config.CreatedAt = now
+	config.UpdatedAt = now
+	config.DeletedAt = nil
+
+	if _, err := s.db.NewInsert().Model(config).Exec(ctx); err != nil {
+		if constraint(err) == "router_configs_name_idx" {
+			return stack.Wrap(ErrNameTaken)
+		}
+		return stack.Wrap(fmt.Errorf("store: create router config: %w", err))
+	}
+	return nil
+}
+
+// UpdateRouterConfig replaces a config a customer holds. Every field is written, so an
+// update is what the config now is rather than what changed about it.
+func (s *Store) UpdateRouterConfig(ctx context.Context, config *RouterConfig) error {
+	if config.CustomerID == "" || config.ID == "" {
+		return stack.Wrap(errors.New("store: a customer and a config id are required"))
+	}
+	if config.Name == "" {
+		return stack.Wrap(errors.New("store: a router config needs a name"))
+	}
+
+	config.UpdatedAt = time.Now().UTC()
+
+	result, err := s.db.NewUpdate().Model(config).
+		Column("name", "stt", "tts", "llm", "sts", "search", "updated_at").
+		Where("id = ?", config.ID).
+		Where("customer_id = ?", config.CustomerID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if constraint(err) == "router_configs_name_idx" {
+		return stack.Wrap(ErrNameTaken)
+	}
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: update router config: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: update router config: %w", err))
+	}
+	if affected == 0 {
+		return unknownRouterConfig(config.ID)
+	}
+	return nil
+}
+
+// DeleteRouterConfig marks a config as gone. The row stays, because the requests that ran
+// under it still name it.
+func (s *Store) DeleteRouterConfig(ctx context.Context, customerID, id string) error {
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a config id are required"))
+	}
+
+	result, err := s.db.NewUpdate().Model((*RouterConfig)(nil)).
+		Set("deleted_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete router config: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete router config: %w", err))
+	}
+	if affected == 0 {
+		return unknownRouterConfig(id)
+	}
+	return nil
+}
+
+// RouterConfig returns one config a customer holds.
+func (s *Store) RouterConfig(ctx context.Context, customerID, id string) (RouterConfig, error) {
+	if customerID == "" || id == "" {
+		return RouterConfig{}, stack.Wrap(errors.New("store: a customer and a config id are required"))
+	}
+
+	var config RouterConfig
+	err := s.db.NewSelect().Model(&config).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RouterConfig{}, unknownRouterConfig(id)
+	}
+	if err != nil {
+		return RouterConfig{}, stack.Wrap(fmt.Errorf("store: router config: %w", err))
+	}
+	return config, nil
+}
+
+// RouterConfigByName returns the config a customer holds under this name, which is how a
+// caller that names a config rather than an id reaches one.
+func (s *Store) RouterConfigByName(ctx context.Context, customerID, name string) (RouterConfig, bool, error) {
+	if customerID == "" || name == "" {
+		return RouterConfig{}, false, stack.Wrap(errors.New("store: a customer and a config name are required"))
+	}
+
+	var config RouterConfig
+	err := s.db.NewSelect().Model(&config).
+		Where("customer_id = ?", customerID).
+		Where("name = ?", name).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RouterConfig{}, false, nil
+	}
+	if err != nil {
+		return RouterConfig{}, false, stack.Wrap(fmt.Errorf("store: router config by name: %w", err))
+	}
+	return config, true, nil
+}
+
+// CustomerRouterConfigs returns the configs a customer holds, newest first.
+func (s *Store) CustomerRouterConfigs(ctx context.Context, customerID string) ([]RouterConfig, error) {
+	if customerID == "" {
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+
+	var configs []RouterConfig
+	err := s.db.NewSelect().Model(&configs).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer router configs: %w", err))
+	}
+	return configs, nil
+}
+
+// ErrNoRouterConfig is a router config id the customer holds no live config by, as
+// ErrNoAgentConfig is for an agent config.
+var ErrNoRouterConfig = errors.New("store: there is no router config")
+
+func unknownRouterConfig(id string) error {
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoRouterConfig, id))
+}

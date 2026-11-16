@@ -1,0 +1,385 @@
+# getstream-calypso
+
+The .NET server-side SDK for the Stream acceleration backend. The backend joins the call,
+hears the caller, answers and speaks; this creates the session, holds the events socket,
+runs your functions and configures everything.
+
+```bash
+dotnet add package getstream-calypso
+```
+
+.NET 10. It depends on [getstream-net](https://www.nuget.org/packages/getstream-net) for
+Stream calls and tokens, and on YamlDotNet for `agent.yaml`.
+
+## Who is calling
+
+```csharp
+using GetStream.VisionAgents;
+
+// A router with nothing in front of it, which is a laptop.
+using var api = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://localhost:8080", CustomerId = "examples" });
+
+// Stream's hosted router, through its authenticating proxy. The default when no Url is set.
+using var hosted = new VisionAgentsClient(new VisionAgentsOptions { ApiKey = key, ApiSecret = secret });
+
+// From IHttpClientFactory, which owns the handler.
+var pooled = new VisionAgentsClient(factory.CreateClient("vision-agents"));
+```
+
+Every option left null falls back to the environment the other SDKs read:
+`STREAM_ACCELERATION_URL`, `STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY`,
+`STREAM_API_SECRET` and `STREAM_ACCELERATION_AUTHENTICATE`. With no URL at all the client goes
+to Stream's hosted router in us-east4; `Region = "europe-west4"`, or `STREAM_ACCELERATION_REGION`,
+sends it to the hosted router in another region. A failure raises
+`RouterException`, carrying the `Status`, the `Operation` and what the router `Said`, with its
+`Type` and `Code` to branch on (expect codes this SDK does not know), the `DocUrl` explaining
+the code, and the `RequestId` to quote to support when a 500 says only "something went wrong".
+
+## An agent
+
+```csharp
+var agent = new Agent(new AgentOptions
+{
+    Name = "jean",
+    Instructions = "You are a friendly assistant. Keep replies short.",
+    Pipeline = new Pipeline { Llm = "llm-fast", Stt = "en-low-latency", Tts = "sonic_36" },
+    Harness = new Harness { Subagents = new Dictionary<string, string> { ["default"] = "openai/gpt-5.6-sol" }, Sandbox = Sandbox.Daytona() },
+    CostTracking = new Dictionary<string, string> { ["customer_id"] = "123" },
+    MemoryFilter = new Dictionary<string, string> { [Agent.UserKey] = "123" },
+});
+
+agent.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
+    (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
+
+await using var session = await agent.JoinAsync();
+Console.WriteLine(agent.MonitorUrl(session));
+
+await agent.Responses.CreateAsync("Say hello.");
+await foreach (var happened in session.EventsAsync())
+{
+    Console.WriteLine($"{happened.Kind} {happened.Text}");
+}
+
+record Weather(string City);
+```
+
+`JoinAsync` opens a session with voice on, and the backend joins the session's own call,
+`agent:<session id>`. `ChatAsync` holds the same conversation in writing;
+`session.Voice.StartAsync()` puts the agent on the call and `session.Voice.StopAsync()` carries
+it on in writing again. `agent.ResumeAsync(sessionId)` carries on a conversation held earlier.
+`Instructions` reach the backend when the agent syncs: a session runs on the stored config's.
+`Config = "docs"` starts from a config
+stored under that name, and `ConfigId` from one by id. The harness is written onto the config
+when it syncs, and every session under that config runs with it. The model asks for a tool over
+the session socket, this process runs it, and the answer or the exception goes back the same way.
+
+A tool can say how the backend treats its calls, and its function can take the call it runs
+for as its first argument:
+
+```csharp
+agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the caller",
+    async (toolCallContext, booking, cancellationToken) =>
+    {
+        await toolCallContext.UpdateAsync("checking seats", cancellationToken);
+        await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
+        return await BookAsync(booking.FlightId, toolCallContext.User.Id, idempotencyKey: toolCallContext.Id);
+    },
+    timeout: TimeSpan.FromSeconds(20), approval: "Book flight {flight_id}?");
+```
+
+- `interruptible: true` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeout` is how long one call may take, in place of the session's. A call that takes
+  longer has its token cancelled and fails.
+- `approval` is a question the caller answers before each call runs, where each `{name}` is one
+  of the tool's parameters. On a voice call the agent asks it out loud and waits 15 seconds for
+  a yes, and `toolCallContext.Approved` is then true. In writing it goes to the app. A `{name}`
+  that is not a parameter throws `ConfigurationException` when the tool is registered.
+
+`toolCallContext.Id` is the id the model gave the call, which a call sent again keeps, so it is
+the key to make a side effect happen once; `SessionId`, `TurnId`, `User` and `Conversation` say
+where it came from. `UpdateAsync(text)` says how the call is going: a voice agent tells the
+caller in its own words once nobody is talking. `SayAsync(text)` has it say `text` as written,
+which a speech-to-speech model may paraphrase. `DisallowInterruptionsAsync` keeps the call going
+from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when the
+router had already cancelled it. A cancelled call has its token cancelled and is not answered. A
+call the router addresses to another watcher (`run: false`) is left alone.
+
+A stored config is changed in place, and only what is set is sent:
+
+```csharp
+await api.Agent("support").UpdateConfigAsync(new AgentConfigPatch { Guardrail = "No refunds.", VisibleTools = ["athena_*"] });
+```
+
+On the phone:
+
+```csharp
+var answered = await agent.WaitForCallAsync("+15551234567");
+var placed = await agent.OutboundCallAsync(from: "+15551234567", to: "+15557654321");
+```
+
+Every caller gets a session of their own, which `WaitForCallAsync` joins when the router hands
+the call over; a worker answering many uses `agent.JoinAsync(call)` from a dispatch
+`WaitForCall` handler. A placed call names the session the agent then joins.
+
+## Dispatch
+
+A caller reached a Stream call over SIP, or somebody wrote in a channel, and the router
+found out by webhook. The worker connects out and waits, so nothing you run has to be
+publicly reachable.
+
+```csharp
+var dispatch = new Dispatch(new DispatchOptions { Capacity = 4 });
+dispatch
+    .WaitForCall(async call =>
+    {
+        await using var agent = new Agent(new AgentOptions { Config = "support" });
+        var session = await agent.JoinAsync(call);
+        await session.WaitAsync();
+    })
+    .WaitForMessage(async message =>
+    {
+        if (message.SessionId != "")
+        {
+            await dispatch.AnswerAsync(message);
+            return;
+        }
+        var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new AgentOptions { ConfigId = message.ConfigId }));
+        await agent.Responses.CreateAsync(message.Text, [.. message.Images.Select(image => new ImageSource { Url = image.Url })]);
+    });
+
+await dispatch.RunAsync(stopping);
+```
+
+`GetOrCreateAgentAsync` keeps one agent per channel, so the second message on it goes to
+the agent that answered the first. An agent whose agent.yaml says `dispatch: {text: enabled}`
+hands what end users write to the worker with the running `SessionId` (and `RequestId`);
+`AnswerAsync` has the model answer it with the worker's credential acting for the writer,
+showing it the photos sent with it (`Images`, by URL), and
+`GetOrCreateAgentAsync` refuses such a message. The router is told each call and message is
+`done`, with the exception's message if the handler threw. `RunAsync` returns when the token
+is cancelled, after the work in hand has finished. A connection the router drops is opened
+again, telling the router how much is still being handled.
+
+A worker can also host an agent's tools for every session opened under that agent, including
+sessions opened from a browser. The router sends each call here. Handlers are optional:
+
+```csharp
+using var client = new VisionAgentsClient();
+var agent = client.Agent("my-agent");
+agent.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
+    (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
+await new Dispatch(new DispatchOptions { Client = client }).Host(agent, toolTimeout: TimeSpan.FromMinutes(1)).RunAsync(stopping);
+```
+
+A hosted tool takes the same `interruptible`, `timeout` and `approval` (asked on a voice call),
+can take its call, and is cancelled when the router gives up on it. If the router refuses the
+tools, `RunAsync` throws `InvalidOperationException` with the
+reason.
+
+## An agent written down as a directory
+
+```
+agents/jean/
+  agent.yaml            required: what it runs on (llm, stt, tts, greeting, connectors, harness, tags, dispatch, ...)
+  instructions.md
+  guardrail.md
+  skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder: SKILL.md plus the text files it brings, at any depth
+  knowledge/pricing.md
+  knowledge/urls.yaml   urls, or {url, title, description, refresh_hours}
+  simulations/lunch.yaml
+  .agent_sync           written by SyncAsync: the fingerprint last synced and when
+```
+
+```csharp
+var agent = new Agent(new AgentOptions { Config = "agents/jean" });
+await agent.SyncAsync();
+await agent.Knowledge.AddUrlAsync("https://example.com/pricing", title: "Pricing", refreshHours: 24);
+```
+
+`SyncAsync` sends the directory in one request. The fingerprint is the one the Go and
+Python SDKs take, so `.agent_sync` written by any of them is read back by this one, and an
+unchanged directory is only read back. A key `agent.yaml` does not know is refused. Joining
+syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
+a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
+
+`floor_control:` is the model that controls the agent's floor, and how long a caller may wait
+once they stop:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; the server's default point otherwise
+```
+
+It is sent as written: `{}` is no choice, which follows the router's default (the flow
+controller, or `stream/chorus-asr` where the router defaults every agent to it), and
+`{model: flow-controller}` keeps the flow controller whatever that default. Left out, the stored
+choice stays; the router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point it
+measured.
+
+## Simulations
+
+```csharp
+var simulation = await api.Simulations.CreateAsync(new SimulationRequest
+{
+    ConfigId = config.Id, Name = "lunch", Scenario = "Order a club wrap.", Assertion = "One club wrap was ordered.",
+});
+var run = await api.Simulations.RunAsync(simulation.Id);
+run = await api.Simulations.Runs.GetAsync(run.Id);
+```
+
+## Conversations, going back and branching off
+
+```csharp
+var session = await api.Agent("docs").ChatAsync(new SessionOptions { Title = "Pricing" });
+var items = await session.Responses.Items.AllAsync();
+var branch = await session.ForkAsync(new ForkOptions { ResponseId = items[2].ResponseId, Title = "asked again" });
+
+var found = await api.Sessions.SearchAsync("pricing", new() { ["project_id"] = "docs" }, limit: 20);
+var mine = await api.Agent("docs").Sessions.QueryAsync(); // an agent's sessions are always only its own
+var either = await api.Sessions.QueryAsync(new SessionQuery
+{
+    Filter = new()
+    {
+        ["user_id"] = "ada", // server side only, like review_score
+        ["$or"] = new[]
+        {
+            new Dictionary<string, object?> { ["project_id"] = new Dictionary<string, object?> { ["$in"] = new[] { "docs", "billing" } } },
+            new Dictionary<string, object?> { ["review_score"] = new Dictionary<string, object?> { ["$gte"] = 4 } },
+        },
+    },
+    Sort = [new SessionSort("pinned"), new SessionSort("last_message_at")], // pinned first, then newest
+    Limit = 50,
+});
+var next = await api.Sessions.QueryAsync(new SessionQuery { Sort = [new SessionSort("pinned"), new SessionSort("last_message_at")], Limit = 50, Cursor = either.NextCursor });
+
+await api.Sessions.PinAsync(session.Id);  // or session.PinAsync(); UnpinAsync takes it back
+```
+
+The filter is the router's own, written as a `Dictionary<string, object?>` with the wire's keys
+and sent as it is. The keys of one object are ANDed; `$and` and `$or` take 1 to 10 filters and
+nest up to 3 deep. Anything not in this table is refused with a 400.
+
+| Key            | Takes                                                                    | Where                                           |
+| -------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+| `project_id`   | a string, `{"$eq": s}` or `{"$in": [up to 50]}`                          | anywhere                                        |
+| `agent`        | a string or `{"$eq": s}`                                                 | anywhere; `api.Agent(name).Sessions` sets it    |
+| `text`         | `{"$q": "words"}`, which `SearchAsync` sets                              | once, top level or top-level `$and`, not `$or`  |
+| `review_score` | 1 to 5, or `{"$eq"/"$gt"/"$gte"/"$lt"/"$lte": n}`; server side only      | anywhere                                        |
+| `user_id`      | a string or `{"$eq": s}`; server side only                               | top level or top-level `$and`                   |
+
+`Sort` is a list of `SessionSort(field, direction)`, direction -1 (the default) or 1. Left out
+it is `last_message_at`, newest first, or `relevance` for a search. The orders are
+`last_message_at`; `pinned`, alone or followed by `last_message_at`; `review_score`, server
+side only; and `relevance`, with a `text` only. `SearchAsync` takes no sort. A cursor only
+carries on the filter and sort it came from.
+
+A pinned session has a `PinnedAt`. Pinning does not move it in a `last_message_at` order; sort
+by `pinned` for that. `UpdateAsync(new UpdateSessionRequest { Pinned = true })` pins too.
+
+Lists come a page at a time: `Items`, and `NextCursor` while `HasMore`. A text conversation
+is kept in Stream Chat unless it is `Incognito`, which keeps nothing. One kept in Stream Chat
+is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
+brought back.
+
+`CloseAsync` stops a session and keeps what it recorded. `DeleteAsync` deletes it with its turns
+and memories, `DeleteMemoriesAsync` only what it remembered, and
+`api.Memories.TruncateAsync(userId)` everything remembered about a user.
+
+## Changing a session mid-conversation
+
+```csharp
+await session.UpdateAsync(new UpdateSessionRequest { Llm = "llm-thinking", Thinking = "high", Title = "Pricing, thought through" });
+```
+
+Models and instructions apply from the next turn; a property left null is left as it is.
+
+Somebody who has not signed up is a guest. `GuestUserAsync` mints one, `AsGuest` is a client
+acting for them, and `ClaimGuestUserAsync` moves their conversations onto the account they
+turn out to be.
+
+## One modality at a time
+
+```csharp
+// "healthcare" is a router config: it holds the target each modality runs on.
+var router = api.Router("healthcare");
+
+var transcript = await router.Stt.RecordingAsync(new Recorded { Url = "https://example.com/interview.mp4" });
+var speech = await router.Tts.RecordingAsync("Hello there.");
+var answer = await router.SearchAsync("perioperative antibiotic guidance");
+
+await using var llm = await router.Llm.RealtimeAsync();
+await llm.AskAsync(new Question { Messages = [new Said("user", "Hello")] });
+await foreach (var delta in llm.ReadAllAsync()) { if (delta.Done) break; }
+```
+
+`RealtimeAsync` opens the socket; `RecordingAsync` is the batch form, which is cheaper and
+more accurate. A router comes from the client and its models from its config; the options
+carry settings such as language, never the target.
+
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `Usd`, exact: the router counts in
+millionths of a dollar, and so does `Usd`. There is no conversion from a `double`;
+`Usd.Parse("12.50")` reads one from a form or a config file.
+
+```csharp
+var limits = api.SpendLimits;
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.Organization, Interval = LimitInterval.Monthly, Amount = Usd.Dollars(20_000) });
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.ApiKey, AppId = "1234", Interval = LimitInterval.Daily, Amount = Usd.Dollars(50) });
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.ApiKey, AppId = "1234", ApiKey = "mz7kq2xa9b", Interval = LimitInterval.Daily, Amount = Usd.Dollars(10), Note = "CI key" });
+var ci = (await limits.ListAsync(new LimitQuery { Subject = LimitSubject.ApiKey, AppId = "1234", ApiKey = "mz7kq2xa9b" }))[0];
+await limits.SetAmountAsync(ci.Id, Usd.Dollars(25));
+await limits.DeleteAsync(ci.Id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.User, AppId = "1234", Interval = LimitInterval.Daily, Amount = Usd.Dollars(20) });
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.User, AppId = "1234", UserId = "user-42", Interval = LimitInterval.Daily, Amount = Usd.Dollars(50) });
+
+// Created or changed, whichever the team needs.
+await api.Teams.SetLimitAsync(new TeamLimit { Team = "finance", Interval = LimitInterval.Monthly, Amount = Usd.Dollars(8_000) });
+
+var session = await api.Agent("docs").ChatAsync(new SessionOptions { Team = "finance" });
+using var finance = new VisionAgentsClient(new VisionAgentsOptions { ApiKey = key, ApiSecret = secret, Team = "finance" });
+
+await limits.ResetAsync(new LimitReset { Subject = LimitSubject.User, AppId = "1234", UserId = "user-42", Intervals = [LimitInterval.Weekly], Reason = "refunded a runaway session" });
+```
+
+Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
+and a session is counted under one team at most:
+
+1. The team signed into the client's tokens, `VisionAgentsOptions.Team`, with any
+   `UsageCategories`. They are sent as `X-Stream-Usage-Categories` to a router with no proxy in
+   front of it, and cannot be set beside a `Token` handed in, which carries its own. A session
+   cannot be moved off it, so a `SessionOptions.Team` naming another is refused with a 400.
+2. `SessionOptions.Team`, from a backend. A device sending a team is refused with a 403.
+3. The agent's tag: `tags: team: finance` in its `agent.yaml` counts that agent's sessions under
+   the team. A tag that is no team name is refused when the agent is synced.
+
+What the router answers is in micros too: `Usd.FromMicros(limit.LimitMicros)` prints as
+`$20000.00`. Work a limit refuses is a `RouterException` of 402 `spend_limit_reached`, or 429
+`user_limit_reached` for one end user's. Spend limits and teams are server side only.
+
+## Working on this package
+
+Everything runs in Docker; nothing is installed on the host.
+
+```bash
+docker run --rm -v "$PWD/../..":/repo -v va-nuget:/root/.nuget -w /repo/sdks/dotnet \
+  mcr.microsoft.com/dotnet/sdk:10.0 dotnet test --project tests/GetStream.VisionAgents.Tests
+
+# regenerate src/GetStream.VisionAgents/Generated/Models.cs from the spec; --check in CI
+docker run --rm -v "$PWD/../..":/repo -v va-nuget:/root/.nuget -w /repo/sdks/dotnet \
+  mcr.microsoft.com/dotnet/sdk:10.0 dotnet run --project tools/Generate
+```
+
+The tests run against a real Kestrel server and a real WebSocket upgrade, with no mocks.
+`LiveTests` talk to a running router and skip unless `VISION_AGENTS_LIVE_URL` names one
+(`http://host.docker.internal:8091` from inside Docker); `VISION_AGENTS_LIVE_CUSTOMER`
+defaults to `examples`. They hold real conversations, so they spend tokens.

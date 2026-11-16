@@ -15,4 +15,4 @@ dependencies = [
 "vision-agents-plugins-kokoro" = {path = "..", editable=true}
 "vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
 "vision-agents-plugins-openai" = {path = "../../openai", editable=true}
-"vision-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents" = {path = "../../../sdks/python", editable=true}

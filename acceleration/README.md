@@ -1,0 +1,2993 @@
+# Model Router
+
+A Go service that fronts several model providers, picks one per request, and records what
+each customer used. Speech-to-text, text-to-speech and large language models are routed
+today, all three over one modality-agnostic core.
+
+On top of the three there is an agent: it joins a Stream call, transcribes what it hears,
+answers with a model and speaks the reply back. Because it is built from the routers rather
+than from provider instances, every turn of a conversation gets the same failover, health
+and billing as a direct API call.
+
+## Layout
+
+| Path                 | What it is                                                        |
+| -------------------- | ----------------------------------------------------------------- |
+| `internal/routing`   | The modality-agnostic core: config, registry, selection, failover, stats |
+| `internal/audio`     | `PcmData`, the PCM type every provider exchanges                   |
+| `internal/emit`      | `Emitter[E]`, the buffered event channel providers hold            |
+| `internal/stt`       | The speech-to-text contract: PCM in, transcript and turn events out |
+| `internal/sttrouter` | Speech-to-text providers and sessions                              |
+| `internal/tts`       | The text-to-speech contract: text in, PCM and synthesis events out |
+| `internal/ttsrouter` | Text-to-speech providers and sessions                              |
+| `internal/llm`       | The LLM contract: messages in, streamed text and token counts out  |
+| `internal/llmrouter` | LLM providers and sessions                                         |
+| `internal/sts`       | The speech-to-speech contract: the caller's audio in, the model's voice, transcripts and tool calls out |
+| `internal/stsrouter` | Speech-to-speech providers and sessions                            |
+| `internal/search`    | The search contract: a question in, an answer and its sources out  |
+| `internal/searchrouter` | Search providers and sessions                                   |
+| `internal/agent`     | The conversation: transcribe, answer, speak, with barge-in          |
+| `internal/harness`   | Sits between the caller and the model: skills, delegation, cancellation |
+| `internal/agent/streamedge` | The agent's transport: a Stream call over WebRTC             |
+| `internal/chatlog`   | Writes what was said into a Stream Chat channel                     |
+| `internal/memory`    | What an agent remembers between calls; `mem0/` is the one provider  |
+| `internal/knowledge` | What the business wrote down; `turbopuffer/` is the one provider    |
+| `internal/knowledge/ingest` | Cutting documents into passages, for both the command and the endpoint |
+| `internal/knowledge/urls` | Keeping a knowledge base filled from pages published elsewhere   |
+| `internal/phone`     | Telephony: the vendor contract, the Stream SIP trunk, the service   |
+| `internal/phone/twilio`, `internal/phone/telnyx` | The two vendors that also answer on a number |
+| `internal/phone/sinch`, `.../bandwidth`, `.../vonage`, `.../bird`, `.../plivo` | Five more that buy numbers and call out on them |
+| `internal/phone/didww`  | Sells numbers and cannot dial: it has no call control API at all    |
+| `internal/store`     | Postgres via bun, plus the goose migrations in `migrations/`        |
+| `internal/live`      | Redis via rueidis: provider health and live per-customer counters   |
+| `internal/api`       | HTTP layer: Huma operations on chi, rendered into `api/openapi.yaml` |
+| `cmd/router`         | Serves the HTTP API                                                 |
+| `cmd/say`            | Types a line, hears it                                              |
+| `cmd/chat`           | Types a line, reads the answer                                      |
+| `cmd/agent`          | Joins a Stream call and holds a conversation                        |
+| `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
+| `cmd/phonecheck`     | Places a live test call and logs where each hop of it ran |
+| `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
+| `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
+| `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
+| `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
+| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM recipe, thinking off: a Truss for Baseten, the same flags for Nebius |
+
+Two providers are therefore unreachable until someone deploys them. `s2pro` is under the
+Fish Audio Research License and wants an H100, so both questions are worth settling before
+the push; the hosted `fish` provider serves the same model in the meantime. `breeze` is in
+the same position under the BreezeBlue Research and Non-Commercial License, and there its
+hosted API is the licensed alternative. `gemma` needs a dedicated deployment because Gemma
+is not on Baseten's shared Model APIs. With `S2PRO_WS_URL`, `BREEZE_WS_URL` or
+`GEMMA_BASE_URL` unset each fails to build and routing moves to the next candidate, so a
+shortcut still resolves.
+
+All three LLM providers speak OpenAI-compatible chat completions, so they share one
+implementation in `internal/llm/openaicompat` and differ only in base URL, credentials and
+extra request fields. `deepseek` reaches Baseten's shared Model APIs, which need no
+deployment. The speech-to-speech providers split the same way: OpenAI, xAI and Alibaba
+send OpenAI's realtime events and share `internal/sts/openairealtime`, differing in how
+the session frame is spelled; Gemini Live is its own package under `internal/sts/gemini`.
+
+## Build prerequisites
+
+Everything builds without cgo. Build with Go's SIMD experiment, `GOEXPERIMENT=simd`, as
+`Dockerfile` and CI do: it compiles the vector kernels of the Opus codec every call's audio
+passes through, on amd64 and arm64, and other platforms build the same code without them.
+The commands below assume `export GOEXPERIMENT=simd`. `cmd/say` needs `ffplay` at runtime
+(part of ffmpeg) to play audio, or `-out` to write a file instead.
+
+## Configuration
+
+Everything that is not a provider credential is one YAML file, read by `internal/config`:
+
+```bash
+go run ./cmd/router --config /etc/router.yaml
+```
+
+Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
+`trusted_proxies`, `routing_config`, `phone_config`, `prices_file`, `voices_bucket_url`, and the nested
+`postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kek}`,
+`rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled`,
+`knowledge.regions`, `code_sandbox.targets` and `stream.{api_key,api_secret}`. Naming no file
+loads one of the three embedded in the binary, by `ROUTER_ENV`.
+
+Every variable below still wins over the file, so a chart, compose and `.env` keep working
+with nothing changed, and the effective settings are written back into the environment for
+the other commands that read them there.
+
+| Variable                | Purpose                                                   |
+| ----------------------- | --------------------------------------------------------- |
+| `ROUTER_CONFIG_FILE`    | Path to the deployment's own YAML, which is what `--config` sets |
+| `ROUTER_ENV`            | `local` (default), `staging` or `testing`. Loads `internal/config/<env>.yaml` when no file of your own is named. The integration suites always use `testing`, which has its own `model_router_test` database and is the one file that wins over the environment |
+| `ROUTER_ADDR`           | HTTP listen address, defaults to `:8080`                   |
+| `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
+| `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health, and a session is only reachable on the node running it |
+| `ROUTER_NODE_ADVERTISE` | `host:port` this node's peers reach it at. Unset works it out from this host's own address and `ROUTER_ADDR`'s port, which is right wherever a pod is reachable from its peers. See [More than one node](#more-than-one-node) |
+| `ROUTER_NODE_LISTEN`    | A second listen address, for this node's peers only. Unset means they use `ROUTER_ADDR`. Set it when two routers share one `ROUTER_ADDR`, so a request for a draining router's session still reaches it |
+| `ROUTER_LISTEN_FD`      | A listening socket inherited from a supervisor, served instead of `ROUTER_ADDR`, so an old and a new router take connections from one queue |
+| `ROUTER_SHUTDOWN_DRAIN` | How long a stopping router keeps its sessions after it stops taking work, e.g. `1h`. Unset ends them once HTTP has drained (10s). A second signal ends the wait. A draining router stops serving metrics when the drain starts, so a router started after it on the same `ROUTER_METRICS_ADDR` serves them |
+| `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
+| `ROUTER_KNOWLEDGE_BUCKET_URL` | Bucket a file uploaded to a knowledge base waits in until it is read, e.g. `gs://knowledge`; each file is deleted once read. Each shard needs its own, in its own region, as the files are read by its workers alone. Without it, `POST /v1/agents/knowledge/files` answers 503 |
+| `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
+| `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.08 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
+| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
+| `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
+| `ROUTER_AUTH_KEK_V<n>_WRAPPED` | Version `n` of the keyring as base64 ciphertext a KMS wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK_V<n>`. The router unwraps it at startup with `ROUTER_AUTH_KMS_KEY` into the same key, so the rows it sealed still open. Setting both forms of one version is refused |
+| `ROUTER_AUTH_KMS_KEY`   | The Cloud KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`, as `projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>`. The router calls Cloud KMS once at startup, with Application Default Credentials. Unset, only the plain keys are read. See «The key encryption key in Cloud KMS» |
+| `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
+| `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
+| `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
+| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis. The child agents a run calls take no slot: at most 8 run at once inside their parent's |
+| `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
+| `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
+| `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
+| `ROUTER_KNOWLEDGE_REGIONS` | `knowledge.regions`: each region knowledge is kept in and the turbopuffer region serving it, as `region=turbopuffer region` pairs, such as `eu=aws-eu-central-1`. `us` is always served: left out, at `TURBOPUFFER_REGION`, then `gcp-us-central1`, as before. One `TURBOPUFFER_API_KEY` serves every region. See [Regions](#regions) |
+| `ROUTER_CODE_SANDBOX_PROXY_ADDR` | Where the router serves the sandbox egress proxy (`internal/sandbox/egress`), such as `:8091` on staging. Unset, the default, serves none. Needs Redis and connectors on |
+| `ROUTER_CODE_SANDBOX_PROXY_LISTEN_FD` | A listening socket inherited from a supervisor, served instead of `ROUTER_CODE_SANDBOX_PROXY_ADDR`, as `ROUTER_LISTEN_FD` is for the API, so no sandbox's connection is refused while an old router hands the proxy over to a new one. Unset, the default, listens on the address. Needs `ROUTER_CODE_SANDBOX_PROXY_ADDR`, and a descriptor other than `ROUTER_LISTEN_FD`'s |
+| `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY` | The PEM certificate and private key of the CA the proxy signs each granted host's certificate with. The router refuses to start with `ROUTER_CODE_SANDBOX_PROXY_ADDR` set and either missing, or a certificate setting that holds a private key. Only the certificate goes into a sandbox |
+| `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
+| `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
+| `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
+| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told. The same channel is told, once per organization and UTC day, when an organization's billable spend today reaches 5x its median day of the 7 before and a minimum spend (`anomalyMinSpendMicros` in `internal/limitnotice/anomaly.go`): one router of the deployment checks every hour under a Postgres advisory lock, and `cost_anomaly_notices` keeps what was posted. An organization that spent on fewer than 4 of the 7 days has no baseline and is not checked. This check runs in every limits mode |
+| `ROUTER_LIMITS_APP_URL`, `ROUTER_LIMITS_STAFF_URL` | The pages each of those Slack notices links to: the app's own, and the operator's for the organization or app. `{organization}` and `{app}` in either stand for the notice's ids, such as `https://dashboard.example/{organization}/{app}`. A URL naming `{app}` is left out of a notice with no app. Unset: no link |
+| `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
+| `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
+| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
+| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user's devices may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`) |
+| `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
+| `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
+| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
+| `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
+| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control` of its own: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at its server's default point, for every such agent on the router. An agent's own choice always wins, on its config or its session: `{model: stream/chorus-asr}` with its own `max_wait_ms`, or `{model: flow-controller}` to keep the flow controller whatever this says. `{}` is no choice. Without `ROUTER_CHORUS_ASR_URL` it warns once at start and the flow controller rules; no session is refused for it. Floor control only: which transcriber writes the words does not change |
+| `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as a bearer token on every request to a chorus-asr server behind a gateway that asks for a key |
+| `ROUTER_CHORUS_ASR_AUDIO` | How the chorus-asr model's audio is sent: `opus` (default), encoded once as it arrives, or `pcm`, for debugging. `cmd/agent` reads the `ROUTER_CHORUS_ASR_*` variables too, and its agent opts in with `-floor-control stream/chorus-asr` |
+| `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
+| `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
+| `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
+| `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
+| `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
+| `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
+| `TURBOPUFFER_API_KEY`   | turbopuffer credentials. Without it an agent looks nothing up |
+| `TAVILY_API_KEY`        | Tavily credentials, one of three ways to find out what is true today |
+| `EXA_API_KEY`           | Exa credentials. Also what reads a URL into a knowledge base |
+| `PERPLEXITY_API_KEY`    | Perplexity credentials, for the ranked index and for Sonar |
+| `DAYTONA_API_KEY`       | Daytona credentials. Without it a session cannot ask for a sandbox |
+| `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
+| `TWILIO_AUTH_TOKEN`     | Twilio credentials. With `TWILIO_API_KEY_SID` set, that key's secret |
+| `TWILIO_API_KEY_SID`    | Optional Twilio API key (SK...). Requests are signed with it instead of the account SID |
+| `TWILIO_WEBHOOK_AUTH_TOKEN` | Auth Token of the Twilio account whose webhooks the router checks (`X-Twilio-Signature`). It only checks signatures: those of the Monitor alerts and usage-trigger callbacks sent to `/v1/phone/hooks/twilio/events`, signed over `ROUTER_PUBLIC_URL` and the path. Without it, or without `ROUTER_PUBLIC_URL`, that route answers 404. A token with whitespace in it stops the router at start |
+| `TELNYX_API_KEY`        | Telnyx credentials                                         |
+| `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
+| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx` and the account events it sends to `/v1/phone/hooks/telnyx/events`. Without it Telnyx numbers are not answered and the events route answers 404. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
+| `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
+| `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
+| `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
+| `ELEVENLABS_API_KEY`    | ElevenLabs credentials, used by the three voices and the Scribe v2 Realtime transcriber |
+| `ELEVENLABS_VOICE_ID`   | Optional default voice; a built-in one is used when unset  |
+| `INWORLD_API_KEY`       | Inworld credentials, used by TTS 2 Flash and the STT-1 transcriber |
+| `FISH_API_KEY`          | Fish Audio credentials                                     |
+| `FISH_VOICE_ID`         | Optional Fish reference id to clone a voice from           |
+| `OPENAI_API_KEY`        | OpenAI credentials                                         |
+| `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
+| `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
+| `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
+| `TOGETHER_API_KEY`      | Together AI credentials, used by the Together-hosted Parakeet and both Nemotrons |
+| `PARAKEET_WS_URL`       | The Parakeet WebSocket endpoint                            |
+| `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
+| `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
+| `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
+| `GEMMA_BASE_URL`        | The root of any OpenAI-compatible Gemma 4 endpoint, ending in `/v1`. On Baseten: `https://model-<model id>.api.baseten.co/environments/production/sync/v1`. On Nebius: `https://<managed host>/v1`, where the host is the endpoint's `https://` public endpoint. See `deploy/gemma-4` |
+| `GEMMA_API_KEY`         | Optional; the host's bearer token for `GEMMA_BASE_URL`. `BASETEN_API_KEY` is used when unset |
+| `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
+| `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
+| `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
+| `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
+
+### The key encryption key in Cloud KMS
+
+A hosted deployment can keep its key encryption key out of its secrets. Cloud KMS wraps the
+key once. At each start the router unwraps it with one `Decrypt` call and then seals and opens
+rows in memory, as before. The key is the same string, so every row it sealed still opens and
+the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK`.
+
+1. Make a symmetric Cloud KMS key, and give the router's service account
+   `roles/cloudkms.cryptoKeyDecrypter` on that key only. `roles/cloudkms.admin` cannot decrypt
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   gcloud kms keys add-iam-policy-binding KEY --keyring=KEYRING --location=LOCATION \
+     --member=serviceAccount:ROUTER_SERVICE_ACCOUNT --role=roles/cloudkms.cryptoKeyDecrypter
+   ```
+
+2. Wrap the current key as version 1, with the AAD `router-kek-v1` (`router-kek-v<n>` for
+   version `n`). `printf %s` adds no newline: the unwrapped key must be the same bytes as the
+   plain one, or no row opens. `gcloud kms encrypt` reads a `-` input from stdin and writes
+   the ciphertext to stdout for `-`
+   ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
+   opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
+   be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
+   lines, so `tr` joins them. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
+   key, which `roles/cloudkms.admin` lacks too
+   ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
+   opened 2026-10-22):
+
+   ```bash
+   printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
+     --location=LOCATION --plaintext-file=- --ciphertext-file=- \
+     --additional-authenticated-data-file=<(printf %s router-kek-v1) | base64 | tr -d '\n'
+   ```
+
+3. Set `ROUTER_AUTH_KMS_KEY` to the key's resource name and `ROUTER_AUTH_KEK_V1_WRAPPED` to the
+   base64, then remove `ROUTER_AUTH_KEK` and `ROUTER_AUTH_KEK_V1`: a version set both ways is
+   refused. The wrapped value is ciphertext, so it can live in plain chart values.
+4. Restart. A start that cannot unwrap a key stops, and its error names the variable and the
+   KMS error, never the key or the ciphertext.
+
+To roll back, set `ROUTER_AUTH_KEK` to the same key again and unset `ROUTER_AUTH_KMS_KEY` and
+`ROUTER_AUTH_KEK_V1_WRAPPED`. The router then reads the plain key and calls no KMS.
+
+## Authentication
+
+`ROUTER_AUTH_MODE` picks between the four deployments this serves.
+
+`api_key`, the default, verifies the caller itself. `proxy` believes what something in
+front of it already decided. `noauth` asks for nothing and treats every caller as the
+customer's own backend. `custom` is an authenticator the deployment supplies in code.
+
+The default is the one that verifies something, because a default that trusts whatever
+reaches it is only correct when something else guarantees nothing does, and that guarantee
+is a NetworkPolicy in one deployment and nothing at all in the next. `api_key` refuses to
+start without a store and a key encryption key, and says which is missing, rather than
+starting and refusing every request for a reason only visible in a 401.
+
+`api_key` needs Postgres to look keys up in. A request
+carries the key in `X-Api-Key` and a token in `Authorization: Bearer`, signed HS256 with the
+secret belonging to that key; a socket takes the same two as `api_key` and `token`. The
+proxy headers are ignored entirely in this mode, since reading them would be a way around
+the key. Keys belong to apps and apps belong to organizations, and it is the app id that
+every other table's `customer_id` holds.
+
+A key is two values with different jobs. The id is public — `vak_live_…`, ending in a
+checksum so a truncated paste is rejected before the database is asked, and it is what a
+log line names so an operator can revoke the right one. The secret is `vas_live_…`, shown
+once and then held only sealed: verifying a token means recomputing its signature, which
+means the secret cannot be hashed, so it is encrypted with AES-256-GCM under
+`ROUTER_AUTH_KEK` and a leaked backup yields ciphertext. `kek_version` is there so that key
+can be rotated by re-wrapping rows rather than by reissuing every secret.
+
+Every failure is one 401 with one body, because a caller that could tell an unknown key
+from a bad signature could use the difference to find out which keys exist. Revoking a key
+keeps the row: a year of request rows pointing at a deleted key is unattributable noise.
+
+`proxy` names the caller by `X-Stream-App-Id` and `X-Stream-Organization-Id`, the end user
+by `X-Stream-User-Id` and the sort of caller by `Stream-Auth-Type`. Nothing is verified, so
+it is only safe where a proxy in front has already authenticated the caller and nothing
+else can reach the router. That proxy owns rate limiting, and it has to overwrite all four
+rather than pass a caller's own through.
+
+`noauth` reads `X-Customer-Id`, or a `customer_id` query parameter on a socket since a
+browser WebSocket carries no headers, and takes every caller for that customer's own
+backend. It deliberately reads neither the user nor the auth type: nothing here verified
+them, so believing them would only let a caller name itself anything it liked, and a user
+id is what one person's conversations are kept from another's by. It is for a laptop, and
+it says so in a warning at startup.
+
+`custom` builds nothing. A deployment embedding this module passes its own
+`auth.Authenticator` to `api.NewServer` through `api.WithAuthenticator`; `auth.Func` makes
+one out of a function. The stock router binary has none compiled in and refuses to start in
+this mode rather than pretending.
+
+### Server-side only
+
+Everything is server-side only unless the spec says otherwise. An operation a device may
+reach is marked `x-client-accessible: true`, and six are:
+
+| Operation | Why a device may |
+| --- | --- |
+| `GET /v1/search` | A question and its answer are one round trip, for whoever asked |
+| `POST /v1/agents/sessions` | Opening a conversation is the point |
+| `GET /v1/agents/sessions` | Finding the conversation it already has |
+| `GET /v1/agents/sessions/{id}` | Reading the one conversation it is having |
+| `DELETE /v1/agents/sessions/{id}` | Hanging up on its own |
+| `GET /v1/agents/sessions/{id}/events` | The conversation itself, as it happens |
+
+The default is inverted rather than enumerated because the failure modes are not
+symmetrical: a new operation nobody marked is refused to devices until somebody decides it
+should not be, and the cost of getting that wrong is a 403 in front of a feature. Listing
+what to close instead means a new operation is open by accident, and the cost of getting
+that wrong is a config a phone can rewrite. The generated SDKs and the check in front of the
+handlers both read the same marks, so there is one answer rather than two that can drift.
+
+Unauthenticated paths — health, for one — declare `security: []` and sit
+outside this entirely: there is no caller to classify.
+
+A server-side caller says so twice. `Stream-Auth-Type: server` is the declaration, and a
+token carrying `server: true` and no `user_id` claim is the proof; `jwt` and a `user_id` are
+what a token minted for an end user carries, and are what a caller that names neither is
+taken to be. Both are required because each fails closed in a different direction: nothing
+signs the header, so it cannot promote a request on its own, and a server token pasted into
+a browser that sends the client header is used by a browser and treated as one. Stream's own
+convention is the same one, so a token minted by a Stream server SDK already fits.
+
+A browser WebSocket cannot set a header, so a socket in `proxy` mode, with no proxy that
+declares kinds, may name its auth type in the `stream-auth-type` query parameter instead. It
+is read only as `jwt` or `anonymous`, only when the header is absent, and only in that mode,
+where saying nothing already makes a caller a backend: the parameter can only make a socket
+weaker, never a backend. It is what lets a device's socket be the device that created its
+session, so the router asks it to run that device's tools. A plain request may send it too,
+and is read the same way.
+
+The refusal is a 403 rather than a 401: the caller has already proved who it is, so a
+specific answer gives nothing away, and one told "unauthenticated" would go looking for a
+credential problem it does not have. In `proxy` the auth type is believed the same way the
+app id is, and a caller that names none is taken to be a backend, since a proxy that has
+classified a caller says so. The gateway overwrites the header from the credential it
+verified, so a caller cannot name its own. In `noauth` there is nothing to declare: every
+caller is a backend because nothing there could make it anything else.
+
+A backend may still say which of its users it is working for, in `X-Stream-User-Id`. A
+server token names no user by definition, so the header is the only place to put it, and it
+is unsigned because a caller holding the secret could mint a token for that user anyway.
+What it buys is that the session the backend opens belongs to that user, so the user's own
+device can reach it afterwards. The caller is still server-side and still reaches
+everything. It is held only to the daily quotas the customer set for that user, never to the
+router's default, and is refused only work that asks a model for something (a session, a
+turn, a run, a socket), never a read.
+
+Beside it, a backend may say the email that user signs in with, in `X-Stream-User-Email`. The
+router keeps the latest one per user and reads it from a server-side caller only, since a
+device that could set it could claim another person's address. A connector whose manifest sets
+`owner_email` (nessy) refuses a user-owned connection's first consent, storing nothing, unless
+the provider's `id_token` names that email (AI-1543).
+
+### Who a session belongs to
+
+Sessions are the one thing a device opens, so they are the one thing that needs a boundary
+inside a customer. A session records who opened it — the customer, the user id and which
+sort of caller claimed it — and every later request for it is matched against that.
+
+A caller is one of four kinds, decided by the credential and not by the request:
+
+| Kind | How | Reaches |
+| --- | --- | --- |
+| server | `Stream-Auth-Type: server` and `server: true` | every session of its customer |
+| authenticated | a token naming a `user_id` | its own user's sessions |
+| guest | a token naming a `user_id`, minted for a guest | its own guest's sessions |
+| anonymous | no token, a user id merely claimed | the sessions opened under that claim |
+
+The three that are not `server` are levels of end user, and an app may turn the bottom two
+away. That is a `settings` document on the app row — `allow_anonymous` and `allow_guest`,
+both defaulting to yes — read in the same query that resolves the API key. A level an app
+refuses is answered 403 at the door rather than given a narrower API, so a new endpoint
+cannot forget, and a missing key or a missing app row admits: `proxy` and `noauth` resolve
+no app row here at all, so the levels are enforced in `api_key` mode only.
+
+The kind is part of the identity and not a property of it, which is what makes an anonymous
+claim harmless: an anonymous caller saying `user_id=alice` is stored as anonymous alice and
+never matches the alice a token proved, so claiming a name buys nothing. That is also why
+guest and authenticated are separate kinds rather than one "has a token" — a guest id is
+issued per device and reused by nobody, but nothing in a token distinguishes the two, so the
+declaration does.
+
+An anonymous caller naming no user at all is refused a listing rather than shown a customer's
+sessions: it has opened nothing that can be found again, and a caller that names nothing is
+not the same caller twice.
+
+Reaching a session means the customer matches and either the caller is server-side or both
+the user id and the kind match. The one exception is a session a backend opened in a named
+user's name: an authenticated or guest caller of that name reaches it, because a backend
+opening the conversation and handing over the id is the ordinary shape of an integration.
+Anonymous is left out of that, since an anonymous name is a claim nobody checked and
+allowing it would make guessing whose a session was enough to read it.
+
+`internal/session` enforces all of this rather than the handlers, so `getSession`,
+`stopSession`, `deleteSession`, the events socket, the call token and the session actions cannot each be
+wrong in their own way.
+
+Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts
+them: an endpoint that creates a key or writes a setting, scopes, and the single-use ticket
+that would get the credential out of a socket's query string.
+
+### Running behind a proxy
+
+`proxy` exists for one deployment in particular. On Stream's own infrastructure
+the router runs with authentication off, reachable only from `stream-accelerate`,
+a proxy in the chat repository that verifies a Stream API key and the token
+signed with that app's secret, rate limits the caller, and sets the two headers
+above. It authenticates against Stream's own app records, so a customer holds
+one credential rather than a second one issued by this service.
+
+That proxy is not part of this repository, and does not need to be: authenticating
+a Stream key means reading Stream's tables. Running this service on your own
+means `api_key` mode instead, where the router authenticates callers itself.
+
+### Daily limits
+
+A token is spent by whoever asks for it, so an end user's device is capped and a
+process the customer runs is not. A backend was given its own key and is trusted
+with the spend that goes with it; a browser holding a token that backend minted is
+not, because a leaked one is a stranger with your model bill.
+
+Two things are counted, per UTC day, and reaching either refuses the next response:
+
+| Counted | Default | Why |
+| ------- | ------- | --- |
+| Model responses | 200 | What "200 messages a day" means |
+| Tokens | 5,000,000 | A backstop for the caller who asks for few responses and makes each one enormous. A turn of an agent with a few MCP servers carries tens of thousands of tokens of tool definitions, so it should not be what an ordinary day hits first |
+
+These numbers are the deployment's default. A customer sets its own as `quota`
+(`messages_per_user_per_day`, `tokens_per_user_per_day`), above the default or below it, and
+`0` is no cap, at three levels:
+
+| Where | Applies to |
+| ----- | ---------- |
+| `PUT /v1/policies/organization` | every user of the organization's apps |
+| `PUT /v1/policies/app` | the app's users, over the organization's |
+| `PUT /v1/policies/users/{user_id}` | one named user of the calling app, over the app's |
+
+Each number is the first set of the user's own, the app's, the organization's and the
+deployment's, decided on its own. The same user id in two apps is two users. A policy PUT
+replaces the whole policy, so one that leaves `quota` out clears it and the next level applies
+again; `DELETE /v1/policies/users/{user_id}` removes a user's own. A user's policy holds a
+quota only. `GET /v1/policies/users/{user_id}` answers the user's own, what they are held to
+with who set each number, and what they spent today toward a quota the customer set, and
+`GET /v1/policies/users` lists the app's users with one. Stream staff read and write any of the
+three through `/v1/manage/organizations/{organization_id}/policies/{scope}/{id}` (manage key,
+audited with source `manage`); an app that is not the organization's answers 404. An app with
+no user policies costs no lookup per user; once it has one, other routers see a change within
+5 s. A limit Stream
+sets on a whole app is the gateway's (AI-1253), a staff spend cap is AI-1254, and a history of
+policy changes is AI-1255.
+
+A turn is counted on the day of whoever sent it. In a session a backend opened in a user's
+name, the backend's own turns are not counted, and what the user sends into it with their own
+token is counted on their day. In a session the user opened, every turn is counted on their day.
+
+Each is counted against two buckets: the `user_id` the caller's token names, scoped
+to the customer who minted it, and the address the request came from, scoped to the
+customer too, since each has its own limit. Both matter.
+A user id is the honest answer to who is asking, and the address is the answer that
+still holds when a backend mints a fresh user id per request.
+
+Against the deployment's default, what a backend asks for is never counted, even when it
+names the user it acts for, and neither are the backend's own turns in a session it opened.
+A quota the customer set is the customer's own rule about its users, so it counts everything
+recorded with the user, a backend acting for them included, in a bucket of its own per user
+(and, for a device caller, against the address as well). An app's `quota` counted only device
+callers before; it now counts its backend's work for the user too. A backend over a user's
+quota is refused only work that asks a model for something, never a read. An anonymous
+caller's name is anybody's, so it is never held to that user's own quota nor counted in their
+bucket: it is held to the app's or organization's, counted by the name and the address. A refusal names the quota:
+`user <id>`, `every user of app <id>`, or the router's default. Answers from `mock/*` models
+are not counted either. A counted HTTP answer carries `X-Quota-Limit`, `X-Quota-Remaining`
+and `X-Quota-Reset` (the unix time of the next UTC midnight), for the limit nearest to
+refusing the caller.
+
+The limit is enforced where a response is created, not only where a request is
+admitted. A socket goes on sending frames and a call goes on talking long after
+whatever opened them was let through, so an admission check alone would cap the
+first turn of an unbounded conversation. A caller with nothing left gets a 429 with
+a `Retry-After`, or an `error` frame if the socket was already open.
+
+Counting happens in Redis, so a deployment without it caps nothing, and a Redis
+that cannot be reached allows the request rather than refusing it. That is the
+right way round: refusing everybody because a counter is missing is a worse outage
+than the one the limit prevents.
+
+`ROUTER_TRUSTED_PROXIES` is what makes the address half meaningful. `X-Forwarded-For`
+is a list each hop appends to, and the leftmost entry is whatever the caller claimed,
+so it is walked from the right and only entries written by proxies you named are
+stepped past. Unset, the header is ignored entirely — correct with nothing in front,
+and wrong behind a load balancer, where every caller would look like the balancer
+and share one allowance.
+
+### Organization and app policies
+
+`GET`/`PUT /v1/policies/app` and `/v1/policies/organization` hold these settings, all
+optional. The organization's are a floor its apps can tighten but not loosen.
+
+| Setting | What it does |
+| ------- | ------------ |
+| `data_policy` | `allow_training` and `retention`, applied to every routed request as a floor under whatever it asked for. The stricter of the two scopes wins. A model that declares no `data_policy` meets no floor, so this narrows LLM, search and image routing to declared models. A policy has no `region`, and one sent is refused: where work is done is the agent's own `region`, or a direct call's `data_policy.region`; see [Regions](#regions) |
+| `quota` | What one end user may spend in a UTC day, in place of the deployment's default: the organization's for every user of its apps, the app's over it, and a named user's own (`/v1/policies/users/{user_id}`) over both. Unlike the rest, a more specific level wins rather than the stricter. See [Daily limits](#daily-limits) |
+| `tool_output_retention` | How long sessions keep what their tools were given and gave back: `none`, or `1h` to `3650d` such as `30d`. The shortest of the organization's, the app's and the agent config's `tools.output_retention` applies. See [What is recorded](#what-is-recorded) |
+| `prompt_injection` | Screens the newest input of every LLM response (the user's turn and any tool results) with the decision model router, using the default route (Jev), at the same time as the model call. Deltas are not held; the end of the response waits for the verdict (at most 2s), and an injection fails the response before its tool calls can be acted on |
+
+The screen asks one question per harm in OpenRouter's prompt injection list (instruction
+override, privileged modes, system override, prompt extraction, role manipulation, DAN-style
+jailbreaks, safety bypass, role spoofing, control tokens), and decodes base64, hex and
+letter-spaced text first so an encoded attack is judged on what it says.
+
+An organization's policy applies to the apps the router has seen that organization name. Behind
+a proxy that is the `X-Stream-Organization-Id` header; with API keys it is the key's app.
+`noauth` reads no organization, so only app policies apply there. Every read of a policy fails
+open. A policy has no `budget` any more: one sent is a 400 `budget_moved`, and spend limits are
+their own table (below).
+
+### Spend limits
+
+The customer's spend limits are rows of the `limits` table, one per subject, level and interval
+(`daily`, `weekly` from Monday, `biweekly` from Monday 2024-01-01, `monthly`, all UTC). A
+subject is what spends: the organization, an app, an API key, an end user of an app, a usage
+category across the organization, or one within an app (a team is the category
+`team:<name>`). A row at a level above its subject is a default for each subject of its kind
+there: an app-level `api_key` row limits every key of the app on its own, a row naming the key
+wins over it, and the app's wins over the organization's. Work is refused once any subject it
+counts for has spent its limit in the current window, so the organization's limit still refuses
+an app whose own has room: 402 `spend_limit_reached`, or 429 `user_limit_reached` with
+`Retry-After` for a limit on one end user, which stops that user alone. A reset
+(`usage_resets`) counts a subject's spend from what it had spent when it was made, until the
+window ends; the usage records are untouched. An origin (`hook:chat` and the rest) is no key a
+limit counts, and a user id the usage records leave off is no user.
+
+They are written through `/v1/spend/limits`, server-side only: one server-side credential of
+any app manages every limit of its organization (an app seen in no organization is its own).
+
+| Operation | Path | What it does |
+| --------- | ---- | ------------ |
+| `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
+| `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key_id`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
+
+A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
+category `team:finance`; a category starting `team:` is a 400 `use_team`. A level left out is
+the most specific the ids name. A limit above the one, in the same interval, of a subject that
+contains it is a 400 `limit_above_parent` naming it (the organization contains its apps and
+categories, an app its keys, users and categories, and an organization's category the same
+category in an app); lowering a parent is allowed, and every read shows
+`effective_limit_micros`, the lowest of the row's and its parents'. A second limit on the same
+subject, level and interval is a 409 `limit_exists` naming the first. Writes are audited as
+`limit`. The router that wrote a limit holds to it at once, the others within 5 s. Staff reach
+the same operations for support under `/v1/manage/spend/limits`, with the manage key and an
+`organization_id`; what they write is the customer's.
+
+A grant (`POST /v1/spend/limits/grants`, listed with `GET` and ended with
+`POST /v1/spend/limits/grants/{grant_id}/revoke`) is a one-time amount one subject may spend
+past its own limits: once any of them is spent, its work is admitted on the grant, the one that
+expires first, until the grant is used up, expires (at most 366 days away; the next midnight UTC
+gives "more for today") or is revoked. It lifts that subject's limits and nothing else: a
+parent's limit, credit and the operator's spend hard limit still refuse. Work admitted on a
+grant draws its whole cost from it, and its row names the grant (`requests.limit_grants`). The
+writer adds each row it writes to the grant's `used_micros` once (`limit_grant_uses`, by usage
+id), and a reconcile every 10 minutes counts a row a router stopped before counting. A subject
+must have a limit to be granted (404 `no_limit`), and an organization has at most 20 live
+grants, a used-up one not counted (409 `too_many_grants`). `getLimitUsage` lists the subject's live grants and says, per window, when
+its work runs on one.
+
+The organization and app budgets that policies held moved into this table with the migration
+`20261112120000_limits`: each became the organization's or the app's own limit on its interval,
+an app's under the organization it was last seen in, or under itself when it was seen in none.
+The migration stops while an hourly budget exists, since limits have no hourly interval. Coming
+down puts one budget back into each policy from its scope's own limits.
+
+### The account, its credit and its teams
+
+What an organization's own dashboard reads about its money, server-side only:
+
+| Operation | Path | What it does |
+| --------- | ---- | ------------ |
+| `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
+| `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
+| `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `origin`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+
+The first two and `listUsageEvents` read the usage service's customer view with the ingest
+token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
+organization. A server-side caller's `origin` and `user_id` query parameters are filters there,
+as they are on `getSpend`. `origin` is who started the work: a public API key, or the origin of
+work no key started (`hook:chat`, `phone:inbound`, `job:<name>`); each `UsageEvent` names it as
+`origin`. Its old name `api_key_id` is refused with a 400 that names `origin`, so a caller
+still sending it never reads every key's events as one key's. A key that is only ever a key is
+named `api_key_id` in the query on the limits and grants lists and usage. `api_key` in the
+query is the caller's credential, which Stream's proxy requires on every call. `user_id` in the
+query only names who a backend acts for, which no account read looks at. `listTeams` sums the
+request rows this month when there is no usage service. Staff read the teams of any
+organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
+
+`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
+(its old name `who:api_key` is refused), `who:user`, `who:team` (work with no
+team under the empty value) or `who:category` (the team left out, and a request counted once in each
+of its categories). A cost label key holds no `:`, so a label named `app` is still `group_by=app`.
+`scope=organization` counts every app of the caller's organization, and there a user is
+`<app_id>/<user_id>`.
+
+### Admission
+
+Before every routed session and every LLM response the router answers from memory what the
+customer may do, so an agent's speech never waits on a database:
+
+- An app's policies are read through the configuration cache the first time it is seen, and
+  again in the background every 5 s while it is in use. The authenticated request that first
+  names an app starts that read, so its first session usually finds it done.
+- Its organization's money is read every 5 s, for every organization in use at once, from the
+  usage service (`ROUTER_USAGE_URL`), 100 organizations a call: the status, the balance, the
+  spend hard limit and this day's and month's spend. The customer's spend limits are read on a
+  loop of their own, so a slow Postgres never makes a balance stale: the organization's limits
+  and resets every 5 s, and what each subject with a limit spent from the usage service's
+  counters every second (`ROUTER_USAGE_REDIS_URL`, the Redis the service mirrors its windows
+  to), or from the service itself every 5 s when that is not set, when a counter is missing,
+  and for 5 s after that Redis fails a read.
+  With no usage service there is no credit or spend hard limit, and each limited subject's
+  spend is summed from the request rows every 10 s, four at a time.
+- What this router recorded since is held by usage id from the moment the row is recorded,
+  and each ledger lets go of it on its own read: against the balance and the spend hard
+  limit, once a standing asked for after the usage service had the row lands (its ack, or the
+  shard showing the row shipped, as by another router's sweeper); against the spend limits of
+  every subject the row counts for, once a read of the counters asked for after an ack that
+  says the counters took the row lands (or a read of the service itself after any ack), or
+  with no usage service once a sum asked for after the shard wrote the row lands. Counted
+  twice for a moment, never not at all. A row a ledger is never known to have is let go 10
+  minutes after the later of when it was held and when that ledger last failed to read, and
+  logged; while no read lands, every hold is kept. While the usage service acks none of an
+  organization's rows, its limits' holds are kept too, and their 10 minutes start once acks
+  come back. A limit counts only what was held in its current UTC window; the balance counts
+  everything held.
+
+In that order: a suspended organization is refused everything, 403 `account_suspended`. A
+balance at or below what is held refuses work that costs money, 402 `insufficient_credits`.
+The organization's spend hard limit, per UTC day and calendar month, refuses it however much
+credit is left, 402 `system_limit_reached`; nothing a customer writes lifts it. Then the
+customer's spend limits, subject by subject (the organization, the app, each category in the
+organization and then in the app, the key, the user), 402 `spend_limit_reached`, or 429
+`user_limit_reached` for the user. A model the deployment runs itself, or one that is free, is
+still served past every one of them but a suspension. An organization is admitted until its
+first read lands. Once it has gone a minute without one, its tier's `fail_mode` decides: a
+closed tier refuses work that costs money until the balance can be read, an open one is
+admitted on the last read. The customer's limits are read before the first admission that
+needs them: an organization's the first time this router sees it, and what a subject with a
+limit spent the first time it sees the subject, waiting at most 250 ms. A read that does not
+land by then, or limits and spend last read over a minute ago, are the tier's `fail_mode` to
+answer as well (an organization with no tier, or no usage service, follows the default tier,
+which fails closed). The metrics are `router_admission_refresh_errors_total`,
+`router_admission_oldest_read_seconds` and, in `shadow`, `router_admission_would_refuse_total`
+by reason.
+
+Billable work is reserved before it starts, through the metering layer, so a new vendor gets
+it without writing it: `routing.Call` reserves `Meter.Estimate` (a search request, the images
+asked for, a text's segments), an LLM response its prompt and `max_output_tokens` (4,096 when
+unset), renewed every minute while it streams, a TTS utterance its characters, and a stream
+(STT, STS, `routing.Slices`) a lease of one minute of its meters, renewed every 30 s and
+released when it ends. A speech-to-speech session whose lease is refused because its money ran
+out refuses its next turn with the money error and closes; nothing else stops a voice model
+replying. One refused because the money could not be checked (holds unshared, a balance
+unread; `policy.Transient`) refuses that turn and stays open until a renewal lands. A transcription
+keeps running, and an agent's next turn is refused by its LLM's reservation. A reservation is a
+hold under the usage id its row will carry, checked in the order above and answered from
+memory; a refusal asks no vendor and records no row. The row settles it at its cost, and a
+reservation never recorded expires (2 minutes, 90 s for a lease). Holds are shared through
+the deployment's Redis (`ROUTER_REDIS_ADDR`): every 50 ms each router writes what changed to
+one hash per subject (`hold:{<org>}:<subject>`, and `hold:{<org>}:grant:<id>` per grant), and
+reads back what the other routers hold, which every figure subtracts as it does its own; the
+subjects it has nothing to write for are read every second. A shared hold is dropped 10 s after
+the usage service acked its row, by when every router's reads count it, and nothing in a
+router ever writes a total. Once a change has waited 10 s unwritten, work that costs money is
+refused with 503 `spend_check_unavailable` and `Retry-After: 5` until a write lands; free work
+is still served. With no Redis, holds stay in the process and nothing is refused for this.
+The usage alerts loop pages `holds_flush_failing` once `router_holds_unflushed_oldest_seconds`
+is over 10: customers' billable work is being refused, so restore the router's connection to
+`ROUTER_REDIS_ADDR`; the first write that lands clears it.
+The metrics are `router_holds_flushed_total`, `router_holds_flush_errors_total`,
+`router_holds_unflushed_oldest_seconds`, `router_holds_live`, `router_holds_refused_total`
+and `router_holds_per_subject`.
+
+Telephony asks the same admission: buying a number, placing or transferring a call, and every
+text an agent sends or answers on a line. Whatever a phone vendor charges for is billed work,
+so a refusal of money refuses it (402, or 403 `account_suspended`). A call to one of the
+organization's numbers is refused: on Telnyx it is rejected before it is answered, so it is
+not billed. Over Stream SIP the bridge has already answered the caller when the router hears
+of the call, so no agent is dispatched and the call is ended through Stream at once; the few
+seconds it was up are billed by the vendor. The same holds for a telephony suspension.
+Releasing a number is never refused. A campaign is refused at launch, and one refused midway
+pauses with the refusal's code as `paused_reason`. The contact it was about to ring goes back
+to waiting without using up an attempt, and is rung once the campaign is resumed. A scheduled
+task that could not be delivered for money records the refusal's code.
+
+Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
+remembering up to 100,000 folded usage ids (about 15 MB per account at most), and the process
+remembers at most 500,000 folded ids across every account (about 60 MB). A folded id past
+either cap is forgotten (`router_admission_folded_ids_forgotten_total`): it is then held
+until its fold's timer rather than its ack, which only ever refuses sooner.
+
+Provider capabilities, prices and the capability shortcuts live in
+[internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
+Adding a provider or model is a config edit.
+
+## Targets
+
+A request names either a concrete `provider/model` or one of four capability shortcuts,
+which mean the same thing in every modality:
+
+| Shortcut                     | What it asks for                                    |
+| ---------------------------- | --------------------------------------------------- |
+| `en-low-latency`             | English, fast enough for a live conversation         |
+| `multilingual-low-latency`   | More than one language, still fast                  |
+| `en-high-accuracy`           | English, quality over speed                         |
+| `multilingual-high-accuracy` | More than one language, quality over speed          |
+
+A shortcut normally describes what it wants and takes whoever meets it, so adding a model is
+a config edit and nothing else. `en-low-latency` for speech-to-text is the exception: every
+live transcriber is realtime, low-latency and speaks English, so nothing any of them declares
+tells one from another, and it names both Deepgram Flux models, Grok and Muse outright with
+`only`. Gemini, the two Parakeets, Ink 2, Inworld and Scribe stay reachable by
+`provider/model` and through the other shortcuts.
+
+A shortcut's candidates are ranked by their live health, which each router reads from a snapshot
+in memory, never from Redis while a request waits. The snapshot reads every model the router can
+build in one pipelined round trip a second. A model missing from it is read along with the rest
+of the walk's missing models in one round trip, and is kept from then on. What a router records
+itself counts in its own snapshot at once, so it stops routing to a model that just failed fatally
+there before the next refresh, and other routers learn of it within a second. A failed refresh
+keeps the last snapshot, and a model no read has reached within the health window is unmeasured,
+as with no Redis at all. The metrics are `router_health_reads_total` (by `kind`: `refresh` or
+`miss`), `router_health_refresh_errors_total` and `router_health_snapshot_age_seconds`.
+
+`router_failovers_total` counts each time the router moved work off a provider that failed, by
+`modality`, the `provider` that failed, `stage` and `reason`; `router_requests_total` tells a
+provider's models apart. It is counted once another candidate has been started in its place: the
+last candidate failing, or a walk the caller left, is no failover. `stage` is `start` (a
+candidate the walk could not start), `use` (one that started and failed in the walk's use, as a
+recording whose vendor failed it) or `session` (one that failed after its session started and
+another took over: an STT session the vendor refused, a voice the agent lost mid-call to another
+provider or key, an LLM response the session's model or a fallback before the one that answered
+failed). `reason` is `request` for a setting the provider refused, `customer_key` for work on
+the customer's own key or their own `custom` model, `cancelled` for a candidate that failed once
+the caller's context had ended, and `vendor` otherwise, which is the one an alert on a degrading
+vendor reads.
+
+### The default groups
+
+These are the shortcuts offered as a choice, for the caller who wants the models we would
+pick rather than a list of their own to keep:
+
+| Group                | What it is                                                                      |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B and GPT-5.6 Luna, pinned to Gemma 4 26B |
+| `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
+| `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
+| `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
+| `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
+| `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
+| `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
+| `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
+| `image-quality`      | Gemini 3.1 Flash Image: follows a long prompt and writes legible text. Takes a shape only |
+
+```yaml
+stt:
+  providers:
+    - stt-accurate
+```
+
+The ones that name their members do so with `only`, which is the thing the field exists for and the thing it
+warns about: a name is a judgement about which models are wanted rather than a fact about what
+they can do, so it goes stale in a way a requirement does not. That is what these are — an
+opinion with a date on it — and the date is in the config beside them.
+
+A group is its models and nothing else. It carries no terms, so a config that wants the label
+still writes `diarize: true`, and the accurate group then narrows to Muse, which is the one of
+its four that declares it and the one the pin already starts with. Both groups are the live
+path only; a recording belongs at `en-recorded`, where the batch models are.
+
+Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
+LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
+is what the skills run on: the part of a turn the talking model could not answer itself, which
+the conversation carries on without. Both name the model this deployment wants rather than
+leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
+only reach the rest of their tier when that model is unavailable or fails to start.
+
+Which models those shortcuts reach for LLM, and what each costs per million tokens (the
+vendor rates in `prices/vendor.json`; customers are charged each entry's price, see
+[Prices](#prices)):
+
+| Model                            | Tier         | In     | Cached  | Out     |
+| -------------------------------- | ------------ | ------ | ------- | ------- |
+| `deepseek/DeepSeek-V4-Flash-0731` | low-latency  | $0.13  | $0.028  | $0.26   |
+| `openai/gpt-5.6-luna`             | low-latency  | $0.20  | $0.02   | $1.20   |
+| `openai/gpt-6-luna`               | low-latency  | $0.10  | $0.01   | $0.50   |
+| `gemini/gemini-3.8-flash`         | low-latency  | $0.75  | $0.075  | $3.75   |
+| `gemma/gemma-4-26B-A4B-it`        | low-latency  | $0.24  | -       | $1.20   |
+| `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
+| `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
+| `openai/gpt-6.1-terra`            | high-quality | $1.00  | $0.05   | $5.00   |
+| `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
+| `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
+| `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
+| `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
+| `gemini/gemini-4-argon`          | high-quality | $2.00  | $0.10   | $10.00  |
+
+Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
+a published price: Baseten's H100 rate divided by an assumed throughput. Cached prompt tokens
+are billed once, at the cached rate, not twice.
+
+DeepSeek's models reason by default, which spends the whole token budget and most of the
+latency before the first word of the answer. The provider turns thinking off through the
+chat template, since that is the wrong trade for a live conversation; `Options.Thinking`
+turns it back on and the reasoning then arrives as `ReasoningDelta` events, separate from
+the answer.
+
+Speech to speech has three shortcuts of its own. `sts-fast` is the model quickest to answer,
+pinned to `gemini/gemini-3.8-live`; `sts-vision` is a conversation the model can watch as
+well as hear, pinned to `openai/gpt-realtime-2.1`; and `sts-duplex` requires a model that can
+listen while producing audio. Realtime transport, barge-in or asynchronous tools alone do
+not establish full duplex. A native speech model owns transcription, turn-taking and speech,
+so it takes the place of the separate STT, conversation LLM and TTS pipeline. A session asks
+for one target rather than three, and the terms it can be asked for are its own:
+`semantic_turns` for a turn detector that reads the words, which only OpenAI has;
+`tools` and `text`, which Qwen lacks; `endpointing` for a silence timer whose length can be
+set; and the two transcripts. Frames are an input modality, gated by `input_modalities`,
+not a term. Which models the shortcuts reach, and what each is billed at:
+
+Set a managed voice agent's speech target and optional skills subagent in `agent.yaml`:
+
+```yaml
+sts: sts-duplex
+subagent: gemini/gemini-3.8-flash
+```
+
+The subagent is an independent LLM router target for delegated reasoning and skills; it can
+name another configured provider/model or alias. It does not choose the speech provider's
+own reasoning backend. GPT-Live uses OpenAI's Responses backend, which defaults to
+`gpt-5.6-terra`.
+
+A named STS router config sets defaults for direct router clients. For example, `routers/duplex.yaml`:
+
+```yaml
+name: duplex
+sts:
+  target: sts-duplex
+  overwrites:
+    openai:
+      backend_model: gpt-5.6-terra
+```
+
+Sync the directory first with `client.SyncRouters(ctx, "routers")`, then open that config with
+`client.Router("duplex").STS().Realtime(ctx, nil, nil)`.
+This named router config does not configure a managed agent; its `agent.yaml` independently
+chooses `sts` and the optional `subagent`. For a direct `/v1/sts/stream` start frame, pass
+provider-specific settings in `sts.overwrites`:
+
+```json
+{"target":"openai/gpt-live-1","sts":{"overwrites":{"openai":{"backend_model":"gpt-5.6-sol"}}}}
+```
+
+`backend_model` is an OpenAI model ID for the Responses backend, not a provider/model routing
+target. The agent's `llm` field and its optional `subagent` do not select that backend.
+
+| Model                                     | Tier         | Billed by                                   |
+| ----------------------------------------- | ------------ | ------------------------------------------- |
+| `gemini/gemini-3.8-live`                  | low-latency  | tokens: $3.00 in, $12.00 out per million     |
+| `gemini/gemini-3.1-flash-live-preview`    | low-latency  | tokens: $3.00 in, $12.00 out per million     |
+| `gemini/gemini-3.8-live-extended-thinking` | high-quality | tokens: $3.00 in, $12.00 out per million    |
+| `xai/grok-voice-3.0`                      | low-latency  | the caller's audio: $4.80 an hour            |
+| `xai/grok-voice-think-fast-2.0`           | low-latency  | the caller's audio: $3.00 an hour            |
+| `qwen/qwen3.5-omni-plus-realtime`         | low-latency  | the caller's audio: $0.03 an hour            |
+| `openai/gpt-realtime-2.1`                 | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
+| `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
+
+The vendors price audio in, audio out and text at different rates, and where a vendor reports
+its tokens by modality (OpenAI Realtime, Gemini Live) each is priced at its own rate in
+`prices/vendor.json`. A reply is one row, settled when the model finishes it; the caller's audio
+since the last reply is the row's `audio_ms`, and the tokens are what the vendor reported.
+`stssuite` is what every one of these models is held to on a real call, the way `sttsuite`
+and `ttssuite` hold a transcriber and a voice. `.claude/skills/router-sts` is the vocabulary.
+
+Gemini is reached over Google's OpenAI-compatible endpoint, so it needs no implementation of
+its own. Every Gemini 3 model thinks and none of them can be told not to, so the provider
+pins the effort to the model's floor rather than letting a conversation wait on its own
+default; `Options.ReasoningEffort` raises it for anything off the live path. That floor is
+`minimal` up to 3.5 and `low` from 3.8 Flash, which made thinking a level and dropped
+`minimal` with it, so asking for it there is refused here rather than 400ing mid-turn.
+Gemini bills thinking as output, which is the other reason a live turn asks for the floor.
+Google reports it as a token count rather than streaming it, so there are no
+`ReasoningDelta` events to separate out.
+
+### Transcribers, and what Gemini does differently
+
+| Model                                                      | Languages | Per audio hour |
+| ---------------------------------------------------------- | --------- | -------------- |
+| `cartesia/ink-2`                                           | en        | ~$0.54         |
+| `deepgram/flux-general-en`                                 | en        | $0.276         |
+| `deepgram/flux-general-multi`                              | 12        | $0.276         |
+| `elevenlabs/scribe_v2_realtime`                            | 57        | $0.39          |
+| `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
+| `grok/grok-stt`                                            | 25        | $0.20          |
+| `inworld/inworld-stt-1`                                    | 30        | $0.15          |
+| `microsoft/MAI-Transcribe-2-Streaming`                     | 60        | $0.54          |
+| `muse/muse-voice-transcribe-1.0`                           | 25        | $0.18          |
+| `parakeet/parakeet-tdt-0.6b-v3`                            | 25        | $0.079         |
+| `together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b`   | en        | $0.09          |
+| `together-nemotron/nvidia/nemotron-3.5-asr-streaming-0.6b` | 28        | $0.27          |
+| `together-parakeet/nvidia/parakeet-tdt-0.6b-v3-realtime`   | 25        | $0.21          |
+
+The two Parakeets are the same weights in two places: `parakeet` is our own Baseten
+deployment and `together-parakeet` is Together's serverless endpoint. They are separate
+providers because the bill and the pager are not shared, so routing can pick between them
+and fail over from one to the other.
+
+The two Nemotrons share a provider instead, because they are two models on one endpoint
+rather than one model in two places. Nemotron 3 ASR is English-only and is what NVIDIA
+recommend for an English call; Nemotron 3.5 ASR is the multilingual extension of it,
+covering 40 language-locales from the same checkpoint and detecting which one is spoken
+rather than being told. The 28 codes it declares are NVIDIA's transcription-ready and
+broad-coverage tiers; their third tier needs fine-tuning before it transcribes, so a call
+in one of those languages is not routed here. Both speak the same realtime protocol as
+`together-parakeet`, and their deltas restate the utterance rather than adding to it.
+
+Muse Voice Transcribe is configured by its opening frame rather than by a header or a
+query string, credentials included, so a rejected key arrives as an error event on the
+socket rather than as a failed dial. It finds turn boundaries itself, which is what
+`ENDPOINTING`, the mode the provider defaults to, asks for; `PUSH_TO_TALK` leaves them to
+the caller and settles on the flag the transcript carries rather than on `speechComplete`.
+Turns can overlap, so the provider keys its bookkeeping on the `turnId` the server sends
+rather than on the order the frames arrive in.
+
+Ink 2 is the second model here that decides where a turn ended itself, and Cartesia publish
+a migration guide from Flux to it because they are much the same shape of protocol. The
+three thresholds that move that boundary are reachable through `overwrites`, not as shared
+terms: Cartesia's own guide says theirs and Deepgram's do not mean the same thing at the
+same value. Closing the socket transcribes whatever the server was still holding, so the
+tail of a caller who was cut off is not lost.
+
+Inworld STT 1 and Scribe v2 Realtime both take their configuration where it cannot be
+changed afterwards — Inworld in an opening `transcribeConfig` frame, Scribe in the query
+string — and both send audio as base64 inside a JSON frame rather than as binary. Scribe has
+no control frame at all: committing the tail of a call means sending a chunk with the commit
+flag set, which is why the provider sends a fiftieth of a second of silence to carry it. It
+also does not start transcribing until it has about two seconds of audio, so its first
+interim transcript lands later than the others' while the turn still settles as quickly.
+
+Muse and Grok are the only two of these that can tell one voice from another. What that is
+for is the microphone with more than one person at it: a track says who joined the call,
+which is the wrong answer for everybody else in the room with them, so the label is what
+lets the agent leave a bystander's question alone. It is a label the session made up rather
+than an identity, and the transcribers that cannot hear the difference leave it empty.
+
+Grok names the voice on every session, because it costs nothing to ask for. Muse does it
+only when a request asks, because its `DIARIZATION` mode looks for a speaker change rather
+than a clean end of speech: measured on the same clip it settles a turn in about 2150ms
+where `ENDPOINTING` takes about 770ms, and that second and a half is time the caller spends
+waiting. Both declare `diarize` and both honour it, so asking narrows an English call to
+those two rather than serving it unlabelled from one of the others.
+
+Deepgram, Cartesia, ElevenLabs, Grok, Inworld, Muse, Parakeet and Nemotron are speech
+recognisers. Gemini 3.5 Transcribe
+is a Gemini model that happens to be listening, reached over the Live API's
+`BidiGenerateContent` socket with the talking half turned off, and that difference shows
+in three places.
+
+It writes down what you meant rather than what you emitted: filler words go, a
+self-correction resolves to the correction, and the text arrives punctuated. That is worth
+having on a call and wrong for a compliance transcript, and it is not a setting.
+
+It has no field for a keyterm or a language hint — `AudioTranscriptionConfig` is an empty
+message. Both are passed as a system instruction instead, which is the only lever the API
+gives and is a request rather than a constraint. Deepgram's `keyterm` is the stronger tool
+if the vocabulary matters more than the phrasing.
+
+It sends the words in pieces that append, so a chunk is a `delta` and the turn boundary the
+server reports is what settles it. The final restates the whole utterance, which cadence
+treats as the transcriber settling rather than as the caller saying it twice.
+
+Billing is per token, not per hour: audio in at $3.50/1M against 25 tokens a second, text
+out at $21.00/1M. The router config carries Google's own blended figure of about $0.009 an
+audio minute, so a busy call costs more than the table suggests and a quiet one less.
+
+### Regions
+
+An agent's work is done in one region, `us` or `eu` for now, and never in another: every model
+its sessions route to, its knowledge base and its sandbox. The region is the agent's own.
+`agent.yaml` names it as `region` (the sync's `region`), as a config written with the API does
+(`AgentConfigRequest.region`, `AgentConfigPatch.region`), and it is stored in
+`agent_configs.region` (migration `20261202135000_agent_region`, which puts every agent before it
+in `us`). An agent that names none is in `us` (`pricing.DefaultRegion`), and a sync, an update or a
+patch that leaves it out keeps the stored one. A region is a letter and up to 31 of a-z, 0-9 and
+hyphens (`pricing.ValidRegion`).
+
+Nothing about a region is looked up when work arrives. A session takes its region from its config,
+and carries it on every call it makes (`routing.Owner.Region`): its models', the flow controller's,
+the title's, the review's, the guardrail's and the prompt-injection screen's, its knowledge's and
+its sandbox's. So do the agent's text channels, phone calls, scheduled tasks and plugin events,
+which are sessions of its config, its episode summaries, and its simulations, whose simulated
+caller and judge are handed the agent's conversation and run in its region too. Phone legs, texts
+and memory are not routed by region.
+
+A sync, and a config create, update or patch, is checked before anything is written, and refused
+(400 `invalid_request`) naming each part of the agent's work that could not be done in its region:
+
+- a model it names (`llm`, `stt`, `tts`, `sts`, `subagent`, `search`) with no instance there:
+  `llm: no instance of anthropic/claude-haiku-5-5 in region eu`. A shortcut or a vendor name
+  passes when one of its instances runs there, as the router resolves it; a customer's own model
+  (`custom/<name>`) runs in `us` alone. A target the deployment does not route at all is left to
+  the session to refuse, as before regions, and so are the defaults of the models it leaves out;
+- its knowledge base kept in another region: a knowledge base is never moved. A sync's is the base
+  named after the agent, which it writes in the agent's region; a config's is its
+  `knowledge_namespace`. A region this deployment keeps no knowledge in is refused too;
+- a sandbox it names, in a region with no Daytona target.
+
+A read that fails fails the save, and the caller tries again. A model, a knowledge base or a
+sandbox the save leaves as it was, in the region it was in, is not checked again, so an agent
+stored before the check stays editable. The region is in what `check_changes` compares and in
+what the audit entry shows.
+
+A direct call, an `stt`, `tts` or `sts` socket or recording with no agent, names its own region in
+its option block's `data_policy.region`, `us` when it names none. Work naming two regions, its
+agent's and its data policy's, is refused naming both (`options.ErrRegionConflict`). A policy
+names no region: an app's and an organization's `data_policy` hold `allow_training` and
+`retention`, and refuse `region`, so no policy read, failed or not, moves any work.
+
+`router.yaml` may declare a model once per region. An instance is the provider, the model and
+its `region` (`us` when it names none); the same three twice is refused at start.
+
+```yaml
+llm:
+  providers:
+    - provider: anthropic
+      model: claude-haiku-5-5
+      languages: [en]
+    - provider: anthropic
+      model: claude-haiku-5-5
+      languages: [en]
+      region: eu
+      endpoint: https://eu.anthropic.example/v1
+      api_key_env: ANTHROPIC_EU_API_KEY
+```
+
+- `endpoint` is the base URL of that instance's regional API, in place of the vendor's
+  default host.
+- `api_key_env` names the environment variable holding that instance's key, in place of the
+  vendor's own variable. It is read once at start, never logged, and a variable that is unset
+  or empty stops the router from starting.
+- A factory says which of them it takes (`routing.OverrideBaseURL`, `OverrideAPIKey`), and the
+  router refuses to start with an instance that sets one its factory would drop. The LLM
+  factories of OpenAI, Anthropic, Gemini, xAI and DeepSeek take both; nothing else takes either
+  yet.
+- Every vendor's default host is taken to be in `us`, so an instance anywhere else must set an
+  `endpoint`, or the router refuses to start, unless its factory picks the region's host
+  itself from the region it is given (`routing.OverrideRegion`; none does yet).
+
+Every routing filter runs as before, then the region's: only the instances in the work's region
+are kept, and with none left the request is refused, naming the region (`no candidate in region
+eu`, a 400). Fallback walks the rest in the usual order, so a failing EU instance falls back only
+to other EU instances. That holds for every routed modality, so an EU agent's session needs an EU
+instance of each model it uses: the transcriber, the voice, the reply's model and the flow
+controller's (`llm-flow`), the title's (`llm-fast`), and search and the decision models where it
+uses them. A prompt-injection screen with no instance in the region lets the response stand, as
+one that cannot be reached does. A concrete `provider/model`, a vendor name and a shortcut
+each resolve to every region's instances first, and a shortcut's `prefer` holds in each region.
+Live health and statistics stay keyed by provider and model: an EU instance shares its US
+twin's health. A customer's own model (`custom/<name>`) runs in `us`, its stored config having
+no region, and is filtered the same way. Each instance's work is priced at its region's entry,
+so EU work is billed under an `-eu` SKU.
+
+Knowledge and sandboxes are not routed, so they are done in the work's region
+(`routing.Owner.Region`), `us` when it names none:
+
+- **Knowledge.** One turbopuffer backend per region `knowledge.regions` maps
+  (`ROUTER_KNOWLEDGE_REGIONS`), `us` always among them as before. A knowledge base stays in the
+  region of its first write through the router, recorded in `knowledge_namespaces` (migration
+  `20261202125000_knowledge_region`, which records every existing base as `us`). Work naming a
+  region, an agent's, reads and writes a base kept there, makes one nothing was written to
+  there, and is refused one kept in another rather than having it moved. Work naming none, as
+  the knowledge API's (`/v1/agents/knowledge`) and a page's read, goes where the base is kept,
+  and makes a new one in `us`. A sync keeps the agent's base in its region before it adds a page,
+  so a page read later lands there. A delete goes where the base is, whatever the work names. A
+  region with no backend is refused. Each region's rows are priced there
+  (`knowledge-turbopuffer-write-eu`), and `router usage storage` samples every region's bases.
+  `cmd/knowledge` still writes to `TURBOPUFFER_REGION` directly, and records no region.
+- **Sandboxes.** Each is made on the Daytona target `code_sandbox.targets` maps its session's
+  region to (`ROUTER_CODE_SANDBOX_TARGETS`); `us` with none is `DAYTONA_TARGET`, then the
+  organization's default, as before. A region with no target is refused when the agent is
+  saved naming a sandbox, and again when a session's sandbox is opened. A sandbox is labelled
+  `stream.region` and its rows carry `region` and
+  the region's SKU. `router usage sandboxes` lists every target of the organization, so the
+  sweep and the reconciliation cover them all, pricing a gap in the sandbox's region.
+
+`GET /v1/{modality}/providers` lists a model once per instance, each with its `region`.
+
+### Customers' own provider keys (BYOK)
+
+A customer may keep a key for their own account at a vendor, one per vendor and region:
+`PUT /v1/agents/provider-keys` with `provider`, `region` (`us` when left out) and `api_key`,
+`GET /v1/agents/provider-keys` to list them and `DELETE /v1/agents/provider-keys/{provider}?region=`
+to forget one, all server-side only and audited as `provider_key`. A key is taken for an LLM
+vendor the deployment routes whose factory builds with an instance's own key
+(`routing.OverrideAPIKey`: OpenAI, Anthropic, Gemini, xAI and DeepSeek today), for `turbopuffer`
+and for `daytona`; any other is a 400 `provider_takes_no_key` naming the ones that are. Only a key
+is taken, never an endpoint: the deployment's own is used.
+
+Keys are kept in `provider_keys` (migration `20261202130000_provider_keys`), sealed with the
+deployment's keyring (`auth.Sealer`, as the other customer secrets are) and bound to the customer,
+the vendor and the region, so a sealed key copied to another row does not open. A key is never
+returned, logged or put in an error: the API lists its last four characters (`key_hint`, empty for a
+key under 16 characters), and its audit entries show no more. A key holding a space, a comma or a
+control character is refused. Without a keyring a put is refused, and without a database there are
+no keys.
+
+- **Routing.** For each candidate in the work's region whose vendor the customer keeps a key for
+  there, the router inserts the customer's own instance immediately before it: a copy of the
+  instance with `BYOK` set, at the deployment's endpoint, built with the customer's key. The order
+  between models stays the priority list's or the ranking's, and each model is tried on the
+  customer's key first. When that fails, as it is built or when the vendor refuses the request, the
+  walk and the LLM fallback move on to the deployment's instance of the model as to any next
+  candidate. A key is looked up for the work's region alone: a key for `eu` is used only for `eu`
+  work, and a key for `us` only for `us` work. A model the deployment holds no key
+  for is still served on the customer's. Keys are read through the appconfig cache (Redis, and the
+  copy rueidis keeps in each process, dropped on every replica when a key is put or deleted) and
+  opened, one AES-GCM open, when work is routed.
+- **Health.** Work on a customer's key is counted for the customer and kept out of the vendor and
+  model's live health and its fatal mark, so one customer's revoked key never marks the model down
+  for everyone. `router_requests_total` counts its failures under `outcome="customer_key"`, never
+  `error` or `timeout`. A 401 or 403 from the vendor on the customer's key is `error_code`
+  `key_refused` on its request row, with a message naming the vendor and region, which the customer
+  sees on their usage events and call timelines; the deployment's instance is asked next.
+- **Billing.** Work on a customer's key is priced at its item's BYOK entry (see Prices): a SKU ending
+  in `-byok`, a fee of 20% of the work at the vendor's rates, `base_cost_micros` 0. A customer who may
+  not spend money is refused it as any billable work is.
+- **Knowledge.** With a `turbopuffer` key for the work's region, a knowledge base first written from
+  then on is kept in the customer's own turbopuffer account, at the turbopuffer region of the
+  deployment's own backend there, read and written on their key and priced at
+  `knowledge-turbopuffer-*-byok`. `knowledge_namespaces.account` records the account, `stream` for
+  every base written before. A base stays in the account of its first write: one in the deployment's
+  stays there when its owner puts a key, and one in theirs whose key was deleted is refused, a 400
+  naming the base and the region, rather than read from the deployment's account. `router usage
+  storage` samples each base kept in a customer's account on their key, at the BYOK price, and counts
+  apart, not as missed, one whose key is gone.
+- **Sandboxes.** With a `daytona` key for the work's region, the session's sandbox is made in the
+  customer's own Daytona organization, on the same target, labelled `stream.account=customer`, and its
+  time is priced at `sandbox-daytona-*-byok`. Under the `daytona` broker its secrets are kept in that
+  organization too, and the hourly secret sweep covers every customer organization a key is kept
+  for. `router usage sandboxes` deletes the orphans and reconciles Daytona's records in each customer
+  organization on its key, as it does in the deployment's (its lines start `a customer's
+  organization:`), pricing a gap at the BYOK entry. A sandbox labelled for a customer's organization
+  is never the deployment organization's, even where one key reaches both.
+
+`router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
+as the router, so their CronJobs need its variables too.
+
+## Pictures
+
+`POST /v1/image/generations` draws pictures from a prompt and answers with them. It is server-side
+only, like every routed modality but search.
+
+```bash
+curl -s localhost:8080/v1/image/generations -H 'X-Customer-Id: acme' \
+  -d '{"prompt": "A yellow watering can beside a seedling, flat illustration, no text",
+       "options": {"target": "image-fast", "aspect_ratio": "16:9"}}'
+```
+
+```json
+{"id": "img_1b9d...", "status": "completed", "provider": "fal",
+ "model": "alibaba/qwen-image-3/text-to-image", "cost_micros": 0,
+ "images": [{"data": "iVBORw0...", "media_type": "image/png", "width": 0, "height": 0}]}
+```
+
+The zeros stand in for real values. The pictures come back as base64 bytes, never a link, and nothing is kept: `id` is for logs. A
+generation that reached a provider is a 200 whether it drew or not. A failed one has `status:
+failed`, an `error_code` (`content_filtered`, `unsupported_option`, `timeout` and the rest of
+`ImageErrorCode`) and `error`, and costs nothing. A request that cannot be routed is a 400.
+
+| Option | What it does |
+| --- | --- |
+| `target` | A shortcut or `provider/model`. Defaults to `image-fast` |
+| `providers` | A priority list, which wins over `target` |
+| `n` | How many pictures, 1 to 4 |
+| `size` | `1024x1024`, on a model that takes a size. FAL draws 512 to 2048 a side |
+| `aspect_ratio` | `16:9`, on a model that takes a shape |
+| `seed`, `negative_prompt`, `output_format` | On a model that declares them |
+
+An option narrows the candidates to the models that declared it, so it is honoured or refused,
+never dropped.
+
+**Routes.** `GET /v1/image/routes` lists `image-fast` and `image-quality` (see
+[The default groups](#the-default-groups)), default first, each with the model it resolves to
+now. The Go SDK has it as `client.Routes(ctx, acceleration.ModalityImage)` and the JavaScript
+SDK as `api.router().routes("image")`. The four shared shortcuts (`en-low-latency` and the
+rest) work here too.
+
+**Time.** A request is answered when its pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. FAL is a queue: the router submits the job and asks every 3 seconds whether it is done, and one router process holds at most 2 FAL jobs at once, so a third waits for a slot before it is submitted. Gemini is one call per picture, drawn one after another. A FAL picture's usage row splits its time into `queued_ms`, submit to the first poll that saw it drawing, and `drawn_ms`, from then to done, each to within a poll; both are left out when no poll saw it drawing. `latency_ms` is the whole request, a wait for a slot included.
+
+**Limits.** At most 4 pictures a request, each at most 10 MiB and 4096 pixels a side, checked
+by decoding the picture before it is returned.
+
+**Billing.** Per picture, at the model's entry in the price list (see [Prices](#prices)). The
+vendor rates behind them, in `prices/vendor.json`, are $0.04 a picture for Qwen Image 3 on FAL
+and $0.0672 a picture for Gemini plus its prompt and thinking tokens. `cost_micros` is what the
+request cost the customer. The money is held before the job is submitted, so a
+spend limit that covers the caller refuses a draw it cannot pay for, and a failed draw costs
+nothing. A request is one row in `requests` counting its pictures.
+
+**From an agent.** `image: image-fast` on an agent config, or in agent.yaml, offers a text agent
+whose conversation has a Chat channel the built-in `generate_image(prompt, aspect_ratio?)`. It
+answers at once and the turn ends; the picture is drawn after it, on whichever router claims the
+job, and posted into the conversation as the agent's own message, or a short message saying why
+there is none. It is billed as this endpoint is, under the session's attribution. An empty
+`image` turns it off, and a target the deployment cannot draw with is refused when the config is
+saved.
+
+## Run
+
+```bash
+# The API
+ROUTER_POSTGRES_DSN=postgres://... ROUTER_REDIS_ADDR=localhost:6379 \
+  go run ./cmd/router
+# Say something
+go run ./cmd/say -text "Hello from the router."
+
+# Or type lines and hear them
+go run ./cmd/say -target multilingual-low-latency -language es
+
+# Ask a model something
+go run ./cmd/chat -text "Name three primary colours."
+
+# Or hold a conversation, which keeps its history between turns
+go run ./cmd/chat -target en-high-accuracy
+
+# Join a Stream call and talk to it. A browser opens on a link that joins the same call,
+# which -demo=false turns off when the caller is joining from somewhere else.
+go run ./cmd/agent -call my-call
+
+# Sprint 6 stack: Gemma speaks, Sol handles the hard parts
+go run ./cmd/agent -call my-call \
+  -stt parakeet/parakeet-tdt-0.6b-v3 \
+  -tts fish/s2-pro \
+  -llm gemma/gemma-4-26B-A4B-it \
+  -subagent openai/gpt-5.6-sol
+
+# Label what a session costs, so spend can be broken down later
+go run ./cmd/agent -call my-call -tag project=support -tag environment=dev
+
+# Give an agent a phone number
+go run ./cmd/phone vendors
+go run ./cmd/phone search -vendor twilio -country US -area 512
+go run ./cmd/phone buy -vendor twilio -number +15125551234 -tag project=support
+go run ./cmd/phone attach -number +15125551234 -call support-line
+
+# Or ask every vendor at once, for somewhere specific with the features you need
+go run ./cmd/phone search -country US -state CO -type local \
+  -feature hd_voice -feature emergency -limit 5
+
+# Call somebody, on the terms the call needs, and join the call it prints
+go run ./cmd/phone dial -from +15125551234 -to +15550001111 \
+  -call-id support-line -ring-timeout 20s -digits ww1234#
+
+# Let the agent hand a caller to a human, or answer a menu on a call it placed
+go run ./cmd/agent -call support-line -number +15125551234
+go run ./cmd/agent -call outbound-1 -number +15125551234 -vendor-call v3:abc -navigating
+
+# Or do either by hand
+go run ./cmd/phone transfer -from +15125551234 -to +15550002222 -call support-line
+go run ./cmd/phone press -vendor telnyx -call-id v3:abc -digits 1
+```
+
+Each utterance `cmd/say` finishes prints which provider served it, the wait for the first
+audio, how much speech came back and what it cost:
+
+```
+elevenlabs/eleven_flash_v2_5  first audio 158ms  audio 2.7s  55 chars  $0.002750
+```
+
+`cmd/chat` prints the same shape of line per turn, in tokens rather than characters:
+
+```
+deepseek/DeepSeek-V4-Flash-0731  first token 356ms  20 in  13 out  $0.000005
+```
+
+## The agent
+
+`internal/agent` is the Go counterpart of the Python `Agent`, built from the three routers
+plus a target each. One conversation is one LLM session and one voice session, but a
+transcription session per participant, because a speech-to-text stream is bound to a single
+speaker.
+
+```mermaid
+flowchart LR
+  edge["Edge audio 16k mono"] --> stt["STT session per participant"]
+  stt -->|"transcript revisions"| cadence["Cadence"]
+  cadence --> flow["Fast flow controller"]
+  flow -->|"respond or clarify"| conv[Conversation history]
+  flow -->|"stop, shorten, continue"| floor["Speech floor"]
+  conv --> harness["Harness"]
+  harness --> llmSession["LLM session"]
+  llmSession -->|"text deltas"| harness
+  harness -->|"speech"| chunker["Sentence chunker"]
+  chunker --> ttsSession["TTS session"]
+  ttsSession -->|"PCM chunks"| out["Edge audio track"]
+```
+
+Three decisions are worth knowing about:
+
+- **Cadence, not turn detection, decides when to act.** Transcript revisions are debounced
+  per participant, then a separate fast-model session decides whether to wait, ignore
+  background speech, respond, or clarify. A provider final is metadata rather than the
+  response trigger; new words cancel a stale decision.
+- **The reply is spoken sentence by sentence.** A model emits a few characters at a time,
+  and a voice given two words at a time pauses in the wrong places. A streaming voice takes
+  a turn's sentences as deltas of one utterance, so one turn stays one billed synthesis; a
+  voice that cannot take deltas gets one final request per sentence.
+- **Overlap is a floor decision.** A correction stops the model and voice, a related addition
+  shortens the current answer after speech already queued, and an acknowledgement lets it
+  continue. Audio from an abandoned turn is still dropped at publication.
+
+Those three decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
+them: every transcript revision, when the words held still, what the flow controller was
+asked and what it answered, and why the agent then spoke, waited, murmured, queued the turn
+or stopped mid-reply. A quiet agent is usually one of `ignore`, `wait` on repeat, or a turn
+queued behind speech that never settled, and each of those says so.
+
+```
+transcribed provider=deepgram participant=user-1 mode=replacement text="what's the weather"
+the words held still, asking whether to answer them candidate=turn-1787 waited=352ms
+the flow controller decided candidate=turn-1787 disposition=respond floor=continue
+answering candidate=turn-1787
+```
+
+`Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
+whole flow be tested in-process against a loopback rather than only against a real call.
+`streamedge` is the real one: it joins over the `getstream-go-webrtc` SDK, subscribes
+to the audio of everyone else in the call (joining subscribes to nothing on its own), decodes
+inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
+
+## The harness
+
+The model on the live path is chosen for how quickly it starts talking, which is not the
+same as how well it thinks. `internal/harness` is what stops that being a trade made on
+every sentence: the fast model can hand the hard part to a slower one and go on talking
+while it runs.
+
+```mermaid
+flowchart LR
+  stt["Transcript cadence"] --> controller["Flow controller"]
+  controller -->|"respond or clarify"| h["Harness"]
+  h -->|"reply"| fast["Fast LLM session"]
+  fast -->|"deltas"| filter["Directive filter"]
+  filter -->|"speech"| chunker["Sentence chunker"] --> tts["TTS"]
+  filter -->|"ask for help"| tasks["Task manager"]
+  tasks --> sub["Subagent LLM session"]
+  sub -->|"result"| h
+  h -->|"cancel superseded"| tasks
+  sub -->|"private summary"| compact["History compaction"]
+```
+
+A skill is a name, a line telling the fast model what it is for, and the instructions the
+subagent answers under. `skills.yaml` is embedded, and `HARNESS_SKILLS` or `-skills`
+replaces it, the same way `router.yaml` and `phone.yaml` already work. An agent config's own
+skills are offered by name and description only, and their instructions are read from the store
+when one is used, so an edit reaches the next use rather than the next session.
+
+The harness is agent config, never session config: `harness` (only `default` today),
+`subagent`, `sandbox` and `skills` are set on the config or in `agent.yaml`, and
+`createSession` does not take them. Only a voice agent names a `subagent`: a text agent
+runs everything, skills included, on its `llm`, and a config that gives one a subagent
+is refused. A client that wants a sandbox of its own declares it as a
+tool instead.
+
+- **The model asks for help mid-sentence.** It writes `<ask skill="think">…</ask>` into its
+  reply. A streaming filter takes it back out before the reply reaches the voice, so the
+  caller hears "let me check that" and never the request. Everything that cannot yet be a
+  tag is released immediately, because the caller is listening to the gap.
+- **A model that has tools is told how to use them.** The reply model is given a short block
+  after the agent's own instructions whenever the harness offers tools: before calling one,
+  say one short sentence that opens with a brief hold phrase ("One moment,") and runs straight
+  on, with no full stop between, into what the operator's instructions ask to be said before
+  acting, such as reading the caller's details back, or else what the agent is doing. The
+  phrase belongs there and nowhere else, never a sentence of its own, never in place of a
+  required read-back and never after the call or the result: a read-back takes seconds to say,
+  so a phrase after it comes after the wait it was meant to cover, and a one-word sentence
+  before it leaves a pause a caller's interruption falls into. After a result the model
+  answers from it without another one. It then calls the tool in the same turn once every
+  argument it requires is known, without collecting optional ones first or asking leave for
+  what the caller just asked for; takes a name or value as the caller gave it, since a surname
+  is a name; after a result, calls the tools the request still needs straight away and without
+  another hold phrase, together when they do not need each other, rather than a sentence and a
+  model turn per tool; and passes bare values. It
+  names no tool and defers to the operator's own instructions and a tool's approval setting
+  wherever confirmation is required first. A reply carrying a colleague's question is offered
+  no tools and is not told about them. The agent's own filler and a tool's `pre_speech` stay
+  what they were, for a model that reached for a tool without a word: a turn that said
+  something before its call is given neither, so a wait has one hold phrase.
+- **A task is a completion, so cancelling one is a targeted interrupt.** `Interrupt` on
+  `llm.LLM` takes completion ids, which is what lets a conversation abandon stale work
+  without stopping the reply being spoken. Work is abandoned when a newer request for the
+  same skill or a revised conversational premise supersedes it, when the model writes
+  `<drop skill="…"/>` because the caller moved on, when its deadline passes, or when the
+  call ends.
+- **Answers come back as a turn nobody asked for.** The caller was told an answer was
+  coming, so it arrives without them asking again. If the agent is mid-sentence the answer
+  waits for it to finish rather than talking over itself. A subagent that cannot answer
+  without knowing something replies `NEED: …`, which becomes a question in the agent's own
+  words.
+
+Subagent completions go through `llmrouter` like anything else, so what the thinking costs
+lands in `requests` with the same failover and cost tags as the talking.
+
+An agent whose config names a sandbox gives the subagent `run_code`, and on a call the model
+holding the conversation none: running code takes seconds that a call does not have, and the
+subagent has already left the live path. A text session has no subagent, so the model holding
+it is offered `run_code` itself (see [Conversations held in writing](#conversations-held-in-writing)). Code the subagent
+writes runs in Daytona, its output comes back as a tool result, and the same task is put
+again, up to four rounds and always inside the skill's own deadline. The subagent may also
+`lookup` and `search` when the agent has a knowledge base and a search target, knowledge base
+first. One sandbox is created the first time code actually runs and released when the session
+ends.
+
+`sandbox_options` on the config, or in `agent.yaml`, says how that sandbox is built and how
+long code may run in it: an `image` with Python to start from, `setup` commands run on top of
+it once, `timeout_ms` for one run (30 seconds by default, at most 30 minutes), and `cpu`,
+`memory_gb` and `disk_gb`. Any of them builds an image, which Daytona keeps, so only the
+first sandbox from a given setup waits for the build. A run is still bounded by its skill's
+deadline, so a skill that renders for minutes says so in its own.
+
+Code in the sandbox reaches nothing outside it by default. `network: true` opens the
+internet, and `allowed_domains` or `network_allow_list` (CIDR ranges), one or the other,
+names the only places it may go, with or without `network`. These need no image of their own.
+Daytona organizations on tiers 1 and 2 cannot set either list per sandbox and refuse to create
+one that does; blocking everything, the default, works on every tier.
+
+`run_code` takes `files` as well as `code`: paths the program writes that the person should
+get, at most four of up to 20 MiB each. On a persistent text conversation each file is
+uploaded to the channel as the agent, `task_settled` lists them (`name`, `mime_type`, `url`,
+`size`), and the reply that settles the work carries them as Chat attachments, an image
+inline and anything else as a file, so they are there when the conversation is reopened.
+Without a channel the subagent is told there is nowhere to show them.
+
+Long histories are compacted privately on the thinking session when the prompt is large and
+either it has filled 80% of the conversation model's `context_window` in `router.yaml`, or the
+provider's reported cached-token ratio has fallen below half. The result replaces
+only the unchanged old prefix; recent turns stay verbatim and a late summary cannot overwrite
+newer conversation.
+
+### Listening and talking at the same time
+
+Cadence and floor control are always part of the agent. `-backchannel` defaults on and makes a
+short listening noise during long speech or delegated work; pass `-backchannel=false` to turn
+it off. `-min-confidence` additionally makes the agent clarify a doubtful transcript. The
+flow controller also asks for clarification when the words are clear but the intent is not.
+
+### Voices that act a direction
+
+Some voices perform bracketed directions such as `[laughs]` or `[whispering]` rather than
+reading them out. A provider says whether it does, and only then is the model told it may
+write them. What it writes is stripped before it reaches the transcript or the
+conversation's history, so a direction is heard and never read.
+
+Three providers perform them, and they are not interchangeable.
+
+`elevenlabs/eleven_v3_conversational` acts any bracketed direction, over the Text to
+Dialogue socket rather than the streaming one. It is a different bargain from
+`eleven_flash_v2_5`: latency is roughly a second to first audio against about 75 ms, and
+an open connection holds a dialogue session from a pool separate from the standard
+concurrency limit, so a deployment routing calls to it needs headroom of a different kind.
+The protocol has no context ids and no cancel frame, so audio is attributed by flush order
+and a barge-in reopens the socket.
+
+`breeze/breeze-tts-2` acts four: `[laugh]`, `[sigh]`, `[cough]` and `[clears throat]`. Its
+prompt says so, because telling a model any direction works when only four do would have
+it write directions that get spoken. In exchange it takes the other half of the
+instruction — how the line should sound, or who should say it — which no other provider
+here does. Two languages only, English and Chinese, and it runs on our own Baseten
+deployment, so see `deploy/breeze-tts-2/README.md` before routing anything at it: the
+licence and the single-request engine both matter.
+
+`fish/drama-3` acts any bracketed direction, written the way you would brief an actor:
+`[calm, measured storyteller voice]` as readily as `[sighs]`. It is Fish's hosted API,
+the same `POST /v1/tts` as `fish/s2-pro` with the `model` header changed, and the default
+for the `fish` provider. Like every Fish model it synthesises a whole sentence per request,
+so it answers later than the socket voices. `fish/s2-pro` reads a bracket out as words.
+
+### A voice described rather than chosen
+
+Every other provider takes a voice id, or one of your own voices written `custom:<name>`,
+which is resolved per provider (one that was never given it is skipped). Breeze takes
+prose: "a warm, thoughtful young woman with a calm, reflective delivery" designs a voice
+with no reference audio at all, and the same field alongside a reference clip steers
+delivery while the clip keeps the identity. So
+`-voice` means something different depending on who is listening, and a voice id from
+another provider is meaningless here rather than merely wrong. A `custom:` voice never
+lands on Breeze, which has no cloner (below).
+
+That is also why `breeze` registers no cloner in `internal/tts/voices`, the same as
+`s2pro`: a customer's own voice is a clip plus a transcript per request, not something
+registered upstream and given an id. The router skips it for a call asking for one.
+
+### Directions are written in square brackets, whoever is listening
+
+Breeze's own syntax for an English vocal event is parentheses — `(sigh)` — but the agent
+writes `[sigh]` for every provider, because parentheses are ordinary punctuation that a
+reply may use for something else. The deployment translates on the way into the engine,
+which is the point where an utterance split across text deltas is whole again. A Chinese
+event such as `[叹气]` is already in brackets and passes through untouched.
+
+## Sessions, for callers outside this process
+
+Everything above is driven by `cmd/agent` on a command line. `internal/session` is the same
+wiring offered over HTTP, so a Python process can have this service hold a conversation on
+its behalf: the spec's fields are `cmd/agent`'s flags, and the process that used to be
+started per call becomes a session in a process that is already running.
+
+| Endpoint                                | What it does                                    |
+| --------------------------------------- | ----------------------------------------------- |
+| `POST /v1/agents/sessions`              | Join a call. Returns once the agent is listening |
+| `GET  /v1/agents/sessions`              | The customer's sessions, newest first            |
+| `GET  /v1/agents/sessions/{id}`         | One of them                                      |
+| `DELETE /v1/agents/sessions/{id}`       | Leave the call                                   |
+| `POST /v1/agents/sessions/{id}/say`     | Speak, without going through the model           |
+| `POST /v1/agents/sessions/{id}/respond` | Answer something, as though it had been said     |
+| `POST /v1/agents/sessions/{id}/interrupt` | Abandon the reply being spoken                 |
+| `POST /v1/agents/sessions/{id}/instructions` | Change what the agent is, from the next turn |
+| `GET  /v1/agents/sessions/{id}/events`  | WebSocket: everything the agent does             |
+| `GET  /v1/{modality}/stream`            | WebSocket: one modality, for a pipeline elsewhere |
+| `GET  /v1/agents/socket`               | WebSocket: a voice session with no call, its audio on the socket |
+
+```bash
+curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
+  -H 'Content-Type: application/json' -d '{
+    "call_id": "demo-1",
+    "instructions": "Keep your replies short.",
+    "llm": "llm-fast",
+    "tags": {"project": "support"},
+    "memory": {"user_id": "222"}
+  }'
+```
+
+Two things travel in both directions. The socket carries out what the agent heard, said and
+decided, and carries back `say`, `interrupt` and `close`. And it carries `tool_call`: the
+caller's own functions live wherever the caller is, so the model asks for one here, the
+answer comes back from there, and a caller that does not answer inside the tool timeout
+leaves the model to carry on without it rather than leaving the call silent.
+
+Sessions are keyed by customer. A session id that exists but belongs to somebody else is
+reported as not existing at all, since a forbidden would confirm it was real.
+
+### Conversations held in writing
+
+`"text": true` and no `call_id` holds the conversation in writing instead. No call is
+joined, nothing is transcribed and nothing is spoken, so neither speech target is used:
+
+```bash
+curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
+  -H 'Content-Type: application/json' -d '{"text": true, "config_id": "..."}'
+```
+
+Everything between hearing a question and answering it is unchanged, which is the point. A
+text session has the same instructions, the same skills and the same knowledge base as a call
+would have had, so an agent can be built and argued with in writing before anybody rings it,
+and a documentation agent or a support chat is the voice agent with the voice left off. The
+one difference is who runs a skill: nobody is waiting on a voice, so the model holding the
+conversation loads the skills its config names itself, with `load_skill`, and keeps every
+tool while it follows one. It takes answers from a matching skill first, then the knowledge
+base (`lookup`), then the web (`search`). A text agent with a sandbox runs code itself with
+`run_code`, a loaded skill's scripts written under `skills/<name>/` before it runs, and the
+files it hands back ride on `tool_ran` and the reply.
+
+It is driven over the session's own socket: `respond` goes in, `response_delta` and
+`responded` come back, along with `looked_up`, `tool_ran`, `delegated` and `task_settled` as
+the agent works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
+interrupt.
+
+### Conversations held over a socket
+
+`GET /v1/agents/socket` holds a voice conversation with no call to join: the audio travels
+on the socket itself. It is for callers that are neither a browser nor a phone, such as a
+benchmark's simulated caller, and everything between hearing and answering is the agent's
+own, the cadence, the flow controller, speculation and barge-in included.
+
+The first frame is `{"type": "start", "sample_rate": 16000, "session": {...}}`, where
+`session` is what `POST /v1/agents/sessions` takes and `call_id` may be left out.
+`sample_rate` is from 8000 to 192000, 16000 when left out; any other rate is refused. The
+answer is `{"type": "session", "session": {...}, "sample_rate": 16000}`. From then on
+binary frames are PCM16 mono at that rate both ways: the caller's audio in, and the agent's
+speech out in 20 ms frames at the pace it is heard on a call, so a reply the caller cuts
+into stops within a frame. `{"type": "cleared"}` says speech already sent was thrown away
+because the caller cut in. Tool calls and everything else the conversation does go over the
+session's events socket as they would for a call.
+
+The session lasts as long as the socket. Closing it, or sending `{"type": "stop"}`, ends
+the conversation, and a conversation that ends closes the socket. Unlike the events socket
+it cannot be relayed, because the audio travels on the connection itself: the session is
+the node the socket opened on, and that is where it stays.
+
+### More than one node
+
+A session lives in one process's memory, and a load balancer has no reason to send a
+caller to the process holding theirs. Two things make the deployment answer anyway, and
+both need `redis.addr`:
+
+- The events socket is relayed. `internal/relay` publishes a session's frames on one
+  Redis pub/sub channel and the watcher's commands on another, and the node holding the
+  socket attaches a real watcher on the node holding the conversation. Every node is sent
+  every session's events, so each keeps a cuckoo filter of the owners it holds sockets for
+  and drops the rest before they cost anything.
+- Everything else is carried to the node that can answer it. `internal/node` keeps a
+  register in Redis of which node is running which session, renewed while it runs, and a
+  request naming a session that is not here is handed to the node that is by gRPC. Peers
+  are reached over h2c on the API's own port, so there is no second port to open between
+  them, and the node answering runs its own handler: it authenticates and authorizes the
+  caller itself rather than taking a peer's word for either. Since anyone reaching that
+  port can speak gRPC to it, a peer presents a credential derived from the key encryption
+  keyring (`ROUTER_AUTH_KEK`, `ROUTER_AUTH_KEK_V<n>`), and a node accepts the one of any key
+  it holds, so a rotation needs no pause. A node with no keyring refuses every peer, and
+  every node holding one refuses it.
+
+That register also answers who is writing as an agent, which is what an arriving chat
+message names. Without it a message landing on the wrong node finds nothing running and
+is handed to a worker, which is a second agent writing into a conversation the first is
+already answering in.
+
+A node that dies leaves its claims behind until they expire, during which a request for
+one of its sessions is answered with a 502 rather than a 404: the conversation existed and
+the node holding it has gone, which is a different thing from a session that was never
+there.
+
+### Shards
+
+One node with one Postgres and one Redis is a whole deployment, and needs nothing below:
+
+```yaml
+postgres:
+  dsn: postgres://localhost/router
+redis:
+  addr: localhost:6379
+```
+
+A hosted deployment runs one shard per region. Every shard shares a global Postgres and
+Redis (tenancy, agents, connectors, phone numbers, the request log, quotas, the node
+register and the worker bus) and keeps its own for what it runs: calls, sessions,
+responses, requests and their rollups in Postgres, provider health and the session relay
+in Redis. Any shard serves any app.
+
+```yaml
+shard: us-west1
+postgres:
+  dsn: postgres://global/router
+  shard_dsn: postgres://usw1/router
+  shards: # every shard's, this one's included
+    us-east4: postgres://use4/router
+    us-west1: postgres://usw1/router
+    europe-west4: postgres://euw4/router
+redis:
+  addr: global:6379
+  shard:
+    addr: usw1:6379
+```
+
+Writes go to this shard's database. Reads of one call, session or recording look in every
+shard, and lists merge every shard's rows, so a session carried on in another region is
+still one session. Migrations run on every database. A socket for a session held in
+another shard is proxied to the node holding it, since that shard's relay is not this
+one's. Empty shard settings fall back to the global ones, which is the single-node setup.
+
+Percentiles merged from several shards' rollups are approximate: they are weighted by request
+count rather than recomputed. A router with shards cannot be a move's source: its shards'
+tables record no changes after an export, so `GET /v1/data/export` and `GET /v1/data/changes`
+answer 400 `not_configured` there (see [Moving a customer](#moving-a-customer)). It can be a move's target.
+
+## Agents that are configured rather than spelled out
+
+A session can be created from a stored configuration instead of a caller repeating the
+whole spec every time. `config_id` on `POST /v1/agents/sessions` loads one and everything
+inline in the request overrides it, so a config can be reused and one call still changed.
+
+| Endpoint                                    | What it does                                |
+| ------------------------------------------- | ------------------------------------------- |
+| `/v1/agents/configs`                        | Named agents: models, voice, instructions, skills, knowledge |
+| `/v1/agents/skills`                         | What the fast model may hand to the slower one |
+| `GET /v1/agents/calls`                      | Calls that happened, running ones included   |
+| `GET /v1/agents/calls/{id}`                 | One call, with what a model made of it       |
+| `GET /v1/agents/calls/{id}/transcript`      | What was said                                |
+| `GET /v1/agents/calls/{id}/timeline`        | Each exchange, said and measured together    |
+| `GET /v1/agents/calls/{id}/events`          | What the conversation decided, and why       |
+| `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
+| `/v1/agents/knowledge/urls`                 | Pages a knowledge base is kept filled from   |
+| `/v1/agents/campaigns`                      | Outbound calls: an agent rings a list of contacts within calling hours, and what each call ended as |
+| `/v1/agents/scheduled-tasks`                 | Things the agent does later for a user, once or on a repeat, and what came of each occurrence |
+
+**Skills are named rather than spelled out.** A config carries skill names, and they are
+resolved once when the session is created: the customer's own rows, or the built-in
+`think`, `recall` and `explain`. A name nothing defines is refused rather than dropped,
+because a model offered a skill nobody implements is worse than one offered none. The
+runtime lookup is unchanged.
+
+**A text agent can hand work to the app's other text agents.** A config's `agents` names
+them, each with the tool its model calls it by:
+
+```yaml
+mode: text
+llm: anthropic/claude-sonnet-5-5
+agents:
+  - config: security-lens        # another text agent of the app, by name (an id is stored as its name)
+    tool: security
+    description: Reviews a diff for security bugs and lists each candidate finding.
+  - config: ranker
+    tool: rank
+    timeout_ms: 90000             # two minutes when left out
+```
+
+Each is offered as a tool taking one string, `input`. A call runs that agent as an incognito
+run of its own (`session.Manager.Run`, what `POST /v1/agents/runs` runs on) on its own llm,
+instructions, connectors and sandbox, and the tool result is what it said last. The calls in
+one reply already ran at once, a goroutine each; a parent runs at most 8 children at a time
+and the rest wait their turn within their deadline. A child gets its own timeout or what is
+left of the parent's run, whichever is less, and ends with the parent's tool call, so it never
+outlives the parent. A child that fails or runs out of time is a failed tool call the parent's
+model answers around, not a failed run. What the children spend is added to the run's `usage`
+and broken down by tool in its `children`.
+
+Children are one level deep: the parent and every child are text agents, and a child has no
+`agents` of its own and is not the parent. A save is refused that would break that from either
+side, including a child gaining agents or stopping being a text agent. A parent names a child
+by name, so a child cannot be renamed or deleted while a parent names it. The child is checked
+again when it runs, and a child tool whose name another tool of the session has is not offered. A child takes none of the app's run slots (`ROUTER_RUNS_CONCURRENT_PER_APP`): the parent's
+slot covers it.
+
+**Knowledge is what the business wrote down.** With `TURBOPUFFER_API_KEY` set, a config's
+`knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
+question about prices or opening hours is answered out of the handbook rather than guessed
+at. Each search is a `requests` row with modality `knowledge`, like everything else that
+costs money: a `lookup`, priced per lookup, carrying the bytes turbopuffer billed it as
+searching (at least 1.28 GB) and returning, and each write or delete request a `write` of the
+bytes written. What each cost turbopuffer is kept as `attributes.provider_cost_micros`.
+
+Storage is sampled hourly by `router usage storage`: one `storage` row per knowledge base and
+hour, of its size as `byte_hours`, owned by its app under `job:knowledge_storage`. By default
+it records the last hour to have ended, so a retry within the next hour bills the same one;
+`--hour` records another, at the size the base holds now, since turbopuffer keeps no past
+sizes. Run exactly one such job per turbopuffer key and region, not one per shard or router:
+it reads every namespace the key holds, and skips those of apps this deployment has never
+seen, which belong to another deployment sharing the key. A base it cannot read fails the run
+and alerts as `storage_missed`, naming the hour to run again.
+
+**Search is what is true today.** Neither the model nor the handbook can answer what the
+traffic is doing, whether a place is open or what a score is: one was trained months ago and
+the other was written down once. A session gets a `search` tool wherever a provider can be
+built for it, and an agent asked about any of those looks it up instead of saying it cannot
+check.
+
+Search is routed the way the three model modalities are. A config's `search` names a target,
+which is a `provider/model` or one of the same capability shortcuts the others use, and the
+router ranks the candidates, fails over past a provider whose key is missing, and files one
+`requests` row per search under modality `search`. There are three providers and they differ
+more between their own modes than they do from each other, which is what the models select
+between:
+
+| Target                | What it does                                                     |
+| --------------------- | ---------------------------------------------------------------- |
+| `exa/fast`            | Exa's index, no crawl and no model: the quickest sources          |
+| `perplexity/search`   | Perplexity's ranked index, results only                           |
+| `tavily/basic`        | Index plus a written summary in the same round trip               |
+| `exa/auto`            | Exa choosing between its neural and keyword indexes               |
+| `tavily/advanced`     | Crawls the pages it finds rather than trusting the snippet        |
+| `perplexity/sonar`    | A model searches the web and writes the answer                    |
+
+A session that names nothing gets `search-fast`. Sonar is a target rather than a fork:
+because it is a language model in the middle of a conversation, whether it is worth its
+latency is a routing decision.
+
+The answer lands in the conversation as a tool result, which is what puts it in front of the
+subagent too: a caller who asks for the best route given the closures gets the fast model
+finding out what the closures are and the subagent reasoning over them. Nothing extra is
+configured for that, and nothing is offered at all without a key for something.
+
+**A knowledge base can also be filled from URLs.** Posting a document happens once; a url is
+a subscription, because the page behind it changes and nobody re-posts it. With
+`EXA_API_KEY` set alongside turbopuffer, a database and Redis, `/v1/agents/knowledge/urls`
+fetches the page, turns it into markdown and cuts it into passages the same way a document
+is. The read is an [asynq](https://github.com/hibiken/asynq) task on Redis, run by a worker
+inside the router: the request answers with the page `pending`, and a read that fails is
+retried three times before the page is marked `failed`.
+
+```bash
+curl -X POST localhost:8080/v1/agents/knowledge/urls \
+  -H "X-Customer-Id: acme" -H "Content-Type: application/json" \
+  -d '{"namespace":"docs","url":"https://example.com/pricing","refresh_hours":24}'
+```
+
+Each row records when the page was last read successfully, what it was called and how many
+passages it became. That last number is what makes removing it exact: passages are keyed by
+the url and a position, so deleting a subscription takes its passages with it, and
+re-reading a page that got shorter leaves no orphans behind. A page that could not be
+fetched is still stored, in the `failed` state with the reason on it, rather than refused
+and forgotten.
+
+A page with `refresh_hours` is read again once that many hours have passed since its last
+read, failed or not. Every router looks once a minute for pages that are due and queues them;
+the task id is the page, so two routers queuing one read it once. Without `refresh_hours` a
+page is only read again when asked: `POST /v1/agents/knowledge/urls/{id}/index` queues a
+read, and so does adding the page again.
+
+`cmd/knowledge` fills one from files:
+
+```bash
+go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
+```
+
+A namespace belongs to a customer: turbopuffer stores it as `<customer>__<slug>-<hash>`, a
+readable slug of the namespace and a hash of it as given (`examples__docs-<16 hex>`), so two
+apps that both say `default` never read each other's. `-customer` is the app id the agent
+runs under.
+
+`POST /v1/agents/knowledge` fills one from a caller that has no access to this machine's
+disk, which is what an SDK pushing an agent directory needs. Documents are cut into passages
+by the server, in `internal/knowledge/ingest`, so a file read off disk by the command and one
+posted over HTTP are cut the same way and replace each other.
+
+```bash
+curl -s localhost:8080/v1/agents/knowledge -H 'X-Customer-Id: acme' \
+  -H 'Content-Type: application/json' -d '{
+    "namespace": "docs",
+    "documents": [{"source": "pricing.md", "text": "# Pricing\n\nA call costs..."}]
+  }'
+```
+
+Markdown is cut at its headings, a section too long to be one passage is cut again at
+paragraph breaks, and each piece keeps the heading it was found under so it still says what
+it is about when it comes back on its own. A section that is only a heading is skipped:
+retrieving a title tells the model nothing. Passages are keyed by the file and the position
+they came from, so reading a directory again after editing it replaces that file's passages
+rather than leaving two versions of them to be found. `-dry-run` prints what would be
+written without writing it.
+
+Search is BM25 only. There are no embeddings here, and nothing to keep in step with a model
+that generates them: documentation and handbooks are answered well by the words in them, and
+a lookup on the answering path has to be fast.
+
+**A call outlives the session that ran it.** Sessions live in a map in memory, which
+answers what is happening now and nothing at all about last Tuesday. A `calls` row is
+written when the agent joins and again when it leaves, both off the conversation's path.
+What was said is not copied into Postgres: the transcript is already in Stream Chat, keyed
+by agent, and the timings are kept in Redis for an hour. The timeline endpoint is those two
+joined, so it shows a call's turns only while they are that recent. When the call ends, a short model pass over the conversation writes a summary and
+a score from one to five onto the row, billed through the LLM router like anything else.
+
+**Campaigns are the outbound half.** A campaign is one agent config ringing a list of
+contacts from one of the customer's numbers. Each contact's variables (`{{first_name}}`)
+reach the agent. Launching takes `consent: true` and an optional `start_at`, and from then on
+the contacts, the sequence and the calling hours are fixed. The sequence says how many
+attempts each contact gets, how far apart, and whether to ring again at once when nobody
+answered. Nobody is rung outside calling hours, judged in the contact's own time zone.
+
+Each call is told the step's `goal`, with the contact's variables filled in, right after the
+config's instructions, and opens with why it is calling. Last comes the closing rule: the
+step's outcomes are listed, and once the call reaches one the agent says goodbye and hangs up.
+After an answered call, one model call reads the transcript and picks one of the step's
+outcomes, or none, which counts as `other`. `do_not_call` also opts the number out of every
+call the app makes.
+
+A step's `voicemail` says what happens when an answering machine picks up. `off` (the
+default, and what a step with no `voicemail` does) does nothing special: nobody is asked who
+answered, and the agent talks to a machine as to a person. `hang_up` ends the call saying
+nothing, and `leave_message` says the step's message, variables
+filled in, once the greeting ends, then hangs up. Telnyx and Twilio are asked who answered. A
+verdict they cannot make counts as a machine while nobody has spoken to the agent, and with no
+verdict at all, so does a call where nobody speaks for 40 seconds after answering. Such a dial
+ends as `voicemail`: it uses the attempt like one nobody answered, gets no outcome, and is not
+dialed again at once.
+
+Each dial keeps the phone's own outcome of its call as `call_outcome`, and what follows is read
+from it. `completed` has its transcript read. `no_answer` and `unknown` ring again at once when
+the sequence double dials. `busy`, `failed` and `canceled` wait for the next attempt's delay. A
+dial that placed no call says why in `result` instead.
+
+Every router runs the dialer, and its state is all in Postgres. A router claims a contact
+that is due under a lease, and the claim counts the campaign's calls in progress in the same
+transaction, so several routers together never go past `concurrency` or ring one person
+twice. When a router dies its leases run out, and another router reads how each call ended
+instead of ringing again. Pausing stops new calls within seconds and leaves the calls already
+happening alone. A router with no Postgres, no sessions or no LLM dials nothing, and says so
+when it starts.
+
+## Voices a customer brought with them
+
+A config's `voice` is normally a name the chosen provider knows. It can also name one of
+the customer's own voices, cloned from recordings they uploaded:
+
+```bash
+curl -s -X POST localhost:8080/v1/agents/voices \
+  -H "X-Customer-Id: acme" -H 'Content-Type: application/json' \
+  -d '{"name":"founder","description":"the one from the ad"}'
+
+curl -s -X POST localhost:8080/v1/agents/voices/$ID/samples \
+  -H "X-Customer-Id: acme" -H 'Content-Type: application/json' \
+  -d '{"audio":"'"$(base64 < clip.wav)"'","filename":"clip.wav","transcript":"..."}'
+
+curl -s -X POST localhost:8080/v1/agents/voices/$ID/prepare \
+  -H "X-Customer-Id: acme" -H 'Content-Type: application/json' -d '{}'
+```
+
+**The voice is ours and the ids are theirs.** Preparing sends the recordings to each
+provider that can be taught one and remembers what each called it back. A session names
+our voice, and which id that means is worked out once the router has picked a provider —
+which is the point, because the router fails over mid-call and an id ElevenLabs knows
+means nothing to Cartesia. A provider that was never given the voice, or that refused the
+recordings, is simply not chosen for a call that asks for it. Deleting a voice takes it off
+every provider first, so a voice nobody can reach stops being billed for.
+
+Recordings live in the bucket `ROUTER_VOICES_BUCKET_URL` names, not in Postgres, so they can be
+re-sent to a provider added later without asking the customer for them again. Without that
+variable the voice paths say so rather than half-working. Not every provider clones:
+`s2pro` takes reference audio per session rather than registering a voice, so it is not
+offered custom voices and the router routes around it for calls that want one.
+
+## What is recorded
+
+| Table                                    | One row per                                        |
+| ---------------------------------------- | -------------------------------------------------- |
+| `requests`                               | Unit of work: a turn, a synthesis, a completion, a memory call, a number bought |
+| `stats_hourly`, `stats_daily`            | Bucket, modality, customer, provider and model      |
+| `stats_tags_hourly`, `stats_tags_daily`  | Bucket, modality, customer and one cost label       |
+| `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
+| `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
+| `customer_activity`                      | App, area of the API, client and UTC day: requests, refusals, first and last |
+| `phone_numbers`                          | Number held, kept after release because it was billed |
+| `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
+| `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
+| `calls`                                  | Conversation that happened, with its summary and score |
+| `campaigns`, `campaign_contacts`, `campaign_attempts` | Outbound campaign, each person on it, and each call placed to them |
+| `scheduled_tasks`, `scheduled_task_runs` | Thing a user is to be reminded of or done for later, and each occurrence of it |
+| `audit_log`                              | Change somebody made to the app's configuration     |
+
+Four things fall out of this that are worth stating.
+
+**Cost tags are the customer's own labels.** Any keys they like, up to sixteen per request,
+carried onto every row a session produces. They get their own rollup tables rather than more
+columns on `stats_hourly`, because a request carries a set of labels rather than one more
+dimension: a request tagged `{project, environment}` is unrolled into both breakdowns. Ask
+what drives spend with `GET /v1/{modality}/stats/tags?key=project`, or narrow the ordinary
+stats with a repeatable `tag=project:support`. Filtering reads the raw request rows, since a
+rollup bucket has already forgotten which labels its requests carried.
+
+**A turn is not a request.** A request row measures one provider call. A turn measures what
+the caller felt: the gap between finishing a sentence and hearing the answer start, which
+spans three providers and the agent's own handling. Every leg is nullable, because a
+realtime model that hears and speaks for itself fills only `roundtrip_ms`, and an interrupted
+turn never reaches the legs that come after the interruption. A leg that never happened is
+left out of the percentiles rather than counted as instant. A turn itself, and every decision
+the conversation made, is kept in Redis for an hour and then let go; what lasts is each hour's
+counts and a histogram of each leg in bins 5% apart, added to as each turn finishes, so
+`GET /v1/turns/stats` reports percentiles within 5% of the true ones and a day is its hours
+added up.
+
+For a single call, `GET /v1/agents/calls/{id}/timeline` shows cadence settling, the
+decision before the reply model, first reply text, TTS submission and first audio at the
+edge. Its `model_calls` list keeps flow, reply and subagent requests separate, with TTFT
+and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay from the
+last input audio using provider STT processing time; it cannot include network transit
+or browser playback. `roundtrip_ms` and `speech_end_to_audio_ms` stop when publishing the
+first chunk of the reply returns, which for a chunk longer than the 400 ms outgoing queue is
+later than it could first be heard. For a turn whose reply said nothing and handed work on, a
+hold or update line, or what the work came back with, is that first chunk. `first_frame_queued_ms`, `first_audible_frame_ms` and
+`speech_end_to_audible_ms` stop at the first frame being queued for the outgoing track and at
+the track taking the first frame that is not silence; they are absent for an edge that does
+not report them. The router logs call join and each ICE peer connection
+independently; the subscriber can stay idle until someone publishes a track. The Python
+accelerated agent records join duration. Set `log_latency=True` on `stream.Accelerated`
+(or `VOICE_LATENCY_DAG=1` for `simple_voice_ai`) to print per-model timing and a console
+DAG for each turn. The router records metrics regardless of this logging flag.
+Model-call durations annotate the stages they overlap and are not added to the
+speech-to-audio path.
+
+**A tool's output is kept for as long as somebody says.** A recorded session keeps each
+turn in `agent_responses` and what happened inside it in `agent_response_items`: the
+question, each tool call and its result, the answer. A tool's arguments and output can be
+anything its API returns, personal data included, so how long they are kept is a setting:
+
+| Where it is set | Field |
+| --------------- | ----- |
+| The organization's policy (`PUT /v1/policies/organization`) | `tool_output_retention` |
+| The app's policy (`PUT /v1/policies/app`) | `tool_output_retention` |
+| The agent config, or `tools:` in agent.yaml | `tools.output_retention` |
+
+Each is `none`, a duration from `1h` to `3650d` such as `12h` or `30d`, or left out. The
+shortest of the three applies when a session opens, so an agent can keep less than its app
+and never more, and with all three left out a session keeps everything, as before.
+`incognito` is the per-session switch that records nothing at all.
+
+- `none` writes a tool call and its result with no text (a search's query, a tool's result),
+  no arguments, and `"error": "redacted"` in place of an error's wording. The item keeps its
+  kind, tool name, time, `call_id` and `"redacted": true`.
+- A duration writes the item whole with a time to redact it, and every router redacts the
+  items of its own shard that are due every ten minutes, in batches of 1,000 up to 100,000 a
+  run, through a partial index that holds only the items still waiting. The log line
+  `redacted tool output` carries how many.
+- Redacting keeps the row, so everything that reads items still works: the items endpoint
+  lists the same items in the same order, `GET /v1/stats/agents` still counts each tool call, its
+  failures and its latency (the token estimate drops to the tool's name), and a rewind or a
+  fork, which carry only questions and answers, are unchanged.
+- The setting applies to tool calls recorded after it is set. `DELETE /v1/agents/sessions/{id}`
+  deletes a session's turns and items, tool output included, at once.
+
+**Memory and phone are recorded but not routed.** There is one memory store and one vendor
+per number, so the provider and route paths do not serve those modalities while the
+statistics paths do.
+
+**No vendor is called without its usage being recorded.** The routers' sessions count what
+they can see (the audio streamed to a transcriber, the characters sent to a voice, the
+prompt and what came back from a model) and bill that, marked `usage_estimated`, when the
+vendor says nothing; request-and-response work goes through `routing.Call`, and work billed
+after the fact through `routing.Settle`. A session hands its vendor to nobody. A
+speech-to-speech session also bills what its vendor reports on the side: GPT-Live's seconds
+(`session_seconds`) and its backend model's responses (LLM rows with
+`attributes.parent_session`), OpenAI Realtime's input transcription (a row of
+`gpt-4o-mini-transcribe`), and the audio xAI bills and its typed turns (`audio_ms`,
+`messages`). `internal/metered/guard_test.go`, part of `go test ./...`, fails a file that holds
+a vendor-facing type or imports a vendor's package outside the routers, `internal/metered`
+and the services that meter their own work, and a model vendor that runs no suite. So adding a
+vendor is:
+
+1. one package under its modality implementing the modality's interface, whose tests embed
+   the modality's suite (`llmsuite`, `sttsuite`, `ttssuite`, `stssuite`, `searchsuite`,
+   `detectionsuite`, `imagegensuite`, `decisionmodelsuite`), which checks it reports what
+   it used;
+2. one `Register` call in the modality's router registry;
+3. its rates in `prices/vendor.json` (see [Prices](#prices)).
+
+**Telephony is billed by what each vendor bills.** Every text that arrives and every one sent
+is a `phone` row under the line's vendor and channel (`telnyx/sms`, `meta/whatsapp`,
+`linq/imessage`), with `messages`, an SMS's `message_segments` (GSM-7 or UCS-2, as a carrier
+counts them) and the MMS beside it (`media_messages`), priced by `direction`, the other party's
+`country` and, for WhatsApp, its `category` (`service`: the agent only writes inside the
+24-hour window). A WhatsApp or iMessage line sends through the app's own Meta or Linq account,
+so its rows are priced and not billed (`vendor_account = "app"`). Each leg of a call (the call
+placed, each transfer into it, a call that arrived) is a `call_legs` row. A placed call or a
+transfer rings from when the vendor takes the dial and starts when the person's phone joins the
+Stream call (`call.session_participant_joined`), matched to its leg by the phone's number; a
+call that arrives starts at `call.session_started`, one leg per Stream session. Legs are timed by
+when Stream made each event (no earlier than the leg was dialled, and arrival time for an event
+made over an hour before it), and a join or leave delivered before its leg is written is kept
+for a day (`call_participants`) for the leg to take. A join delivered again after the call ended
+revives the leg the end left unanswered, billed once. A leg ends when its phone leaves
+(`call.session_participant_left`) or the call ends (`call.session_ended`), and is then a
+`call_minutes` row of its `call_seconds`, billed to whoever placed the call, or the app under
+`phone:inbound`, and priced by direction and country. A leg that never connected bills nothing. A
+leg still open after four hours is ended, logged at ERROR and given away, since nothing says how
+long it lasted. A leg whose row was lost is written again by the sweep, under the same usage id.
+The call hook has to deliver the participant events. With `ROUTER_PUBLIC_URL` set, the router points
+the app's call hook itself when a number is bought or attached. For a router that predates that, or
+an app whose hook lacks the participant events, run `go run ./cmd/phone hooks -url <router url>`
+once. Until the hook delivers them a placed call that ends unanswered with no participant event
+delivered logs `call hook does not deliver participant events; re-run cmd/phone hooks` at ERROR,
+once an hour per app. Placing a call is a free `dial` row, for its latency and failures. A number is
+billed every month it is held, on the day it was bought, at the price its vendor quoted (or the
+number's offer when the purchase names none; with neither, as work with no price); the month it
+was bought in under the buyer's key and each after it by `router usage numbers` under
+`job:number_rental`. A 10DLC brand, a campaign's review and its first three months are billed when
+it is registered, and each month after by `router usage dlc` under `job:dlc_fees`. While the 10DLC
+sandbox holds an app, its texts and minutes are priced and given away (`dlc_sandbox = "true"`); a
+leg the sweep ended does not count toward its minutes.
+
+**The audit log holds configuration, not traffic.** `audit_log` keeps one row per change to
+an agent config, skill, knowledge document, knowledge url, router config, plugin or policy:
+the fields that moved with the value on each side, which client the change came from
+(`dashboard`, `cli`, `sdk`, or `api` for a caller that named none) and who was at the
+keyboard. Sessions, simulations, runs and calls are not in it — one agent produces
+thousands a day, and they are read from their own lists. A write that moved nothing is not
+recorded, bookkeeping columns are excluded from every diff, and a plugin's secret is never
+in a row. Read it with `POST /v1/audit/query`, or ask what changed about one agent since
+its directory was last synced with `GET /v1/agents/configs/{id}/changes`. Both are
+server-side only.
+
+Who made a change comes from three headers, read only from a server-side caller:
+`X-Stream-Client`, `X-Stream-Actor-Id` and `X-Stream-Actor-Name`. Nothing signs them: they
+buy a name beside a change somebody already held the credential to make, never permission
+to make it.
+
+### The request log
+
+Everything above is what a request *did*. That it arrived at all is a log line, one per
+request served, at info:
+
+```
+level=INFO msg="served a request" method=POST path=/v1/agents/sessions status=201 duration=425ms customer=examples request_id=… bytes=877 app_id=examples api_key=noauth
+level=INFO msg="served a request" method=GET path=/v1/agents/sessions/d84a…/events status=101 duration=94ms customer=examples request_id=… app_id=examples api_key=noauth
+```
+
+An authenticated request's line, and any line logged with its context, names its app as `app_id`
+and the public key it came with as `api_key`, as the Stream platform's logs do (`customer` is the
+same app as `app_id`). A hook, which is not authenticated, and a request nobody authenticated carry
+neither.
+
+The access line also carries these fields, named like the Stream platform's access logs. Each one
+is left out when the request has none:
+
+| Field | What it is |
+| --- | --- |
+| `trace_id` | The trace of the request's span. None when tracing is off or the request was not sampled |
+| `operation_type` | The route's pattern, such as `/v1/agents/sessions/{id}`. None for a path no route serves |
+| `error_code` | The `code` of the error the request was answered with |
+| `x_stream_client`, `stream_auth_type`, `user_agent` | The `X-Stream-Client`, `Stream-Auth-Type` and `User-Agent` headers, each cut to 256 bytes. `stream_auth_type` falls back to a socket's `stream-auth-type` query (`jwt` or `anonymous`) |
+| `request_size` | The request's `Content-Length`. None for a chunked body |
+| `user_id` | The end user of a request from a user's device, cut to 256 bytes. None for a backend's request, even one that names a user |
+| `build_version` | The release the router was built from. None in a local build |
+
+A socket is logged once, when it closes, so its `duration` is how long the connection lived
+rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
+at error instead, because an access log at a busy deployment is the one stream nobody reads
+all of. A preflight is not logged, and the query string is never logged: a socket names its
+customer there and a telephony vendor names a token.
+
+### Stream staff's operations (`/v1/ops`)
+
+The routes under `/v1/ops` are Stream staff's: they take the ops key (`ROUTER_AUTH_OPS_KEY`) in
+`X-Ops-Key` and no app's credentials. An app's key, even its backend's, is answered 401, and so
+is every call on a deployment with no ops key. They are tagged `Staff` in the spec.
+
+| Route | What it is for |
+| ----- | -------------- |
+| `GET /v1/ops/orgs/{org_id}/activity` | Whether an organization tried Agents, how far it got and how much it used |
+| `GET`, `PUT`, `DELETE /v1/ops/customers/{customer_id}/telephony-suspension` | Stop an app using the phone, and lift it |
+| `GET /v1/ops/use-cases`, `GET /v1/ops/use-cases/{id}`, `POST /v1/ops/use-cases/{id}/review` | Review 10DLC use cases |
+| `PUT`, `DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` | Make Stream's own app a customer's provider app, and stop it |
+| `POST /v1/ops/stats/rollup` | Aggregate request rows into a rollup table |
+
+An organization's activity reads `customer_activity` for every app of the organization and
+`requests` on every shard in `postgres.shards`, from `since` (RFC 3339, at most 90 days ago, 30 days ago when left
+out):
+
+```bash
+curl -H "X-Ops-Key: $ROUTER_AUTH_OPS_KEY" "localhost:8080/v1/ops/orgs/$ORG_ID/activity?since=2026-11-01T00:00:00Z"
+```
+
+`areas` is one item per area and client, `meters` one per modality (requests, tokens, audio,
+characters, time and cost), and `first_seen` and `last_seen` the first and last request of any
+area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
+with a request answered rather than refused, or `steady_use` once conversations or model calls
+were answered on three UTC days, else `none`. Areas, `first_seen`, `last_seen` and
+`furthest_step` come from `customer_activity`, which counts only since it was first deployed,
+and `meters` from every request in the window: for an organization whose use is older, up to 90
+days back, `furthest_step` can read `none` while `meters` show use. An organization with nothing recorded is a 200
+with empty lists. `shards` names the shards whose `requests` the meters sum, this one's
+first. A deployment that leaves `postgres.shards` unset reads its own shard's `requests` alone
+and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
+whole use; areas are kept in the database every shard shares and are complete (see Shards).
+
+`sessions` reads `agent_sessions` on every shard in `shards`, from `since`: `opened` and
+`running` count the sessions the organization's apps opened, `ended` counts the others by end
+reason, and `latest` lists the 20 newest. `latency` reads `turn_latency_hourly` on every shard,
+from the hour `since` falls in, one item per leg with `turns` and the `p50_ms`, `p95_ms` and
+`p99_ms` read off bins 5% wide.
+
+The endpoint sums the rows of the organization's current apps, including rows the sweeper has
+not processed yet, while the cost-anomaly check sums `requests.organization_id` over swept
+billable rows, so the two can disagree for two reasons. One is an app that moved organization
+within the window. The other is rows the sweeper has not yet given an organization: `MeterUses`
+reads an org's apps with no organization filter, while the cost-anomaly check skips rows with an
+empty `organization_id`.
+
+### The usage service
+
+`cmd/usage` is a second binary in the same image, with a database of its own. Producers ship
+it usage events (`POST /v1/events`); it records each once by its `usage_id`, adds it to what
+every subject the event names (its organization, app, key, user, and each category across
+the organization and within the app) spent in the current daily, weekly, bi-weekly and
+monthly window, and writes those totals to Redis before it answers, as
+`usage:{<org>}:<subject>:<ids>` hashes with one `<interval>:<YYYYMMDD>` field per window.
+Routers read the current window's field from Redis, and read through `POST /v1/windows` when
+that field is missing, not only when the key is: a key written in an earlier window holds that
+window's field alone. The ack's `mirrored` says whether Redis took a batch's totals; sending
+the batch again rewrites them. It never prices: an event carries what the work cost. Nothing
+ships to it yet.
+
+```bash
+USAGE_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/usage?sslmode=disable' \
+USAGE_INGEST_TOKEN=local-usage-token USAGE_REDIS_URL=redis://localhost:56379 \
+USAGE_MANAGE_KEY=local-usage-manage-key USAGE_TIERS_FILE=tiers/dev.json \
+  go run ./cmd/usage            # or `docker compose build router && docker compose up usage`
+go run ./cmd/usage --help       # every setting
+```
+
+**Accounts and tiers.** Every organization has an account: its credit (`granted_micros`,
+the sum of its credit entries), its spend (`spent_micros`, debited in the transaction that
+records its events, so a batch sent twice debits once), its status (`active` or
+`suspended`), and its own value for any of its tier's settings (`limit_overrides`). A tier is
+a string producers send on every event; the service assigns none. Its row holds its
+`fail_mode` (what admission does while it cannot read a balance) and its `limits`: a spend
+hard limit per UTC day and calendar month (0 or absent is none), per-channel counts,
+recipients, countries and concurrency, sandbox bounds, and a low-balance threshold. A tier
+string with no row gets the `default` row's, which cannot be deleted. The code names no tier
+but `default`: the rows are data. At start the service adds the tiers of an operator's tier
+file (`USAGE_TIERS_FILE`) that the database lacks, then a built-in `default` (fail closed,
+nothing else) if there is still none; a tier the database has is changed only through the
+API. `tiers/dev.json` holds made-up tiers for the local stack and the tests.
+
+```bash
+go run ./cmd/usage tiers check --file tiers/dev.json   # exits non-zero on the first error
+go run ./cmd/usage tiers sync --dry-run                # what the next start would add
+```
+
+`POST /v1/standings` answers, per organization, the tier asked about (`fallback_tier` when it
+has no row), the overrides and the settings in force, the status, the balance, and the
+organization's spend in the current day and month. The management API under `/v1/manage`
+(tiers, accounts, limits, credit, suspension, usage) takes `USAGE_MANAGE_KEY` in
+`X-Manage-Key` and an actor in `X-Stream-Actor-Id`, never the ingest token; without the key
+every route answers 404 `not_configured`. Each change is written to `manage_audit` with its
+actor. A credit is written once per `Idempotency-Key`, and only its sign is checked. A
+suspension, a restore and a change to an organization's settings need one too, so a request
+sent again cannot make its change a second time: a replay with the same organization and body
+changes nothing, writes no audit row and answers the standing as it is now. The key is one
+space across the four writes: a key already used for another operation, organization or body
+is a 409 `idempotency_key_reused`. Keys are kept in `manage_requests`, for good.
+
+**The customer view.** `GET /v1/accounts/{organization_id}`, `/credits`, `/teams` and `/usage`
+take the ingest token and write nothing: the standing without `status_reason`, with the
+low-balance threshold in force and whose it is (`tier` or `account`) and `own_limits`, the
+settings the account overrides; the credit entries without actor, note or idempotency key, a
+reference only on an entry whose actor is `stripe`; the current windows of every `team:`
+category, across the organization and within each app that carried it this month; and the
+events `listUsage` answers, with its filters and cursor, without the organization, its tier,
+`base_cost_micros`, `price_version` or `source`. The manage key opens none of them. The
+router's `getAccount`, `listCredits`, `listTeams` and `listUsageEvents` read them.
+
+**Forgetting an end user.** A user id is often an email, so an erasure request for one of a
+customer's users reaches the usage records. `router usage forget-user --app <app> --user <id>
+--actor <who>` replaces the id with `forgotten:` and 32 random hex characters (random, since a
+hash of an email can be recomputed from it), in order: the requests of every shard; the usage
+service's events and the user's windows (`POST /v1/manage/users/forget`, one transaction, a
+window the replacement already has taking the forgotten one's spend), and again after
+`--settle` (2 minutes) for a batch a shipper read before the shards were rewritten; the user's
+`usage:` counter, `hold:` key and `quota:` buckets in Redis, deleted by name; and in the shared
+database their own policy and user-level limits, deleted, so the app's defaults apply, and the
+id on their resets, grants and campaigns. Usage and cost stay under the app. It writes one
+`end_user` audit row naming the replacement and the actor, never the id, and the service one
+`forget_user` row per organization. `--dry-run` prints the counts and changes nothing. Every
+step only touches what still names the id, so it is safe to repeat: to finish a run that
+stopped, pass the replacement it printed as `--replacement`, and the rest is rewritten under
+that one replacement, with the run's own audit row. It covers
+the usage records only: sessions, conversation history and `agent_logs` have their own
+retention, and work recorded for the id afterwards carries it again.
+
+The service checks its own alerts, sends them to Sentry (`usage_alert:<name>`) and logs them.
+A rejected event, a batch refused whole for what it holds (`batch_refused`: a 400, 413 or 422,
+any 4xx but a 401), ingest failing and Redis refusing the totals page. A router's events
+arriving late warns (other producers ship late by design and are not measured), and so does
+a batch sent without the ingest token (`batch_unauthorized`, a 401): a misconfigured
+producer, or no producer at all. `usage_batches_refused_total{status}` counts both kinds of
+refusal.
+
+## Prices
+
+Every priced item is a modality, provider and model, in a region, with the customer's own key
+or without (BYOK), and the `when` attributes that choose between its entries, such as a
+service tier or a country. It has an entry with two prices: `rates` and `tiers`, the vendor's
+cost, kept for reference, and `prices` and `price_tiers`, what customers are charged, with the
+same meters and the same `above_input_tokens` thresholds. A quote charges the price alone
+(`cost_micros`), and works out the cost at the vendor's rates beside it (`base_cost_micros`), so
+the margin on every row can be read back. Nothing adds a markup when a row is priced. A free
+entry has no price, and a local model with none costs nothing, as before.
+
+Every entry and every item names its region: `us` or `eu` for now, more later (a letter and up
+to 31 of a-z, 0-9 and hyphens). The region and the BYOK state are matched exactly: work is
+priced only by an entry of its own region and BYOK state, so EU work is never priced by a US
+entry, and BYOK work never by an entry that is not BYOK, nor the other way round. Work no entry
+matches is unpriced, as before, and logged with its region and BYOK state. It is counted in
+`router_usage_unpriced_total` with `region` and `byok` labels besides the item's, and its alert
+names it as `<modality>/<provider>/<model>/<region>/<byok>`, such as
+`llm/anthropic/claude-haiku-5-5/eu/false`. Within those, `when`
+picks the entry whose conditions all hold with the most of them. A provider instance runs in
+the `region` its routing config names. When `router.yaml` names none, as it names none today,
+parsing gives it `pricing.DefaultRegion`, `us`, so a parsed config never has an empty region.
+A config built in code, as phone, knowledge, memory and sandbox metering build one, names none
+and runs in the default region too. The default region is only where such an instance runs,
+never a fallback when an item is priced.
+
+Unpriced work is recorded at nothing and reserves no spend, so it is refused or alarmed rather
+than left silently free. `billable.Items` lists every item a deployment bills: each routed
+provider in its region and, where its router takes a customer key (the LLM vendors), its BYOK
+twin; knowledge `lookup`, `write` and `storage` in every knowledge region and sandbox `running`
+and `stopped` in `us` and every Daytona target's region, each with its BYOK twin; `dial` and
+`call_minutes` for each phone vendor with its credentials, `sms` when Telnyx is one, the 10DLC
+fees when a registrar is set, and runtime `text`, `voice` and `video`. A number's month (the
+vendor quotes it) and WhatsApp and iMessage (the app's own account bills them) are not on it.
+An item with no attributes is priced by its entry with no `when`, or, where it has none, by any
+of its entries, so work priced only per class or per country is not listed. The router logs
+"billable work has no price" for each item on the list the price list in force leaves unpriced
+when it starts (the database's once read, else the files'), and the price list's `unpriced`, a
+change's preview and `router prices show --unpriced` check the same list. An agent's sync, and
+a config create or update, is refused with a 400 naming each item when the work it asks for in
+its region has no price: every instance there of each model it names, its knowledge and its
+sandbox, and their BYOK twins where the customer keeps a key for the vendor in that region.
+The usage jobs run the router's metering alerts and check them once more as they stop, so a row
+a job records with no price raises `unpriced` as a router's does. A cost the vendor quoted
+outright, such as a number's month, is its price, and is not logged as unpriced.
+
+Work done with the customer's own key is billed to the customer by the vendor, so its price is
+a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2000). A million
+tokens that cost the vendor $1 are $1.08 on the operator's key and $0.20 on the customer's. A
+BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
+`cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
+(`routing.ProviderConfig.BYOK`, never read from a file; see "Customers' own provider keys"). No price file writes BYOK entries:
+reading any of them, `vendor.json` included, adds a BYOK twin of each `llm`, `knowledge` and
+`sandbox` entry that is not BYOK (`pricing.WithBYOK`, for `pricing.BYOKModalities`). The twin has
+the same item, region and `when`, the same rates, tiers and free flag, and no price or SKU of
+its own, so it is priced at the fee and given its own SKU when it is first loaded. A file may
+write a BYOK entry itself, with a price of its own, and it wins over the twin.
+
+Every item has a SKU, kept across all its price changes, which each row it prices records
+(`requests.sku`, and `sku` on the usage event). A new item is given its modality, provider,
+model, each `when` attribute and its value, its region, and `byok` for a BYOK item, lowercased
+with every run of other characters one hyphen: `llm-anthropic-claude-haiku-5-5-us`,
+`llm-anthropic-claude-haiku-5-5-us-byok`, `llm-openai-gpt-6-luna-service-tier-batch-us`,
+`knowledge-turbopuffer-write-us-byok`. It is numbered `-2`, `-3` past a SKU another item has had
+(`llm-openai-gpt-4-1-us-2`). A change may give a new item an existing SKU, as a model its vendor
+renamed keeps the old name's, only when that SKU's item is withdrawn by the same change or is no
+longer in force.
+
+`prices/vendor.json` holds the vendors' published list prices, one entry per model (and per
+service tier where a vendor charges one), all in the `us`, embedded in the binary: rates only,
+no price of the operator's and no negotiated figure. A deployment may lay a price file of its
+own over it with `ROUTER_PRICES_FILE`: for one item, region, BYOK state and `when`, the first
+file with an entry wins. Every entry of `vendor.json` names its `region`, and one that names
+none is refused, naming the entry. A deployment's own file should too, but for now an entry of
+it that names none is read as `us`, with a warning naming the entries: every router of a
+deployment reads the same file at its start, and a router built before regions refuses a
+`region` field, so the file can name regions only once none of its routers is that old. An
+entry may set `prices`, `price_tiers` and `sku`. One with no price
+is priced at its rates times `pricing.PriceFactorBps` (10800, so 1.08), or a BYOK one at
+`pricing.BYOKFeeBps`, each rate kept to 12 significant digits. A file's top-level `markup_bps`,
+which older files have, is ignored with a warning.
+
+At start, right after migrating, a router loads them into the shared database's
+`price_changes` and `price_list_entries`: everything into an empty database, as one `seed`
+change, and otherwise only the items the database has never priced, as one `release` change.
+Those are the only entries priced at the factor or the fee; an item the database has priced
+keeps its price, whatever the files say now, and staff set every later price outright through
+the management API. Each load is audited (`price_list`, source `cli`). A load that fails is
+retried every 30 seconds while the router serves; a file that does not parse stops the router
+at start. Rows are only ever added: a trigger refuses to change or delete an entry, its price,
+SKU, region and BYOK state included, and a change can only be cancelled before it takes effect.
+The one exception is `router prices reload`, for a development database only, below. An amount
+a vendor quotes outright, such as a number's monthly rental, is charged at that amount times the
+same factor, which no entry stores; its `base_cost_micros` is the vendor's amount, or 0 with the
+fee charged for a BYOK item.
+
+Migration `20261118120000_price_entry_prices` stored every existing entry's price as what it
+was charged: its rates times its own markup, else the list's in force when it is (or was), and
+gave every item its SKU. Migration `20261130120000_drop_price_markup` then drops the
+`markup_bps` those markups were kept in, on `price_changes` and `price_entries`, which nothing
+had read since.
+
+Migration `20261202120000_price_entry_region` renames `price_entries` to `price_list_entries`
+and adds `region` and `byok`: every existing entry is `us` and not BYOK, and `region` keeps no
+default, so every later insert names one. It ends every existing SKU in `-us`
+(`llm-openai-a` becomes `llm-openai-a-us`, `llm-openai-gpt-4-1-2` becomes
+`llm-openai-gpt-4-1-2-us`), and indexes items by region and BYOK state as well. `requests.sku`
+and the usage ledger are not rewritten: a row keeps the SKU it was billed under, so a row priced
+before the migration names its item's SKU without the region. The rename is what keeps a router
+built before it from reading a BYOK entry as its item's newest price: that router's reads and
+writes of the price list fail, and it keeps pricing with the list it holds in memory, reading
+again every 30 seconds, until it is replaced. The first start after the migration writes one
+`release` change holding only the BYOK twins the files now have, at the fee; every US item keeps
+its price and its SKU. Down takes the region off the SKUs, drops the columns and renames the
+table back, and refuses a list that holds a BYOK or non-US entry, which a router built before
+it would read as a US price.
+
+| Command | What it does |
+| --- | --- |
+| `router prices show [--at <time>] [--json] [--unpriced]` | The list in force: each entry's item, region and BYOK state, its SKU, its vendor rates and its price; `--unpriced` lists the billed items (`billable.Items`) no entry prices, each in its region |
+| `router prices sync --dry-run` | What the next start would load, each item with its region and BYOK state, writing nothing |
+| `router prices check [--file <path>]` | Parses a price file (default `vendor.json`) and builds a list from it, with no database, counting its entries by region and BYOK state |
+| `router prices drift [--since 168h] [--json]` | Per model, over every shard, how far each row's cost at the vendor's rates is from what the vendor said it charged (`attributes.vendor_cost_micros`) |
+| `router prices export [--from <routing config>] [--phone] [--out <path>] [--strip]` | Writes a routing config's old `price:` blocks as a price file, and with `--strip` takes them out of it |
+| `router prices reload --development [--dry-run]` | Development only: empties the price list and seeds it again from the price files, as a fresh database's first start does. See below |
+
+A start never changes a price the database already has, so on a laptop an edit to
+`vendor.json` (a rate fixed, say) does not reach a database seeded before it.
+`router prices reload --development` puts the files' list back: in one transaction, under the
+lock a load takes, it empties `price_changes` and `price_list_entries` (every change goes, those
+scheduled and cancelled included), then writes the `seed` a fresh database gets from
+`ROUTER_PRICES_FILE` over `vendor.json`. It first prints
+the database it is pointed at, the address it connects to and the address the server answers
+as (never the password), then what it removed, what it seeded, and the items whose price
+moved; `--dry-run` prints the same and writes nothing. The audit log keeps its rows and gains
+two: the removal (`deleted`, named `<time>_reload`), then the seed. Rows already recorded keep
+the `price_version` that priced them, which then names no change. Running routers read the
+new list within 30 seconds, so none needs a restart.
+
+It refuses to run unless `--development` is passed and the database is on this machine or is
+compose's: both the host `postgres.dsn` names and the address the driver connects to (a
+`host` query parameter included) must be `localhost`, a loopback address, a unix socket or
+`postgres` (compose's service, as the router's container reaches it). It also refuses under a
+`ROUTER_ENV` other than unset, `local`, `development` or `testing`, but that is not what
+protects a deployment: most leave `ROUTER_ENV` unset, which reads as `local`. Their remote
+database host is what refuses it. A port-forward or proxy listening on localhost for a remote
+database passes the host check, and only `--development` stands in its way, so read the
+database and address the command prints first, and start with `--dry-run`.
+
+`vendor.json` is built into the binary, so after editing it rebuild what runs the command: `go
+run` does that itself, and the compose router needs `docker compose up -d --build router`
+first, which also restarts it on the new image.
+
+```bash
+cd acceleration && go run ./cmd/router prices reload --development --dry-run
+docker compose up -d --build router && docker compose exec router router prices reload --development
+```
+
+Customers read the list with `GET /v1/prices` (`getPrices`, any credential, a device's
+included): every entry in force from the router's memory, its `region`, `byok`, `sku` and its
+price in `rates` and `tiers` (what they are charged), with the change that wrote it, and
+`upcoming`, what the scheduled changes will set, soonest first, with their reason. `region` and
+`modality` in the query keep one region's or one modality's prices alone. The vendor's cost, the
+unpriced items and each change's source and author stay on the staff operations, whose list in
+force and preview name each item's `region` and `byok` too.
+
+Staff change the list with `createPriceChange` (`/v1/manage/price-lists/changes`): each entry
+names its `region` (an entry without one, or with one of another form, fails validation with a
+400 `validation_failed`) and, for work on the customer's own key, `byok: true`. It sets the
+vendor's cost (`rates`, `tiers`) and the price (`prices`, `price_tiers`) outright, a BYOK entry's
+fee included, the same meters in both (else 400 `price_meters_mismatch`) and a price tier for
+each tier (else 400 `price_tiers_mismatch`), and may name its `sku` (a SKU another item has in
+force is 400 `sku_in_use`; another SKU for an item in force is 400 `sku_changed`). An entry of
+another region or BYOK state is an item of its own: it moves no other entry's price. The
+preview's `confirmation_required` is worked out on the prices: one moving by a factor of 2 or
+more.
+
+Until the router prices from the database, it prices every row from its price files:
+`ROUTER_PRICES_FILE` over the embedded `vendor.json`, priced as a first load prices them, BYOK
+twins included. A `price:` block in a routing config is ignored, with a warning at start;
+`router prices export --from <your config> --out own-prices.json` moves one into a file for
+`ROUTER_PRICES_FILE`, each entry in its provider's region, which keeps those models priced. The
+`check_prices` skill checks the list against what each vendor charges.
+
+## Transcripts, memory and phone
+
+**Transcripts.** With `STREAM_API_KEY` and `STREAM_API_SECRET` set, `cmd/agent` writes every
+relevant transcript committed by the flow controller and every reply into the Stream Chat
+channel `agent:{agentID}`, off
+the event stream rather than from inside the conversation loop. A voice call otherwise leaves
+nothing behind, and any Stream Chat client can already read a channel.
+
+For development, `ROUTER_CHAT_TIMINGS=true` (or `cmd/agent -chat-timings`) shows how fast each turn
+was on the agent's reply, so somebody talking to the agent in a call UI sees it without reading
+logs. Each reply gets a line after its text, such as
+`⏱ reply 1112 ms = eou 452 + llm 412 + tts 248 · ttft 731 · ttfb 120`.
+`reply` is the wait the caller felt, from the end of their speech to the first audible frame of the
+reply (the first audio published, where the edge does not say when that was heard), and the three
+stages add up to it: `eou` from the end of their speech until the turn was committed to
+(transcription settling, cadence wait and end-of-turn decision), `llm` from then to the reply's
+first text (absent when a reply started beside the decision was ready by then), and `tts` from the
+first text to the first audible frame. The providers' own `ttft` and `ttfb` follow, because work
+started early hides them inside the stages. A figure that did not happen is left out, and a turn
+the caller talked over starts `⏱ interrupted ·`. The same figures, in whole milliseconds, are on
+the message as the `timings` custom field (`reply_ms`, `eou_ms`, `llm_ms`, `tts_ms`, and the parts
+and provider waits). Reading the conversation back, in a transcript or as the history of a bound
+conversation, leaves the line out, so the agent never takes it for something said. Off by default.
+
+**Memory.** With `MEM0_API_KEY` set, an agent recalls what it knows about the customer on
+join and prepends it to its instructions, then hands each finished exchange over to be
+learned from. Both happen off the conversation's path: recalling is bounded and a failure
+means the agent starts the call knowing nothing rather than not taking it, and remembering is
+queued and dropped under backpressure. `app_id` is the deployment and `user_id` is the
+customer, so two deployments sharing one mem0 account do not read each other's memories.
+Every call is recorded as a `requests` row with modality `memory`.
+
+**Phone.** `phone.Provider` is the things vendors agree on: search, buy, release, point at
+the bridge, dial out, press digits. All eleven vendors are declared in
+[internal/phone/phone.yaml](internal/phone/phone.yaml). Eight are implemented; the other
+three resolve to a stub that refuses every operation by name, so they list rather than being
+absent.
+
+Being implemented means different things for different vendors, so each declares its
+`operations` and `GET /v1/phone/vendors` reports them. Seven of the eight can place an
+outbound call. **DIDWW cannot, and never will here:** it sells numbers and has no call
+control API at all, only SIP origination against a trunk resource it expects you to point
+your own switch at. There is nothing to ask it to dial with, so `dial` is absent from its
+operations and a number is not bought from it for an agent that has to call people.
+
+Only Twilio and Telnyx also `attach`, which is the inbound direction: pointing a number at a
+trunk so calling it reaches an agent. For the other five that is a per-vendor application
+rather than a property of the number, and it is declared missing rather than half-done.
+
+A customer who already has numbers and a SIP trunk at their own carrier can call out from
+them without buying anything here. `POST /v1/phone/trunks` stores the trunk (host, port,
+transport, username, codecs, and whether it accepts an INVITE without SDP); the password is
+sealed under the deployment's key encryption key and never returned, and without such a key
+the trunk paths answer 400 `not_configured`. `POST /v1/phone/trunks/{id}/numbers` records a number on it with
+vendor `sip_trunk`. A call from that number is then placed by the router itself: it opens one
+SIP dialog to the customer's trunk and one to the Stream trunk made for the call, and copies
+SDP between them, so the audio goes from the carrier to Stream directly. `POST
+/v1/phone/calls` answers `queued` at once, as with every vendor. A wrong password, host or
+caller ID does not show in that answer. It shows only in the router's logs, under the call's
+`vendor_call_id`. Behind NAT, the trunk must challenge the INVITE with 401 or 407: the router
+corrects its Contact from the challenge, and without it the trunk's requests in the call,
+such as its BYE, never reach the router. The node that placed a call
+holds it until it ends and hangs it up if it stops, so a deploy ends calls in progress.
+Initial digits, pressing digits and custom headers are refused for these numbers, and so is
+`attach`: inbound calls to them reach the customer's own switch. `sip_trunk` is not in the
+vendor registry, so it is never offered in `GET /v1/phone/vendors` or a number search.
+
+Vendors also disagree about how a search can be narrowed. Telnyx filters by US state and
+Sinch does not; Plivo matches digits only at the front of a number and Vonage matches at
+either end but not both at once. So a provider declares which filters it can express, and
+`GET /v1/phone/numbers/available` without a vendor asks every vendor that has its credentials
+at once, merges what they offer cheapest first, and reports in `skipped` any vendor it could
+not ask and why. Dropping a filter the vendor cannot express would answer a search for
+Colorado with numbers from Ohio, which reads as a result. Capabilities are the exception:
+every vendor says what its numbers carry even when it cannot filter on them, so those are
+checked on the results.
+
+Stream's SIP support is **inbound only** today. A number reaches an agent by the vendor
+sending the call to a Stream inbound trunk; an outbound call is originated at the vendor and
+bridged into the same trunk, because there is nothing to ask Stream to dial with. Attaching a
+number creates the trunk and a routing rule whose caller id is a handlebars template, so the
+SIP caller becomes a participant with a stable id that per-participant transcription can key
+on.
+
+### Placing a call
+
+`POST /v1/phone/calls` makes its own trunk and routing rule and pins the rule to a call, so
+the answered leg lands somewhere an agent can be waiting. The response says which call that
+is, and an agent that is not in it hears nothing when the person picks up.
+
+Vendors do not agree on what a call can be asked for, so a provider declares which terms its
+API can express and a call naming one it cannot is refused rather than placed without it. A
+ring timeout that was silently dropped is a call sitting in somebody's voicemail for a
+minute.
+
+| Term | Who can express it |
+| --- | --- |
+| `ring_timeout_seconds` | Everyone but Bird and Sinch |
+| `initial_digits` | Twilio, Telnyx, Bandwidth, Sinch |
+| `headers` | Nobody yet: Telnyx's TeXML call is not known to put them on the SIP leg |
+
+Getting past the trunk splits the vendors in two. Twilio, Telnyx and Plivo can name SIP
+digest credentials in their call plans, so the trunk's own password is enough. Vonage, Bird,
+Sinch and Bandwidth have no field for a password anywhere, so their trunk recognises them by
+the address they call from, declared as `signalling` in `phone.yaml`. Stream reads an empty
+allowlist as "accept everything" rather than "password only", so a vendor that authenticates
+by address refuses to place a call until its addresses are declared: a trunk with neither is
+a way into a customer's calls for anyone who learns its uri. Vonage's and Bird's addresses
+are published and are in `phone.yaml`; Bandwidth's and Sinch's come with the account, so
+those are per deployment.
+
+Plivo and Bandwidth also will not take a call plan on the request at all, and fetch one when
+the person answers. For those, placing a call parks the plan and hands the vendor a
+single-use expiring token at `GET /v1/phone/answer/{token}`, which is the one unauthenticated
+path here because the vendor fetching it has no customer to name. It needs `ROUTER_PUBLIC_URL`
+to be set to somewhere those vendors can reach, and says so rather than placing a call
+nothing will answer. Sinch is the near miss: its callbacks belong to the application rather
+than to a call, so its plan travels inline on the callout instead.
+
+```bash
+go run ./cmd/phone dial -from +15125551234 -to +15550001111 \
+  -call-id support-line -ring-timeout 20s -digits ww1234# -custom reason=callback
+```
+
+Buying a number spends money every month, so nothing automated buys one. The runbook, run by
+hand:
+
+```bash
+# What is on offer, and what it costs
+go run ./cmd/phone search -vendor telnyx -country US -state CO \
+  -type local -feature hd_voice -feature emergency -limit 5
+
+# Buy one of them. -country is only needed by the vendors that sell out of a
+# country's inventory rather than by number, which the search reports.
+go run ./cmd/phone buy -vendor telnyx -number +1719XXXXXXX -tag project=sprint12
+go run ./cmd/phone list
+
+# Give it back, which is what stops the charge
+go run ./cmd/phone release -number +1719XXXXXXX
+```
+
+`cmd/router` applies migrations on startup. To run them by hand:
+
+```bash
+goose -dir migrations postgres "$ROUTER_POSTGRES_DSN" up
+```
+
+## Moving a customer
+
+`api_key` mode cannot bootstrap itself over HTTP: every endpoint wants a key and there is
+nobody to issue the first one. `keys create` does it beside the database, printing the
+secret once and never logging it:
+
+```bash
+go run ./cmd/router keys create --org Acme --app-name "Acme production" --key-name default
+```
+
+`--app-id` keeps an id the customer already has, which is what makes an import land under
+something. Running it again for an existing app adds a second key rather than refusing.
+
+Three endpoints move a customer between two deployments, all server-side only:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /v1/data/export` | Everything the calling app has, one JSON object per line, ending with the cursor its changes carry on from |
+| `POST /v1/data/import` | Writes an export, or a batch of changes, into this deployment |
+| `GET /v1/data/changes?after=` | What has happened to the app's rows since that cursor, and whether that is all of it |
+
+`cmd/router replicate` is both halves at once: the copy, and everything that happens after
+the copy, which is what makes the switchover free of a window where writes are lost.
+
+An export starts recording the app's changes, then waits until every write transaction open in
+the source's shared database when recording started has ended, and only then reads its snapshot.
+So every write of the app to a table the export carries is in the export or in the changes after its cursor,
+including one that was in progress when the export started. A transaction still open after 30 seconds makes the
+export answer 503: run it again. A repeatable read or serializable transaction whose snapshot is older than the
+start of recording is refused with a serialization failure when it next writes, so its retry is recorded.
+
+The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
+sessions, responses, requests and their stats) record no changes, so a router with a shard database
+of its own, or with other shards' databases listed in `postgres.shards`, answers the export and the
+changes 400 `not_configured` before it records anything: moving off it is not supported yet. Any router can be the
+target.
+
+```bash
+go run ./cmd/router replicate --from https://old.example.com \
+  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once] [--full]
+```
+
+A run saves on this deployment the cursor of the source's changes it has applied, after the
+export and after each page of changes. A later run for the same app and source, `--once` or
+`--follow`, carries on from that cursor: it applies only what changed at the source since,
+and writes no row of the export over what was done here. Pass `--as <app id>` on a repeat run:
+with it the run does not ask for the export. Without it the run opens the export to learn the
+app, which starts a capture at the source and can answer 503 while a write there is open, then
+reads its first line and drops it. A run that stopped before the export ended saved no cursor,
+and the next run copies the export again.
+
+A run refuses, before it writes anything, an app this deployment already holds that no run
+saved a cursor for, such as one copied before runs saved them. It counts an app as held when a
+table in the shared database holds a row of it; a table kept in the shards does not count. It also refuses a cursor read
+longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers
+410 for. The source records an app's changes only for its own retention after a read, and answers
+410 for a cursor from before its recording started again; the check here also covers a source
+older than that, and assumes the source's retention is this deployment's, so set the two alike.
+Writes since may be missing. `--full` copies the whole export again, writing the source's rows over the ones here,
+and then saves the cursor.
+
+`POST /v1/data/import` refuses an export the same way: an app this deployment already holds gets a 409 before
+any of the export's rows is written, unless the request asks `?full=true`; a batch of changes is always applied. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
+
+The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
+`--source-auth server` is for a source router reached directly.
+
+A scheduled task active on the source is imported paused, and so is a campaign running or
+scheduled there, since the source goes on delivering them until the move is cut over. Each is
+marked as paused by
+the move; a change carried later sets the mark again from the source's state, so one the user
+paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
+any other edit keeps it. A contact in the middle of a call on the source is settled here from that
+call once the mark is cleared, as one whose router died is: its next attempt waits its delay. One
+whose answered call still awaits its outcome has the transcript read here then. On a campaign the
+user had paused on the source there is no mark, so such a contact is settled as soon as it
+arrives.
+
+Until the last `--once`, the source is the truth: each change carried writes the row as the source
+has it, over whatever was done to that row here, a delete included. A config deleted here comes
+back if the source edits it afterwards. There are two exceptions. A connector connection the owner
+authorized again here keeps its state and credentials, so a rename, a disconnect or a soft
+delete at the source does not reach it. A phone number on a trunk here, attached or given a line,
+keeps its trunk, route, app, call, bridge and agent config, while its other columns follow the source. A hard delete at the
+source still reaches both. So once SDKs
+point here, stop writing at the source.
+
+Cut over once SDKs point here:
+
+1. Pause each running or scheduled campaign at the source
+   (`POST /v1/agents/campaigns/{id}/pause`). Wait until none of its contacts is `in_progress`
+   there (`GET /v1/agents/campaigns/{id}/contacts?stage=in_progress`). A pause stops every
+   replica from taking its next contact, and a call in progress goes on until it ends, for at
+   most 15 minutes. A call that ends after the last `--once` is not carried: its contact
+   settles here with an `unknown` outcome.
+2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
+   holds every call the source made.
+3. Stop the source delivering. Do not pause the scheduled tasks there before that last
+   `--once`: the pauses are carried over, they clear the marks, and step 4 then resumes
+   nothing.
+4. Run the cut-over:
+
+   ```bash
+   go run ./cmd/router replicate --resume --as <app id>
+   ```
+
+`--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
+at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
+and names the marked campaigns. The source went on delivering between the last `--once` and its
+stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
+the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
+the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
+hold ends. A marked task with no occurrence left is
+completed, a one-shot with a `missed` run of the time it slept through. Run step 4 right after
+step 3: an occurrence due between the two is delivered by neither. A marked task whose
+agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
+and the command prints how many it left that way. A user holds at most the config's
+`max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
+made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
+and the rest stay paused and marked. The command prints how many; run it again once the user
+has made room.
+
+`--resume` resumes no campaign. A campaign paused at the source in step 1 stays paused here and
+is not named: resume it here with `POST /v1/agents/campaigns/{id}/resume` when it is to ring
+again. Every router here dials a running campaign, so a resumed one rings from here at once; one
+whose `start_at` has not come yet goes back to scheduled. A campaign still running or scheduled
+at the source at the last `--once` stays paused here, and `--resume` names it: a contact the
+source rang after that is still `enrolled` here, and a resume here rings that contact again.
+Read its contacts at the source before you resume it here.
+
+Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
+again: it overwrites what was resumed here with what the source has.
+
+The customer is always the authenticated caller, never anything in the body or the query,
+so an export is the caller's own data and an import lands under the caller's own app
+however the file was edited on the way. An import upserts and refuses a row whose primary
+key belongs to another tenant, so replaying the same change twice lands where applying it
+once would and a guessed id overwrites nothing. A request row is the exception: each
+deployment numbers its own, so it is imported by its `usage_id` with an id the destination
+gives it, written once, and a delete of it is replayed by its `usage_id`, or for a row from
+before usage ids by the one its import made from its source id.
+
+Key rows, sealed secrets, OAuth access and refresh tokens, organizations and apps are not
+exported. A moved deployment mints its own keys and re-authorizes its plugin connections.
+Voice recordings live in the bucket rather than in Postgres, so their rows move and copying
+the bucket is the operator's.
+
+A phone number still held moves only in E.164 form (`+15551234567`) and only while no other
+app here holds it; one given back moves as written. A moved number arrives detached: its
+trunk, route and call stay behind, so it is attached again where it arrives.
+
+Changes are captured by a trigger per table writing into `data_changes`, gated on a row in
+`data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
+starts the capture and reading a page refreshes it, so an abandoned move stops recording by
+itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
+rather than silently missing writes. A start after the capture expired takes a change number of
+its own, kept in `data_change_capture.recorded_since`, which pruning keeps: a cursor below it is
+answered 410, and the export after it carries on from it. A change is numbered when it is written and seen when
+its transaction commits, so a transaction that commits late can hold a lower number than
+one already seen. Each transaction that records a change holds a shared advisory lock
+naming the highest number handed out before its first one, until it ends, and the cursor
+never passes the lowest such lock: no change at or below the cursor can still appear. While
+a transaction recording a change is open, every customer's feed waits for it; an open
+transaction that records nothing holds no feed back. Pruning drops only the oldest
+numbers, so what is kept runs without a gap from the oldest change kept.
+
+## Test
+
+```bash
+# Unit tests, no credentials or services needed
+go test ./...
+
+# Integration tests hit real providers, Postgres and Redis
+go test -tags integration ./...
+
+# Manual live full-duplex proof for GPT-Live (requires OPENAI_API_KEY and ffmpeg)
+go test -tags integration -count=1 -v -run '^TestOpenAILiveIntegrationSuite/TestTheModelHearsAndAnswersWhileTheCallerIsStillSpeaking$' ./internal/sts/openailive
+```
+
+Integration tests skip themselves when the credentials or services they need are absent.
+CI checks caller-audio forwarding against a fake Live socket and compiles the shared STS
+integration suite without calling providers. The full-duplex proof is manual; providers that
+do not declare `FullDuplex` or the needed transcript capabilities skip it.
+
+`internal/agent/conversation_test.go` is the conversation-quality suite: a synthesised caller
+is played into a real agent at the rate a real call delivers audio, in silence, in a noisy
+room, over somebody else's conversation and while the agent is talking. What it asserts is
+what a caller would notice, including how long they waited to be answered.
+
+```bash
+go test -tags integration -run TestConversationSuite ./internal/agent
+```
+
+Postgres and Redis for local runs:
+
+```bash
+docker run -d --name va-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=model_router \
+  -p 55432:5432 postgres:16-alpine
+docker run -d --name va-redis -p 56379:6379 redis:7-alpine
+```
+
+The API suites run as one database by default. To run them as a shard does, against a
+second database and Redis:
+
+```bash
+docker run -d --name va-redis-shard -p 56380:6379 redis:7-alpine
+ROUTER_POSTGRES_SHARD_DSN='postgres://postgres:postgres@localhost:55432/model_router_shard?sslmode=disable' \
+ROUTER_REDIS_SHARD_ADDR=localhost:56380 go test -tags integration ./internal/api
+```
+
+`internal/store` runs its suite both ways in every run.
+
+## Regenerate the HTTP layer
+
+Operations are declared in Go with Huma, on a chi router, and the structs are the source
+of truth. `api/openapi.yaml` is rendered from them by `cmd/openapi` and read by every client
+generator, so it is never edited by hand. After changing an operation:
+
+```bash
+go run ./cmd/openapi
+uv run ../plugins/stream/generate.py
+uv run ../sdks/swift/generate.py
+(cd ../sdks/js && npm run types)
+(cd ../dashboard && npm run types)
+```
+
+The usage service's operations are a spec of their own, `internal/usage/server/openapi.yaml`,
+which no SDK is generated from. Render it from the service's binary, whose error responses it
+describes: `go run ./cmd/usage openapi`.
+
+The Swift client is generated from a filter rather than from the whole spec, and
+`generate.py --check` fails if anything in that filter is not marked `x-client-accessible`,
+or if the committed client was generated from another version of the spec's client part.
+Dropping that mark is therefore the whole of removing an operation from the iOS SDK.
+
+The JavaScript client generates types and no runtime, because one package has to work in a
+browser and on a server and the runtime is the part that differs between them. Its request
+code is hand-written in `sdks/js/src/client.ts` and typed against the generated `paths`, so
+a new operation is reachable there as soon as the types are regenerated.
+
+The three sockets cannot be Huma operations, since an upgrade returns a connection rather than
+a response, and neither can the log stream, the data export and import, which stream, or the
+connector consent's launch page, handoff and callback, which a browser reaches. Their handlers are written by hand in `internal/api/sessionws.go`, `streamws.go`,
+`dispatchws.go`, `logs.go`, `datamove.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
+still declared, with its `101` or streamed response, in `internal/api/handwritten.go`, so a
+reader and a client generator know it exists and the server-side check reads its marks like
+any other operation's: an operation the spec cannot see is the one place a default that
+refuses could fail open.
+
+What one node asks another is not part of this API and is not in the spec. It is the
+`Node` gRPC service in `internal/node/node.proto`, generated by buf. Both buf and the
+protobuf plugins are pinned `go run` commands rather than tool directives, so nothing has
+to be installed and a code generator's dependencies stay out of the router's:
+
+```bash
+go run github.com/bufbuild/buf/cmd/buf@v1.73.0 generate
+```
+
+## Design notes
+
+- **The core knows nothing about modalities.** `routing.Router[P]` resolves a target, ranks
+  candidates and fails over; each modality adds only a provider contract and a session that
+  knows which of its events count as a unit of work.
+- **One row per unit of work.** A completed turn for speech-to-text, a completed synthesis
+  for text-to-speech, a completed completion for an LLM, one question asked for a search,
+  alongside rows for sessions that
+  failed to start. Everything is keyed by `modality`, so the same provider can serve two of
+  them without its numbers mixing.
+- **Latency is the number the customer felt.** For speech-to-text that is the provider's
+  decode time; for text-to-speech it is the wait for the first audio, since the rest
+  arrives while the listener is already hearing it; for an LLM it is the wait for the first
+  token, for the same reason.
+- **A conversation lives in the caller, not the provider.** Every LLM request carries the
+  whole history, so consecutive turns can be served by different providers and a failover
+  loses nothing.
+- **Delegation is not tool calling.** Standardising a tool schema across providers is a
+  bigger question than routing needs answered, and a tool call is the wrong shape for a
+  phone call anyway: it blocks the reply on the result. The harness has the fast model ask
+  a slower one for help in its own words, in the middle of a sentence it goes on to finish.
+- **Costs come from the price list, not from the provider.** The recorder prices every row
+  once, through one price list (`internal/pricing`) of the vendors' rates in
+  `prices/vendor.json` (see [Prices](#prices)). A model with no price reports a cost of zero
+  rather than a guess, and is logged as billable work with no price unless it is marked
+  `free` or `local`.
+- **Transcript modes.** `delta` appends, `replacement` supersedes the current in-progress
+  text, `final` is settled. Both speech-to-text providers send replacements.
+- **An audio chunk does not say whether it is the last.** A streaming voice only learns
+  that after the fact, and buffering a chunk to find out would cost the latency the design
+  is for, so `SynthesisComplete` is what ends an utterance.
+- **A speech-to-speech model owns its own turns.** It is the voice activity detector, the
+  turn detector, the transcriber and the voice at once, so nothing in front of it acts as
+  one. `SpeechStarted` says only that the model heard someone; `ResponseComplete` with
+  `Interrupted` is the one signal a consumer drops its buffer on, and the router session
+  drops any audio of that reply still arriving, because the model learns of a barge-in a
+  round trip after the caller. What a model cannot do is refused, never dropped: a typed
+  turn to a model that takes none, or instructions to one that took them at setup, comes
+  back as an error.
+- **Uptime and latency come from the same request rows** as billing, so there is no
+  separate health-probe pipeline to keep in sync.
+- **Nothing a conversation does waits on a database.** Turns, transcripts and memories all go
+  through a bounded queue and are dropped when the writer falls behind, because losing a row
+  costs a statistic while blocking costs the participant a silence.
+- **Failover happens at session start.** A candidate that fails to start is recorded and
+  the next one is tried; a provider that keeps failing falls down the ranking.
+- **`customer_id` is a trusted header.** Real authentication is not part of this version.
+
+## Source research is the caller's, not the backend's
+
+The backend holds no research workspaces. An agent that reads source owns its own
+Daytona VM and offers `investigate_sdk` as one of its own tools, which the session
+dispatches back to it like any other caller-owned tool. Nothing about the VM, the
+repositories it holds or the credentials it reads them with is the backend's to know.
+
+This is deliberate. The agent has to be told which repositories it may read and under
+whose Cursor and Daytona keys, and every one of those answers belongs to whoever
+deploys the agent rather than to whoever runs this router. A profile on an agent config
+could only ever be a copy of a decision made elsewhere.
+
+`agents.Daytona()` / `sandbox: daytona` is unaffected: that is delegated Python
+execution for code the subagent writes, and remains the backend's to run.
+
+See `../../artemis-impl` in the sibling workspace for an agent that does own one: the
+runnable support application, its repository catalog and the explicit docs compiler
+contract.
+
+## Persistent text conversations
+
+Every text session is kept in a Stream Chat `agent:support-<uuid>` channel unless it is
+`incognito`; pass `conversation_id` to bind to an existing one. The configured agent ID is
+preserved; the backend verifies the channel's customer and agent ownership on
+resume and on `GET /v1/agents/conversations/{cid}/messages?agent_id=...&before=...`.
+This endpoint returns up to 100 messages and a `before` cursor. Completed ordinary
+user/assistant messages restore model context, capped at 100 messages and 60,000
+characters. `context_truncated` reports the bound. Stored tool attachments are
+never executed or restored as system instructions.
+
+`conversation_updated` WebSocket events carry a cumulative visible message snapshot:
+`id`, `question_id`, `state`, `response_started_at`, `state_started_at`, final
+`finished_at`/`duration_ms`, text, attachments and `saved`/`persistence_error`.
+States are `thinking`, `queued`, `tools`, `writing`, `completed`, `failed`,
+`cancelled`, or `interrupted`. Thinking conveys activity, not private reasoning.
+Each `tool_calling` attachment has an immutable backend `started_at`, stable
+`tool_call_id`, name/title, status/phase, structured summary, optional
+`execution_started_at`, and final `finished_at`/`duration_ms`. Raw tool arguments
+and results are excluded. Internal model turns remain bound to the original
+question so a late interruption cannot cancel its successor.
+
+The backend owns all Chat writes. Initial messages, tool starts/completions and
+final results use durable writes; intermediate cumulative snapshots use
+`EphemeralMessageUpdate`, throttled to 200 ms when changed. Nothing is written to
+local disk: a held conversation retries its pending writes in memory with stable
+message IDs, and Stream Chat is the durable copy. Pending data stays visibly
+unsaved and is overlaid on resumed history. A conversation nobody holds is rebuilt
+from its channel: a user message is stored under its command ID, so a command in
+the last 100 messages is never run twice, and a reply still running there when it
+is reopened is marked interrupted. Writes not yet in Stream when the process stops
+are lost. Stream credentials are required; Postgres and Redis are not. Closing the
+last client of a persisted text session ends that session; the saved channel
+remains available.
+
+### How much of a conversation a resumed session is handed
+
+`resume_history` changes what the model is handed when a session carries a conversation on:
+reopened after it ended, resumed by `conversation_id`, joined by voice, or forked from Chat. It
+is opt-in and set at four levels, the most specific winning field by field: a server-side
+`POST /v1/agents/sessions`, then the session's agent config, then the app's policy
+(`PUT /v1/policies/app`), then the organization's (`PUT /v1/policies/organization`). A field set
+at none of them is the default above, and `include_tools: false` turns off what a broader level
+turned on. This is a feature switch rather than a limit, so unlike a policy's data retention it
+is not the strictest level that wins. The session row keeps what the session was opened with,
+policies included, so reopening it in another process reads the conversation the same way.
+
+- `max_messages` (1 to 100) and `max_characters` (1,000 to 400,000) replace the 100-turn and
+  60,000-character caps. Tool calls and results count toward the characters, not the turns.
+- `include_tools` hands each reply back with the tool calls it made and their results, read
+  from the recorded response items (`agent_response_items`) and matched to the reply by the
+  `turn_id` its Chat message and its `answer` item both carry. Each step the model took is an
+  assistant message with its calls, followed by one result per call, so every result answers
+  a call before it, as OpenAI Responses, Anthropic Messages and the OpenAI-compatible
+  providers all require. A call that never returned is left out with its result; a reply
+  recorded before answers carried a `turn_id`, one whose items were deleted with their
+  session or rewound, and one with a result redacted under a retention setting are handed
+  back as text, as without the setting. Over `max_characters`, the oldest results become
+  `[result trimmed]` first, then the oldest turns are left out, and the conversation's first
+  user message is kept throughout (read from the response rows when the transcript read back
+  does not reach it). `context_truncated` is true whenever anything was trimmed or left out.
+- A speech-to-speech model is told the conversation as text in its instructions, so a native
+  voice session reads the replies and not their tool calls, whatever the setting says.
+- A fork at a `response_id`, a fork of a session that kept no channel, and a rewind are
+  rebuilt from the response rows as questions and answers, whatever the setting says.
+- Results are replayed as they were stored: credentials redacted, and a result over 8 KB cut
+  to its first 2,048 characters.
+- The restored history is sent in full with the first reply after the conversation is
+  resumed, and billed then. A model that caches reads it from the cache from the second
+  reply on; compaction only starts once a reply has reported its usage. Keep
+  `max_characters` well inside the model's context window (about four characters to a
+  token): nothing refuses one that does not fit before the provider does.
+
+The Go SDK exposes `agents.ChatOptions{ConversationID: cid}`,
+`Session.ConversationID()`, `Session.ContextTruncated()`,
+`stream.Backend.ConversationHistory`, and `Event.ConversationMessage`.
+Without Stream credentials a new text session runs without a channel. Voice calls write
+their transcript into Chat as well: what a caller is saying streams as ephemeral updates
+and is stored once the turn settles. Text-mode native skills
+use task-oriented delegation; voice sessions retain their speech-repair policy.
+
+STT/TTS recording requests may explicitly set `inline: true` to complete a short
+request synchronously without a database. The usual 202 response contains a
+completed/failed result, not a pollable job. Audio is not stored. Inline requests
+reject callbacks, transcription URLs, audio over 8 MiB and text over 16,000
+characters; the request's cancellation propagates and execution is bounded to
+90 seconds. Existing asynchronous recording behavior is unchanged. In Go use
+`Recorded{Audio: clip, Inline: true}` or `TTS().InlineRecording(...)`.

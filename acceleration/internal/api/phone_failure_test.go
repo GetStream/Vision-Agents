@@ -1,0 +1,306 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/bird"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/didww"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/plivo"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vonage"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+)
+
+func vendorRefusal(code string) error {
+	refused := &phone.VendorError{Vendor: "twilio", Path: "/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		Status: http.StatusBadRequest, Code: code, Message: "the vendor's own words"}
+	// Wrapped the way the service wraps what a provider returns.
+	return stack.Wrap(fmt.Errorf("phone: buy: %w", refused))
+}
+
+func TestANumberThatNeedsAnAddressIsAnsweredInPlainWords(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	failure := stack.Wrap(fmt.Errorf("%w: %w", phone.ErrAddressRequired, vendorRefusal("21631")))
+	handler, _ := served(t, func() error { return phoneFailure(logger, failure) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	answer := answered(t, response.Body.Bytes())
+	require.Equal(t, "phone_number_needs_address", answer.Code)
+	require.Equal(t, "This number needs a verified address, which is not supported. "+
+		"Choose a number in the US or Canada, or contact support.", answer.Message)
+	require.NotContains(t, response.Body.String(), "AC123")
+}
+
+func TestAVendorFailureIsLoggedAndAnsweredWithoutItsWords(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	handler, _ := served(t, func() error { return phoneFailure(logger, vendorRefusal("20003")) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	answer := answered(t, response.Body.Bytes())
+	require.Equal(t, "phone_vendor_failed", answer.Code)
+	require.Equal(t, "The phone vendor could not complete the request. "+
+		"Try again, or contact support if it keeps failing.", answer.Message)
+	for _, secret := range []string{"AC123", "/2010-04-01", "the vendor's own words", "20003"} {
+		require.NotContains(t, response.Body.String(), secret)
+	}
+	for _, detail := range []string{"AC123", "20003", "the vendor's own words"} {
+		require.Contains(t, logged.String(), detail, "the log keeps what debugging needs")
+	}
+}
+
+func TestAFailedCallIsNotAnsweredWithTryAgain(t *testing.T) {
+	handler, _ := served(t, func() error { return callFailure(slog.New(slog.DiscardHandler), vendorRefusal("20003")) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	answer := answered(t, response.Body.Bytes())
+	require.Equal(t, "phone_vendor_failed", answer.Code)
+	require.Equal(t, "The phone vendor did not confirm the call, so it can still ring. "+
+		"Do not place it again at once. Contact support if this keeps happening.", answer.Message)
+	require.NotContains(t, response.Body.String(), "Try again")
+}
+
+// clientPhoneErrors are failures the client can fix, each made the way the phone service
+// makes it.
+func clientPhoneErrors() map[string]error {
+	return map[string]error{
+		"digits a keypad cannot press":      phone.ValidateDigits("one"),
+		"a number that is not E.164":        phone.Dialable("911"),
+		"a number stored in another form":   stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, "5125551234")),
+		"no app for the customer":           stack.Wrap(streamapp.ErrNoIdentity),
+		"an app the customer moved from":    stack.Wrap(streamapp.ErrStreamAppMoved),
+		"a disconnected app":                stack.Wrap(streamapp.ErrStreamAppDisconnected),
+		"an app the customer may only read": stack.Wrap(streamapp.ErrReadOnly),
+	}
+}
+
+func TestAPhoneFailureTheClientCanFixSaysWhatToFix(t *testing.T) {
+	for name, failure := range clientPhoneErrors() {
+		for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {
+			handler, _ := served(t, func() error { return failed(slog.New(slog.DiscardHandler), failure) })
+
+			response := postSync(handler, `{"name":"jean"}`)
+
+			require.Equal(t, http.StatusBadRequest, response.Code, "%s: %s", answer, name)
+			got := answered(t, response.Body.Bytes())
+			require.Equal(t, ErrorTypeInvalidRequest, got.Type, "%s: %s", answer, name)
+			require.Equal(t, failure.Error(), got.Message, "%s: %s", answer, name)
+		}
+	}
+}
+
+// A deployment without Stream credentials, a vendor's credentials or settings, or sip trunks
+// is a feature it lacks:
+// still a 400, with the code that says so.
+func TestAPhoneFailureOfTheDeploymentsMissingSettingsIsNotConfigured(t *testing.T) {
+	missing := map[string]struct {
+		failure error
+		message string
+	}{
+		"no Stream app": {stack.Wrap(phone.ErrNoStream),
+			"phone lines are not available: this deployment has no Stream app to make them in"},
+		"a vendor without credentials": {stack.Wrap(phone.NotConfigured(errors.New("phone: twilio needs TWILIO_SID"))),
+			"phone: twilio needs TWILIO_SID"},
+		"every vendor without credentials": {stack.Wrap(phone.NotConfigured(errors.New("phone: no vendor has the credentials to be searched"))),
+			"phone: no vendor has the credentials to be searched"},
+		"a vendor without a setting it dials with": {stack.Wrap(fmt.Errorf("phone: dial: %w",
+			phone.NotConfigured(errors.New("telnyx: a connection id is required to place a call")))),
+			"phone: dial: telnyx: a connection id is required to place a call"},
+		"sip trunks off on this deployment": {stack.Wrap(phone.ErrSIPTrunksDisabled), phone.ErrSIPTrunksDisabled.Error()},
+	}
+	for name, want := range missing {
+		for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {
+			handler, _ := served(t, func() error { return failed(slog.New(slog.DiscardHandler), want.failure) })
+
+			response := postSync(handler, `{"name":"jean"}`)
+
+			require.Equal(t, http.StatusBadRequest, response.Code, "%s: %s", answer, name)
+			got := answered(t, response.Body.Bytes())
+			require.Equal(t, codeNotConfigured, got.Code, "%s: %s", answer, name)
+			require.Equal(t, want.message, got.Message, "%s: %s", answer, name)
+		}
+	}
+}
+
+// What the gate or the store failed with is the router's: the client is told only that
+// something went wrong, and the log keeps the rest.
+func TestAPhoneFailureOfOursIsAServerErrorWithoutItsWords(t *testing.T) {
+	ours := stack.Wrap(fmt.Errorf("store: opted out: %w", errors.New("sql: database is closed")))
+	for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {
+		handler, logged := served(t, func() error { return failed(slog.New(slog.DiscardHandler), ours) })
+
+		response := postSync(handler, `{"name":"jean"}`)
+
+		require.Equal(t, http.StatusInternalServerError, response.Code, answer)
+		require.Equal(t, "something went wrong", answered(t, response.Body.Bytes()).Message, answer)
+		require.NotContains(t, response.Body.String(), "database is closed", answer)
+		require.Contains(t, logged.String(), "database is closed", "%s: the log keeps what failed", answer)
+	}
+}
+
+// Work waiting on the deployment's own Stream app reaches Huma as it is, which answers it
+// 503 for the caller to retry.
+func TestAPhoneOperationWaitingOnTheDeploymentsAppIsAnsweredTryAgain(t *testing.T) {
+	handler, _ := served(t, func() error {
+		return phoneFailure(slog.New(slog.DiscardHandler), stack.Wrap(streamapp.ErrDeploymentAppUnknown))
+	})
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.NotEmpty(t, response.Header().Get("Retry-After"))
+}
+
+func TestASkippedVendorIsAnsweredWithoutItsWords(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	err := vendorRefusal("20003")
+	skip := phone.Skip{Vendor: "twilio", Reason: err.Error(), Err: err}
+
+	reason := skipReason(logger, skip)
+
+	require.Equal(t, "The phone vendor could not complete the request.", reason)
+	for _, secret := range []string{"AC123", "/2010-04-01", "the vendor's own words"} {
+		require.NotContains(t, reason, secret)
+		require.Contains(t, logged.String(), secret, "the log keeps what debugging needs")
+	}
+}
+
+// A vendor that refused, never answered, answered what cannot be read, or was never asked
+// is a vendor failure: a search skips it in the vendor-free words and a call is answered as
+// one the vendor did not confirm. Its path holds the account id and its body the vendor's
+// own words.
+func TestAVendorThatFailedIsAnsweredWithoutItsPathOrBody(t *testing.T) {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"authentication failed for account VENDORWORDS"}`))
+	}))
+	t.Cleanup(refusing.Close)
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`VENDORWORDS<`))
+	}))
+	t.Cleanup(garbled.Close)
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	applicationKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	bases := map[string]string{
+		"refused": refusing.URL, "unreadable": garbled.URL, "no answer": gone.URL,
+		"no request": "http://router.test/\x7f",
+	}
+	for failure, base := range bases {
+		vendors := map[string]func() (phone.Provider, error){
+			"bird": func() (phone.Provider, error) {
+				return bird.New(bird.Options{AccessKey: "bk_us1_abc", BaseURL: base})
+			},
+			"didww": func() (phone.Provider, error) {
+				return didww.New(didww.Options{APIKey: "key", BaseURL: base})
+			},
+			"plivo": func() (phone.Provider, error) {
+				return plivo.New(plivo.Options{AuthID: "MA123", AuthToken: "secret", BaseURL: base})
+			},
+			"vonage": func() (phone.Provider, error) {
+				return vonage.New(vonage.Options{APIKey: "k", APISecret: "s", BaseURL: base})
+			},
+		}
+		for name, open := range vendors {
+			provider, err := open()
+			require.NoError(t, err, "%s: %s", failure, name)
+			_, err = provider.SearchNumbers(context.Background(), phone.Search{Country: "US"})
+			require.Error(t, err, "%s: %s", failure, name)
+
+			reason := skipReason(slog.New(slog.DiscardHandler), phone.Skip{Vendor: name, Reason: err.Error(), Err: err})
+
+			require.Equal(t, "The phone vendor could not complete the request.", reason, "%s: %s: %v", failure, name, err)
+		}
+
+		// Bird and Vonage place calls through a voice API of their own.
+		dialers := map[string]func() (phone.Provider, error){
+			"bird": func() (phone.Provider, error) {
+				return bird.New(bird.Options{AccessKey: "bk_us1_abc", VoiceBaseURL: base})
+			},
+			"vonage": func() (phone.Provider, error) {
+				return vonage.New(vonage.Options{APIKey: "k", APISecret: "s", VoiceBaseURL: base,
+					ApplicationID: "app-1", PrivateKey: applicationKey})
+			},
+		}
+		for name, open := range dialers {
+			provider, err := open()
+			require.NoError(t, err, "%s: %s", failure, name)
+			_, err = provider.Dial(context.Background(), phone.Outbound{
+				From: "+15125551234", To: "+15550001111", Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+			})
+			require.Error(t, err, "%s: %s", failure, name)
+
+			require.Equal(t, error(errCallNotConfirmed), callFailure(slog.New(slog.DiscardHandler), err), "%s: %s: %v", failure, name, err)
+		}
+	}
+}
+
+func TestASkipForOurOwnReasonKeepsItsWords(t *testing.T) {
+	skip := phone.Skip{Vendor: "telnyx", Reason: "cannot search by region"}
+
+	require.Equal(t, "cannot search by region", skipReason(slog.New(slog.DiscardHandler), skip))
+}
+
+func TestAVendorErrorSayingNotANumberIsNotTakenForANumberWeDoNotHold(t *testing.T) {
+	vendors := stack.Wrap(&phone.VendorError{Vendor: "twilio", Path: "/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		Status: http.StatusNotFound, Message: "+15125551234 is not a number on this account"})
+	ours := stack.Wrap(errors.New("phone: +15125551234 is not a number you hold"))
+
+	require.False(t, isNumberNotHeld(vendors))
+	require.True(t, isNumberNotHeld(ours))
+	require.False(t, isNumberNotHeld(nil))
+}
+
+// Only a self-hosted router lacks a keyring, and the customer cannot set its env vars.
+func TestAttachingWithoutAKeyringIsNotConfiguredAndNamesNoSetting(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	failure := stack.Wrap(fmt.Errorf("phone: telnyx numbers are answered with their stored trunk: %w", phone.ErrNoSealer))
+	handler, _ := served(t, func() error { return phoneFailure(logger, failure) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	answer := answered(t, response.Body.Bytes())
+	require.Equal(t, "not_configured", answer.Code)
+	require.NotContains(t, response.Body.String(), "ROUTER_AUTH_KEK")
+	require.Contains(t, logged.String(), "ROUTER_AUTH_KEK", "the operator still learns what to set")
+}
+
+func TestAHookThatCannotBePointedIsAnsweredWithTryAgain(t *testing.T) {
+	logged := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logged, nil))
+	failure := stack.Wrap(fmt.Errorf("%w: %w", phone.ErrCallHook, errors.New("phone: update app: refused")))
+	handler, _ := served(t, func() error { return phoneFailure(logger, failure) })
+
+	response := postSync(handler, `{"name":"jean"}`)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.NotContains(t, response.Body.String(), "cmd/phone")
+	require.Contains(t, logged.String(), "level=ERROR")
+}

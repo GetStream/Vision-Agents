@@ -1,0 +1,1272 @@
+package api
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"io"
+	"maps"
+	"net"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// The browser routes of a consent. The launch path and the callback path are the prototype's
+// (connectorOAuthLaunchPath in internal/api/connectors.go and CallbackPath in
+// internal/mcp/oauth.go:119 on codex/connector-support at cf62af0d), so a redirect URI
+// registered with a provider for the prototype still matches.
+const (
+	// ConnectorCallbackPath is where a provider sends the browser back to: the redirect URI
+	// is ROUTER_PUBLIC_URL followed by it.
+	ConnectorCallbackPath = "/v1/agents/connectors/oauth/callback"
+	// ConnectorClientMetadataPath is where the router's OAuth Client ID Metadata Document is
+	// served. CIMD (draft-ietf-oauth-client-id-metadata-document-02 section 3) lets the
+	// client choose any https URL with a path; this one is the prototype's ClientMetadataPath
+	// (internal/mcp/oauth.go:122 at cf62af0d). It is not a registered well-known URI
+	// (RFC 8615 section 3.1), which is unverified as a problem for any server.
+	ConnectorClientMetadataPath = "/.well-known/oauth-client-metadata"
+	connectorLaunchPath         = "/v1/agents/connectors/oauth/launch/"
+)
+
+// connectorCallbackURL is the redirect URI every consent of a router at publicURL sends, and
+// so the one a provider has to have registered for the OAuth client: publicURL followed by
+// ConnectorCallbackPath. Empty when publicURL is, since no consent can start then (begin).
+func connectorCallbackURL(publicURL string) string {
+	base := strings.TrimRight(publicURL, "/")
+	if base == "" {
+		return ""
+	}
+	return base + ConnectorCallbackPath
+}
+
+const (
+	// attemptLifetime is how long a consent may take, from authorize to callback. It is RFC
+	// 6749 section 4.1.2's recommended maximum authorization code lifetime (10 minutes), the
+	// prototype's connectorAuthorizationLifetime and oauth2code's attemptTTL, so no attempt
+	// outlives the code it is waiting for and the scheme's own expiry agrees with the row's.
+	attemptLifetime = 10 * time.Minute
+	// handoffBytes is the size of the handoff token and of the browser cookie's value, two
+	// separate tokens. 32 random octets, as oauth2code's state: a guess succeeds with
+	// probability 2^-256, below the 2^-128 RFC 6749 section 10.10 requires and the 2^-160 it
+	// recommends for a token an attacker must not guess.
+	handoffBytes = 32
+	// nonceBytes is the launch page's CSP nonce: 128 bits, the minimum CSP Level 3 section
+	// 7.1 («Nonce Reuse») says a nonce SHOULD have, fresh for every response.
+	nonceBytes = 16
+	// maxHandoffBody bounds the handoff's JSON, which holds one 43-character token. 4096 is
+	// the prototype's io.LimitReader in connectorOAuthLaunchHandoff; not measured.
+	maxHandoffBody = 4096
+	// attemptCookiePrefix names the cookie that binds an attempt to the browser that began
+	// it, one cookie per attempt so two consents in one browser do not overwrite each other.
+	// The prototype's name (connectorAuthorizationCookieName at cf62af0d).
+	attemptCookiePrefix = "va_connector_oauth_"
+	// clientMetadataMaxAge is how long an authorization server may cache the client metadata
+	// document; CIMD section 5.2 has it follow HTTP cache headers (RFC 9111). 300 seconds is
+	// the prototype's (connectorOAuthClientMetadataHandler at cf62af0d); unverified, not
+	// measured.
+	clientMetadataMaxAge = "public, max-age=300"
+	// accountSwitchError is the connection's last_error after a consent for another account.
+	// The prototype's wording, shortened (finishConnectorLogin at cf62af0d).
+	accountSwitchError = "A consent returned a different provider account; the existing grant was kept. " +
+		"Create a new connection for that account."
+)
+
+// unauthorizedClientHint follows a consent the provider refused with unauthorized_client, «The
+// client is not authorized to request an authorization code using this method» (RFC 6749
+// section 4.1.2.1), with the redirect URI the provider's admin allows it with. Gong answers it
+// until its tech admin adds the router as an MCP integration (staging, 2026-10-16T15:11:14Z,
+// AI-1379; providers/gong.yaml).
+const unauthorizedClientHint = "The provider does not let this client sign in for your organization: " +
+	"an admin at the provider may need to allow it, with the redirect URI %s."
+
+// Where a consent ended, sent to the return_url or the dashboard as the status query parameter.
+const (
+	consentConnected       = "connected"
+	consentDenied          = "denied"
+	consentFailed          = "failed"
+	consentAccountMismatch = "account_mismatch"
+)
+
+// errNoAttempt is the one answer for a callback or a handoff whose attempt cannot be used:
+// unknown, expired, already used, sealed for another row, or for a deleted connection. One
+// answer, as store.ErrNoAuthorizationAttempt is one error, so a probe learns nothing.
+var errNoAttempt = invalidRequest("this consent is unknown, expired or already finished: start it again")
+
+// AuthorizationKind is why an attempt was started.
+type AuthorizationKind string
+
+func (AuthorizationKind) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "AuthorizationKind",
+		"consent for a connection no account was connected to yet, reconnect for one that has "+
+			"been connected before, which must come back with the same provider account.",
+		store.AttemptConsent, store.AttemptReconnect)
+}
+
+// Authorization is a consent in flight, as the backend that started it is shown it.
+type Authorization struct {
+	ID           string            `json:"id" doc:"The attempt."`
+	Kind         AuthorizationKind `json:"kind"`
+	LaunchURL    string            `json:"launch_url" doc:"The router's page to open in a popup from a page of the return_url's origin, or of the dashboard's when the consent was started without one. It asks the opener for handoff_token, from that origin only, and then sends the browser to the provider. A consent whose return_url is a native app's own scheme is opened in the app's web authentication sheet as launch_url#handoff_token=<handoff_token> instead, and the page reads the token from its fragment."`
+	HandoffToken string            `json:"handoff_token" doc:"Handed to the launch page by postMessage, from the return_url's origin or the dashboard's, and never in a query string. A native app, which has no origin to post from, puts it in launch_url's fragment, which no server and no Referer is sent. It binds the attempt to the first browser that opens launch_url and hands it off; a second handoff is refused."`
+	ExpiresAt    time.Time         `json:"expires_at" doc:"When the attempt ends, 10 minutes after it began. A callback after that is refused."`
+}
+
+func (*Authorization) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A consent in flight for one connection: the page that starts it in a " +
+		"browser and the token that binds it to that browser."
+	return schema
+}
+
+type createAuthorizationRequest struct {
+	ID   string `path:"id" doc:"The connection, as returned when it was created."`
+	Body *AuthorizationRequest
+}
+
+// maxReturnURLBytes bounds return_url: 2048 is the length the router takes for every other URL
+// it keeps (ConnectorEventDestinationRequest.url).
+const maxReturnURLBytes = 2048
+
+// AuthorizationRequest is what a backend may tell a consent it starts.
+type AuthorizationRequest struct {
+	ReturnURL string `json:"return_url,omitempty" doc:"The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app."`
+}
+
+type authorizationResponse struct {
+	Body Authorization
+}
+
+// attempt is what an authorization attempt seals: everything the handoff and the callback
+// need, so neither trusts a value the browser sends beyond the state and the cookie.
+type attempt struct {
+	ConnectorID        string `json:"connector_id"`
+	DefinitionRevision int    `json:"definition_revision"`
+	Scheme             string `json:"scheme"`
+	// Handoff is the handoff token the backend was answered.
+	Handoff string `json:"handoff"`
+	// Cookie is the browser cookie's value, chosen at the handoff and empty before it. It is
+	// not the handoff token, which the backend and the dashboard's script also hold.
+	Cookie       string `json:"cookie,omitempty"`
+	AuthorizeURL string `json:"authorize_url"`
+	// State is the scheme's BeginOutput.State, handed back to Complete.
+	State json.RawMessage `json:"scheme_state"`
+	// ReturnURL is the backend's return_url: the launch page's opener origin and where the
+	// callback sends the browser. Empty, as in an attempt sealed before it existed, is the
+	// dashboard. A native app's own scheme has no origin: its launch page reads the handoff
+	// token from its fragment.
+	ReturnURL string `json:"return_url,omitempty"`
+}
+
+// registerAuthorizations declares the one Huma operation of the consent flow. It is
+// server-side only, like every connection operation: a user-owned connection's consent is
+// started by the backend for the user it acts for (architecture doc, one-way door 7), and
+// the end user's browser only ever sees the launch page that backend hands it.
+func (s *Server) registerAuthorizations(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "createAuthorization",
+		Method:        http.MethodPost,
+		Path:          "/v1/agents/connections/{id}/authorizations",
+		Summary:       "Start a consent",
+		DefaultStatus: http.StatusCreated,
+		Description: "Starts the provider's consent for a connection: a consent for a pending one, " +
+			"a reconnect for one connected before. Open launch_url in a popup from a page of " +
+			"return_url's origin, or of the dashboard's when there is no return_url, and post it " +
+			"handoff_token when it says it is ready; the browser then goes to the provider and " +
+			"comes back to the router, which stores the grant and sends the browser to return_url, " +
+			"or else to the dashboard, with connection_id and status (connected, denied, failed or " +
+			"account_mismatch) added to its query. A native app whose return_url is its own " +
+			"scheme opens launch_url#handoff_token=<handoff_token> in its web authentication sheet " +
+			"instead, and the callback hands the sheet back to the app. The body is optional. A reconnect that comes back with another provider account keeps " +
+			"the old grant. A connector that checks its owner's email, such as nessy, ends a user-owned " +
+			"connection's first consent as account_mismatch, storing nothing, unless the provider account's " +
+			"email is the one the backend last sent for that user in X-Stream-User-Email. The consent runs on the connector's latest revision, and the " +
+			"connection reads that revision once the consent connects it. Who may start it is who " +
+			"may read the connection. Needs " +
+			"ROUTER_PUBLIC_URL, where the provider sends the browser back to.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"201": {Description: "The consent is waiting for its browser"}},
+		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.createAuthorization)
+}
+
+// createAuthorization begins a consent for a connection the caller may have.
+func (s *Server) createAuthorization(ctx context.Context, request *createAuthorizationRequest) (*authorizationResponse, error) {
+	connection, err := s.reachableConnection(ctx, request.ID)
+	if err != nil {
+		return nil, err
+	}
+	if s.connectorSecrets == nil || s.credentials == nil {
+		return nil, notConfigured("consents cannot be started: connectors are not enabled on this deployment")
+	}
+	var returnURL string
+	if request.Body != nil {
+		returnURL = request.Body.ReturnURL
+	}
+	if returnURL != "" {
+		if err := checkReturnURL(returnURL); err != nil {
+			return nil, invalidRequest("return_url: " + err.Error())
+		}
+	}
+	begun, err := s.consents().begin(ctx, connection, nil, returnURL)
+	if err != nil {
+		return nil, err
+	}
+	return &authorizationResponse{Body: begun}, nil
+}
+
+// consents begins consents for the backend that asks for one (createAuthorization) and for a
+// session whose end user's own connection a tool call needs (ConnectorConsents). One path, so
+// a consent begun from the chat is the same single-use attempt, bound to the first browser
+// that hands it off, as one the backend begins.
+type consents struct {
+	store     *store.Store
+	registry  core.Registry
+	secrets   *auth.Sealer
+	publicURL string
+	// providerApps is whether PUT provider-app can answer on this deployment, which a missing
+	// client's answer names only then.
+	providerApps bool
+}
+
+func (s *Server) consents() consents {
+	return consents{store: s.store, registry: s.connectors, secrets: s.connectorSecrets, publicURL: s.publicURL,
+		providerApps: s.connectorSecrets != nil && s.slackApps != nil && providerAppsURL(s.publicURL)}
+}
+
+// ConnectorConsents is how a session begins a consent for its caller's own connection, when
+// a tool call needs one (session.Consents): the attempt createAuthorization begins, on the
+// connection chosen, or else on the caller's newest connection to the connector in any
+// status, or else on a new one. Nil when connectors are off or ROUTER_PUBLIC_URL is
+// unset, so no consent could begin: a session binding with no usable connection is then left
+// out of the session, as before.
+func ConnectorConsents(records *store.Store, registry core.Registry, secrets *auth.Sealer, publicURL string) session.Consents {
+	if records == nil || secrets == nil || len(registry.Schemes) == 0 || strings.TrimRight(publicURL, "/") == "" {
+		return nil
+	}
+	// cmd/router builds the Slack apps client wherever connector secrets exist (main.go), and
+	// secrets are not nil here.
+	c := consents{store: records, registry: registry, secrets: secrets, publicURL: publicURL, providerApps: providerAppsURL(publicURL)}
+	return func(ctx context.Context, request session.ConsentRequest) (session.Consent, error) {
+		connection, err := c.connectionFor(ctx, request)
+		if err != nil {
+			return session.Consent{}, err
+		}
+		definition, err := records.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, connection.DefinitionRevision)
+		if err != nil {
+			return session.Consent{}, err
+		}
+		// The session's return_url, which refuseSessionRequest checked as createAuthorization
+		// checks its own; a session created without one finishes its consents on the dashboard.
+		begun, err := c.begin(ctx, connection, request.StepUp, request.ReturnURL)
+		if err != nil {
+			return session.Consent{}, err
+		}
+		return session.Consent{
+			ConnectionID: connection.ID, AuthorizationID: begun.ID, LaunchURL: begun.LaunchURL,
+			HandoffToken: begun.HandoffToken, ExpiresAt: begun.ExpiresAt, Name: definition.Manifest.Name,
+		}, nil
+	}
+}
+
+// connectionFor is the caller's own connection a consent from the chat is for. One chosen
+// must be theirs and to the binding's connector, as mayReach and the session's owner rule
+// (session.mayUse) require.
+func (c consents) connectionFor(ctx context.Context, request session.ConsentRequest) (store.ConnectorConnection, error) {
+	if request.CustomerID == "" || request.ConnectorID == "" || request.UserID == "" {
+		return store.ConnectorConnection{}, stack.Wrap(errors.New("a consent from the chat needs a customer, a connector and the caller"))
+	}
+	mine := func(connection store.ConnectorConnection) bool {
+		return connection.OwnerType == store.OwnerUser && connection.OwnerID == request.UserID &&
+			connection.ConnectorID == request.ConnectorID
+	}
+	if request.ConnectionID != "" {
+		connection, err := c.store.ConnectorConnection(ctx, request.CustomerID, request.ConnectionID)
+		if err != nil {
+			return store.ConnectorConnection{}, err
+		}
+		if !mine(connection) {
+			return store.ConnectorConnection{}, stack.Wrap(errors.New("the connection chosen is not the caller's own to the binding's connector"))
+		}
+		return connection, nil
+	}
+	held, err := c.store.ConnectorConnectionsByOwner(ctx, request.CustomerID, store.ConnectionFilter{
+		OwnerType: store.OwnerUser, OwnerID: request.UserID, ConnectorID: request.ConnectorID,
+	})
+	if err != nil {
+		return store.ConnectorConnection{}, err
+	}
+	// The caller's newest connection to the connector, in any status, so a new chat asking
+	// again does not leave a row and a grant each time. The person still consents in this
+	// chat: one connected before gets a reconnect (begin), which keeps the old grant when it
+	// comes back with another account (completeConsent, account_mismatch), and the session
+	// opens it only once that consent connected it anew (session.openOrAsk). A session uses a
+	// connection nobody chose for it only when it is the caller's one connected connection to
+	// the connector (session.impliedSelection, AI-994); here they have none or several, so it
+	// uses this one by the person's own consent.
+	//
+	// A static token or key is replaced, never consented to (AI-990), so the chat passes over
+	// a connection that holds one: a person's github token beside the consent the chat asks for.
+	for _, connection := range held {
+		if mine(connection) && !core.IsStatic(c.registry.Schemes, connection.AuthScheme) {
+			return connection, nil
+		}
+	}
+	definition, err := c.store.LatestConnectorDefinition(ctx, request.CustomerID, request.ConnectorID)
+	if err != nil {
+		return store.ConnectorConnection{}, err
+	}
+	// The chat cannot ask for a scheme or an input, so only a connector that needs neither is
+	// connected from it, as createConnection takes one with neither named.
+	scheme, found := defaultScheme(definition.Manifest, c.registry.Schemes)
+	if !found {
+		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s allows %d schemes, and the chat cannot choose one",
+			definition.ID, len(definition.Manifest.Schemes)))
+	}
+	// Nor can it ask for a token or key, so it makes no connection that could only wait for one.
+	if core.IsStatic(c.registry.Schemes, scheme) {
+		return store.ConnectorConnection{}, stack.Wrap(fmt.Errorf("%s takes only a static token or key, which the chat cannot ask for",
+			definition.ID))
+	}
+	profile, err := definition.Manifest.Resolve(scheme, nil, nil)
+	if err != nil {
+		return store.ConnectorConnection{}, stack.Wrap(err)
+	}
+	connection := store.ConnectorConnection{
+		CustomerID: request.CustomerID, ConnectorID: definition.ID, DefinitionRevision: definition.Revision,
+		OwnerType: store.OwnerUser, OwnerID: request.UserID, AuthScheme: scheme, Inputs: profile.Inputs,
+	}
+	if err := c.store.CreateConnectorConnection(ctx, c.registry, &connection); err != nil {
+		return store.ConnectorConnection{}, err
+	}
+	return connection, nil
+}
+
+// begin starts the provider's consent for connection and seals its attempt. stepUp, when set,
+// is what the provider asked for on a call of the connection (session.ConsentRequest.StepUp):
+// the attempt is a step-up that asks for that access. Its callback is any consent's
+// (finishConnectorConsent), so the grant is replaced only once the provider granted it, for
+// the same account, and a step-up denied, failed or never finished leaves the old grant as
+// it is. returnURL, when set, is checked (checkReturnURL) and sealed in the attempt.
+func (c consents) begin(ctx context.Context, connection store.ConnectorConnection, stepUp *core.Outcome, returnURL string) (Authorization, error) {
+	// Checked here, not at the callback: a consent the provider cannot send back would
+	// otherwise be found out only after the user approved it.
+	public := strings.TrimRight(c.publicURL, "/")
+	if public == "" {
+		return Authorization{}, notConfigured("consents cannot be started: ROUTER_PUBLIC_URL is not set, " +
+			"so the provider has nowhere to send the browser back to")
+	}
+	scheme, found := c.registry.Schemes[connection.AuthScheme]
+	if !found {
+		return Authorization{}, invalidRequest(fmt.Sprintf("auth_scheme %q is not one this deployment has", connection.AuthScheme))
+	}
+	// Every consent runs on the connector's latest revision, whatever the connection reads
+	// now: a pending one made before a fix, or one connected on a revision marked broken
+	// since, gets the fixed manifest. The connection moves to it only once the consent
+	// connects it (completeConsent), so a consent denied, failed or for another account
+	// leaves it reading what its grant was made with.
+	latest, err := c.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
+	if err != nil {
+		return Authorization{}, err
+	}
+	manifest, err := connectionManifest(ctx, c.store, connection, latest.Revision)
+	if err != nil {
+		return Authorization{}, err
+	}
+	kind := store.AttemptReconnect
+	if connection.Status == store.ConnectionPending {
+		kind = store.AttemptConsent
+	}
+	if stepUp != nil {
+		kind = store.AttemptStepUp
+		manifest = steppedUp(manifest, connection, *stepUp)
+	}
+	ref := core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}
+	begun, err := scheme.Begin(ctx, core.BeginInput{Ref: ref, Manifest: manifest, RedirectURI: connectorCallbackURL(c.publicURL)})
+	// The client comes from the app's own record or the operator's environment
+	// (ConnectorClients), so a connector that takes a client the app can give and finds none,
+	// or whose provider refused to register one (WWSD feedback #31, Gong), says how to give it
+	// one.
+	if errors.Is(err, oauth2code.ErrNoClient) || errors.Is(err, oauth2code.ErrRegistration) {
+		if failure, ok := missingOAuthClient(err, manifest, connection.ConnectorID, connectorCallbackURL(c.publicURL),
+			c.providerApps && whyNotManaged(latest.Manifest) == nil); ok {
+			return Authorization{}, failure
+		}
+	}
+	if err != nil {
+		// A scheme's error carries no secret (core AGENTS.md, «Secrets never print»), and it
+		// is what the backend needs to fix: a missing client, an unreachable server.
+		return Authorization{}, invalidRequest("the provider's consent could not be started: " + err.Error())
+	}
+	if begun.Done {
+		return Authorization{}, invalidRequest(fmt.Sprintf("auth_scheme %q needs no consent", connection.AuthScheme))
+	}
+	state, err := authorizeState(begun.AuthorizeURL)
+	if err != nil {
+		return Authorization{}, err
+	}
+	handoff, err := randomToken(handoffBytes)
+	if err != nil {
+		return Authorization{}, err
+	}
+
+	id := store.NewID()
+	raw, err := json.Marshal(attempt{
+		ConnectorID:        connection.ConnectorID,
+		DefinitionRevision: latest.Revision,
+		Scheme:             connection.AuthScheme,
+		Handoff:            handoff,
+		AuthorizeURL:       begun.AuthorizeURL,
+		State:              begun.State,
+		ReturnURL:          returnURL,
+	})
+	if err != nil {
+		return Authorization{}, err
+	}
+	sealed, err := c.secrets.SealWithAAD(string(raw), attemptAAD(connection.CustomerID, connection.ID, id))
+	if err != nil {
+		return Authorization{}, err
+	}
+	expires := time.Now().UTC().Add(attemptLifetime).Truncate(time.Microsecond)
+	err = c.store.CreateConnectorAuthorizationAttempt(ctx, &store.ConnectorAuthorizationAttempt{
+		ID:            id,
+		CustomerID:    connection.CustomerID,
+		ConnectionID:  connection.ID,
+		Kind:          kind,
+		StateHash:     store.AuthorizationStateHash(state),
+		AttemptSealed: sealed,
+		KEKVersion:    c.secrets.CurrentVersion(),
+		ExpiresAt:     expires,
+	})
+	// Deleted between the read above and the insert.
+	if errors.Is(err, store.ErrNoConnectorConnection) {
+		return Authorization{}, errNoSuchConnection
+	}
+	if err != nil {
+		return Authorization{}, err
+	}
+	return Authorization{
+		ID:           id,
+		Kind:         AuthorizationKind(kind),
+		LaunchURL:    public + connectorLaunchPath + id,
+		HandoffToken: handoff,
+		ExpiresAt:    expires,
+	}, nil
+}
+
+// steppedUp is manifest asking for what a step-up needs (AI-854):
+//
+//   - the scopes the provider asked for (RFC 6750 section 3.1, insufficient_scope's scope),
+//     with, when the manifest's scopes.step_up_union is set, the ones it lists and the ones
+//     the grant has, for a provider whose new grant replaces the old one rather than adds to
+//     it. MCP's «Scope Challenge Handling» (2025-11-25, Authorization) has a client ask for
+//     the union too. Asked for none, the manifest's own list stays;
+//   - a claims challenge as the authorize request's claims parameter: OpenID Connect Core 1.0
+//     section 5.5, which Microsoft's «Claims challenges, claims requests and client
+//     capabilities» has a client send back as it was decoded
+//     (learn.microsoft.com/en-us/entra/identity-platform/claims-challenge).
+func steppedUp(manifest core.ResolvedManifest, connection store.ConnectorConnection, asked core.Outcome) core.ResolvedManifest {
+	scopes := asked.Scopes
+	if manifest.Scopes.StepUpUnion {
+		scopes = slices.Concat(manifest.Scopes.List, connection.GrantedScopes, asked.Scopes)
+	}
+	var unique []string
+	for _, scope := range scopes {
+		if !slices.Contains(unique, scope) {
+			unique = append(unique, scope)
+		}
+	}
+	if len(unique) > 0 {
+		manifest.Scopes.List = unique
+	}
+	if asked.Claims != "" {
+		params := maps.Clone(manifest.AuthorizeParams)
+		if params == nil {
+			params = map[string]string{}
+		}
+		params["claims"] = asked.Claims
+		manifest.AuthorizeParams = params
+	}
+	return manifest
+}
+
+// launchPage is the router-hosted page a consent starts on. It waits for the page that opened
+// it, of the origin serveConnectorLaunch names, to post the handoff token, trades the token
+// for the authorize URL (which sets the browser cookie on the way), and goes to the provider.
+// The prototype's page (connectorOAuthLaunchPage at cf62af0d), unchanged but for the wording.
+// The script's constant keeps its name dashboardOrigin whichever origin it holds, so a consent
+// started without a return_url gets the page byte for byte as before.
+//
+// A consent that returns to a native app's own scheme has no opener and no origin to post
+// from: the app opens the page in its web authentication sheet with the token in the fragment,
+// which the page reads, drops from its history and hands off as the opener's would have been.
+var launchPage = template.Must(template.New("connector-launch").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connecting your account</title></head>
+<body><p id="status">Connecting securely to the provider…</p><script nonce="{{.Nonce}}">{{if .FromFragment}}
+const status = document.getElementById('status');
+const handoffToken = new URLSearchParams(window.location.hash.slice(1)).get('handoff_token');
+history.replaceState(null, '', window.location.pathname);
+(async () => {
+  try {
+    if (!handoffToken) throw new Error('Start from the app, so this browser can be checked.');
+    const response = await fetch(window.location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handoff_token: handoffToken }) });
+    if (!response.ok) throw new Error('This consent has expired. Start again from the app.');
+    const authorization = await response.json();
+    window.location.replace(authorization.authorization_url);
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : 'Could not reach the provider.';
+  }
+})();
+{{else}}
+const dashboardOrigin = {{.OpenerOrigin}};
+const status = document.getElementById('status');
+let handoffStarted = false;
+window.addEventListener('message', async (event) => {
+  if (handoffStarted || event.source !== window.opener || event.origin !== dashboardOrigin || !event.data || event.data.type !== 'va.connector.oauth.handoff' || typeof event.data.handoff_token !== 'string') return;
+  handoffStarted = true;
+  try {
+    const response = await fetch(window.location.pathname, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handoff_token: event.data.handoff_token }) });
+    if (!response.ok) throw new Error('{{if .ReturnsToApp}}This consent has expired. Start again from the page that opened this.{{else}}This consent has expired. Start again from the dashboard.{{end}}');
+    const authorization = await response.json();
+    window.opener = null;
+    window.location.replace(authorization.authorization_url);
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : 'Could not reach the provider.';
+  }
+});
+if (window.opener) window.opener.postMessage({ type: 'va.connector.oauth.ready' }, dashboardOrigin);
+else status.textContent = '{{if .ReturnsToApp}}Start from the page that opened this, so this browser can be checked.{{else}}Start from the dashboard, so this browser can be checked.{{end}}';
+{{end}}</script></body></html>`))
+
+// launchPolicy is the launch page's Content-Security-Policy (CSP Level 3): nothing loads but
+// the one script carrying the nonce, it may fetch only its own origin (the handoff), no page
+// may frame it (frame-ancestors, section 6.4.2), and it has no base URL or form to redirect.
+// The prototype's policy (connectorOAuthLaunchPageHandler at cf62af0d).
+const launchPolicy = "default-src 'none'; script-src 'nonce-%s'; connect-src 'self'; " +
+	"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
+// serveConnectorLaunch renders the launch page for the attempt's opener: the origin of the
+// return_url it sealed, or else the dashboard's. It checks nothing else: the handoff that
+// follows is what is checked. An attempt that is unknown, expired or used gets the
+// dashboard's page, the one every attempt got before return_url, so the page says nothing
+// about an id but the origin a live one returns to, which only the backend and the browser
+// that holds the 128-bit id (store.NewID) know.
+func (s *Server) serveConnectorLaunch(w http.ResponseWriter, r *http.Request) {
+	launch, err := s.launchOpener(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	nonce, err := randomToken(nonceBytes)
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", fmt.Sprintf(launchPolicy, nonce))
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// For a browser without frame-ancestors (CSP Level 3 section 6.4.2.2).
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := launchPage.Execute(w, struct {
+		Nonce, OpenerOrigin        string
+		ReturnsToApp, FromFragment bool
+	}{nonce, launch.origin, launch.returnsToApp, launch.fromFragment}); err != nil {
+		s.logger.Error("could not render the connector launch page", "error", err)
+	}
+}
+
+// launchOpening is how the launch page of one attempt is handed its token.
+type launchOpening struct {
+	// origin is the opener the page takes the handoff from, empty when it reads its fragment.
+	origin string
+	// returnsToApp is whether the attempt sealed a return_url, which the page's wording follows:
+	// it does not send the person to a dashboard they never used.
+	returnsToApp bool
+	// fromFragment is a return_url of a native app's own scheme: no opener and no origin, so
+	// the page reads the token from its fragment.
+	fromFragment bool
+}
+
+// launchOpener is how the launch page of attempt id takes the handoff: from the origin of the
+// return_url it sealed, from its fragment when that is a native app's scheme, or else from the
+// dashboard's origin.
+func (s *Server) launchOpener(ctx context.Context, id string) (launchOpening, error) {
+	if s.store != nil && s.connectorSecrets != nil {
+		_, sealed, err := s.openAttemptByID(ctx, id)
+		if err != nil && !errors.Is(err, store.ErrNoAuthorizationAttempt) {
+			return launchOpening{}, err
+		}
+		if sealed.ReturnURL != "" {
+			if returnsToNativeApp(sealed.ReturnURL) {
+				return launchOpening{returnsToApp: true, fromFragment: true}, nil
+			}
+			// checkReturnURL took it, so a scheme that is not an app's has an http(s) origin.
+			origin, err := originOf(sealed.ReturnURL)
+			return launchOpening{origin: origin, returnsToApp: true}, err
+		}
+	}
+	dashboard, err := originOf(s.dashboardURL)
+	if err != nil {
+		return launchOpening{}, fmt.Errorf("consents cannot be launched: DASHBOARD_BASE_URL is not an http(s) URL: %w", err)
+	}
+	return launchOpening{origin: dashboard}, nil
+}
+
+// handOffConnectorLaunch trades the handoff token for the authorize URL and binds the
+// attempt to this browser with a cookie of a fresh value, which the callback then requires.
+// A token is traded once: the first handoff wins, so a token that leaked is useless after
+// the launch page used it, and if it was used first elsewhere the launch page fails where
+// the person can see it. RFC 9700 section 2.1 asks for «one-time use CSRF tokens carried in
+// the state parameter that are securely bound to the user agent»; this cookie is that
+// binding, so only one user agent may ever hold it.
+//
+// Origin must be the router's own: the launch page's fetch sends it on a POST (Fetch
+// Standard, «append a request Origin header»), so a form or a script on another site that
+// learned a handoff token cannot make the router set the cookie in its own browser. That
+// holds for browsers only: any other client sends whatever Origin it likes, which is why
+// the token is single-use.
+func (s *Server) handOffConnectorLaunch(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil || s.connectorSecrets == nil {
+		writeError(w, errNoAttempt)
+		return
+	}
+	public, err := originOf(s.publicURL)
+	if err != nil || r.Header.Get("Origin") != public {
+		writeError(w, forbidden("the handoff must come from the launch page"))
+		return
+	}
+	var body struct {
+		HandoffToken string `json:"handoff_token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxHandoffBody)).Decode(&body); err != nil || body.HandoffToken == "" {
+		writeError(w, invalidRequest("the handoff needs a handoff_token"))
+		return
+	}
+	row, sealed, err := s.openAttemptByID(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
+		writeError(w, errNoAttempt)
+		return
+	}
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(body.HandoffToken), []byte(sealed.Handoff)) != 1 {
+		writeError(w, forbidden("that is not this consent's handoff token"))
+		return
+	}
+	if sealed.Cookie != "" {
+		writeError(w, errNoAttempt)
+		return
+	}
+	sealed.Cookie, err = randomToken(handoffBytes)
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	raw, err := json.Marshal(sealed)
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	resealed, err := s.connectorSecrets.SealWithAAD(string(raw), attemptAAD(row.CustomerID, row.ConnectionID, row.ID))
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	err = s.store.HandOffConnectorAuthorizationAttempt(r.Context(), row.ID, row.AttemptSealed, resealed, s.connectorSecrets.CurrentVersion())
+	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
+		writeError(w, errNoAttempt)
+		return
+	}
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	http.SetCookie(w, s.attemptCookie(row.ID, sealed.Cookie, row.ExpiresAt))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		AuthorizationURL string `json:"authorization_url"`
+	}{sealed.AuthorizeURL})
+}
+
+// finishConnectorConsent is the redirect URI. Its order is what makes it safe:
+//
+//  1. the state names an open attempt, read but not used up;
+//  2. the browser holds that attempt's cookie (RFC 6749 section 10.12, RFC 9700 section
+//     2.1: the state is bound to the user agent), so a callback in another browser is
+//     refused and the right browser can still finish;
+//  3. the attempt is used up, once (store.ConsumeConnectorAuthorizationAttempt), so a
+//     replayed callback never reaches the provider again;
+//  4. the manifest's before_complete hook sees the whole callback;
+//  5. Scheme.Complete checks state, iss (RFC 9207 section 2.4) and the provider's error
+//     before it exchanges the code;
+//  6. under the connection's lock, a consent for another account than the connection has
+//     keeps the old grant and says so (architecture doc, one-way door 1).
+func (s *Server) finishConnectorConsent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	query := r.URL.Query()
+	states := query["state"]
+	if len(states) != 1 || states[0] == "" {
+		writeError(w, invalidRequest("the callback needs exactly one state"))
+		return
+	}
+	if s.store == nil || s.connectorSecrets == nil || s.credentials == nil {
+		writeError(w, errNoAttempt)
+		return
+	}
+	row, sealed, err := s.openAttemptByState(ctx, states[0])
+	if errors.Is(err, store.ErrNoAuthorizationAttempt) {
+		writeError(w, errNoAttempt)
+		return
+	}
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	// An attempt not handed off yet has no cookie value, and an empty cookie must not match it.
+	cookie, err := r.Cookie(attemptCookiePrefix + row.ID)
+	if err != nil || sealed.Cookie == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(sealed.Cookie)) != 1 {
+		writeError(w, forbidden("finish the consent in the browser that started it"))
+		return
+	}
+	consumed, err := s.store.ConsumeConnectorAuthorizationAttempt(ctx, states[0])
+	if errors.Is(err, store.ErrNoAuthorizationAttempt) || err == nil && consumed.ID != row.ID {
+		writeError(w, errNoAttempt)
+		return
+	}
+	if err != nil {
+		writeFailure(w, r, err)
+		return
+	}
+	http.SetCookie(w, s.attemptCookie(row.ID, "", time.Time{}))
+
+	outcome := s.completeConsent(ctx, row, sealed, query)
+	// A consent a session asked for in its conversation carries on there, or ends the calls
+	// waiting for it. The attempt names the session's own login, so no other session is handed
+	// it.
+	if s.sessions != nil {
+		switch outcome {
+		case consentConnected:
+			s.sessions.ConnectorConsentFinished(ctx, row.CustomerID, row.ConnectionID, row.ID)
+		case consentDenied:
+			s.sessions.ConnectorConsentEnded(row.CustomerID, row.ConnectionID, row.ID, conversation.AuthorizationDeclined)
+		default:
+			s.sessions.ConnectorConsentEnded(row.CustomerID, row.ConnectionID, row.ID, conversation.AuthorizationFailed)
+		}
+	}
+	// Every outcome goes back to the same page: the backend's return_url, or else the dashboard.
+	returnTo := s.dashboardURL
+	if sealed.ReturnURL != "" {
+		returnTo = sealed.ReturnURL
+	}
+	destination, err := url.Parse(returnTo)
+	if err != nil || returnTo == "" {
+		writeFailure(w, r, errors.Join(fmt.Errorf("the consent ended as %s, and DASHBOARD_BASE_URL is not set to go back to", outcome), err))
+		return
+	}
+	back := destination.Query()
+	back.Set("connection_id", row.ConnectionID)
+	back.Set("status", outcome)
+	destination.RawQuery = back.Encode()
+	http.Redirect(w, r, destination.String(), http.StatusFound)
+}
+
+// completeConsent exchanges the callback through the scheme and stores what it got, and
+// says how the consent ended.
+func (s *Server) completeConsent(ctx context.Context, row store.ConnectorAuthorizationAttempt, sealed attempt, query url.Values) string {
+	ref := core.ConnectionRef{CustomerID: row.CustomerID, ConnectionID: row.ConnectionID}
+	scheme, found := s.connectors.Schemes[sealed.Scheme]
+	if !found {
+		s.logger.Error("a consent finished for a scheme this deployment no longer has", "scheme", sealed.Scheme)
+		return consentFailed
+	}
+	connection, err := s.store.ConnectorConnection(ctx, row.CustomerID, row.ConnectionID)
+	if err != nil {
+		s.logger.Error("could not read the connection a consent finished for", "connection", row.ConnectionID,
+			"connector", sealed.ConnectorID, "error", err)
+		return consentFailed
+	}
+	manifest, err := s.connectionManifest(ctx, connection, sealed.DefinitionRevision)
+	if err != nil {
+		s.logger.Error("could not resolve a connection's manifest for its consent", "connection", row.ConnectionID, "error", err)
+		return consentFailed
+	}
+	if err := s.beforeComplete(ctx, manifest, query); err != nil {
+		s.logger.Info("a before_complete hook refused a consent", "connection", row.ConnectionID, "error", err)
+		return consentFailed
+	}
+	credentials, account, err := scheme.Complete(ctx, core.CompleteInput{Ref: ref, Manifest: manifest, State: sealed.State, Query: query})
+	var refused *oauth2code.AuthorizationError
+	if errors.As(err, &refused) && refused.Code == "access_denied" {
+		// RFC 6749 section 4.1.2.1: «The resource owner or authorization server denied the
+		// request». Nothing is written: the connection stays as it was. The line keeps the
+		// provider's description without the callback's state and code, which it may echo.
+		s.logger.Info("a consent was denied at the provider", "connection", row.ConnectionID, "connector", sealed.ConnectorID,
+			"provider_code", refused.Code, "error_description", core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code")))
+		return consentDenied
+	}
+	if refused != nil {
+		// Any other error the provider sent back: its description is kept as the denied line
+		// keeps it, not as AuthorizationError.Error carries it, raw and whole.
+		description := core.LoggedDescription(refused.Description, query.Get("state"), query.Get("code"))
+		code := core.LoggedDescription(refused.Code, query.Get("state"), query.Get("code"))
+		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "provider_code", code,
+			"error_description", description)
+		s.recordRefusal(ctx, connection, code, description)
+		return consentFailed
+	}
+	if err != nil {
+		s.logger.Info("a consent did not complete", "connection", row.ConnectionID, "error", err)
+		return consentFailed
+	}
+
+	// A user-owned connection's first account must be its owner's, where the manifest asks:
+	// the consent link works in any browser, so another person could finish it (AI-1543).
+	var refusal string
+	if manifest.OwnerEmail && connection.OwnerType == store.OwnerUser {
+		asserted, err := s.store.UserEmail(ctx, connection.CustomerID, connection.OwnerID)
+		if err != nil {
+			s.logger.Error("could not read the email a consent is checked against", "connection", row.ConnectionID, "error", err)
+			return consentFailed
+		}
+		refusal = ownerEmailRefusal(asserted, account)
+	}
+
+	switched, notOwner := false, false
+	var committed *core.CredentialState
+	// The tokens a reconnect replaces, and those the consent got.
+	change := core.CredentialChange{Current: core.FingerprintsOf(s.connectors.Schemes, credentials)}
+	err = s.credentials.Update(ctx, ref, func(state *core.CredentialState, _ func() error) (bool, error) {
+		if state.AccountID == "" && refusal != "" {
+			notOwner = true
+			return false, nil
+		}
+		if state.AccountID != "" && state.AccountID != account.AccountID {
+			switched = true
+			state.LastError = accountSwitchError
+			return true, nil
+		}
+		// The credential store leaves the revision it committed here (core.CredentialStore).
+		committed = state
+		change.Previous = core.FingerprintsOf(s.connectors.Schemes, state.Credentials)
+		state.Credentials = credentials
+		state.Status = store.ConnectionConnected
+		state.LastError = ""
+		state.AccountID = account.AccountID
+		state.Metadata = account.Metadata
+		state.Scopes = account.Scopes
+		// The connection reads the revision its grant was made on from now on.
+		state.DefinitionRevision = sealed.DefinitionRevision
+		// Unknown here: the expiry is inside the scheme's stored credentials, and the
+		// resolver (T12) sets it the first time it retrieves an access credential.
+		state.ExpiresAt = time.Time{}
+		// The grant begins here; a provider's signal about an older one leaves it alone
+		// (Resolver.Revoke).
+		state.ConnectedAt = time.Now().UTC()
+		return true, nil
+	})
+	if err != nil {
+		s.logger.Error("could not store a consent's credentials", "connection", row.ConnectionID, "error", err)
+		return consentFailed
+	}
+	if notOwner || switched {
+		// Nothing stores the tokens the provider just issued, so nothing could revoke them later.
+		s.revokeAtProvider(ctx, connection, core.CredentialState{Credentials: credentials, Metadata: account.Metadata,
+			DefinitionRevision: sealed.DefinitionRevision}, "refused_consent")
+	}
+	if notOwner {
+		s.logger.Info("a consent was refused for another account than its connection's owner", "connection", row.ConnectionID,
+			"connector", sealed.ConnectorID, "reason", refusal)
+		return consentAccountMismatch
+	}
+	if switched {
+		return consentAccountMismatch
+	}
+	s.auditGrant(ctx, connection.CustomerID, connection.ID, connection.ConnectorID, connection.OwnerType,
+		store.AuditGrantCreated, store.AuditReasonConsent, committed.Revision, row.ID, change)
+	s.recordClient(ctx, connection.ID, credentials)
+	// A reconnect brings back the MCP event subscriptions its bindings declare, as a validate
+	// does: one a disconnect or a long wait dropped is made again. The consent itself is done,
+	// so a failure here is logged and the next validate tries again.
+	if s.mcpEvents != nil {
+		connected, err := s.store.ConnectorConnection(ctx, row.CustomerID, row.ConnectionID)
+		if err == nil {
+			err = s.mcpEvents.Reconcile(ctx, connected)
+		}
+		if err != nil {
+			s.logger.Error("could not subscribe a reconnected connection's MCP events", "connection", row.ConnectionID, "error", err)
+		}
+	}
+	return consentConnected
+}
+
+// ownerEmailRefusal is why a consent may not give a user-owned connection its first account
+// under a manifest that sets owner_email, or "" when it may. The account's email, captured
+// from the id_token, must be the one the app's backend last said the owner signs in with
+// (auth.EmailHeader), compared without case and surrounding space, and an email_verified
+// the id_token carries must be true (OpenID Connect Core 1.0 section 5.1). With no email
+// said, nothing tells whose account it is, so the consent is refused.
+func ownerEmailRefusal(asserted string, account core.AccountInfo) string {
+	asserted = strings.TrimSpace(asserted)
+	if asserted == "" {
+		return "the app has not said which email its user signs in with (" + auth.EmailHeader + ")"
+	}
+	if verified, said := account.Metadata[core.OwnerEmailVerified]; said && verified != "true" {
+		return "the provider has not verified the email of the account that consented"
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.Metadata[core.OwnerEmailCapture]), asserted) {
+		return "the account that consented is not the one the app's user signs in with"
+	}
+	return ""
+}
+
+// recordRefusal keeps why the provider refused a consent as the connection's last validation,
+// which the dashboard shows on the connection, so its person reads why and not only that the
+// consent failed. code and description are already cut as a log line has them
+// (core.LoggedDescription), so neither holds the callback's state or code. A connected
+// connection keeps its grant and the last validate of that grant, as on base.
+func (s *Server) recordRefusal(ctx context.Context, connection store.ConnectorConnection, code, description string) {
+	if connection.Status == store.ConnectionConnected {
+		return
+	}
+	reason := "The provider refused the consent with " + code
+	if description != "" {
+		reason += ": " + description
+	}
+	if !strings.HasSuffix(reason, ".") {
+		reason += "."
+	}
+	if code == "unauthorized_client" {
+		reason += " " + fmt.Sprintf(unauthorizedClientHint, connectorCallbackURL(s.publicURL))
+	}
+	err := s.store.PutConnectorConnectionValidation(ctx, &store.ConnectorConnectionValidation{
+		ConnectionID: connection.ID, Revision: connection.Revision, Status: validationFailed,
+		Code: codeConsentRefused, Error: reason, CheckedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		s.logger.Error("could not record why a consent was refused", "connection", connection.ID, "error", err)
+	}
+}
+
+// beforeComplete runs the hook the manifest names at before_complete, if any, on a copy of
+// the full callback query (core.HookBeforeComplete), such as a signed callback's check. A
+// hook the manifest names that is not registered fails the consent rather than skipping a
+// check the manifest asked for.
+func (s *Server) beforeComplete(ctx context.Context, manifest core.ResolvedManifest, query url.Values) error {
+	name, named := manifest.Hooks[core.HookBeforeComplete]
+	if !named {
+		return nil
+	}
+	hook, found := s.connectors.Hooks[name]
+	if !found {
+		return fmt.Errorf("hook %q is not registered", name)
+	}
+	return hook(ctx, &core.HookContext{Point: core.HookBeforeComplete, Manifest: manifest, Query: cloneValues(query)})
+}
+
+// serveConnectorClientMetadata serves the router's OAuth Client ID Metadata Document, which
+// a server that supports CIMD fetches at the client_id URL. With no https
+// ROUTER_PUBLIC_URL there is no client_id URL (CIMD section 3), so there is no document.
+func (s *Server) serveConnectorClientMetadata(w http.ResponseWriter, _ *http.Request) {
+	clientID := ConnectorClientMetadataURL(s.publicURL)
+	if clientID == "" {
+		writeError(w, notFound("no client metadata document: ROUTER_PUBLIC_URL is not an https URL"))
+		return
+	}
+	document := oauth2code.ClientMetadataDocument(clientID,
+		[]string{connectorCallbackURL(s.publicURL)})
+	w.Header().Set("Cache-Control", clientMetadataMaxAge)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_ = json.NewEncoder(w).Encode(document)
+}
+
+// ConnectorClientMetadataURL is the router's client_id under CIMD for publicURL, and empty
+// when publicURL is not https, which CIMD section 3 requires of a client_id URL.
+func ConnectorClientMetadataURL(publicURL string) string {
+	base := strings.TrimRight(publicURL, "/")
+	if !strings.HasPrefix(base, "https://") {
+		return ""
+	}
+	return base + ConnectorClientMetadataPath
+}
+
+// attemptCookie is the cookie binding an attempt to one browser, or, with no value, the one
+// that clears it. Its attributes, from draft-ietf-httpbis-rfc6265bis-22:
+//
+//   - HttpOnly (section 4.1.2.6): no script reads it, the launch page's included.
+//   - Secure (section 4.1.2.5) whenever ROUTER_PUBLIC_URL is https, so it never travels in
+//     the clear; a local http router leaves it off, or no browser would send it back.
+//   - SameSite=Lax (section 5.6.7.1): sent with the provider's redirect, which is a
+//     cross-site top-level navigation with a safe method, and with nothing cross-site
+//     else. Strict would not be sent with that redirect, so every consent would fail.
+//   - Path is the callback alone (section 4.1.2.4), so no other route ever receives it;
+//     the section says a path is not a security boundary, and nothing here relies on it.
+//   - Expires and Max-Age (sections 4.1.2.1, 4.1.2.2) end it with the attempt.
+func (s *Server) attemptCookie(id, value string, expires time.Time) *http.Cookie {
+	cookie := &http.Cookie{
+		Name:     attemptCookiePrefix + id,
+		Value:    value,
+		Path:     ConnectorCallbackPath,
+		HttpOnly: true,
+		Secure:   strings.HasPrefix(s.publicURL, "https://"),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	}
+	if value != "" {
+		cookie.Expires = expires
+		cookie.MaxAge = max(int(time.Until(expires).Seconds()), 1)
+	}
+	return cookie
+}
+
+// missingOAuthClient answers a consent that found no OAuth client (oauth2code.ErrNoClient), or
+// whose dynamic registration gave none (oauth2code.ErrRegistration), with every way to give the
+// connector one that its client.registration lists: the app's own client (customer,
+// setConnectorOAuthClient) and the app the router creates (managed, setConnectorProviderApp).
+// ok is false when it lists neither, since the app can then give none. WWSD platform feedback
+// #4: the answer used to name only the first, and finding the second took reading every
+// connector operation.
+func missingOAuthClient(err error, manifest core.ResolvedManifest, connectorID, redirectURI string, providerApp bool) (APIError, bool) {
+	var ways []string
+	if slices.Contains(manifest.Client.Registration, core.ClientCustomer) {
+		// What checkOAuthClient asks of a client for this connector: a signing secret and
+		// the app it signs for only where the channel is verified with the app's own secret.
+		takes := "its client_id and client_secret"
+		if manifest.Client.AuthMethod == core.AuthNone {
+			// A public client has no secret, and PUT oauth-client refuses one (checkOAuthClient).
+			takes = "its client_id"
+		}
+		if manifest.Channel != nil && manifest.Channel.Verifier.Secret == core.SecretProviderApp {
+			takes += ", and the app's provider_app_id and signing_secret, which its events are verified with"
+		}
+		ways = append(ways, fmt.Sprintf("put the app's own OAuth client with PUT /v1/agents/connectors/%s/oauth-client, "+
+			"giving %s; the client must list the redirect URI %s", connectorID, takes, redirectURI))
+	}
+	// providerApp is whether PUT provider-app would take the connector (whyNotManaged) on a
+	// deployment that serves it (setConnectorProviderApp).
+	if providerApp && slices.Contains(manifest.Client.Registration, core.ClientManaged) {
+		// What setConnectorProviderApp needs the first time (ConnectorProviderAppRequest): the
+		// name is required.
+		ways = append(ways, fmt.Sprintf("have the router create the app with PUT /v1/agents/connectors/%s/provider-app, "+
+			"giving the app's name and the refresh token of an app configuration token a workspace admin generates in Slack's app settings", connectorID))
+	}
+	if len(ways) == 0 {
+		return APIError{}, false
+	}
+	return APIError{Type: ErrorTypeInvalidRequest, Code: codeNoOAuthClient, Message: fmt.Sprintf(
+		"the provider's consent could not be started: %v; %s", err, strings.Join(ways, "; or "))}, true
+}
+
+// connectionManifest is the connection's definition at revision, resolved for its inputs
+// and what earlier consents captured.
+func (s *Server) connectionManifest(ctx context.Context, connection store.ConnectorConnection, revision int) (core.ResolvedManifest, error) {
+	return connectionManifest(ctx, s.store, connection, revision)
+}
+
+// connectionManifest keeps only the captured values revision still captures. A consent runs
+// on the latest revision (begin), which may have dropped a capture rule the connection's own
+// revision had; no template of revision can name that value, and Resolve refuses one it does
+// not capture. At the connection's own revision every value is one it captured, so nothing
+// is left out.
+func connectionManifest(ctx context.Context, records *store.Store, connection store.ConnectorConnection, revision int) (core.ResolvedManifest, error) {
+	definition, err := records.ConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID, revision)
+	if err != nil {
+		return core.ResolvedManifest{}, err
+	}
+	return definitionManifest(definition, connection)
+}
+
+// definitionManifest is definition resolved for the connection, as connectionManifest. Its
+// only error is Resolve's: definition does not take the connection's scheme, inputs or
+// captured values.
+func definitionManifest(definition store.ConnectorDefinition, connection store.ConnectorConnection) (core.ResolvedManifest, error) {
+	metadata := maps.Clone(connection.Metadata)
+	maps.DeleteFunc(metadata, func(name, _ string) bool {
+		return !slices.ContainsFunc(definition.Manifest.Capture, func(rule core.CaptureRule) bool { return rule.Name == name })
+	})
+	return definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, metadata)
+}
+
+// openAttemptByID and openAttemptByState read an open attempt and open what it sealed. A
+// blob that does not open for this row is the same as no attempt.
+func (s *Server) openAttemptByID(ctx context.Context, id string) (store.ConnectorAuthorizationAttempt, attempt, error) {
+	if id == "" {
+		return store.ConnectorAuthorizationAttempt{}, attempt{}, store.ErrNoAuthorizationAttempt
+	}
+	row, err := s.store.ConnectorAuthorizationAttemptByID(ctx, id)
+	return s.openedAttempt(row, err)
+}
+
+func (s *Server) openAttemptByState(ctx context.Context, state string) (store.ConnectorAuthorizationAttempt, attempt, error) {
+	row, err := s.store.ConnectorAuthorizationAttemptByState(ctx, state)
+	return s.openedAttempt(row, err)
+}
+
+func (s *Server) openedAttempt(row store.ConnectorAuthorizationAttempt, err error) (store.ConnectorAuthorizationAttempt, attempt, error) {
+	if err != nil {
+		return row, attempt{}, err
+	}
+	plain, err := s.connectorSecrets.OpenWithAADVersion(row.AttemptSealed, attemptAAD(row.CustomerID, row.ConnectionID, row.ID), row.KEKVersion)
+	var opened attempt
+	if err != nil || json.Unmarshal([]byte(plain), &opened) != nil || opened.Handoff == "" {
+		return row, attempt{}, store.ErrNoAuthorizationAttempt
+	}
+	return row, opened, nil
+}
+
+// attemptAAD binds a sealed attempt to its tenant, connection and id, so a blob copied onto
+// another row does not open. Each part is length-prefixed, as pgsealed's credentialsAAD is,
+// so no two triples give the same bytes. v1 changes with the layout.
+func attemptAAD(customerID, connectionID, id string) []byte {
+	return fmt.Appendf(nil, "accelerate:connector-attempt:v1:%d:%s:%d:%s:%d:%s",
+		len(customerID), customerID, len(connectionID), connectionID, len(id), id)
+}
+
+// authorizeState is the state parameter of an authorize URL: RFC 6749 section 4.1.1 has the
+// client send it there, and section 4.1.2 has the server return it unchanged in the
+// callback, which is how the callback finds its attempt.
+func authorizeState(authorizeURL string) (string, error) {
+	parsed, err := url.Parse(authorizeURL)
+	if err != nil {
+		return "", fmt.Errorf("api: the scheme's authorize URL does not parse: %w", err)
+	}
+	state := parsed.Query()["state"]
+	if len(state) != 1 || state[0] == "" {
+		return "", errors.New("api: the scheme's authorize URL carries no single state")
+	}
+	return state[0], nil
+}
+
+// originOf is scheme://host[:port] of an http(s) URL in the form a browser's Origin header
+// has: scheme and host lowercased and the scheme's default port dropped, as the URL
+// Standard's parser leaves them.
+func originOf(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User != nil || parsed.Host == "" {
+		return "", errors.New("api: not an http(s) URL with a host")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New("api: not an http(s) URL with a host")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := parsed.Port(); port != "" && !(scheme == "https" && port == "443") && !(scheme == "http" && port == "80") {
+		host += ":" + port
+	}
+	return scheme + "://" + host, nil
+}
+
+// checkReturnURL is why raw cannot be a consent's return_url, or nil. The launch page posts
+// the handoff to its origin's opener and the callback sends the browser to it, so it must be
+// a page a browser opens: an http(s) URL with a host. Or it is a native app's own scheme,
+// which the callback's redirect hands back to the app, and whose launch page reads its fragment
+// rather than an opener, so it needs no host and no origin.
+func checkReturnURL(raw string) error {
+	if len(raw) > maxReturnURLBytes {
+		return fmt.Errorf("longer than %d bytes", maxReturnURLBytes)
+	}
+	parsed, err := url.Parse(raw)
+	app := err == nil && nativeAppScheme(parsed.Scheme)
+	if err != nil || !parsed.IsAbs() || (!app && parsed.Hostname() == "") {
+		return errors.New("not an absolute URL with a host")
+	}
+	// A browser's Origin holds the host in punycode (URL Standard, host parsing), so the origin
+	// the launch page would name for a Unicode host never matches event.origin.
+	host := parsed.Hostname()
+	for _, r := range host {
+		if r > unicode.MaxASCII && !app {
+			return errors.New("a host with non-ASCII characters is refused; write it in punycode (xn--)")
+		}
+	}
+	// A browser writes an IPv4-mapped address in its hexadecimal form ([::ffff:7f00:1]), not as
+	// written here, so the origin the launch page names would never match.
+	if ip := net.ParseIP(host); ip != nil && strings.Contains(host, ":") && ip.To4() != nil && !app {
+		return errors.New("an IPv4-mapped IPv6 address is refused; write the IPv4 address")
+	}
+	if parsed.User != nil {
+		return errors.New("a URL carrying a user name or password is refused")
+	}
+	// An empty fragment ("…#") leaves parsed.Fragment empty, so the string is what is checked.
+	if strings.Contains(raw, "#") {
+		return errors.New("a URL with a fragment is refused (RFC 6749 section 3.1.2)")
+	}
+	// The callback adds connection_id and status to the query (finishConnectorConsent); a pair
+	// that does not parse would be dropped there rather than kept.
+	if _, err := url.ParseQuery(parsed.RawQuery); err != nil {
+		return errors.New("a query that is not key=value pairs is refused, since the callback adds to it")
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		// RFC 8252 sections 7.3 and 8.3: plain http is for the loopback interface alone,
+		// which never leaves the machine.
+		if loopbackHost(parsed.Hostname()) {
+			return nil
+		}
+		return errors.New("http is taken for a loopback host alone (localhost, 127.0.0.0/8 or [::1]); use https")
+	}
+	if app {
+		return nil
+	}
+	return errors.New("the scheme must be https, or a native app's own in reverse domain form, " +
+		"such as com.example.app (RFC 8252 section 7.1)")
+}
+
+// nativeAppScheme is whether scheme is a native app's private-use one: RFC 8252 section 7.1
+// has an app use a domain name it controls, in reverse order, which is what keeps it from
+// colliding with another app's. Requiring that dot is also what leaves out javascript, data,
+// file and every other scheme a browser runs or reads rather than hands to an app.
+func nativeAppScheme(scheme string) bool {
+	return strings.Contains(scheme, ".") && scheme != "http" && scheme != "https"
+}
+
+// returnsToNativeApp is whether a return_url checkReturnURL took is a native app's own scheme.
+func returnsToNativeApp(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && nativeAppScheme(parsed.Scheme)
+}
+
+// randomToken is size bytes from crypto/rand, base64url without padding, which is safe in a
+// cookie value (RFC 6265bis section 4.1.1, cookie-octet) and in JSON.
+func randomToken(size int) (string, error) {
+	raw := make([]byte, size)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func cloneValues(values url.Values) url.Values {
+	cloned := make(url.Values, len(values))
+	for key, value := range values {
+		cloned[key] = append([]string(nil), value...)
+	}
+	return cloned
+}

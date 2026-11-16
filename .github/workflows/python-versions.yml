@@ -1,7 +1,7 @@
 name: Python compatibility check
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "accelerate" ]
     paths:
       - '**/pyproject.toml'
       - 'uv.lock'
@@ -16,7 +16,7 @@ on:
       - '.github/workflows/python-versions.yml'
 
 concurrency:
-  group: python-compatibility-${{ github.workflow }}-${{ github.ref }}
+  group: python-compatibility-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -36,5 +36,7 @@ jobs:
         uses: actions/checkout@v6
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
+        with:
+          sync-flags: "--frozen --only-group dev"
       - name: Resolve every workspace member on Python ${{ matrix.python }}
         run: uv run --no-sync dev.py check-python-versions ${{ matrix.python }}

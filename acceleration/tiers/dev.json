@@ -1,0 +1,21 @@
+{"tiers": [
+  {"name": "default", "fail_mode": "closed", "limits": {
+    "channels": {
+      "sms":      {"per_day": 10, "recipients_per_day": 5, "countries": ["NL", "IT"]},
+      "whatsapp": {"per_day": 10, "recipients_per_day": 5, "countries": ["NL", "IT"]},
+      "rcs":      {"per_day": 10, "recipients_per_day": 5, "countries": ["NL", "IT"]},
+      "imessage": {"per_day": 10, "recipients_per_day": 5, "countries": ["NL", "IT"]},
+      "voice":    {"per_day": 10, "recipients_per_day": 5, "countries": ["NL", "IT"], "concurrent": 1}},
+    "sandbox": {"network": "none", "max_cpu": 1, "max_memory_gb": 2, "max_disk_gb": 5, "max_concurrent": 1},
+    "low_balance_micros": 1000000}},
+  {"name": "tier-a", "fail_mode": "open", "limits": {
+    "spend_hard_limit": {"daily_micros": 25000000, "monthly_micros": 250000000},
+    "channels": {
+      "sms":      {"per_day": 100, "recipients_per_day": 50},
+      "whatsapp": {"per_day": 100, "recipients_per_day": 50},
+      "rcs":      {"per_day": 100, "recipients_per_day": 50},
+      "imessage": {"per_day": 100, "recipients_per_day": 50},
+      "voice":    {"per_day": 100, "recipients_per_day": 50, "concurrent": 10}},
+    "sandbox": {"network": "allow_list", "max_cpu": 2, "max_memory_gb": 8, "max_disk_gb": 20, "max_concurrent": 10},
+    "low_balance_micros": 10000000}}
+]}

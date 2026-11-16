@@ -1,0 +1,6 @@
+Dockerfile
+.dockerignore
+README.md
+deploy/
+**/*_test.go
+**/testdata/

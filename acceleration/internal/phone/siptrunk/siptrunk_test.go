@@ -1,0 +1,537 @@
+package siptrunk
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
+)
+
+// fakeCall is a connected call that ends when it is hung up, let go, or the other side
+// says bye.
+type fakeCall struct {
+	media    sipbridge.MediaAddrs
+	done     chan struct{}
+	once     sync.Once
+	mu       sync.Mutex
+	state    sipbridge.CallState
+	err      error
+	hungUp   bool
+	released bool
+	// hangupGate, when set, holds Hangup back until it is closed, and hangingUp, when set, hears
+	// that Hangup was entered.
+	hangupGate chan struct{}
+	hangingUp  chan struct{}
+}
+
+func newFakeCall() *fakeCall { return &fakeCall{done: make(chan struct{})} }
+
+func (c *fakeCall) Done() <-chan struct{} { return c.done }
+func (c *fakeCall) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+func (c *fakeCall) Media() sipbridge.MediaAddrs {
+	return c.media
+}
+func (c *fakeCall) Hangup(context.Context) error {
+	if c.hangingUp != nil {
+		select {
+		case c.hangingUp <- struct{}{}:
+		default:
+		}
+	}
+	if c.hangupGate != nil {
+		<-c.hangupGate
+	}
+	c.end(nil, func() { c.hungUp = true })
+	return nil
+}
+func (c *fakeCall) Release() {
+	c.end(sipbridge.ErrReleased, func() { c.released = true })
+}
+func (c *fakeCall) State() sipbridge.CallState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state
+}
+
+// bye ends the call as a BYE from either side would.
+func (c *fakeCall) bye() { c.end(nil, func() {}) }
+
+func (c *fakeCall) setState(state sipbridge.CallState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.state = state
+}
+
+func (c *fakeCall) end(err error, mark func()) {
+	c.once.Do(func() {
+		c.mu.Lock()
+		c.err = err
+		mark()
+		c.mu.Unlock()
+		close(c.done)
+	})
+}
+
+func (c *fakeCall) wasHungUp() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hungUp
+}
+
+func (c *fakeCall) wasReleased() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.released
+}
+
+// fakeDialer records what it was asked to dial and answers with call or err.
+type fakeDialer struct {
+	mu     sync.Mutex
+	ctx    context.Context
+	config sipbridge.Config
+	call   *fakeCall
+	err    error
+	blocks bool // the dial waits for ctx to end, like a phone nobody picks up
+	// gate, when set, holds the answer back until it is closed, whatever ctx does.
+	gate    chan struct{}
+	dialled chan struct{}
+	// respondsAfter, when set, is the post-dial delay the dial tells the config's Responded.
+	respondsAfter time.Duration
+}
+
+func (d *fakeDialer) dial(ctx context.Context, config sipbridge.Config) (call, error) {
+	d.mu.Lock()
+	d.ctx, d.config = ctx, config
+	d.mu.Unlock()
+	close(d.dialled)
+	if d.respondsAfter > 0 {
+		config.Call.Responded(d.respondsAfter)
+	}
+	if d.gate != nil {
+		<-d.gate
+	}
+	if d.blocks {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if d.err != nil {
+		return nil, d.err
+	}
+	return d.call, nil
+}
+
+type SIPTrunkSuite struct {
+	suite.Suite
+	dialer   *fakeDialer
+	provider *Provider
+}
+
+func TestSIPTrunkSuite(t *testing.T) { suite.Run(t, new(SIPTrunkSuite)) }
+
+func (s *SIPTrunkSuite) SetupTest() {
+	s.dialer = &fakeDialer{call: newFakeCall(), dialled: make(chan struct{})}
+	s.provider = newProvider(Options{Logger: slog.New(slog.DiscardHandler)}, s.dialer.dial, nil)
+}
+
+func (s *SIPTrunkSuite) TearDownTest() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+}
+
+// Built at runtime so no literal reads as a credential.
+var (
+	placedTrunkPassword  = strings.Repeat("p", 12)
+	placedBridgePassword = strings.Repeat("q", 12)
+)
+
+func outbound() phone.Outbound {
+	return phone.Outbound{
+		From: "+15550000301",
+		To:   "+15550000302",
+		Bridge: phone.Bridge{
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: placedBridgePassword,
+		},
+		RingTimeout: 20 * time.Second,
+		Trunk: &phone.SIPTrunk{
+			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
+			Password: placedTrunkPassword, LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
+		},
+	}
+}
+
+func (s *SIPTrunkSuite) waitForDial() {
+	select {
+	case <-s.dialer.dialled:
+	case <-time.After(time.Second):
+		s.FailNow("the call was never dialled")
+	}
+}
+
+// live takes the provider rather than reading s.provider, because an Eventually check can
+// still be running when the next test's SetupTest replaces it.
+func live(p *Provider, id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.calls[id]
+	return ok
+}
+
+// waitForCalls waits until every call's goroutine has returned, without closing the provider.
+func (s *SIPTrunkSuite) waitForCalls() {
+	finished := make(chan struct{})
+	go func() {
+		s.provider.running.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		s.FailNow("a call is still running")
+	}
+}
+
+func (s *SIPTrunkSuite) TestDialReturnsAtOnceAsQueued() {
+	dialed, err := s.provider.Dial(context.Background(), outbound())
+
+	s.Require().NoError(err)
+	s.Equal("queued", dialed.Status)
+	_, err = uuid.Parse(dialed.VendorCallID)
+	s.NoError(err)
+}
+
+func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
+	_, err := s.provider.Dial(context.Background(), outbound())
+	s.Require().NoError(err)
+	s.waitForDial()
+
+	s.dialer.mu.Lock()
+	got := s.dialer.config
+	s.dialer.mu.Unlock()
+	got.Logger = nil
+	s.NotNil(got.Call.Responded, "the bridge has somewhere to tell the post-dial delay")
+	got.Call.Responded = nil
+	want := sipbridge.Config{
+		CustomerTrunk: sipbridge.CustomerTrunk{
+			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
+			Password: placedTrunkPassword, LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
+		},
+		Stream: sipbridge.StreamTrunk{
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: placedBridgePassword,
+		},
+		Call: sipbridge.CallParams{From: "+15550000301", To: "+15550000302", RingTimeout: 20 * time.Second},
+	}.WithDefaults()
+	want.Logger = nil
+	s.Equal(want, got)
+}
+
+func (s *SIPTrunkSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
+func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheCallID() {
+	placing := outbound()
+	placing.CallID = "abc"
+
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	s.waitForDial()
+
+	s.dialer.mu.Lock()
+	defer s.dialer.mu.Unlock()
+	s.Equal("abc", s.dialer.config.Call.CallID)
+}
+
+func (s *SIPTrunkSuite) TestAConnectedCallSaysWhereEachSidesAudioComesFrom() {
+	s.dialer.call.media = sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}
+	told := make(chan sipbridge.MediaAddrs, 1)
+	placing := outbound()
+	placing.Connected = func(media sipbridge.MediaAddrs) { told <- media }
+
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+
+	select {
+	case media := <-told:
+		s.Equal(sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}, media)
+	case <-time.After(time.Second):
+		s.FailNow("the connected call never said where its audio comes from")
+	}
+}
+
+func (s *SIPTrunkSuite) TestASlowConnectedCallbackDoesNotHoldUpTheHangup() {
+	told, release := make(chan struct{}), make(chan struct{})
+	placing := outbound()
+	placing.Connected = func(sipbridge.MediaAddrs) {
+		close(told)
+		<-release
+	}
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	<-told
+
+	s.provider.stop()
+
+	call := s.dialer.call
+	s.Eventually(call.wasHungUp, time.Second, 10*time.Millisecond, "the hang-up waited for the callback")
+	close(release)
+}
+
+func (s *SIPTrunkSuite) TestCancellingTheRequestDoesNotEndTheCall() {
+	request, cancel := context.WithCancel(context.Background())
+	dialed, err := s.provider.Dial(request, outbound())
+	s.Require().NoError(err)
+	cancel()
+	s.waitForDial()
+
+	s.dialer.mu.Lock()
+	dialCtx := s.dialer.ctx
+	s.dialer.mu.Unlock()
+	s.NoError(dialCtx.Err(), "the call runs on the node's context, not the request's")
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+	s.False(s.dialer.call.wasHungUp())
+}
+
+func (s *SIPTrunkSuite) TestAnEndedCallIsForgotten() {
+	dialed, err := s.provider.Dial(context.Background(), outbound())
+	s.Require().NoError(err)
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	s.Require().NoError(s.dialer.call.Hangup(context.Background()))
+	s.waitForCalls()
+	s.False(live(p, dialed.VendorCallID))
+}
+
+func (s *SIPTrunkSuite) TestAFailedDialIsForgotten() {
+	s.dialer.err = errors.New("407 Proxy Authentication Required")
+
+	dialed, err := s.provider.Dial(context.Background(), outbound())
+	s.Require().NoError(err, "the failure happens after the request has been answered")
+	s.waitForCalls()
+	s.False(live(s.provider, dialed.VendorCallID))
+}
+
+func (s *SIPTrunkSuite) TestCloseHangsUpEveryCall() {
+	dialed, err := s.provider.Dial(context.Background(), outbound())
+	s.Require().NoError(err)
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+
+	s.True(s.dialer.call.wasHungUp())
+	s.False(live(p, dialed.VendorCallID))
+}
+
+func (s *SIPTrunkSuite) TestWithoutRedisCloseStillHangsUp() {
+	placing := outbound()
+	placing.Resume = &phone.TrunkCallRef{CustomerID: "acme", SIPTrunkID: "trunk-1", CallID: "call-1"}
+	dialed, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+
+	s.True(s.dialer.call.wasHungUp(), "a call another node could continue is still hung up when no node can")
+	s.False(s.dialer.call.wasReleased())
+}
+
+func (s *SIPTrunkSuite) TestCloseCancelsACallStillBeingSetUp() {
+	s.dialer.blocks = true
+
+	dialed, err := s.provider.Dial(context.Background(), outbound())
+	s.Require().NoError(err)
+	s.Equal("queued", dialed.Status)
+	s.waitForDial()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+
+	s.dialer.mu.Lock()
+	dialCtx := s.dialer.ctx
+	s.dialer.mu.Unlock()
+	s.ErrorIs(dialCtx.Err(), context.Canceled)
+	s.False(live(s.provider, dialed.VendorCallID))
+	s.False(s.dialer.call.wasHungUp(), "a call that never connected has nothing to hang up")
+}
+
+func (s *SIPTrunkSuite) TestADialAfterCloseIsRefused() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+
+	_, err := s.provider.Dial(context.Background(), outbound())
+	s.EqualError(err, "phone: this node is shutting down and places no more calls")
+}
+
+func (s *SIPTrunkSuite) TestACallNeedsATrunkWithAPassword() {
+	withoutTrunk := outbound()
+	withoutTrunk.Trunk = nil
+	_, err := s.provider.Dial(context.Background(), withoutTrunk)
+	s.EqualError(err, "phone: a call through a customer's sip trunk needs the trunk")
+
+	withoutPassword := outbound()
+	withoutPassword.Trunk.Password = ""
+	_, err = s.provider.Dial(context.Background(), withoutPassword)
+	s.EqualError(err, "phone: the sip trunk has no password; set one before calling through it")
+}
+
+func (s *SIPTrunkSuite) TestOnlyTheRingTimeoutCanBeExpressed() {
+	s.True(s.provider.Dials(phone.FeatureRingTimeout))
+	s.False(s.provider.Dials(phone.FeatureInitialDigits))
+	s.False(s.provider.Dials(phone.FeatureCustomHeaders))
+	s.Equal(phone.SIPTrunkVendor, s.provider.Vendor())
+}
+
+func (s *SIPTrunkSuite) TestNothingIsBoughtOrPressedHere() {
+	ctx := context.Background()
+	const notSold = "phone: numbers on a customer's own sip trunk are the customer's, not bought here"
+	_, err := s.provider.SearchNumbers(ctx, phone.Search{})
+	s.EqualError(err, notSold)
+	_, err = s.provider.BuyNumber(ctx, phone.Order{})
+	s.EqualError(err, notSold)
+	s.EqualError(s.provider.ReleaseNumber(ctx, "+15550000301"), notSold)
+	s.EqualError(s.provider.ConfigureInbound(ctx, phone.Inbound{}),
+		"phone: inbound calls on a customer's own sip trunk are not supported")
+	s.EqualError(s.provider.SendDigits(ctx, "id", "1"),
+		"phone: digits cannot be pressed on a call through a customer's own sip trunk")
+	s.ErrorIs(s.provider.SendDigits(ctx, "id", "1"), phone.ErrInvalid)
+}
+
+func (s *SIPTrunkSuite) TestClosingTheServiceHangsUpThisProvidersCalls() {
+	service, err := phone.NewService(phone.ServiceOptions{
+		Registry: phone.NewRegistry(phone.Config{}), SIPTrunks: s.provider,
+	})
+	s.Require().NoError(err)
+	dialed, err := s.provider.Dial(context.Background(), outbound())
+	s.Require().NoError(err)
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(service.Close(ctx))
+
+	s.True(s.dialer.call.wasHungUp())
+	s.False(live(p, dialed.VendorCallID))
+}
+
+// endsWith dials with the dialer failing with err, or answering when err is nil, and returns
+// how the call was reported to have ended.
+func (s *SIPTrunkSuite) endsWith(err error) phone.CallStatus {
+	s.dialer.err = err
+	ended := make(chan phone.CallStatus, 1)
+	placing := outbound()
+	placing.Ended = func(status phone.CallStatus) { ended <- status }
+
+	_, dialErr := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(dialErr)
+	if err == nil {
+		s.waitForDial()
+		s.Require().NoError(s.dialer.call.Hangup(context.Background()))
+	}
+	return s.reported(ended)
+}
+
+func (s *SIPTrunkSuite) reported(ended <-chan phone.CallStatus) phone.CallStatus {
+	select {
+	case status := <-ended:
+		return status
+	case <-time.After(time.Second):
+		s.FailNow("the call never said how it ended")
+		return phone.CallStatus{}
+	}
+}
+
+func refused(code int, reason string) error {
+	return fmt.Errorf("sipbridge: customer leg: %w", &sipbridge.Unanswered{Code: code, Reason: reason})
+}
+
+func (s *SIPTrunkSuite) TestABusyTrunkReportsBusy() {
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "486", SIPCode: 486}, s.endsWith(refused(486, "Busy Here")))
+}
+
+func (s *SIPTrunkSuite) TestADeclineReportsBusy() {
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "603", SIPCode: 603}, s.endsWith(refused(603, "Decline")))
+}
+
+func (s *SIPTrunkSuite) TestA480ReportsNoAnswer() {
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "480", SIPCode: 480},
+		s.endsWith(refused(480, "Temporarily Unavailable")))
+}
+
+func (s *SIPTrunkSuite) TestARequestTimeoutReportsNoAnswer() {
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "408", SIPCode: 408}, s.endsWith(refused(408, "Request Timeout")))
+}
+
+func (s *SIPTrunkSuite) TestARingTimeoutReportsNoAnswer() {
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "ring timeout"}, s.endsWith(refused(0, "")))
+}
+
+func (s *SIPTrunkSuite) TestAnotherRefusalReportsFailed() {
+	s.Equal(phone.CallStatus{Result: phone.CallFailed, Word: "503", SIPCode: 503}, s.endsWith(refused(503, "Service Unavailable")))
+}
+
+func (s *SIPTrunkSuite) TestADialThatFailsWithoutARefusalReportsFailed() {
+	s.Equal(phone.CallFailed, s.endsWith(errors.New("connection refused")).Result)
+}
+
+func (s *SIPTrunkSuite) TestAnAnsweredCallThatEndsReportsCompleted() {
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.endsWith(nil))
+}
+
+func (s *SIPTrunkSuite) TestARingTimeoutReportsNoSIPCode() {
+	s.Zero(s.endsWith(refused(0, "")).SIPCode, "nothing answered the INVITE")
+}
+
+func (s *SIPTrunkSuite) TestTheBridgesPostDialDelayIsReportedWithHowTheCallEnded() {
+	s.dialer.respondsAfter = 1500 * time.Millisecond
+
+	s.Equal(1500*time.Millisecond, s.endsWith(refused(486, "Busy Here")).PostDialDelay)
+}
+
+func (s *SIPTrunkSuite) TestAnAnsweredCallReportsItsPostDialDelay() {
+	s.dialer.respondsAfter = 2 * time.Second
+
+	s.Equal(2*time.Second, s.endsWith(nil).PostDialDelay)
+}
+
+func (s *SIPTrunkSuite) TestACallNoResponseReachedReportsNoPostDialDelay() {
+	s.Zero(s.endsWith(errors.New("connection refused")).PostDialDelay)
+}
+
+func (s *SIPTrunkSuite) TestStoppingTheNodeWhileRingingReportsCanceled() {
+	s.dialer.blocks = true
+	ended := make(chan phone.CallStatus, 1)
+	placing := outbound()
+	placing.Ended = func(status phone.CallStatus) { ended <- status }
+	_, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	s.waitForDial()
+
+	s.provider.stop()
+
+	s.Equal(phone.CallCanceled, s.reported(ended).Result)
+}

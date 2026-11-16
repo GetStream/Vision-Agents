@@ -1,0 +1,361 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// ConnectionInvocation is one connector tool call a session ran through a connection. It
+// holds no argument and no result, for any session.
+type ConnectionInvocation struct {
+	ID           string               `json:"id"`
+	ConnectionID string               `json:"connection_id"`
+	ConnectorID  string               `json:"connector_id"`
+	ConfigID     string               `json:"config_id" doc:"The agent config whose binding the call went through."`
+	Binding      string               `json:"binding" doc:"The alias the config binds the connector under."`
+	Tool         string               `json:"tool" doc:"The tool's name at the provider, without the alias."`
+	SessionID    string               `json:"session_id,omitempty" doc:"The session that called it. Absent for an incognito session, whose calls are tied to no conversation."`
+	StartedAt    time.Time            `json:"started_at"`
+	LatencyMs    int64                `json:"latency_ms" doc:"From the call reaching the router to its answer, the router's own checks included."`
+	ErrorType    *InvocationErrorType `json:"error_type,omitempty" doc:"How the call failed. Absent for a call that answered."`
+	// The row's provider_status and error_message (20261031130000_connector_invocation_failures.sql).
+	ProviderStatus *int                 `json:"provider_status,omitempty" doc:"The HTTP status the provider answered the call's last request with. Absent for a call that answered, and for one no request of which was answered: the router refused or held it, or the provider could not be reached."`
+	ErrorMessage   string               `json:"error_message,omitempty" doc:"Why the call failed: the start of the provider's error body when it answered with a 4xx or a 5xx, else what the call's error said, at most 1 KiB. Every URL in it keeps only its scheme and host, and the connection's credential and the request's path are taken out. A call the router held for the provider's rate limit says rate limited by the router: retry after <seconds>s. Absent for a call that answered, and for a call recorded before the router kept it."`
+	Arguments      []InvocationArgument `json:"arguments,omitempty" doc:"The shape of what the call was asked, sorted by name. Absent for a call asked with no arguments, for an incognito session's call, for arguments that were not a JSON object, and for a call recorded before the router kept it."`
+}
+
+func (*ConnectionInvocation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One connector tool call a session ran through the connection: the " +
+		"binding, the tool, the shape of its arguments, how long it took and how it failed. No " +
+		"value the call was asked, and nothing it answered, is kept."
+	return schema
+}
+
+// InvocationArgument is one top-level argument of a connector tool call without its value
+// (store.ArgumentShape, AI-990 F40).
+type InvocationArgument struct {
+	Name string `json:"name" doc:"The argument's name, when the tool's input schema declares it under properties. The arguments it does not declare, whose names a model may choose, are one entry named (undeclared): type object, length their count."`
+	// RFC 8259 section 3's six types of a JSON value.
+	Type   string `json:"type" enum:"object,array,string,number,boolean,null" doc:"The argument's JSON type."`
+	Length *int   `json:"length,omitempty" doc:"A string's characters (Unicode code points) or an array's elements, or for (undeclared) the number of undeclared arguments. Absent for any other type."`
+}
+
+func (*InvocationArgument) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One argument a connector tool call was asked with: its name, its JSON type " +
+		"and, for a string or an array, its length, so an empty string shows as length 0. Never its value."
+	return schema
+}
+
+// InvocationErrorType is how a connector tool call failed.
+type InvocationErrorType string
+
+func (InvocationErrorType) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "InvocationErrorType",
+		"customer_auth: the provider refused the connection's credential, or it had none; "+
+			"reconnect it. external_server: the provider answered with a failure or could not "+
+			"be reached. client_timeout: the router stopped waiting before the provider "+
+			"answered, and nothing says it got the call. outcome_unknown: the call was sent and "+
+			"cut off, by the binding's timeout or an interrupted turn, so it may have been done. "+
+			"denied: the router refused it before anything was sent.",
+		store.InvocationCustomerAuth, store.InvocationExternalServer, store.InvocationClientTimeout,
+		store.InvocationOutcomeUnknown, store.InvocationDenied)
+}
+
+// ConnectionInvocationPage is a page of a connection's calls.
+type ConnectionInvocationPage struct {
+	Items      []ConnectionInvocation `json:"items"`
+	HasMore    bool                   `json:"has_more"`
+	NextCursor *string                `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page. Absent on the last one."`
+}
+
+// ConnectorAuditEvent is one grant a connection got, renewed or lost, one export of its access
+// credential, or one direct call sent through it, as an operator reads it.
+type ConnectorAuditEvent struct {
+	ID           string                    `json:"id"`
+	ConnectionID string                    `json:"connection_id" doc:"The connection, which may since have been deleted."`
+	ConnectorID  string                    `json:"connector_id"`
+	OwnerType    ConnectionOwnerType       `json:"owner_type"`
+	Action       ConnectorAuditAction      `json:"action"`
+	Reason       string                    `json:"reason,omitempty" doc:"Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked."`
+	Revision     int                       `json:"revision,omitempty" doc:"The connection's credential revision once the change was made. Absent when the change names none, as a delete."`
+	RequestID    string                    `json:"request_id,omitempty" doc:"The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted."`
+	SessionID    string                    `json:"session_id,omitempty" doc:"The session whose tool call caused it. Absent for an incognito session, and once the connection's user was deleted."`
+	AttemptID    string                    `json:"attempt_id,omitempty" doc:"The authorization attempt a consent finished. Absent once the connection's user was deleted."`
+	StatusCode   *int                      `json:"status_code,omitempty" doc:"A proxy_call's status from the provider. Absent when no answer came, and for a grant."`
+	LatencyMs    *int64                    `json:"latency_ms,omitempty" doc:"How long a proxy_call took until the provider's answer, in milliseconds. Absent for a grant."`
+	Target       string                    `json:"target,omitempty" doc:"The host a proxy_call reached. Absent for a grant."`
+	CreatedAt    time.Time                 `json:"created_at"`
+	Tools        []ApprovedConnectionTool  `json:"tools,omitempty" doc:"A tool_reapproved row's tools, by name, sorted, each with the digest approved and the one it was pinned at before. Absent for every other action."`
+	Credential   *ConnectorAuditCredential `json:"credential,omitempty" doc:"The tokens a grant row left, by fingerprint; on a grant_revoked row the provider caused, the tokens that ended. Absent for a proxy_call, a token_export, a user's erasure, a connector's delete, and a connection whose scheme does not name its tokens. A connection delete's row names the tokens it ended."`
+}
+
+// ConnectorAuditCredential is a grant row's tokens by fingerprint (store.ConnectorAuditCredential).
+type ConnectorAuditCredential struct {
+	AccessFingerprint          string     `json:"access_fingerprint,omitempty" doc:"The access token the grant left, by fingerprint. On grant_revoked, the one that ended."`
+	PreviousAccessFingerprint  string     `json:"previous_access_fingerprint,omitempty" doc:"The access token before it, by fingerprint. Absent for a first grant."`
+	RefreshFingerprint         string     `json:"refresh_fingerprint,omitempty" doc:"The refresh token the grant left, by fingerprint. On grant_revoked, the one that ended. Absent when there is none."`
+	PreviousRefreshFingerprint string     `json:"previous_refresh_fingerprint,omitempty" doc:"The refresh token before it, by fingerprint. Absent for a first grant, or when there was none."`
+	Rotated                    bool       `json:"rotated" doc:"The refresh token the connection already had was replaced, as a provider that rotates refresh tokens does on every refresh."`
+	AccessExpiresAt            *time.Time `json:"access_expires_at,omitempty" doc:"When the access token expires. Absent when the provider did not say."`
+	RefreshExpiresAt           *time.Time `json:"refresh_expires_at,omitempty" doc:"When the refresh token expires, by the connector's refresh_ttl. Absent when it does not say."`
+}
+
+func (*ConnectorAuditCredential) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the " +
+		"token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a " +
+		"refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown."
+	return schema
+}
+
+func (*ConnectorAuditEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One grant a connection got, renewed or lost, one export of its access credential, or one direct " +
+		"call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's " +
+		"connections being deleted."
+	return schema
+}
+
+// ConnectorAuditAction is what an audit row records.
+type ConnectorAuditAction string
+
+func (ConnectorAuditAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ConnectorAuditAction",
+		"grant_created: a consent or a credentials write gave the connection a grant. "+
+			"grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, "+
+			"because the provider refused or revoked it or the connection was deleted. "+
+			"token_export: the app's backend exported its access credential. "+
+			"proxy_call: a direct call went to the provider through the connection. "+
+			"tool_reapproved: the app's backend approved tools at the schema the provider lists now "+
+			"(POST .../tools/approve); tools names them.",
+		store.AuditGrantCreated, store.AuditGrantRefreshed, store.AuditGrantRevoked, store.AuditTokenExport, store.AuditProxyCall,
+		store.AuditToolReapproved)
+}
+
+// ConnectorAuditPage is a page of audit rows.
+type ConnectorAuditPage struct {
+	Items      []ConnectorAuditEvent `json:"items"`
+	HasMore    bool                  `json:"has_more"`
+	NextCursor *string               `json:"next_cursor,omitempty" doc:"Pass as cursor for the next page, with the same connection_id. Absent on the last one."`
+}
+
+type listConnectionInvocationsRequest struct {
+	ID string `path:"id" doc:"The connection, as returned when it was created."`
+	// 200 and 25 are store.InvocationLimit's.
+	Limit  int    `query:"limit" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
+	Cursor string `query:"cursor" doc:"The next_cursor of the previous page. Omitted is the first page."`
+}
+
+type listConnectionInvocationsResponse struct {
+	Body ConnectionInvocationPage
+}
+
+type listConnectorAuditRequest struct {
+	ConnectionID string `query:"connection_id" doc:"Keeps one connection's rows, deleted or not."`
+	// 200 and 25 are store.AuditLimit's.
+	Limit  int    `query:"limit" minimum:"1" maximum:"200" doc:"Up to 200. Omitted is 25."`
+	Cursor string `query:"cursor" doc:"The next_cursor of the previous page. Omitted is the first page."`
+}
+
+type listConnectorAuditResponse struct {
+	Body ConnectorAuditPage
+}
+
+type deleteUserConnectionsRequest struct {
+	UserID string `path:"user_id" minLength:"1" doc:"The user whose connections to delete, as owner.user_id named them."`
+}
+
+// registerConnectionRecords declares what the router keeps about connections' use: the
+// invocation log (T29), the audit (T47), and the user delete that takes a user's connections
+// and their log with it. All three are server-side only: a connection's use is the app's
+// business, and a device never reaches a connection (registerConnections).
+func (s *Server) registerConnectionRecords(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listConnectionInvocations",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/connections/{id}/invocations",
+		Summary:     "List a connection's tool calls",
+		Description: "Every tool call sessions ran through the connection, newest first: the " +
+			"binding, the tool, the latency and how it failed. What a call was asked and " +
+			"answered is never kept, except the start of the provider's error for a call that " +
+			"failed, and an incognito session's calls name no session. Who may " +
+			"read them is who may read the connection.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"200": {Description: "A page of tool calls"}},
+		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listConnectionInvocations)
+	huma.Register(api, huma.Operation{
+		OperationID: "listConnectorAudit",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/connector-audit",
+		Summary:     "List the connector audit",
+		Description: "Every grant the app's connections got, renewed or lost, newest first, " +
+			"with the request, session and authorization attempt that caused each. A deleted " +
+			"connection's rows stay, and its deletion is one of them.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"200": {Description: "A page of audit rows"}},
+		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listConnectorAudit)
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteUserConnections",
+		Method:        http.MethodDelete,
+		Path:          "/v1/agents/users/{user_id}/connections",
+		Summary:       "Delete every connection of one user",
+		DefaultStatus: http.StatusNoContent,
+		Description: "For offboarding and erasure requests: deletes every connection the user " +
+			"owns, live or deleted before, for good, with its credentials, its pending consents " +
+			"and its tool call log, so the user's id and their provider accounts' ids are gone. " +
+			"The next session for the user attaches none of them. Where the connector's manifest " +
+			"says revoke_on_delete (Nessy), the provider is asked to revoke each grant once the " +
+			"connections are gone, and a refusal is logged; for every other connector it is not " +
+			"asked. The audit keeps one grant_revoked row for each connection " +
+			"that still held a grant, naming neither the user nor the account, and the audit " +
+			"rows of those connections lose their request, session and attempt ids. A user with " +
+			"no connections is not an error.\n\n" +
+			"It deletes connections, not sessions: the tool calls and audit rows of the app's own " +
+			"connections keep the ids of the user's sessions that caused them. Delete those " +
+			"sessions too, and each id names a session that no longer exists.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"204": {Description: "The user's connections are deleted"}},
+		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.deleteUserConnections)
+}
+
+// listConnectionInvocations lists one connection's calls, a page at a time.
+func (s *Server) listConnectionInvocations(ctx context.Context, request *listConnectionInvocationsRequest) (*listConnectionInvocationsResponse, error) {
+	connection, err := s.reachableConnection(ctx, request.ID)
+	if err != nil {
+		return nil, err
+	}
+	cursor, err := decodeCursor[store.InvocationPosition](&request.Cursor)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+	found, err := s.store.ConnectorInvocations(ctx, connection.CustomerID, connection.ID, request.Limit, cursor)
+	if err != nil {
+		return nil, err
+	}
+	kept, more := page(found, store.InvocationLimit(request.Limit))
+	listed := ConnectionInvocationPage{Items: make([]ConnectionInvocation, 0, len(kept)), HasMore: more}
+	for _, row := range kept {
+		item := ConnectionInvocation{
+			ID: row.ID, ConnectionID: row.ConnectionID, ConnectorID: row.ConnectorID, ConfigID: row.ConfigID,
+			Binding: row.Binding, Tool: row.Tool, SessionID: row.SessionID, StartedAt: row.StartedAt,
+			LatencyMs: row.LatencyMs, ProviderStatus: row.ProviderStatus, ErrorMessage: row.ErrorMessage,
+		}
+		if row.ErrorType != "" {
+			failure := InvocationErrorType(row.ErrorType)
+			item.ErrorType = &failure
+		}
+		for _, argument := range row.Arguments {
+			item.Arguments = append(item.Arguments, InvocationArgument{Name: argument.Name, Type: argument.Type, Length: argument.Length})
+		}
+		listed.Items = append(listed.Items, item)
+	}
+	if more {
+		last := kept[len(kept)-1]
+		listed.NextCursor = encodeCursor(store.InvocationPosition{StartedAt: last.StartedAt, ID: last.ID})
+	}
+	return &listConnectionInvocationsResponse{Body: listed}, nil
+}
+
+// listConnectorAudit lists the customer's audit rows, a page at a time.
+func (s *Server) listConnectorAudit(ctx context.Context, request *listConnectorAuditRequest) (*listConnectorAuditResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil {
+		return nil, errNoConnections
+	}
+	cursor, err := decodeCursor[store.AuditPosition](&request.Cursor)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+	found, err := s.store.ConnectorAuditEvents(ctx, customerID, store.AuditFilter{
+		ConnectionID: request.ConnectionID, Limit: request.Limit, After: cursor,
+	})
+	if err != nil {
+		return nil, err
+	}
+	kept, more := page(found, store.AuditLimit(request.Limit))
+	listed := ConnectorAuditPage{Items: make([]ConnectorAuditEvent, 0, len(kept)), HasMore: more}
+	for _, row := range kept {
+		listed.Items = append(listed.Items, ConnectorAuditEvent{
+			ID: row.ID, ConnectionID: row.ConnectionID, ConnectorID: row.ConnectorID,
+			OwnerType: ConnectionOwnerType(row.OwnerType), Action: ConnectorAuditAction(row.Action),
+			Reason: row.Reason, Revision: row.Revision, RequestID: row.RequestID, SessionID: row.SessionID,
+			AttemptID: row.AttemptID, StatusCode: row.StatusCode, LatencyMs: row.LatencyMs, Target: row.Target,
+			CreatedAt: row.CreatedAt, Credential: auditCredential(row.Credential), Tools: approvedTools(row.Tools),
+		})
+	}
+	if more {
+		last := kept[len(kept)-1]
+		listed.NextCursor = encodeCursor(store.AuditPosition{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return &listConnectorAuditResponse{Body: listed}, nil
+}
+
+// auditCredential is c as the API shows it, nil for nil.
+func auditCredential(c *store.ConnectorAuditCredential) *ConnectorAuditCredential {
+	if c == nil {
+		return nil
+	}
+	out := &ConnectorAuditCredential{
+		AccessFingerprint: c.AccessFingerprint, PreviousAccessFingerprint: c.PreviousAccessFingerprint,
+		RefreshFingerprint: c.RefreshFingerprint, PreviousRefreshFingerprint: c.PreviousRefreshFingerprint,
+		Rotated: c.Rotated,
+	}
+	if !c.AccessExpiresAt.IsZero() {
+		out.AccessExpiresAt = &c.AccessExpiresAt
+	}
+	if !c.RefreshExpiresAt.IsZero() {
+		out.RefreshExpiresAt = &c.RefreshExpiresAt
+	}
+	return out
+}
+
+// deleteUserConnections hard deletes every connection of one user of the caller's app, drops
+// their outbound clients, audits each grant it revoked and revokes at the provider those whose
+// manifest opts in.
+func (s *Server) deleteUserConnections(ctx context.Context, request *deleteUserConnectionsRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil {
+		return nil, errNoConnections
+	}
+	// The grants the delete drops are revoked after it, for a manifest that opts in; their
+	// tokens are read before it, since the delete removes them.
+	granted, err := s.store.GrantedConnectorConnectionsOfUser(ctx, customerID, request.UserID)
+	if err != nil {
+		return nil, err
+	}
+	held := s.revocableGrants(ctx, granted)
+	deleted, err := s.store.DeleteUserConnectorConnections(ctx, customerID, request.UserID)
+	if err != nil {
+		return nil, err
+	}
+	// The revocations name no request either: this one's access log line has the user's id
+	// in its path.
+	ctx = core.WithCorrelation(ctx, core.Correlation{})
+	for _, connection := range deleted {
+		if s.connectorTransports != nil {
+			s.connectorTransports.Close(core.ConnectionRef{CustomerID: customerID, ConnectionID: connection.ID})
+		}
+		if connection.HadGrant {
+			s.auditGrant(ctx, customerID, connection.ID, connection.ConnectorID, store.OwnerUser,
+				store.AuditGrantRevoked, store.AuditReasonUserDeleted, 0, "", core.CredentialChange{})
+		}
+	}
+	s.revokeGrants(ctx, granted, held, "user_delete")
+	return nil, nil
+}

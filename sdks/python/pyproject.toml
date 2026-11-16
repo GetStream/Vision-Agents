@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vision-agents"
+description = "Open video agents. Build low latency video and voice agents on any realtime edge network."
+readme = "README.md"
+keywords = ["video AI", "AI", "voice AI", "video agents", "voice agents", "agents", "AI"]
+dynamic = ["version"]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: OS Independent",
+]
+
+requires-python = ">=3.10"
+dependencies = [
+    "getstream[webrtc,telemetry]>=4.1.0,<5",
+    "aiortc>=1.14.0,<1.15.0",
+    "av>=14.2.0, <17",
+    "python-dotenv>=1.1.1",
+    "pillow>=10.4.0",
+    "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
+    "mcp>=1.23.3,<2",
+    "colorlog>=6.10.1",
+    "fastapi>=0.135.1",
+    "uvicorn>=0.38.0",
+    "urllib3>=2.6.3",
+    "onnxruntime>=1.16.1,<2",
+    "click>=8.1",
+    "jinja2>=3.1",
+    "pydantic>=2.7",
+]
+
+[project.urls]
+Documentation = "https://visionagents.ai/"
+Website = "https://visionagents.ai/"
+Source = "https://github.com/GetStream/Vision-Agents"
+
+[project.scripts]
+vision-agents = "vision_agents.cli.main:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-json-report", "mypy", "ruff"]
+anthropic = ["vision-agents-plugins-anthropic"]
+cartesia = ["vision-agents-plugins-cartesia"]
+deepgram = ["vision-agents-plugins-deepgram"]
+elevenlabs = ["vision-agents-plugins-elevenlabs"]
+gemini = ["vision-agents-plugins-gemini"]
+getstream = ["vision-agents-plugins-getstream"]
+inworld = ["vision-agents-plugins-inworld"]
+kokoro = ["vision-agents-plugins-kokoro"]
+nvidia = ["vision-agents-plugins-nvidia"]
+openai = ["vision-agents-plugins-openai"]
+roboflow = ["vision-agents-plugins-roboflow"]
+smart_turn = ["vision-agents-plugins-smart-turn"]
+telnyx = ["vision-agents-plugins-telnyx"]
+ultralytics = ["vision-agents-plugins-ultralytics"]
+wizper = ["vision-agents-plugins-wizper"]
+xai = ["vision-agents-plugins-xai"]
+vogent = ["vision-agents-plugins-vogent"]
+huggingface = ["vision-agents-plugins-huggingface"]
+moondream = ["vision-agents-plugins-moondream"]
+aws = ["vision-agents-plugins-aws"]
+openrouter = ["vision-agents-plugins-openrouter"]
+pocket = ["vision-agents-plugins-pocket"]
+qwen = ["vision-agents-plugins-qwen"]
+fish = ["vision-agents-plugins-fish"]
+fast-whisper = ["vision-agents-plugins-fast-whisper"]
+decart = ["vision-agents-plugins-decart"]
+twilio = ["vision-agents-plugins-twilio"]
+turbopuffer = ["vision-agents-plugins-turbopuffer"]
+qdrant = ["vision-agents-plugins-qdrant"]
+mistral = ["vision-agents-plugins-mistral"]
+assemblyai = ["vision-agents-plugins-assemblyai"]
+redis = ["redis[hiredis]>=5.0.0"]
+local = ["vision-agents-plugins-local"]
+anam = ["vision-agents-plugins-anam"]
+sarvam = ["vision-agents-plugins-sarvam"]
+tencent = ["vision-agents-plugins-tencent; sys_platform == 'linux'"]
+minimax = ["vision-agents-plugins-minimax"]
+twelvelabs = ["vision-agents-plugins-twelvelabs"]
+speechify = ["vision-agents-plugins-speechify"]
+stream = ["vision-agents-plugins-stream"]
+omni = ["vision-agents-plugins-omni"]
+
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["vision_agents"]
+
+[tool.hatch.build.targets.sdist]
+include = ["vision_agents"]
+
+#[tool.uv.sources]
+# getstream = { git = "https://github.com/GetStream/stream-py.git", branch = "audio-more" }
+# for local development
+# getstream = { path = "../../stream-py/", editable = true }
+# aiortc = { path = "../stream-py/", editable = true }

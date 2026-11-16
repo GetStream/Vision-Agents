@@ -1,0 +1,962 @@
+# Stream Agents for JavaScript
+
+`@stream-io/stream-agents` is the JavaScript client for the Stream acceleration backend. One package for both ends: a
+Node process that runs agents, and a browser that holds a conversation with one.
+
+Nothing here does inference or touches media. The backend joins the call, hears the caller,
+answers and speaks. What arrives here are the events saying so, and what stays here is
+function calling — because the functions are here.
+
+```bash
+npm install @stream-io/stream-agents
+```
+
+Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
+Crypto are all taken from the runtime. `session.chat()` works with `stream-chat` 9 or 10
+(10 needs Node 22.18 or newer).
+
+## The three ways to say who is calling
+
+Which one a deployment uses is a property of the deployment rather than a choice.
+
+| Credential | Who it is | Reaches |
+| --- | --- | --- |
+| `customerId` | A router with nothing in front of it, which is a laptop | everything |
+| `customerId` + `setUser` | A page on that laptop | the conversations that user owns |
+| `apiKey` + `apiSecret` | A process you run | everything |
+| `apiKey` + `token` | A browser | the conversations that user owns |
+
+```ts
+import { Client } from "@stream-io/stream-agents";
+
+// On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
+const api = new Client();
+
+// In a browser, with a token your backend minted for this user.
+const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
+```
+
+A token function is asked once and its answer kept. It is asked again when the router answers
+401, and the request is sent once more; when a socket is refused, and the socket dialled once
+more; when the token it holds expires within a minute, read from the JWT's `exp`; and after
+`setUser` or `clearUser`. Requests that need a token while one is being fetched wait for that
+fetch, and requests refused together ask for one new token between them. A token passed as a
+string is the only one there is, so a 401 with it is final.
+
+Search is the one routed modality a page may reach: `api.router({ config: "healthcare" }).search("what changed in the pricing page")`.
+
+`url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
+passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
+pass `region: "europe-west4"` or set `STREAM_ACCELERATION_REGION` instead. `customerId`, `apiKey` and `apiSecret` fall back to
+`STREAM_ACCELERATION_CUSTOMER_ID`, `STREAM_API_KEY` and `STREAM_API_SECRET`.
+
+The hosted router is reached through Stream's authenticating proxy, which wants the
+credential spelled its own way; that is on by default for it. A self-hosted deployment
+behind the same proxy passes `authenticate: true`, or sets `STREAM_ACCELERATION_AUTHENTICATE`:
+
+```ts
+const api = new Client({ url: "https://agents.example.com", authenticate: true });
+```
+
+A router running locally with nothing in front of it is reached by customer id:
+
+```ts
+const api = new Client({ url: "http://localhost:8080", customerId: "examples" });
+```
+
+A page there names its user with `setUser`, and is then that user rather than the app's
+backend: it lists only their conversations, and `serverSide` is false. A server that passes
+`userId` instead stays the backend, acting for that user.
+
+It is a switch rather than an extra header or two because the two spellings contradict each
+other: a router reached directly needs `Stream-Auth-Type: server` before it admits a
+backend, and that is the one thing the proxy refuses. Opt in rather than let the presence of
+a credential decide, because a Stream key and secret are in the environment for plenty of
+reasons that have nothing to do with this router.
+
+A page that signs somebody out calls `api.clearUser()`, and a guest from `api.guestUser()` is
+acted as with `api.setUser(guest)`, which takes the token it was minted with.
+
+A secret belongs on a server. A browser holding one could rewrite every agent in the app,
+which is why the browser passes a token instead — and why the operations that configure an
+agent answer a browser with a 403 rather than trusting it.
+
+## Resources, typed from the spec
+
+The API is grouped by resource, with the request and response types generated from
+`acceleration/api/openapi.yaml`:
+
+```ts
+const simulation = await api.simulations.create({ name, config_id, scenario, assertion });
+let run = await api.simulations.run(simulation.id);
+run = await api.simulations.runs.get(run.id);
+await api.memories.truncate("user-123");
+```
+
+A failure raises `RouterError`, carrying the status, the operation and what the router said
+went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `type`, not on the
+message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
+"something went wrong".
+
+A request that never got an answer is a `RouterError` with status 0, its network error as
+`cause`; one the caller aborted rejects with the signal's own `AbortError`, and a call missing a
+path parameter with a `ConfigurationError`, so neither looks like something worth retrying.
+A request that is safe to send twice (GET, PUT, DELETE, and `responses.create`, which the router
+answers once per request id) is sent again after a network failure or a 429, 502, 503 or 504,
+up to `maxRetries` times (2 unless the client says), waiting longer each time and as long as
+`Retry-After` asks. To ask again yourself after a failure that may have reached the router,
+pass the same `requestId` to `responses.create`. When the router took the question and only its
+answer was lost, it answers the retry with no id, and `responses.create` looks up the turn by
+what was asked, so the response it returns still names that turn.
+
+A connection lost while reading a response body follows the same retry policy. Invalid JSON
+is reported with the operation and request id and is not retried. Text responses remain
+strings; event-stream responses return a `ReadableStream<Uint8Array>` for the caller to read.
+
+### What a modality routes to
+
+`api.router().routes(modality)` lists the capability shortcuts a modality offers as a choice,
+default first, each with the models it resolves to now, best first. For `"image"` they are
+`image-fast` and `image-quality`, either of which an agent config's `image` accepts in place of a
+`provider/model`. It is server side only.
+
+```ts
+const routes = await api.router().routes("image");
+for (const route of routes) {
+  console.log(route.id, route.candidates.map((c) => `${c.provider}/${c.model}`));
+}
+```
+
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `USD`, held exactly as the millionths
+of a dollar the router counts in, and never built from a fractional number: `USD.dollars(20)`,
+`USD.cents(1250)`, or `USD.parse("12.50")` (a string of dollars is taken anywhere an amount is).
+
+```ts
+import { Client, USD } from "@stream-io/stream-agents";
+
+const api = new Client(); // STREAM_API_KEY and STREAM_API_SECRET: server side only
+await api.spendLimits.create({ subject: "organization", interval: "monthly", amount: USD.dollars(20_000) });
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+await api.spendLimits.create({ subject: "api_key", appId: "1234", interval: "daily", amount: USD.dollars(50) });
+await api.spendLimits.create({
+  subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b", interval: "daily", amount: USD.dollars(10), note: "CI key",
+});
+const [ci] = await api.spendLimits.list({ subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b" });
+await api.spendLimits.setAmount(ci!.id, USD.dollars(25));
+await api.spendLimits.delete(ci!.id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+await api.spendLimits.create({ subject: "user", appId: "1234", interval: "daily", amount: USD.dollars(20) });
+await api.spendLimits.create({ subject: "user", appId: "1234", userId: "user-42", interval: "daily", amount: USD.dollars(50) });
+
+// Created or changed, whichever the team needs.
+await api.teams.setLimit("finance", { interval: "monthly", amount: USD.dollars(8_000) });
+
+// Work counted under the team: one session, or everything a client does.
+const session = await api.agent("docs").sessions.create({ team: "finance" });
+const finance = new Client({ team: "finance" });
+
+// Count user-42's week from now. Nothing is refunded.
+await api.spendLimits.reset({
+  subject: "user", appId: "1234", userId: "user-42", intervals: ["weekly"], reason: "refunded a duplicate run",
+});
+```
+
+An agent whose `agent.yaml` has `tags: team: finance` counts its sessions under that team when
+neither the caller's token nor the session names one.
+
+A client built with `team` (and `usageCategories`) signs them into every token it mints, and
+sends them in `X-Stream-Usage-Categories` to a router with no proxy in front of it. A device's
+token carries its own, from `api.createUserToken("user-42", { team: "finance" })`, so neither can
+be passed beside a token; a session naming a team other than its token's is refused with a 400,
+and a device naming one at all with a 403. What the router answers is in micros too:
+`USD.fromMicros(limit.limit_micros)` prints as `$20000.00`. Work a limit refuses is a
+`RouterError` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one end user's.
+
+## A conversation somebody comes back to
+
+A text conversation is kept in Stream Chat, so what was said outlives the session that
+heard it.
+
+```ts
+const support = api.agent("support");
+const session = await support.sessions.create({ agent_id: "ana-support" });
+// Keep session.id. It is the way back to what was said.
+await session.responses.create("Where is my order?");
+
+// Later: the conversations of two projects, the one the agent answered last first.
+const recent = await support.sessions.query({
+  filter: { $or: [{ project_id: "orders" }, { project_id: "returns" }] },
+  limit: 50,
+});
+// The page after it: the same filter and sort, with the cursor the page before gave.
+if (recent.next_cursor) {
+  const older = await support.sessions.query({
+    filter: { $or: [{ project_id: "orders" }, { project_id: "returns" }] },
+    limit: 50,
+    cursor: recent.next_cursor,
+  });
+}
+
+// The pinned ones first, then the rest by when the agent last answered.
+const pinnedFirst = await support.sessions.query({
+  sort: [{ field: "pinned" }, { field: "last_message_at" }],
+});
+
+// By what it was called, best match first, in one project.
+const found = await support.sessions.search("order 1042", { filter: { project_id: "orders" } });
+
+// Pin the one being held, or any by its id. The session answered carries pinned_at.
+const pinned = await session.pin();
+await support.sessions.unpin(session.id);
+await support.sessions.update(session.id, { title: "Order 1042", pinned: true });
+
+// On a server only: one user's conversations the review scored 2 or less, worst first.
+const poor = await support.sessions.query({
+  filter: { user_id: "ana", review_score: { $lte: 2 } },
+  sort: [{ field: "review_score", direction: 1 }],
+});
+
+// Carry one on, running or ended, by the id of the session it was held in.
+const again = await support.sessions.resume(session.id);
+```
+
+A filter is written with the router's own keys, typed as `SessionFilter`: `project_id` (a
+string, `{ $eq }` or `{ $in: [...] }` of up to 50), `agent`, `text` (`{ $q }`, which `search`
+sets), and for a server-side caller `user_id` and `review_score` (a number from 1 to 5, or
+`$eq`, `$gt`, `$gte`, `$lt`, `$lte`). The keys of one object are ANDed; `$and` and `$or` take 1
+to 10 filters and nest up to 3 deep; `text` and `user_id` stay at the top level or in a
+top-level `$and`. Anything else is refused with a 400. A query through `agent.sessions` is
+always narrowed to that agent. `sort` is a list of `{ field, direction }`, -1 (the default)
+for descending and 1 for ascending: `last_message_at`; `pinned`, alone or followed by
+`last_message_at`; `review_score`, server side only; or `relevance`, for a text search only.
+A cursor is only good with the sort it came from. Pinning a session sets its `pinned_at` and
+does not move it in `last_message_at` order; a person may pin their own conversations.
+
+The channel is the backend's to name, so a conversation is carried on by its session id
+rather than by its channel. A session id may also be one the caller picks, up to 64 of
+`A-Za-z0-9_-`, passed as `id` when it is created.
+
+`timezone` is the person's IANA zone, such as `Europe/Lisbon`, which the agent tells the date
+and the hour in. Opened from a page and left out, it is the zone the browser reports for the
+device, when that reads as a zone name; anywhere else nothing is read from the machine, and
+`timezone: ""` sends none anywhere, leaving the user's stored zone to decide.
+
+`memory: {}` has the session recall what the agent learned about the user in earlier ones, and
+keep what it learns in this one, with `filter` and `app_id` to narrow it. From a page it is
+remembered for the user `setUser` named, whatever `user_id` it was handed, since a device may
+only name its own; a backend names whichever of its users it means, or the one it acts for.
+
+`session.close()` stops a conversation and keeps everything it recorded and remembered, so
+a conversation in writing is usually left running. `session.delete()`, or
+`sessions.delete(id)` without a handle, deletes it with its turns and what it taught
+memory. A conversation this process is not holding is renamed with `sessions.update(id, …)`,
+put on its call and taken off with `sessions.startVoice(id)` and `sessions.stopVoice(id)`,
+stopped with `sessions.close(id)` and forked with `sessions.fork(id, …)`.
+
+### What the agent holds for later
+
+`api.scheduledTasks` is the reminders and later work agents hold for the user `setUser` named:
+what a person does with a reminder they already have. The agent makes one in a conversation,
+and the app's backend can make one in their name; a device cannot.
+
+```ts
+const page = await api.scheduledTasks.list({ state: "active" });
+await api.scheduledTasks.update(page.items[0].id, { next: { in: "PT15M" } }); // snooze
+await api.scheduledTasks.pause(id);
+await api.scheduledTasks.resume(id);
+const runs = await api.scheduledTasks.runs(id);
+await api.scheduledTasks.delete(id);
+```
+
+## An agent
+
+```ts
+import { Agent } from "@stream-io/stream-agents";
+
+const agent = new Agent({
+  name: "John",
+  instructions: "You are a friendly assistant. Keep replies short.",
+  pipeline: { llm: "llm-fast", stt: "en-low-latency", tts: "sonic_36" },
+});
+
+agent.tools.register<{ city: string }>({
+  name: "get_weather",
+  description: "Get the current weather for a city",
+  parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+  run: async ({ city }) => fetchWeather(city),
+});
+
+await agent.sync();
+const session = await agent.join();
+console.log(await agent.monitorURL(session));
+
+for await (const event of session.events()) {
+  console.log(event.kind, event.text);
+}
+```
+
+`join` opens a session with voice on, and the backend joins the session's own call,
+`agent:<session id>`. `chat` holds the same conversation in writing instead — the same
+instructions, the same skills, the same knowledge, with nothing transcribed and nothing
+spoken. `session.voice.stop()` carries a conversation on in writing and
+`session.voice.start()` puts the agent back on the call. Instructions reach the backend
+with `agent.sync()`: a session runs on the stored config's. Without `pipeline.config`,
+`chat` and `join` select that config by the agent's name, so an agent that was never synced
+under its name is refused with a 404 `there is no agent called <name>`: sync it first.
+
+`new Agent({ timezone: "Europe/Lisbon" })` is the zone the agent's sessions are in, and `join`,
+`chat`, `answer`, `reply`, `startCall` and `waitForCall` each take a `timezone` for the person on
+that call, over the agent's. Neither set sends none.
+
+The model asks for a tool over the session socket, this process runs it, and the answer
+goes back the same way. A tool that throws is reported to the model, because the model is
+mid-sentence waiting for it and can only say something useful if it is told.
+
+`parameters` can also be a Zod 4 schema, or any schema that implements
+[Standard JSON Schema](https://standardschema.dev), such as ArkType's or Valibot's:
+
+```ts
+import { z } from "zod";
+
+agent.tools.register({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: z.object({
+    flight_id: z.string().regex(/^[A-Z]{2}\d{1,4}$/).describe("e.g. LH400"),
+    seats: z.number().int().min(1).max(9),
+    cabin: z.enum(["economy", "business", "first"]).default("economy"),
+  }),
+  run: async ({ flight_id, seats, cabin }) => bookings.book(flight_id, seats, cabin),
+});
+```
+
+The model is told the JSON Schema the Zod schema describes, and each call's arguments are
+parsed by it before `run`, which is handed what it parsed, typed from the schema. Arguments it
+refuses fail the call with what was wrong, such as `seats: Too big: expected number to be
+<=9`, and the model can try again. A rule JSON Schema cannot say, such as a `refine`, still
+holds; the model is just not told it. A JSON Schema written out is told to the model as it is,
+and its arguments reach `run` unchecked. The package does not depend on Zod.
+
+A tool can say how the backend treats its calls. `run` is handed the arguments, then the call it
+is running for, which a tool that does not need it leaves out:
+
+```ts
+agent.tools.register<{ flight_id: string }>({
+  name: "book_flight",
+  description: "Book a flight for the caller",
+  parameters: { type: "object", properties: { flight_id: { type: "string" } }, required: ["flight_id"] },
+  approval: { title: "Book flight {flight_id}?" },
+  timeoutMs: 20_000,
+  run: async ({ flight_id }, toolCallContext) => {
+    toolCallContext.update("checking seats");
+    await toolCallContext.disallowInterruptions();
+    return bookings.book(flight_id, { user: toolCallContext.user.id, key: toolCallContext.id });
+  },
+});
+```
+
+- `interruptible: true` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeoutMs` is how long one call may take, in place of the session's. A call that takes
+  longer fails.
+- `concurrency` caps how many calls to the tool run at once. A call over the cap waits its
+  turn, and its timeout keeps counting while it waits. Every tool's calls together are capped
+  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares an agent's
+  `tools` across every session it hosts, so the cap is the worker's.
+- `approval` is asked before each call runs. In writing the call waits in `session.approvals`
+  until `session.decide(id, { allowed })` answers it; a page follows the list in
+  `session.conversation`, which says when it changes, a cancel by the model included.
+  On a voice call the agent asks the caller out loud, with each `{name}` in the title filled in
+  from the call's arguments, and runs the call on a yes within 15 seconds, with
+  `toolCallContext.approved` set. A `{name}` that is not in `parameters` is refused when the
+  tool is registered.
+
+`toolCallContext` is the call being answered: its `id`, which a call sent again keeps, so it is
+the key to make a side effect happen once; `sessionId`, `turnId`, the `user` whose turn asked,
+and the `conversation`. A call cancelled, as when the caller talks over the agent, fails at once
+and its result is no longer waited on. `update(text)` says how the call is going: a voice agent
+tells the caller in its own words once nobody is talking. `say(text)` has it say `text` as
+written, which a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call
+going from then on, for a write that must not stop halfway, and rejects with a
+`CallNotHeldError` when the call had already been stopped, so the write never starts. A call the router addresses to another
+watcher of the session (`run: false`) is left for whoever runs it.
+
+A function shows the model a picture by returning a `ToolOutput`: its `text`, and `images`
+as URLs or data URIs, which the model sees with that call's result.
+
+```ts
+run: async () => new ToolOutput({ text: "The desk, just now.", images: [{ url: dataUri }] }),
+```
+
+## Agent dispatch
+
+A caller reached a Stream call over SIP, or somebody wrote in a channel, and the router
+found out by webhook. The agent, though, runs in your process. So the worker connects out
+and waits, and the router pushes work down the connection as it arrives — nothing you run
+has to be publicly reachable.
+
+```ts
+import { Agent, Dispatch } from "@stream-io/stream-agents";
+
+const dispatch = new Dispatch({ capacity: 4 });
+
+dispatch.onCall(async (call) => {
+  const agent = new Agent({ name: "John", pipeline: { config: "support" } });
+  const session = await agent.answer(call);
+  await session.wait();
+});
+
+dispatch.onMessage(async (message) => {
+  if (message.sessionId) {
+    await dispatch.answer(message);
+    return;
+  }
+  const session = await dispatch.sessionFor(message, () => new Agent({
+    name: "John", pipeline: { config: "support" },
+  }));
+  const images = (message.images ?? []).map(({ url }) => ({ url }));
+  await session.responses.create(message.text, { images });
+});
+
+await dispatch.run();
+```
+
+`capacity` is a promise about what this process can answer: the router passes over a full
+worker rather than queueing behind it. Several workers can wait at once, and the work is
+shared between them. Each call and message is reported `done` to the router when its handler
+returns, with the error when it throws, which is what frees the room it took.
+
+A connection that drops, as one does when the network blinks or the router is redeployed, is
+dialled again with a growing wait, while the calls already being handled carry on. After
+`maxReconnects` tries in a row (10 unless the worker says) `run` rejects with the error, so a
+supervisor can restart the process; a router closing the connection on purpose ends `run`
+normally.
+
+A message usually arrives here only when no agent is running on its channel — one written to
+an agent that is already running is answered by the router from that session, because that
+agent is the one that knows what has been said. `sessionFor` keeps one conversation per
+channel for the same reason. The exception is an agent whose agent.yaml says
+`dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
+written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the model answer
+it, with this worker's credential acting for the user who wrote it. The photos sent with a
+message come in `images`, by URL, and `dispatch.answer` shows them to the model.
+
+A worker can also host tools for every session opened under an agent id, including one a
+browser opened, where the session's own process cannot reach what the tool needs:
+
+```ts
+const agent = client.agent("my-agent");
+agent.tools.register({ name: "lookup", description: "Look up an order", run: lookup });
+dispatch.host(agent, { toolTimeoutMs: 60_000 });
+```
+
+The router offers them to each session naming the agent and sends every call here. A hosted
+tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a voice
+call), is handed its `toolCallContext`, and fails when the router gives up on it. `run`
+works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
+refuses them.
+
+Tool names must be unique across the agents hosted by one worker. Use separate workers when
+agents need different implementations of a tool with the same name. `stop` also cancels a
+socket upgrade still in progress; work already running is drained.
+
+Server side only. A worker is offered other people's callers, so anything that can open
+that socket could answer for the whole app.
+
+Placing a call outward is the other direction of the same thing:
+
+```ts
+const session = await agent.startCall("+15551234567", "+15557654321");
+```
+
+The agent is told it is navigating, so recordings are let finish and menus are answered
+rather than talked over. Every caller to an attached number gets a session of their own:
+`agent.answer(call)` joins the one the router names, and `agent.waitForCall(number)` waits
+for the next one without a worker of your own.
+
+## An agent written down as a directory
+
+```
+agents/jean/
+  agent.yaml            required: the name and what it runs on (llm, stt, tts, greeting, harness, tags, ...)
+  instructions.md
+  guardrail.md
+  skills/think.md
+  skills/pdf/SKILL.md   a skill as a folder: SKILL.md plus the text files it brings
+  skills/pdf/scripts/fill.py
+  knowledge/pricing.md
+  knowledge/urls.yaml   pages to read, each optionally with refresh_hours
+  simulations/lunch.yaml
+  .agent_sync           written by sync: the fingerprint last synced and when
+```
+
+```ts
+import { Agent } from "@stream-io/stream-agents";
+import { loadFolder } from "@stream-io/stream-agents/node";
+
+const agent = new Agent({ folder: await loadFolder("agents/jean") });
+await agent.sync();
+```
+
+`sync` stores it as a config a session can then be created from by name, in one request
+carrying the files, the pages and what `agent.yaml` declares. A key `agent.yaml` does not
+know is refused. The request carries a fingerprint of everything in it and `.agent_sync`
+records it, so syncing on every startup only reads the config back when nothing has changed.
+A setting left out leaves whatever is stored — a model chosen in the dashboard survives a
+sync that says nothing about it. The harness (`harness`, subagent, sandbox and skills) is
+stored on the config this way too, never on a session: a session runs its config's.
+
+`region: eu` (or `us`) is where the agent's work is done: every model it runs, its knowledge
+base and its sandbox are there and nowhere else. Left out, the stored region stays, and a new
+agent is in `us`. The router refuses a sync naming a model with no instance in the region,
+naming each, and one whose knowledge base is already kept in another region.
+
+`floor_control` is the model that controls the agent's floor, and how long a caller may wait
+once they stop, sent as written:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; left out, the server's default point
+```
+
+Left out or null, the stored choice stays; `floor_control: {}` is no choice, which follows the
+router's default (the flow controller, or `stream/chorus-asr` where the router defaults every
+agent to it); `{model: flow-controller}` keeps the flow controller whatever that default. The router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point
+the server has measured.
+
+Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
+`variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
+`simulations/` directory the config's simulations become exactly what it declares, so an
+empty one deletes them; without one, the stored ones are left alone.
+
+What is written in code wins over what the directory says, so a directory is a starting
+point rather than an override.
+
+`loadFolder` needs a filesystem, which is why it is the one thing in the `/node` entry
+point rather than the main one. It hands `sync` the stamp to read and write, so `sync`
+itself touches no filesystem.
+
+## Talking to an agent from a browser
+
+`VoiceSession` puts the agent on a call and this page on the same call. It lives in the
+`/video` entry point, which is what brings `@stream-io/video-client` in:
+
+```ts
+import { VoiceSession } from "@stream-io/stream-agents/video";
+
+const voice = await VoiceSession.start(api.agent("my-agent"));
+await voice.join(); // the microphone on; { camera: true } for the back lens
+
+const { call, client, muted, status } = voice.get();
+voice.subscribe(() => render(voice.get()));
+
+await voice.setMuted(true);
+await voice.leave(); // and closes the session start() made; end() always does
+```
+
+`start` opens a session with voice on, so the agent is on the call before this page joins.
+`join` creates the call rather than only joining it, since which of the two gets there first
+is a race, and rejects when it fails, for example when the person denies the microphone.
+Asking twice joins once. `VoiceSession.of(session)` joins a session that already has voice
+on, one switched over with `session.voice.start()`; leaving it leaves the session running.
+`VoiceSession.attach(api, sessionId)` does the same from the session's id alone, with a watcher
+of its own that runs no tools, as the phones do.
+
+`status` is what the agent is doing in the states `VoiceGlow` and `VoiceWave` in
+`stream-chat-react/ai-components` take: `connecting` until joined, `speaking` while the agent
+is heard on the call, `listening`, `thinking` and `idle`. Speaking comes from the call
+because a reply is written before it is spoken. Playing the agent is the page's:
+`<ParticipantsAudio />` from `@stream-io/video-react-sdk`, or `call.bindAudioElement` per
+remote participant. Start from a click, since a browser plays audio and asks for the
+microphone only after one. In React, `get` and `subscribe` are bound, so they go straight
+into `useSyncExternalStore(voice.subscribe, voice.get)`.
+
+With the camera on, the agent can look through it: the page keeps a frame twice a second, and
+the session answers the router's `get_video_frames` with the ones taken when the question was
+put. A session with no camera on leaves that request to whoever else on the call owns it.
+
+What the agent is doing is on every session, voice or not, as `session.state`: `idle`,
+`listening`, `responding`, `working` (with the `skills` thinking) and `ended`. It is fed from
+the socket beside `events()`, so it takes nothing from a loop reading them, and has the same
+`get` and `subscribe`. It is not the session's lifecycle, which is `session.created.state`.
+
+`session.conversation` is the rest of what a page shows, fed the same way: `turns`, what this
+device typed, what was transcribed on the call and the agent's replies as they were written;
+`failure`, what the agent last reported going wrong, such as speech recognition on a call,
+with `failureContext` naming the part (`stt`, `llm`, `sts`, `tts`) and `failureAt` when, until
+the agent next hears, answers or speaks;
+`approvals`, the calls waiting for the person; and `connected`, with `socketError` saying why
+the socket stopped when it did not end normally. A failed join, mute or camera rejects and is
+kept as `failure` on the voice session's snapshot too.
+
+```ts
+const { turns, approvals, failure } = useSyncExternalStore(
+  session.conversation.subscribe,
+  session.conversation.get,
+);
+```
+
+When a call of one of the agent's connectors waits for the person to sign in, its step in the
+Chat channel is `awaiting_authorization`, with the router's sign-in page and a handoff token.
+A page opens it in a popup from a page of the session's `return_url` origin and posts it the
+token; Not now is `session.declineLogin(toolCallId)`, and the router ends the call and tells
+the agent. A `connector_scope_required` event, the step-up a call needs, reads as
+`connectorScopeRequiredOf(event)`.
+
+## A written conversation in Stream's AI components
+
+`AgentChat`, in the `/chat` entry point, is a conversation held in writing as Stream's AI
+components want it: the messages of the channel the router keeps it in, each reply's whole
+thinking, what the agent is doing, and asking. `agentChatTransport` hands it to an
+`AIConversationController` from `stream-chat-react-native` (and, once it has one,
+`stream-chat-react`), which keeps the rest: the question on its way, status, errors and retry.
+
+```ts
+import { AgentChat, agentChatTransport } from "@stream-io/stream-agents/chat";
+
+const sessions = api.agent("my-agent").sessions;
+const chat = new AgentChat({
+  sessionId, // undefined for a new conversation
+  open: (id) => (id ? sessions.resume(id, { tools }) : sessions.create({ tools })),
+});
+const conversation = new AIConversationController({
+  transport: agentChatTransport(chat, {
+    adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
+  }),
+});
+```
+
+The session opens only once something needs it: `send`, `prepare` (call it while the person
+writes the first question, since opening takes seconds) or `stop`. A new conversation that was
+only looked at is never created, and one whose session opened but was never asked anything is
+deleted on `close`. A conversation used some other way, such as talked to in voice mode, says so
+with `use()`, which hands back the session and keeps the conversation as asking does. Each
+question goes out under the controller's message id as its
+`requestId`, which the router stores the person's message under, so its copy replaces the
+question on its way. A reply the model couldn't write shows as the AI indicator's error state,
+with no text of the router's, so the components show their own. `chat.state` has the shape of
+`StateStore` from `@stream-io/state-store`, so `useStateStore(chat.state, selector)` reads it.
+It reads the channel with stream-chat 9 or 10, whichever `session.chat()` opens it on.
+
+**Regenerate, edit and ‹ i/n ›.** The transport has `switchBranch`, so the controller offers
+regenerate on every reply and edit on every message of the person's, and shows ‹ i/n › from each
+message's `branch`, which `adapt` reads from the router's `support_branch` mark. A regenerate
+calls `responses.regenerate` and an edit `responses.edit` on the response the message belongs to
+(see "Regenerate and edit" below), and what they hid leaves the conversation as soon as the
+router answers, before the new reply arrives. `switchBranch` shows another version: it reads it
+with `responses.branch` and shows it in place of the channel's messages from where the two part,
+writing nothing to Chat and telling the model nothing. Going back to the version the
+conversation is on shows the channel's own messages again, and so does a `channel.rewound`, or
+the message the versions part at leaving the channel. New messages in the channel keep the
+version shown on screen. Asking anything while another version is shown, or regenerating or
+editing one of its messages, first brings it back with `responses.activate`, so the agent
+answers from what the person sees. Bringing it back sends its messages again as copies carrying
+`resent_from`, which the controller never takes for the new reply; the transport resolves only
+once they are in the conversation (or after a few seconds and a fresh read of the channel), so
+keep `resent_from` in what `adapt` makes of a message. `fromStreamMessage` maps it to
+`resentFrom`. A switch the controller aborts, because the person sent something first, shows
+nothing.
+
+A refusal is an `AgentBranchError` whose message is for the person and whose `code` says which:
+
+- `not_branchable`: a turn from before branches, or typed while the agent was on a call, carries
+  no mark, and neither regenerates, edits nor pages. Nothing is sent.
+- `branch_limit_reached`: the conversation used its 100 edit and regenerate points. Asking and
+  paging still work.
+- `branch_too_long`: the version shown has more than 100 messages to send again, so it can be
+  looked at but not continued; it stays on screen.
+- `branch_unavailable`: a memory truncate deleted the router's copy of that version.
+
+A version brought back is sent again as new messages, with new ids, and memories made on a
+version the person left are kept: the rest of what to tell the person is under "Regenerate and
+edit".
+
+Make one per conversation and close it when the person leaves it. In React, make the chat and
+the controller in an effect and let them go in its cleanup, so StrictMode's second mount makes
+fresh ones rather than reusing closed ones:
+
+```ts
+useEffect(() => {
+  const chat = new AgentChat({ sessionId, open });
+  const conversation = new AIConversationController({
+    transport: agentChatTransport(chat, { adapt }),
+  });
+  setScreen({ chat, conversation });
+  return () => {
+    conversation.dispose();
+    void chat.close();
+  };
+}, [sessionId]);
+```
+
+## A reply as it is heard
+
+The Chat channel has the agent's reply as fast as the model writes it, seconds ahead of the
+voice. `session.speech` says how much of each reply has been heard on the call, so a page can
+show a message as it is said:
+
+```ts
+import type { LocalMessage } from "stream-chat";
+
+function shownText(message: LocalMessage, now = performance.now()) {
+  const text = message.text ?? "";
+  const heard = session.speech.heard(message, now);
+  // Characters are Unicode code points, as the session socket counts them.
+  return heard ? Array.from(text).slice(0, heard.chars).join("") : text;
+}
+
+session.speech.subscribe(() => requestAnimationFrame(render));
+```
+
+Every message the agent said carries the `turn_id` the session socket's `speaking`, `spoke`
+and `interrupted` name (on `message.turn_id` in stream-chat 9, `message.custom.turn_id` in
+10). `heard` takes the message and reads either, or the turn id itself, and with `now` is
+`{ chars, done }`: the code points of the message heard so far, exact once the playing
+utterance's `spoke` has said how long it is and estimated from the voice's measured rate
+(about 15 a second until then), and `done` once the turn's last known utterance has played out
+or the caller talked over it. The voice is not sent the message's own words (a direction it
+acts, "last four digits, 1234" for "last four 1234", a sentence held back), so the router says
+where each utterance is in the message (`message_start` and `message_end` on `speaking`,
+`spoke` and `interrupted`), and each is revealed across its own place there; a router that
+does not say is counted in the voice's characters. A cut freezes the turn at what the router says was heard of the utterance it cut
+(`heard_ms` on `interrupted`), or at the estimate when it does not say. An utterance reported
+before the track got to it, behind speech still queued, starts when that has played
+(`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another
+after a pause, so show a reply in full once `done` is true and its message is no longer
+`generating` (`message.generating` in stream-chat 9, `message.custom.generating` in 10).
+
+A reply's message usually arrives before its audio starts, and Chat can even be faster than the
+session socket. While the agent is on the call, a turn is `{ chars: 0, done: false }` until its
+`speaking` once it is known to be coming: its text has begun on the socket (`said`,
+`response_delta`, or a `responded` with words), or `heard` was asked about a message of the
+agent's (`source: "agent"` or `ai_generated`) that is still `generating`. It is let go of, and
+`undefined` from then on, once it turns out to say nothing (an empty `responded`, or a `turn`
+that published no audio) or when `SPEECH_GRACE_MS` (5 s) pass without a `speaking`; speech that
+comes later does not take it back, since the page has shown it in full. The agent leaving the
+call (`left`), `voice.stop()` and the session ending stop anything being held, so a reply in
+writing afterwards shows at once. A turn let go of, a message with no turn and a router too
+old to send `speaking` are all `undefined`: show those as they are. A reply cut off before any
+of it was heard stays at `{ chars: 0, done: true }`.
+
+`now` is on the clock of `performance.now()`, which `requestAnimationFrame` hands its callback
+too, and `heard` is cheap enough to call on every frame. `subscribe` is told whenever what
+`heard` says of a turn changes other than with the clock; `get` says where the voice last was.
+The store is fed from the frames the session reads, beside `events()` rather than through it,
+so it needs no loop and takes nothing from yours. It keeps the last 20 turns.
+
+## Going back, and branching off
+
+```ts
+const items = await session.responses.items.all();
+await session.responses.rewind(items[2]); // carry on as though nothing after it was said
+const branch = await session.fork({ response_id: items[2].response_id, title: "asked again" });
+```
+
+`rewind` takes a response, a response's id, or any item of one. The model forgets the later
+turns, and they drop out of what `responses` reads back. A text conversation is kept in
+Stream Chat unless it is incognito, and so cannot be rewound, since the channel would still
+hold the later turns: regenerate or edit it instead (below), or fork it at the response, which
+starts a new session carrying the history only that far. All of these work from a browser as
+well as a server.
+
+## Regenerate and edit
+
+In a conversation kept in Stream Chat, a reply can be answered again and a question asked
+differently without leaving the conversation. The earlier versions are kept as branches the
+person can page through, ‹ 1/2 › the way ChatGPT does it, all in the same session and channel.
+
+```ts
+const again = await session.responses.regenerate(reply);           // the same question, answered again
+const edited = await session.responses.edit(reply, "Rome instead"); // a new question in its place
+again.created.branch; // { of: "reply", index: 2, count: 2 }
+```
+
+Both take a response, its id, or any item of one, and `maxOutputTokens`, `reasoningEffort` and
+`requestId`; images and a UI action cannot go with them. Like `create` they go under a request
+id, a fresh one unless you name it, and return once the agent has started answering: the answer
+arrives as any other does, in the channel and through `session.events()`.
+
+The router hides the conversation from that point on in Chat, with Chat's rewind, and keeps
+what it hid. A regenerate hides the reply and everything after it; an edit hides the question
+too. The channel only ever shows the branch the person is on:
+
+```ts
+const page = await session.responses.siblings(reply, { of: "reply" }); // or "question" for edits
+for await (const sibling of session.responses.unwindSiblings(reply)) {
+  sibling.index; sibling.active; // the i of ‹ i/n ›, and whether the channel shows it
+}
+const other = page.items.find((sibling) => !sibling.active);
+if (other) {
+  const hidden = await session.responses.branch(other.id); // its messages, shaped as Chat's
+  await session.responses.activate(other.id);              // before asking anything on it
+}
+```
+
+`branch` only reads: show its messages in place of the channel's from where the two part, and
+nothing is written to Chat or told to the model. A response the channel already shows answers
+`active: true` and no items. To carry on from a branch that is not shown, `activate` it first:
+the router hides the shown one and sends the chosen one's messages again, and the model answers
+from it from then on. Activating what is already shown changes nothing, so it is safe to retry.
+
+Each message the router writes carries its place, `support_branch`, which `supportBranchOf`
+reads from a stream-chat 9 or 10 message, or from one `branch` read back, for a page drawing
+‹ i/n › without the React components:
+
+```ts
+import { supportBranchOf } from "@stream-io/stream-agents";
+
+const place = supportBranchOf(message); // { of, index, count, responseId, ... } or undefined
+```
+
+**The channel follows along.** Once `session.chat()` has opened the channel, the session drops
+what a regenerate, an edit or an activation hid from it as soon as the call returns, from the
+answer's `rewound_to`, so the device that asked never shows the old and the new answer
+together. Another device hears Chat's `channel.rewound` (or `notification.channel_rewound`, when
+it is a member not watching), and the session drops the hidden messages from the channel's state
+at once and then reads the channel again. Dropping comes first because stream-chat does not
+handle the event, and its `channel.query` adds what it reads to what the channel holds rather
+than replacing it, so reading again alone would never take anything away. This stops when the
+session is closed. An app showing the channel without this package needs its own handler.
+
+**What to tell the person.**
+
+- **At most 100 edit and regenerate points per conversation.** Chat keeps 100 separate hidden
+  stretches per channel. Regenerating the same reply again reuses its stretch, and editing an
+  earlier turn swallows the ones after it, so a normal conversation stays in single digits.
+  Past it, a regenerate or an edit is a `RouterError` with code `branch_limit_reached` (409):
+  continue in a new chat. Asking and reading still work, and paging through ‹ i/n › never counts.
+- **A branch of more than 100 messages cannot be brought back.** `activate` sends them again,
+  and past 100 it is refused with `branch_too_long` (409): continue in a new chat.
+- **A deleted branch is gone.** A memory truncate deletes the router's copies of hidden
+  branches; reading or activating one is then `branch_unavailable` (410).
+- **Brought-back messages are new messages.** They have new ids and times, fire `message.new`
+  again, and reach webhooks, the firehose and moderation as new. They are sent with `skip_push`
+  and carry `custom.resent_from`, the id of the message each copies, for a backend to dedupe on.
+- **Memories from abandoned branches are kept.** What the agent remembered on a branch the
+  person left can still be recalled; `session.deleteMemories()` is the only way to take it back.
+- **Some turns cannot be branched.** A turn answered before branches existed, or typed while the
+  agent was on a call, carries no mark and is refused. So are shared conversations, threads,
+  conversations a dispatch worker answers, a session while it is on a call, a speech-to-speech
+  model, and incognito sessions (nothing is kept to branch).
+- **Chat still counts what is hidden.** Hidden messages stay in a channel export and in
+  `message_count`, and for a moment after a rewind a read can still return what it hid.
+
+`branchErrorOf(error)` answers which of the three codes a failure is, or undefined.
+
+## Sockets
+
+`Socket` is the hand-written half of this SDK. OpenAPI stops at the upgrade, so the session
+events socket, the dispatch socket and the four modality sockets are written rather than
+generated.
+
+```ts
+import { Socket } from "@stream-io/stream-agents";
+
+const socket = await Socket.open(api.backend, await api.backend.socketURL("/v1/stt/stream"));
+socket.send({ type: "start", options: { language: "en" } });
+socket.sendAudio(pcm);
+
+for await (const message of socket.messages()) {
+  if (message instanceof Uint8Array) {
+    play(message);
+  } else {
+    console.log(message.type);
+  }
+}
+```
+
+Credentials go in the query string, because a browser WebSocket carries no headers of its
+own. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
+counterpart on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is how
+it reads a user's token.
+
+## Working on this package
+
+```bash
+npm install
+npm run types                          # regenerate src/generated/api.ts from the spec
+npm test                               # typecheck, then the suite
+npm run test:local                     # against a router running on this machine
+npm run test:qa                        # against the hosted deployments
+npm run test:integration               # device posture and one Stream connection, see below
+npm run build                          # dist/, what gets published
+npm run example build/examples/voice.js
+```
+
+The generated types are committed, so installing the package needs no code generation, and
+`npm run types -- --check` is what CI uses to catch a spec that has moved without them.
+`acceleration/api/openapi.yaml` is the source of truth: after editing it, regenerate every
+client — see [acceleration/README.md](../../acceleration/README.md).
+
+The tests run against a real HTTP server and a real WebSocket upgrade rather than a stubbed
+`fetch`, so what they exercise is the request this SDK actually puts on the wire.
+
+`npm test` is hermetic and is what CI runs, once with the `stream-chat` 9 the lockfile has
+and once with 10. To run it against 10 here: `npm install --no-save stream-chat@^10.0.2`,
+then `npm test`, then `npm ci` to go back. The two live suites are not part of it and are
+not in CI: they talk to a deployment, and they skip rather than fail when there is none to
+talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
+build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default
+`http://127.0.0.1:8098`. `test:qa` wants `STREAM_API_KEY` and `STREAM_API_SECRET`, and
+reaches `QA_ACCELERATION_URL`, which it skips without, and `QA_DOCS_SEARCH_URL`. They are the only place
+the claims above are checked against a real backend rather than against a test one, which
+is worth running before trusting any of them: three of them are `todo` there today, each
+naming what the deployment does instead.
+
+`test:integration` checks the two promises a client SDK makes. A device holding a user's token
+is refused every server-side operation (minting a call or chat token, claiming a guest,
+configs, sync, simulations, memories, the dispatch socket) with a 403 `server_side_only`. And
+however many sessions ask, there is one Stream Chat and one Stream Video socket for the user,
+none at all beside a `StreamChat` the app handed over with `client.use`, nobody left online
+after `client.disconnect()`, and no push device but the app's own. Sockets are counted off
+Node's diagnostics channels, so they are the connections that actually left the process.
+
+The posture half needs a router that verifies credentials, which the Docker one in proxy mode
+does not. Mint a key against its Postgres and run a second router in `api_key` mode beside it:
+
+```bash
+cd acceleration && set -a && source ../.env && set +a
+export ROUTER_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/model_router?sslmode=disable' ROUTER_REDIS_ADDR=localhost:56379
+go run ./cmd/router keys create --app-name sdk-suite      # prints the key and secret once
+ROUTER_ADDR=:8099 ROUTER_AUTH_MODE=api_key ROUTER_PUBLIC_URL=http://localhost:8099 go run ./cmd/router
+```
+
+Then `INTEGRATION_ROUTER_KEY=vak_live_… INTEGRATION_ROUTER_SECRET=vas_live_… npm run
+test:integration` (`INTEGRATION_ROUTER_URL` defaults to `http://localhost:8099`). The Stream
+half wants the Docker router on `STREAM_ACCELERATION_URL` with `STREAM_ACCELERATION_CUSTOMER_ID`,
+`STREAM_API_KEY` and `STREAM_API_SECRET`, all read from `.env`. Each half skips without its own.
+Run it from a shell without `.env` sourced, or `npm test` reads the same variables and fails.
+
+They hold real conversations, so they spend the app's daily token allowance, and run often
+enough they will spend all of it. A test that finds it gone skips saying so rather than
+reporting the deployment broken — worth recognising in the output, because everything else
+still passes and only the one test that needed an answer steps aside.
+
+### Releasing
+
+The **Release JS SDK** workflow publishes to npm, run by hand from the `accelerate` branch.
+semantic-release (`release.config.mjs`) reads the commits since the last `sdk-js-v*` tag and
+counts only those scoped `sdk-js`: `feat(sdk-js):` moves the minor, `fix(sdk-js):` and
+`perf(sdk-js):` the patch, and while the package is 0.x a breaking change moves the minor too.
+A commit with any other scope, or none, ships nothing, whatever it touches. The workflow runs
+as a dry run unless that box is unticked, printing the version and notes it would publish.
+
+It publishes with npm trusted publishing, so there is no token, and npm only lets a package
+trust a workflow once the package exists. The first version is therefore published by hand:
+
+```bash
+npm publish                               # 0.2.0, as package.json says
+git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
+```
+
+then on npmjs.com, under the package's settings, add GitHub Actions as a trusted publisher:
+`GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in
+`package.json` is not maintained: semantic-release writes the next one into the package it
+publishes and nothing is committed back.

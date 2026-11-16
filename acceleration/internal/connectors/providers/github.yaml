@@ -1,0 +1,272 @@
+# GitHub's remote MCP server (internal/mcp/connectors.yaml:77-84 on codex/connector-support at
+# cf62af0d, «[proto]:N» below). The core's fixture testdata/manifests/github.yaml is the
+# GitHub App installation flow; this is the MCP server's user flow. Vendor pages, opened
+# October 2, 2026:
+#   [remote]  https://github.com/github/github-mcp-server/blob/f10e4e1f923d46b86f2e80e849aa74084c847184/docs/remote-server.md
+#   [host]    https://github.com/github/github-mcp-server/blob/f10e4e1f923d46b86f2e80e849aa74084c847184/docs/host-integration.md
+#   [oauth]   https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps
+#   [user]    https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+#   [refresh] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
+# Opened October 9, 2026:
+#   [readme]  https://github.com/github/github-mcp-server/blob/eb47a99ddb866ca2b8a162920e6bda9521f33ebb/README.md
+# Opened October 15, 2026:
+#   [toolsets] https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md
+#   [rest]    https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api
+#   [restauth] https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api
+#   [versions] https://docs.github.com/en/rest/about-the-rest-api/api-versions
+#   [paging]  https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
+# Opened October 20, 2026:
+#   [assets]  https://docs.github.com/en/rest/releases/assets
+#   [secrets] https://www.daytona.io/docs/en/secrets.md
+# Opened October 27, 2026:
+#   [smart]   https://git-scm.com/docs/gitprotocol-http
+#   [graphql] https://docs.github.com/en/graphql/guides/forming-calls-with-graphql
+#   [ghapi]   https://cli.github.com/manual/gh_api
+# Opened November 5, 2026:
+#   [lfsbatch] https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
+#   [lfsurl]   https://github.com/git-lfs/git-lfs/blob/main/docs/api/server-discovery.md
+# Opened October 22, 2026:
+#   [remotes] https://docs.github.com/en/get-started/git-basics/about-remote-repositories
+#   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
+# And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
+#         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
+#         authorization_servers [https://github.com/login/oauth], scopes_supported [repo,
+#         read:org, read:user, user:email, read:packages, write:packages, read:project,
+#         project, gist, notifications].
+#   [as]  GET https://github.com/.well-known/oauth-authorization-server/login/oauth at
+#         2026-10-02T21:06:35Z: issuer https://github.com/login/oauth, authorize
+#         https://github.com/login/oauth/authorize, token
+#         https://github.com/login/oauth/access_token, code_challenge_methods_supported
+#         [S256], authorization_response_iss_parameter_supported true, no
+#         registration_endpoint, no token_endpoint_auth_methods_supported; fetched again at
+#         2026-10-02T22:13:25Z, scopes_supported [offline_access].
+id: github
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.registration. 3 adds bearer (AI-990). 4 (AI-1308) adds
+# endpoints.api_base, so a backend can call GitHub's REST API through the connection proxy.
+# 5 (AI-1309) adds the X-MCP-Toolsets header on the mcp source, so GitHub offers its Actions
+# tools beside the default ones. 6 adds sandbox, so code in a session's sandbox can call
+# GitHub's REST API with the connection's token. 7 (AI-1576) adds github.com to sandbox.hosts,
+# so git over HTTPS reaches it through both brokers. 8 adds sandbox.reads: under the proxy
+# broker code in the sandbox reads only, and git clone and fetch read with a POST. 9 adds the
+# GraphQL endpoint as a read of queries alone, so gh reads through it. 10 lists the tools that
+# only read. 11 adds Git LFS's batch API as a read of downloads alone, so git lfs pull reads
+# through it.
+revision: 11
+# [proto]:78-80
+name: GitHub
+category: Developer tools
+description: Search repositories, inspect issues and pull requests, and make changes.
+endpoints:
+  # [remote] («URL: https://api.githubcopilot.com/mcp/»); [proto]:81.
+  mcp: https://api.githubcopilot.com/mcp/
+  # The issuer [prm] names. [host] asks hosts to discover the endpoints rather than hard-code
+  # https://github.com/login/oauth/authorize, so authorize and token come from [as]. The issuer
+  # is pinned instead of found from the MCP endpoint: oauth2_code strips the trailing slash
+  # before the well-known suffix (RFC 9728 section 3.1), and that document,
+  # /.well-known/oauth-protected-resource/mcp at 2026-10-02T21:06:34Z, names resource
+  # https://api.githubcopilot.com/mcp without it, which section 3.3 refuses; the root
+  # document answered 404 at 2026-10-02T21:10:21Z.
+  issuer: https://github.com/login/oauth
+  # RFC 8707 resource indicator: [prm]'s resource. Whether GitHub's authorization server
+  # reads it is not documented on the pages above. # unverified
+  resource: https://api.githubcopilot.com/mcp/
+  # [rest]: a request's URL «includes the base URL for the GitHub REST API
+  # (https://api.github.com)»; GET /repos/octo/hello/issues is
+  # https://api.github.com/repos/octo/hello/issues. Each scheme's token is taken there as
+  # «Authorization: Bearer»: an OAuth App's ([oauth], «Use the access token to access the
+  # API»: «curl -H "Authorization: Bearer OAUTH-TOKEN" https://api.github.com/user»), a GitHub
+  # App's user token ([user]: «Include the user access token in the Authorization header of an
+  # API request»), and a personal access token ([restauth]: «you can create a personal access
+  # token», «you can use Authorization: Bearer or Authorization: token»). [rest] rejects a
+  # request with no User-Agent; the proxy forwards the caller's, and Go's client sends
+  # Go-http-client/1.1 when there is none (net/http request.go, defaultUserAgent, go1.27).
+  # Accept is a «should» on [rest], and with no X-GitHub-Api-Version GitHub answers as
+  # 2022-11-28 ([versions]), so the proxy adds neither. GitHub pages with an absolute Link
+  # header naming api.github.com ([paging]: «link:
+  # <https://api.github.com/repositories/1300192/issues?page=2>; rel="prev"»); the proxy
+  # rewrites each such link to the connection's proxy URL (api.proxiedLinks). URLs in a body
+  # (url, comments_url and the like) name api.github.com too and are passed as they came: a
+  # client must not follow one with the router's credential, but call its path through the
+  # proxy. With no ROUTER_PUBLIC_URL every Link is dropped (fail closed), so paging needs it set.
+  api_base: https://api.github.com
+# Authorization code with PKCE S256: [oauth], [user] (code_challenge_method S256); [as].
+# And a personal access token the developer supplies, sent to the same endpoint as
+# «"Authorization": "Bearer ${input:github_mcp_pat}"» ([readme]:73-83, «GitHub Personal Access
+# Token»), which is the bearer scheme's header (RFC 6750 section 2.1). bearer reads none of
+# the client, scopes, refresh or issuer below: they are oauth2_code's. A token learns no
+# account, since this manifest has no identity. A connection that names no scheme still gets
+# oauth2_code, its one scheme that is not static (api.defaultScheme).
+schemes: [oauth2_code, bearer]
+client:
+  # A GitHub App or an OAuth App registered ahead of time: «Dynamic Client Registration is
+  # NOT supported by Remote GitHub MCP Server at this time» ([host]), and [as] has neither a
+  # registration_endpoint nor a CIMD flag. The prototype said dcr ([proto]:83); the vendor
+  # page wins. [host] recommends a GitHub App and says a user's organization may have to
+  # approve or install it, which is why a customer may bring its own; that is our policy,
+  # not a vendor fact. The list order is not the order: oauth2_code tries a customer's
+  # client before the operator's (ownerOrder in schemes/oauth2code/client.go).
+  registration: [operator, customer]
+  # client_id and client_secret go in the token request body: [oauth], [user]. [as] lists no
+  # methods, so without this oauth2_code would pick client_secret_basic, which neither page
+  # documents.
+  auth_method: client_secret_post
+  # [proto]:84
+  env: GITHUB
+scopes:
+  # All of [prm]'s scopes_supported, as MCP 2025-11-25 «Scope Selection Strategy» asks. An
+  # OAuth App takes them; a GitHub App's user token has fine-grained permissions instead and
+  # its scope «will always be an empty string» ([user]). The prototype asked for none
+  # ([proto]:77-84, docs/connector-design.md:148 there), before [prm] listed them.
+  # offline_access is [as]'s one scope: with it «you will receive an expiring access token
+  # and a refresh token even if your app is not configured to use expiring tokens», and it
+  # «will not alter the scope behavior» ([oauth], opened October 2, 2026). So an OAuth App
+  # gets the 8-hour token and rotating refresh token below rather than a token that never
+  # expires. What a GitHub App does with it is not on [user]. # unverified
+  list:
+    - repo
+    - read:org
+    - read:user
+    - user:email
+    - read:packages
+    - write:packages
+    - read:project
+    - project
+    - gist
+    - notifications
+    - offline_access
+  # No separator, so a space: [oauth] («A space-delimited list of scopes»). The token
+  # response answers granted scopes with commas («"scope":"repo,gist"», [oauth]), which one
+  # separator cannot say; see the PR.
+# No identity: the token response carries no account id ([oauth], [user]), and GET /user
+# is a profile request this schema cannot make.
+refresh:
+  # A GitHub App's user token: «expires after 8 hours», the refresh token after 6 months
+  # (refresh_token_expires_in 15897600 seconds, 4416h), and «Once you use a refresh token,
+  # that refresh token and the old user access token will no longer work»: [user],
+  # [refresh]. No access_ttl: it is used only when a response has no expires_in, and GitHub
+  # leaves expires_in out exactly when the token does not expire: «If you disabled
+  # expiration of user access tokens, this parameter will be omitted» ([user]), and an
+  # OAuth App sends it only with expiring tokens or offline_access ([oauth]). Both pages
+  # opened October 2, 2026.
+  rotating: true
+  refresh_ttl: 4416h
+sources:
+  - kind: mcp
+    endpoint: mcp
+    # [toolsets] «Optional Headers»: «X-MCP-Toolsets: Comma-separated list of toolsets to
+    # enable», and /mcp/ alone is the default toolset. The header rather than the /x/actions
+    # path, which «can only be a single toolset», so endpoints.mcp and resource stay
+    # /mcp/ and the tokens of existing connections keep working. Live tools/list with a
+    # personal access token at 2026-10-15T19:15:12Z: no header and «default» 49 tools each;
+    # «actions» 4 (actions_get, actions_list, actions_run_trigger, get_job_logs);
+    # «default,actions» 53, the 49 and the 4.
+    headers:
+      X-MCP-Toolsets: default,actions
+    # The tools that only read, of the toolsets the header asks for: the default ones
+    # (context, repos, issues, pull_requests and users, the README's «"default" toolset»; the
+    # copilot toolset is Default: true in pkg/github/tools.go there too, and its tools write) and
+    # actions, read in github/github-mcp-server at 99d6d6503a7b2a133e2f8a595d6d0ba24b4086d3
+    # (opened 2026-11-05). Each name is in that toolset's list in README.md there, and its
+    # definition in pkg/github sets «ReadOnlyHint: true», as its snapshot in
+    # pkg/github/__toolsnaps__ does. [toolsets] calls those the tools «that enable read
+    # access», the only ones its /readonly path serves. The issue_read, pull_request_read and actions_get
+    # methods all get. get_job_logs and actions_get's download_workflow_run_artifact may
+    # return a GitHub download URL, which brings data in, as linear.yaml's get_attachment
+    # does; the search_ tools send their query to GitHub's own search. Left out: every tool of
+    # those toolsets whose ReadOnlyHint is false (actions_run_trigger and the tools that
+    # create, update, merge, push, fork, delete, comment, review or assign Copilot), as is a
+    # tool added later.
+    read_only_tools:
+      - get_me
+      - get_team_members
+      - get_teams
+      - ui_get
+      - get_commit
+      - get_file_contents
+      - get_latest_release
+      - get_release_by_tag
+      - get_tag
+      - list_branches
+      - list_commits
+      - list_releases
+      - list_repository_collaborators
+      - list_tags
+      - search_code
+      - search_commits
+      - search_repositories
+      - get_label
+      - issue_read
+      - list_issue_fields
+      - list_issue_types
+      - list_issues
+      - search_issues
+      - list_pull_requests
+      - pull_request_read
+      - search_pull_requests
+      - search_users
+      - actions_get
+      - actions_list
+      - get_job_logs
+# Code in a session's sandbox reads a placeholder from GITHUB_TOKEN, and the sandbox's egress
+# puts the connection's token in its place only in a request to these hosts ([secrets]). It is
+# the env var name GitHub's own tools read the token from (gh: «GH_TOKEN, GITHUB_TOKEN»,
+# https://cli.github.com/manual/gh_help_environment, opened October 20, 2026). A placeholder is
+# replaced only in a request header ([secrets] says only when the header carries it verbatim,
+# which the Basic case below contradicts under Daytona), so code sends it as
+# «Authorization: Bearer», which every scheme's token takes ([rest] and api_base above). git
+# sends it to github.com as Basic auth's password, Base64-encoded. Both brokers replace it
+# there: the proxy broker (code_sandbox.broker: proxy) by its own rewrite, and Daytona in live
+# staging E2E on 2026-10-22 (session 01a16514-923c-7843-9214-40a94453f194: git ls-remote of a
+# public repo with «Authorization: Basic b64(x-access-token:$GITHUB_TOKEN)» exited 0, the same
+# with a fake placeholder got 502), although [secrets], «Transformed placeholders», says it
+# does not.
+sandbox:
+  env: GITHUB_TOKEN
+  hosts:
+    # [rest]: the REST API's base URL is https://api.github.com.
+    - api.github.com
+    # [assets], «Upload a release asset»: «Use the upload_url returned in the response of the
+    # Create a release endpoint», and its example request is
+    # https://uploads.github.com/repos/OWNER/REPO/releases/RELEASE_ID/assets?name=example.zip.
+    - uploads.github.com
+    # [remotes]: git over HTTPS uses «An HTTPS URL like https://github.com/user/repo.git», and
+    # «When Git prompts you for your password, enter your personal access token»; [install]:
+    # «git clone https://x-access-token:TOKEN@github.com/owner/repo.git». GitHub refuses
+    # «Authorization: Bearer» there (401 to git-receive-pack, 2026-10-22T03:53:09Z), so git
+    # takes the Basic form, which both brokers replace (see the comment above `sandbox`).
+    - github.com
+  # Under the proxy broker a request to these hosts with a method other than GET or HEAD is
+  # refused, except these, which only read. [smart], «Smart Service git-upload-pack»: clone and
+  # fetch send «POST $GIT_URL/git-upload-pack», after a GET of
+  # $GIT_URL/info/refs?service=git-upload-pack. $GIT_URL is /<owner>/<repo>.git, or /<owner>/<repo>
+  # when the URL leaves .git out ([remotes]), and * matches either. A push is «POST
+  # $GIT_URL/git-receive-pack» ([smart], «Smart Service git-receive-pack»), so it is refused.
+  reads:
+    - host: github.com
+      method: POST
+      path: /*/*/git-upload-pack
+    # [graphql]: «For GitHub.com, that endpoint is: https://api.github.com/graphql», and «you'll
+    # provide a JSON-encoded body whether you're performing a query or a mutation, so the HTTP
+    # verb is POST». gh reads through it ([ghapi]: «graphql to access the GitHub API v4»). The
+    # proxy lets a POST there through only when every operation in its body is a query. A
+    # GraphQL read names no method: a router before revision 9's code refuses the POST.
+    - host: api.github.com
+      path: /graphql
+      graphql: true
+    # [lfsbatch]: «All Batch API requests use the POST verb», its body's «operation - Should be
+    # download or upload», and the batch URL is the remote's with .git/info/lfs/objects/batch
+    # ([lfsurl]: «Git LFS will append .git/info/lfs to the end of a Git remote url»), which *
+    # matches. The proxy lets that POST through only when its body asks to download; git lfs push
+    # asks to upload, so it is refused. An LFS read names no method: a router before revision
+    # 11's code refuses the POST.
+    - host: github.com
+      path: /*/*/info/lfs/objects/batch
+      lfs: true
+      # The answer's actions.download.href names this host, a presigned URL whose
+      # authorization is in its query, with no header to send: a batch for a public repository
+      # asked to download one object on 2026-11-05T17:15:08Z, and its href's GET answered the
+      # object. The proxy reaches it for GET and HEAD and gives it no token. Which host a
+      # private repository's answer names is unverified.
+      downloads: [github-cloud.githubusercontent.com]

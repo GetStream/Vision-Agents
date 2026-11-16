@@ -23,7 +23,6 @@ vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
-vision-agents-plugins-lemonslice = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
 vision-agents-plugins-vogent = { workspace = true }
@@ -41,10 +40,11 @@ vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
-vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
+vision-agents-plugins-stream = { workspace = true }
+vision-agents-plugins-omni = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -61,7 +61,7 @@ cache-dir = ".uv-cache"
 
 [tool.uv.workspace]
 members = [
-    "agents-core",
+    "sdks/python",
     "plugins/anthropic",
     "plugins/aws",
     "plugins/cartesia",
@@ -80,7 +80,6 @@ members = [
     "plugins/ultralytics",
     "plugins/smart_turn",
     "plugins/wizper",
-    "plugins/lemonslice",
     "plugins/inworld",
     "plugins/vogent",
     "plugins/moondream",
@@ -98,10 +97,11 @@ members = [
     "plugins/local",
     "plugins/anam",
     "plugins/sarvam",
-    "plugins/liveavatar",
     "plugins/tencent",
     "plugins/twelvelabs",
     "plugins/speechify",
+    "plugins/stream",
+    "plugins/omni",
 ]
 exclude = [
     "**/__pycache__",
@@ -146,7 +146,7 @@ dev = [
 
 [tool.mypy]
 python_version = "3.12"
-mypy_path = ["agents-core"]
+mypy_path = ["sdks/python"]
 # Gradual typing → can tighten over time
 ignore_missing_imports = true
 check_untyped_defs = true
@@ -157,6 +157,13 @@ explicit_package_bases = true
 # import its types so we can't skip it, but we ignore errors inside the package.
 [[tool.mypy.overrides]]
 module = "twelvelabs.*"
+ignore_errors = true
+
+# The stream plugin's HTTP client is generated from acceleration/api/openapi.yaml by
+# openapi-python-client. Correcting its output by hand would be undone by the next
+# regeneration.
+[[tool.mypy.overrides]]
+module = "*.stream._generated.*"
 ignore_errors = true
 
 [tool.hatch.version]

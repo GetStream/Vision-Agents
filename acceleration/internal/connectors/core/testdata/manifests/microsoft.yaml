@@ -1,0 +1,54 @@
+# Stress-test row 8 (Microsoft 365) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. Vendor sources, all
+# opened October 1, 2026 ([cert] is in the doc's «Sources and evidence»; the others were
+# opened for this fixture):
+#   [cert]    https://learn.microsoft.com/en-us/entra/identity-platform/certificate-credentials
+#   [code]    https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+#   [admin]   https://learn.microsoft.com/en-us/entra/identity-platform/v2-admin-consent
+#   [idtoken] https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
+id: microsoft
+revision: 1
+name: Microsoft 365
+inputs:
+  # {tenant} is common, organizations, consumers or a tenant identifier (a GUID or a
+  # domain): [code]. The pattern admits those shapes and nothing with a slash.
+  - name: tenant
+    pattern: "[A-Za-z0-9.-]+"
+    default: organizations
+endpoints:
+  # [code]
+  authorize: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize
+  token: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+  # [admin]
+  admin_consent: https://login.microsoftonline.com/{tenant}/v2.0/adminconsent
+  # Issuer per tenant: row 8; the v2.0 issuer «ends in /v2.0»: [idtoken].
+  issuer: https://login.microsoftonline.com/{tenant}/v2.0
+schemes: [oauth2_code]
+client:
+  # Our policy, not a vendor fact.
+  registration: [operator, customer]
+  # Certificate credentials are private_key_jwt, the assertion alg «Should be PS256»:
+  # [cert]; row 8.
+  auth_method: private_key_jwt
+  alg: PS256
+scopes:
+  # openid for the id_token, profile for the oid claim ([idtoken]), offline_access for a
+  # refresh token ([code]), and the Graph scope of [code]'s hybrid-flow example.
+  list: [openid, profile, offline_access, https://graph.microsoft.com/user.read]
+  # Refresh must send scope: row 8 (Claude Code #89862). [code] calls it optional.
+  send_on_refresh: true
+  # Step-up for Microsoft: «What the stress test adds to the core», item 5.
+  step_up_union: true
+capture:
+  # oid and tid together identify a user acting in a tenant: [idtoken] «oid and tid is
+  # best as all apps get the same oid and tid claims for a user acting in a tenant».
+  - name: tid
+    from: id_token
+    path: $.tid
+  - name: oid
+    from: id_token
+    path: $.oid
+identity: [tid, oid]
+rate_limit:
+  # Graph 130,000 per 10 s per app: row 8.
+  per: app

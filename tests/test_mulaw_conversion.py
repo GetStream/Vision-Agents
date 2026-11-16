@@ -10,7 +10,7 @@ import os
 spec = importlib.util.spec_from_file_location(
     "utils",
     os.path.join(
-        os.path.dirname(__file__), "../examples/03_phone_and_rag_example/utils.py"
+        os.path.dirname(__file__), "../examples/old/03_phone_and_rag_example/utils.py"
     ),
 )
 utils = importlib.util.module_from_spec(spec)

@@ -1,0 +1,230 @@
+/**
+ * The JavaScript client for the Stream acceleration backend.
+ *
+ * Everything here runs in a browser and on a server. What only a server may do is not a
+ * matter of which file it is in but of what it is authenticated as: a `Backend` holding an
+ * API secret reaches every operation, and one holding a user's token reaches the
+ * conversations that user owns and nothing about how an agent is configured.
+ *
+ * Reading an agent directory needs a filesystem, so `loadFolder` lives in
+ * `@stream-io/stream-agents/node`.
+ */
+
+export {
+  API_KEY_ENV,
+  API_SECRET_ENV,
+  AUTHENTICATE_ENV,
+  Backend,
+  CUSTOMER_ENV,
+  DEFAULT_URL,
+  REGION_ENV,
+  URL_ENV,
+  USAGE_CATEGORIES_HEADER,
+  regionUrl,
+  signToken,
+  type BackendOptions,
+  type StreamCredentials,
+  type StreamUser,
+  type TokenSource,
+  type UserTokenOptions,
+  type WebSocketConstructor,
+  type WebSocketLike,
+} from "./backend.js";
+
+export {
+  Client,
+  type Method,
+  type PathsWith,
+  type RequestOptions,
+  type Result,
+  type Schemas,
+} from "./client.js";
+
+export { AgentHandle } from "./handle.js";
+
+export { Memories } from "./memories.js";
+
+export { SimulationRuns, Simulations, type SimulationRunQuery } from "./simulations.js";
+export { ScheduledTasks, type ScheduledTaskQuery } from "./scheduled-tasks.js";
+export { Router, type RouterOptions } from "./router.js";
+
+export {
+  SpendLimits,
+  type GrantFilter,
+  type GrantSpec,
+  type LimitFilter,
+  type LimitInterval,
+  type LimitLevel,
+  type LimitReset,
+  type LimitSpec,
+  type LimitSubject,
+  type LimitTarget,
+  type SubjectIds,
+} from "./spend-limits.js";
+export { Teams, type TeamLimit, type TeamLimitTarget } from "./teams.js";
+export { USD, type Amount } from "./usd.js";
+
+export {
+  Sessions,
+  type CreateSessionOptions,
+  type SessionFilter,
+  type SessionQuery,
+  type SessionSearch,
+  type SessionSort,
+  type SessionSortField,
+  type SessionSpec,
+} from "./sessions.js";
+
+export {
+  AgentResponse,
+  Items,
+  Responses,
+  type BranchResponseOptions,
+  type CreateResponseOptions,
+  type ImageSource,
+  type ResponseRef,
+  type UIAction,
+} from "./responses.js";
+
+export {
+  branchErrorOf,
+  supportBranchOf,
+  type BranchErrorCode,
+  type RewoundTo,
+  type SupportBranch,
+} from "./branches.js";
+
+export {
+  GUEST_STORAGE_KEY,
+  browserStore,
+  claimGuestUser,
+  forgetGuest,
+  guestUser,
+  type Guest,
+  type GuestStore,
+  type GuestUserOptions,
+} from "./guests.js";
+
+export {
+  ConfigurationError,
+  HostingRefusedError,
+  RouterError,
+  SocketClosedError,
+  type RouterErrorType,
+} from "./errors.js";
+
+export type { components, operations, paths } from "./generated/api.js";
+
+export {
+  Socket,
+  flag,
+  nested,
+  number,
+  text,
+  type Frame,
+  type Message,
+} from "./socket.js";
+
+export {
+  CallNotHeldError,
+  ToolCallContext,
+  ToolOutput,
+  type ToolOutputPart,
+  Tools,
+  render,
+  type ParameterSchema,
+  type StandardIssue,
+  type StandardToolSchema,
+  type Tool,
+  type ToolApproval,
+  type ToolCallFields,
+  type ToolConversation,
+  type ToolLine,
+  type ToolUser,
+} from "./tools.js";
+
+export { LiveReasoning } from "./reasoning.js";
+export { LiveUI } from "./live-ui.js";
+export {
+  compileUIPrompt,
+  uiPascalName,
+  validateOpenUIProgram,
+  type UIBlueprint,
+  type UIDeclaration,
+  type UIPortableComponent,
+} from "./ui-catalog.js";
+
+export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
+export {
+  Conversation,
+  mergeOpenUIStatements,
+  type ConversationRecord,
+  type Turn,
+  type TurnUI,
+} from "./conversation.js";
+
+export { CameraFrames, NoFrames, type CameraFrame } from "./frames.js";
+
+export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
+
+export {
+  Session,
+  Voice,
+  connectorScopeRequiredOf,
+  eventOf,
+  type ConnectorScopeRequired,
+  type ForkOptions,
+  type Participant,
+  type SessionChat,
+  type SessionEvent,
+  type SessionOptions,
+  type SessionVideo,
+  type ToolApprovalRequest,
+  type ToolDecision,
+} from "./session.js";
+
+export {
+  DEFAULT_CHARS_PER_MS,
+  SPEECH_GRACE_MS,
+  Speech,
+  type HeardSpeech,
+  type SpeechOptions,
+  type SpeechSnapshot,
+} from "./speech.js";
+
+export {
+  Agent,
+  USER_KEY,
+  daytona,
+  userIdOf,
+  type AgentOptions,
+  type CallOptions,
+  type ChatOptions,
+  type ConnectorDeclaration,
+  type Declaration,
+  type Folder,
+  type Harness,
+  type Pipeline,
+  type Sandbox,
+  type Skill,
+  type SyncStamp,
+} from "./agent.js";
+
+export {
+  DEFAULT_CALL_TYPE,
+  DEFAULT_MONITOR_URL,
+  Edge,
+  type Call,
+  type EdgeOptions,
+  type User,
+} from "./edge.js";
+
+export { callOf, messageOf, type InboundCall, type InboundImage, type InboundMessage } from "./inbound.js";
+
+export {
+  Dispatch,
+  type CallHandler,
+  type DispatchOptions,
+  type HostOptions,
+  type MessageHandler,
+} from "./dispatch.js";

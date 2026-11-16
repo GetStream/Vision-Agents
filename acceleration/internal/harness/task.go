@@ -1,0 +1,92 @@
+package harness
+
+import (
+	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+)
+
+// needPrefix is how a skill says it cannot finish without something only the caller can
+// tell it. Every skill's instructions ask for it, because a subagent that guesses at a
+// missing detail is worse than one that has the agent ask.
+const needPrefix = "NEED:"
+
+// State is how a task ended.
+type State string
+
+const (
+	// Done means the subagent answered.
+	Done State = "done"
+	// Cancelled means the answer stopped being worth having before it arrived.
+	Cancelled State = "cancelled"
+	// Failed means the subagent could not answer.
+	Failed State = "failed"
+)
+
+// Reasons a task was cancelled.
+const (
+	// ReasonSuperseded means a newer request for the same skill replaced it. The premise
+	// of the old one is what changed, which is exactly the case worth abandoning.
+	ReasonSuperseded = "superseded"
+	// ReasonDropped means the model said the answer no longer matters.
+	ReasonDropped = "dropped"
+	// ReasonDeadline means the answer stopped being worth having.
+	ReasonDeadline = "deadline"
+	// ReasonClosed means the conversation ended.
+	ReasonClosed = "closed"
+	// ReasonRefused means the prompt injection screen refused the turn that asked for it,
+	// so it was asked on input nothing may act on.
+	ReasonRefused = "refused"
+)
+
+// Result is a finished task.
+type Result struct {
+	Evidence []string
+	TaskID   string
+	TurnID   string
+	Skill    string
+	State    State
+	// Text is the answer, when there is one.
+	Text string
+	// Question is what the agent must ask the caller before the work can go any further.
+	// It is set instead of Text.
+	Question string
+	// Reason says why a cancelled task was abandoned.
+	Reason string
+	Err    error
+	// ElapsedMs is how long the caller was kept company for.
+	ElapsedMs float64
+	// Files are what the work's code handed back, published where the caller can see
+	// them. Only an answered task has any.
+	Files []sandbox.Attachment
+}
+
+// Answered reports whether the task produced something worth telling the caller.
+func (r Result) Answered() bool { return r.State == Done && r.Text != "" }
+
+// Actionable reports whether the caller is owed something because of this result: an
+// answer, a question, or the news that the answer is not coming.
+func (r Result) Actionable() bool {
+	switch r.State {
+	case Done:
+		return r.Text != "" || r.Question != ""
+	case Failed:
+		return true
+	case Cancelled:
+		// Work that ran out of time is the one cancellation the caller is still waiting
+		// on: nothing replaced it and they never moved on from it, so going quiet leaves
+		// them holding a question the agent has silently given up on. The other reasons
+		// are the premise being gone, and nobody is owed anything for those.
+		return r.Reason == ReasonDeadline
+	}
+	return false
+}
+
+// answer splits a subagent's reply into an answer and a question it needs asked first.
+func answer(text string) (string, string) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, needPrefix) {
+		return trimmed, ""
+	}
+	return "", strings.TrimSpace(strings.TrimPrefix(trimmed, needPrefix))
+}

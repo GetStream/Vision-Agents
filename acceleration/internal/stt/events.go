@@ -1,0 +1,113 @@
+package stt
+
+import (
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+)
+
+// Event is emitted on the channel returned by STT.Events.
+type Event interface {
+	isSTTEvent()
+}
+
+// Transcript carries recognised text. Mode says whether it supersedes the previous one.
+type Transcript struct {
+	Participant Participant
+	Mode        Mode
+	// Utterance numbers the stretch of speech this text belongs to, counting from one and
+	// moving on when the provider reports that one run of speech ended and another began.
+	// It is what tells a provider going over words again apart from the speaker saying
+	// them again, which no amount of looking at the words can settle. Providers that
+	// cannot see where an utterance ends leave it zero.
+	Utterance int64
+	// Speaker is the voice the provider heard, for the providers that tell one voice on a
+	// track from another. It is a label the session made up, "A" or "1", not an identity:
+	// it says nothing about who the person is and it does not survive a reconnect. What it
+	// is for is the microphone more than one person is talking into, where the participant
+	// the audio arrived under is the wrong answer for everyone but the first of them.
+	// Providers that cannot hear the difference leave it empty.
+	Speaker string
+	Text    string
+	// Interim says the words were written while the speaker was still talking, by a
+	// transcriber that marks the end of a turn itself and sends these so that a watcher sees
+	// the words appear meanwhile. They are a ModeReplacement to show, not to act on: no pause
+	// is to be read into when they arrive or how long they then hold still, as the next
+	// words or the final may be a second away. A revision without it is the words as the
+	// speaker left them at a pause, which a listener that reads pauses itself acts on.
+	// Providers that leave turn-taking to the listener never set it.
+	Interim bool
+	// Floor says the agent's floor control timed the words: a model that hears the speaker's
+	// audio ended the utterance at a pause it ruled on, whichever transcriber wrote the words,
+	// and AudioDurationMs and ProcessingTimeMs are its clock's, the utterance's audio and how
+	// long after it the words went out. A final with it is the end of the turn, and its words
+	// will not change. Only the floor control's own transcriber sets it, on what it sends
+	// whether it wrote the words or another transcriber did.
+	Floor            bool
+	Confidence       float64
+	Language         string
+	Provider         string
+	Model            string
+	ProcessingTimeMs float64
+	AudioDurationMs  float64
+}
+
+// Final reports whether the turn is settled.
+func (t Transcript) Final() bool { return t.Mode == ModeFinal }
+
+func (Transcript) isSTTEvent() {}
+
+// Connected means the upstream connection is established.
+type Connected struct {
+	Provider string
+	Model    string
+	At       time.Time
+}
+
+func (Connected) isSTTEvent() {}
+
+// Disconnected means the upstream connection closed. Clean is false for failures.
+type Disconnected struct {
+	Provider string
+	Model    string
+	Reason   string
+	Clean    bool
+	At       time.Time
+}
+
+func (Disconnected) isSTTEvent() {}
+
+// Failover means the provider refused the session part way through and the next candidate
+// took it over. Speech the refusing one had not transcribed yet is lost.
+type Failover struct {
+	// Provider and Model serve the session from now on.
+	Provider string
+	Model    string
+	// From is the "provider/model" that refused, and Err what it said.
+	From string
+	Err  error
+}
+
+func (Failover) isSTTEvent() {}
+
+// Error reports a provider failure. Fatal means the session cannot continue.
+type Error struct {
+	Provider string
+	Model    string
+	Err      error
+	Context  string
+	Fatal    bool
+}
+
+func (e Error) Error() string { return e.Err.Error() }
+
+func (e Error) Unwrap() error { return e.Err }
+
+func (Error) isSTTEvent() {}
+
+// Emitter fans provider events out to a single consumer channel. Providers hold one
+// rather than managing the channel and its close semantics themselves.
+type Emitter = emit.Emitter[Event]
+
+// NewEmitter returns an Emitter with the given channel buffer.
+func NewEmitter(buffer int) *Emitter { return emit.New[Event](buffer) }

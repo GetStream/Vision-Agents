@@ -1,0 +1,846 @@
+package telnyx
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+)
+
+type TelnyxSuite struct {
+	suite.Suite
+	ctx      context.Context
+	server   *httptest.Server
+	provider *Provider
+
+	// seen is what the last request asked for.
+	seen request
+	// respond answers the next request.
+	respond func(w http.ResponseWriter, r *http.Request)
+}
+
+type request struct {
+	method string
+	path   string
+	query  url.Values
+	body   map[string]any
+	auth   string
+}
+
+func TestTelnyx(t *testing.T) { suite.Run(t, new(TelnyxSuite)) }
+
+func (s *TelnyxSuite) SetupTest() {
+	s.ctx = context.Background()
+	s.seen = request{}
+	s.answer(`{"data":{}}`)
+
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body := map[string]any{}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &body)
+		}
+		s.seen = request{
+			method: r.Method,
+			path:   r.URL.Path,
+			query:  r.URL.Query(),
+			body:   body,
+			auth:   r.Header.Get("Authorization"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		s.respond(w, r)
+	}))
+
+	provider, err := New(Options{
+		APIKey:       "KEY123",
+		ConnectionID: "conn-1",
+		BaseURL:      s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.provider = provider
+}
+
+func (s *TelnyxSuite) TearDownTest() { s.server.Close() }
+
+func (s *TelnyxSuite) TestAKeyIsRequired() {
+	s.T().Setenv("TELNYX_API_KEY", "")
+
+	_, err := New(Options{})
+
+	s.ErrorContains(err, "TELNYX_API_KEY")
+}
+
+func (s *TelnyxSuite) TestSearchingFiltersByCountryAndReturnsWhatIsOffered() {
+	s.answer(`{"data":[{
+		"phone_number":"+15125551234","country_code":"US",
+		"features":[{"name":"voice"},{"name":"sms"}],
+		"region_information":[{"region_type":"state","region_name":"TX"},
+		                      {"region_type":"rate_center","region_name":"AUSTIN"}],
+		"cost_information":{"monthly_cost":"1.00"}}]}`)
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{
+		Country:      "us",
+		AreaCode:     "512",
+		Limit:        3,
+		Capabilities: []phone.Capability{phone.Voice},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("/v2/available_phone_numbers", s.seen.path)
+	s.Equal("US", s.seen.query.Get("filter[country_code]"))
+	s.Equal("512", s.seen.query.Get("filter[national_destination_code]"))
+	s.Equal("3", s.seen.query.Get("filter[limit]"))
+	s.Equal("Bearer KEY123", s.seen.auth)
+
+	s.Require().Len(offered, 1)
+	s.Equal("+15125551234", offered[0].E164)
+	s.Equal("TX", offered[0].Region)
+	s.Equal("AUSTIN", offered[0].Locality)
+	s.Equal([]phone.Capability{phone.Voice, phone.SMS}, offered[0].Capabilities)
+	s.Equal(int64(1_000_000), offered[0].MonthlyCostMicros)
+}
+
+func (s *TelnyxSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{})
+
+	s.ErrorContains(err, "country is required")
+	s.Empty(s.seen.path)
+}
+
+func (s *TelnyxSuite) TestBuyingANumberOrdersItOnTheConnectionThatReachesTheBridge() {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":[{"phone_number":"+15125551234",
+				"cost_information":{"monthly_cost":"1.00000"}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"id":"order-9","phone_numbers":[
+			{"phone_number":"+15125551234","country_code":"US","features":[{"name":"voice"}]}]}}`))
+	}
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+	s.Require().NoError(err)
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/v2/number_orders", s.seen.path)
+	s.Equal("conn-1", s.seen.body["connection_id"])
+
+	s.Equal("order-9", bought.VendorID)
+	s.Equal("telnyx", bought.Vendor)
+	s.Equal("US", bought.Country)
+	s.Equal([]phone.Capability{phone.Voice}, bought.Capabilities)
+	s.Equal(int64(1_000_000), bought.MonthlyCostMicros, "the order carries no price, so it is the offer's")
+}
+
+func (s *TelnyxSuite) TestANumberNoLongerForSaleIsNotOrdered() {
+	s.answer(`{"data":[]}`)
+
+	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+
+	s.ErrorContains(err, "not for sale")
+	s.ErrorIs(err, phone.ErrInvalid)
+	s.Equal(http.MethodGet, s.seen.method)
+}
+
+func (s *TelnyxSuite) TestReleasingANumberLooksUpItsIdFirst() {
+	var paths []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":[{"id":"num-3","phone_number":"+15125551234"}]}`))
+	}
+
+	s.Require().NoError(s.provider.ReleaseNumber(s.ctx, "+15125551234"))
+
+	s.Equal([]string{"GET /v2/phone_numbers", "DELETE /v2/phone_numbers/num-3"}, paths)
+}
+
+func (s *TelnyxSuite) TestANumberThisAccountDoesNotOwnCannotBeReleased() {
+	s.answer(`{"data":[]}`)
+
+	err := s.provider.ReleaseNumber(s.ctx, "+15125551234")
+
+	s.ErrorContains(err, "not one of this account's numbers")
+}
+
+func (s *TelnyxSuite) TestConfiguringInboundAssignsTheNumberToTheConnection() {
+	s.answer(`{"data":[{"id":"num-3","phone_number":"+15125551234"}]}`)
+
+	err := s.provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(http.MethodPatch, s.seen.method)
+	s.Equal("/v2/phone_numbers/num-3", s.seen.path)
+	s.Equal("conn-1", s.seen.body["connection_id"])
+}
+
+func (s *TelnyxSuite) TestWithoutAConnectionThereIsNowhereToRouteACallTo() {
+	provider, err := New(Options{APIKey: "KEY123", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	err = provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+
+	s.ErrorContains(err, "connection id is required")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
+}
+
+func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
+	s.answer(`{"call_sid":"v3:cc-1","from":"+15125550100","to":"+15125550123","status":"queued"}`)
+
+	placed, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com",
+			Username: "u",
+			Password: "p",
+		},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/v2/texml/calls/conn-1", s.seen.path)
+	s.NotContains(s.seen.body, "ApplicationSid", "the application is in the path")
+	s.Equal("+15125550100", s.seen.body["From"])
+	s.Equal("+15125550123", s.seen.body["To"])
+	s.NotContains(s.seen.body, "link_to")
+	s.NotContains(s.seen.body, "Timeout", "no timeout leaves Telnyx's own default")
+	s.NotContains(s.seen.body, "CustomHeaders")
+
+	texml := s.texml()
+	s.Equal("sip:+15125550100@app.sip.example.com", texml.Dial.Sip.URI)
+	s.Equal("u", texml.Dial.Sip.Username)
+	s.Equal("p", texml.Dial.Sip.Password)
+
+	s.Equal("v3:cc-1", placed.VendorCallID)
+	s.Equal("queued", placed.Status)
+}
+
+func (s *TelnyxSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
+func (s *TelnyxSuite) TestTheTrunkLegCarriesTheCallID() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.CallID = "abc"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("sip:+15125550100@app.sip.example.com?x-stream-call-id=abc", s.texml().Dial.Sip.URI)
+}
+
+func (s *TelnyxSuite) TestAnOutboundWithoutACallIDDialsThePlainURI() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Equal("sip:+15125550100@app.sip.example.com", s.texml().Dial.Sip.URI)
+}
+
+func (s *TelnyxSuite) TestCredentialsWithXMLSpecialCharactersAreEscaped() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com;a=1&b=<2>",
+			Username: `u"&<`,
+			Password: `a&b<"c`,
+		},
+	})
+	s.Require().NoError(err)
+
+	texml := s.texml()
+	s.Equal("sip:+15125550100@app.sip.example.com;a=1&b=<2>", texml.Dial.Sip.URI)
+	s.Equal(`u"&<`, texml.Dial.Sip.Username)
+	s.Equal(`a&b<"c`, texml.Dial.Sip.Password)
+}
+
+func (s *TelnyxSuite) TestTermsTelnyxIsKnownToCarryAreTheOnesItDials() {
+	s.True(s.provider.Dials(phone.FeatureRingTimeout))
+	s.True(s.provider.Dials(phone.FeatureInitialDigits))
+	// TeXML's CustomHeaders are documented as HTTP headers, so they may never reach the
+	// person's SIP leg.
+	s.False(s.provider.Dials(phone.FeatureCustomHeaders))
+}
+
+func (s *TelnyxSuite) TestTheRingTimeoutIsCarriedOnTheCall() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:        "+15125550100",
+		To:          "+15125550123",
+		Bridge:      phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+		RingTimeout: 25 * time.Second,
+	})
+	s.Require().NoError(err)
+
+	s.Equal(float64(25), s.seen.body["Timeout"])
+	s.Empty(s.texml().Dial.Timeout, "the person's ring timeout is not the trunk's")
+}
+
+func (s *TelnyxSuite) TestACallWhoseIDTelnyxDoesNotSayIsStillPlaced() {
+	logged := s.logged()
+	s.answer(`{"from":"+15125550100","to":"+15125550123","status":"queued"}`)
+
+	placed, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.Empty(placed.VendorCallID)
+	s.Equal("queued", placed.Status)
+	s.unknownIDWarned(logged)
+}
+
+// The README promises a status for every vendor's call, and Telnyx's reference does not
+// show one on this answer.
+func (s *TelnyxSuite) TestACallPlacedWithNoStatusIsQueued() {
+	s.answer(`{"call_sid":"v3:cc-1"}`)
+
+	placed, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com",
+			Username: "u",
+			Password: "p",
+		},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("queued", placed.Status)
+}
+
+func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
+	bridge := phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"}
+	for refusal, outbound := range map[string]phone.Outbound{
+		"telnyx: telnyx rings for 5 to 120 seconds, not 3":   {RingTimeout: 3 * time.Second},
+		"telnyx: telnyx rings for 5 to 120 seconds, not 121": {RingTimeout: 121 * time.Second},
+		`telnyx: TeXML plays only "0123456789*#w", not "W1"`: {InitialDigits: "W1"},
+		`telnyx: TeXML plays only "0123456789*#w", not "1A"`: {InitialDigits: "1A"},
+		"telnyx: custom SIP headers are not known to reach the person on a TeXML call": {
+			Headers: map[string]string{"X-Ticket": "42"},
+		},
+	} {
+		outbound.From, outbound.To, outbound.Bridge = "+15125550100", "+15125550123", bridge
+		s.seen = request{}
+
+		_, err := s.provider.Dial(s.ctx, outbound)
+
+		s.EqualError(err, refusal)
+		s.ErrorIs(err, phone.ErrInvalid, refusal+" is the caller's to change")
+		s.Empty(s.seen.path, refusal+" is refused before anything is sent")
+	}
+}
+
+func (s *TelnyxSuite) TestDigitsTeXMLCannotPlayAreRefusedBeforeTheCallIsSetUp() {
+	// Unsupported is what the service checks before it creates a Stream trunk.
+	s.Equal([]phone.CallFeature{phone.FeatureInitialDigits},
+		phone.Outbound{InitialDigits: "W1"}.Unsupported(s.provider))
+	s.Equal([]phone.CallFeature{phone.FeatureInitialDigits},
+		phone.Outbound{InitialDigits: "1D"}.Unsupported(s.provider))
+	s.Empty(phone.Outbound{InitialDigits: "ww1234#*"}.Unsupported(s.provider))
+}
+
+func (s *TelnyxSuite) TestInitialDigitsArePlayedBeforeTheTrunkIsDialled() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:          "+15125550100",
+		To:            "+15125550123",
+		Bridge:        phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+		InitialDigits: "ww1234#",
+	})
+	s.Require().NoError(err)
+
+	raw, _ := s.seen.body["Texml"].(string)
+	play, dial := strings.Index(raw, "<Play"), strings.Index(raw, "<Dial")
+	s.Require().NotEqual(-1, play, raw)
+	s.Less(play, dial, "the menu is answered before the agent joins")
+	s.Equal("ww1234#", s.texml().Play.Digits)
+}
+
+func (s *TelnyxSuite) TestACallWithNoTermsOnlyDialsTheTrunk() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125550100",
+		To:     "+15125550123",
+		Bridge: phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+	})
+	s.Require().NoError(err)
+
+	raw, _ := s.seen.body["Texml"].(string)
+	s.NotContains(raw, "<Play")
+	s.NotContains(raw, "timeout=")
+	s.NotContains(raw, "username=")
+	s.NotContains(raw, "password=")
+}
+
+func (s *TelnyxSuite) TestACallWithAStatusURLAsksTelnyxToPostHowItEnded() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.StatusURL = "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal(placing.StatusURL, s.seen.body["StatusCallback"])
+	s.Equal(http.MethodPost, s.seen.body["StatusCallbackMethod"])
+}
+
+// Telnyx's default event is completed alone, and it takes several events as one string
+// separated by a space.
+func (s *TelnyxSuite) TestACallWithAStatusURLAsksForTheRingingEventToo() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.StatusURL = "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("ringing completed", s.seen.body["StatusCallbackEvent"])
+}
+
+func (s *TelnyxSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.body, "StatusCallback")
+	s.NotContains(s.seen.body, "StatusCallbackMethod")
+	s.NotContains(s.seen.body, "StatusCallbackEvent")
+}
+
+func (s *TelnyxSuite) TestACallWithAMachineURLAsksTelnyxForAsyncMachineDetection() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.MachineURL = "https://router.example/v1/phone/machine/token-1"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("DetectMessageEnd", s.seen.body["MachineDetection"])
+	s.Equal("Premium", s.seen.body["DetectionMode"])
+	s.Equal(true, s.seen.body["AsyncAmd"])
+	s.Equal(placing.MachineURL, s.seen.body["AsyncAmdStatusCallback"])
+	s.Equal(http.MethodPost, s.seen.body["AsyncAmdStatusCallbackMethod"])
+}
+
+func (s *TelnyxSuite) TestACallWithoutAMachineURLAsksForNoDetection() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, s.outbound())
+	s.Require().NoError(err)
+
+	for _, name := range []string{"MachineDetection", "DetectionMode", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
+		s.NotContains(s.seen.body, name)
+	}
+}
+
+func (s *TelnyxSuite) TestEachAnsweredByIsWhoPickedUp() {
+	for answeredBy, machine := range map[string]phone.Machine{
+		"human":               phone.MachineHuman,
+		"machine_end_beep":    phone.MachineGreetingEnded,
+		"machine_end_silence": phone.MachineGreetingEnded,
+		"machine_end_other":   phone.MachineGreetingEnded,
+		"machine_start":       phone.MachineUnknown,
+		"fax":                 phone.MachineFax,
+		"unknown":             phone.MachineUnknown,
+		"something_new":       phone.MachineUnknown,
+	} {
+		got, err := s.provider.ReadMachine(formType, []byte("CallSid=v3:cc-1&AnsweredBy="+answeredBy))
+		s.Require().NoError(err)
+		s.Equal(phone.MachineReport{Machine: machine, Word: answeredBy}, got, answeredBy)
+	}
+}
+
+func (s *TelnyxSuite) TestAMachineReportWithoutAnAnsweredByIsRefused() {
+	_, err := s.provider.ReadMachine(formType, []byte("CallSid=v3:cc-1"))
+
+	s.ErrorContains(err, "AnsweredBy")
+}
+
+func (s *TelnyxSuite) TestAMachineReportThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadMachine("application/json", []byte(`{"AnsweredBy":"human"}`))
+
+	s.Error(err)
+}
+
+func (s *TelnyxSuite) TestEachFinalStatusIsAnOutcome() {
+	for word, result := range map[string]phone.CallResult{
+		"completed": phone.CallCompleted,
+		"busy":      phone.CallBusy,
+		"no-answer": phone.CallNoAnswer,
+		"failed":    phone.CallFailed,
+		"canceled":  phone.CallCanceled,
+	} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3:cc-1&CallStatus="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: word}, status, word)
+	}
+}
+
+// ringingCallback is the body of Telnyx's "TeXML Call Ringing" callback, as its API reference
+// shows it (https://developers.telnyx.com/api-reference/callbacks/texml-call-ringing).
+const ringingCallback = "AccountSid=acct-1&CallDuration=10" +
+	"&CallInitiatedAt=2024-01-15T10%3A30%3A26.028Z&CallSid=v3%3Acc-1" +
+	"&CallStatus=ringing&CallbackSource=call-progress-events&ConnectionId=conn-1&From=%2B15125550100" +
+	"&SequenceNumber=1&Timestamp=2024-01-15T10%3A30%3A00Z&To=%2B15125550123"
+
+// completedCallback is the body of Telnyx's "TeXML Call Completed" callback, as its API
+// reference shows it (https://developers.telnyx.com/api-reference/callbacks/texml-call-completed),
+// with placeholder numbers and ids. The test replaces its CallStatus and SipHangupCause with %s.
+const completedCallback = "AnsweredTime=2024-01-15T10%%3A30%%3A15Z&CallDuration=45" +
+	"&CallInitiatedAt=2024-01-15T10%%3A30%%3A26.028Z&CallSid=v3%%3Acc-1" +
+	"&CallStatus=%s&CallbackSource=call-progress-events&From=%%2B15125550100&HangupCause=normal_clearing" +
+	"&HangupSource=caller&SequenceNumber=3&SipHangupCause=%s&Timestamp=2024-01-15T10%%3A30%%3A00Z&To=%%2B15125550123"
+
+func (s *TelnyxSuite) TestARingingCallbackIsARingingReportThatDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte(ringingCallback))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "ringing", Ringing: true}, status)
+}
+
+func (s *TelnyxSuite) TestAReportThatIsNeitherFinalNorRingingIsNotARingingReport() {
+	for _, word := range []string{"initiated", "in-progress", "queued"} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3%3Acc-1&CallStatus="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Word: word}, status, word)
+	}
+}
+
+func (s *TelnyxSuite) TestACompletedCallbackCarriesItsSipHangupCauseAsTheSIPCode() {
+	for _, tc := range []struct {
+		name, word, cause string
+		want              int
+	}{
+		{"answered", "completed", "200", 200},
+		{"busy", "busy", "486", 486},
+		{"not answered", "no-answer", "480", 480},
+		{"caller gave up", "canceled", "487", 487},
+		{"declined", "failed", "603", 603},
+		{"no cause sent", "completed", "", 0},
+		{"a cause that is no number", "failed", "normal_clearing", 0},
+		{"a cause with a unit", "failed", "486%20Busy", 0},
+	} {
+		status, err := s.provider.ReadStatus(formType, fmt.Appendf(nil, completedCallback, tc.word, tc.cause))
+		s.Require().NoError(err, tc.name)
+		s.Equal(finalStatuses[tc.word], status.Result, tc.name)
+		s.Equal(tc.want, status.SIPCode, tc.name)
+		s.False(status.Ringing, tc.name)
+	}
+}
+
+func (s *TelnyxSuite) TestAStatusWithoutACallStatusIsRefused() {
+	_, err := s.provider.ReadStatus(formType, []byte("CallSid=v3:cc-1"))
+
+	s.ErrorContains(err, "CallStatus")
+}
+
+func (s *TelnyxSuite) TestAStatusThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"CallStatus":"busy"}`))
+
+	s.Error(err)
+}
+
+// formType is how Telnyx posts a TeXML call's status.
+const formType = "application/x-www-form-urlencoded"
+
+func (s *TelnyxSuite) TestDiallingWithoutAConnectionIDIsRefused() {
+	provider, err := New(Options{APIKey: "KEY123", BaseURL: s.server.URL})
+	s.Require().NoError(err)
+
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125550100",
+		To:     "+15125550123",
+		Bridge: phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"},
+	})
+
+	s.EqualError(err, "telnyx: a connection id is required to place a call")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
+	s.Empty(s.seen.path)
+}
+
+func (s *TelnyxSuite) TestTheTrunkRingsForAsLongAsAsked() {
+	raw, err := dialTrunk(phone.Bridge{URI: "sip:+15125550100@app.sip.example.com"}, 25)
+	s.Require().NoError(err)
+
+	var parsed parsedTexml
+	s.Require().NoError(xml.Unmarshal(raw, &parsed))
+	s.Equal("25", parsed.Dial.Timeout)
+	s.True(strings.HasPrefix(string(raw), "<?xml"))
+}
+
+func (s *TelnyxSuite) TestAnInboundCallIsSentToTheNumbersTrunk() {
+	plan, err := RenderInbound(phone.Bridge{
+		URI: "sip:+15125550100@app.sip.example.com", Username: "trunk-1", Password: "s3cret",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("application/xml", plan.ContentType)
+	var parsed parsedTexml
+	s.Require().NoError(xml.Unmarshal(plan.Body, &parsed))
+	s.Equal("sip:+15125550100@app.sip.example.com", parsed.Dial.Sip.URI)
+	s.Equal("trunk-1", parsed.Dial.Sip.Username)
+	s.Equal("s3cret", parsed.Dial.Sip.Password)
+	s.Empty(parsed.Dial.Timeout, "Telnyx's own ring time")
+}
+
+func (s *TelnyxSuite) TestAnInboundCallWithNoTrunkIsNotRendered() {
+	_, err := RenderInbound(phone.Bridge{})
+
+	s.Error(err)
+}
+
+func (s *TelnyxSuite) TestHangingUpIsTeXMLThatEndsTheCall() {
+	plan := RenderHangup()
+
+	s.Equal("application/xml", plan.ContentType)
+	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Hangup/></Response>`, string(plan.Body))
+}
+
+func (s *TelnyxSuite) TestRejectingIsTeXMLWhoseFirstVerbLeavesTheCallUnanswered() {
+	plan := RenderReject()
+
+	s.Equal("application/xml", plan.ContentType)
+	s.Equal(`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+`<Response><Reject reason="rejected"/></Response>`, string(plan.Body))
+}
+
+func (s *TelnyxSuite) TestATrunkWithoutAnAddressIsNotDialled() {
+	_, err := dialTrunk(phone.Bridge{}, 0)
+
+	s.ErrorContains(err, "bridge uri is required")
+}
+
+func (s *TelnyxSuite) TestPressingDigitsActsOnThePersonsLegWithoutEndingIt() {
+	// Telnyx plays the tones out of the leg named, to whoever that leg reaches. The id
+	// placing returned is the person's leg; the leg its TeXML bridged to Stream would play
+	// them to the agent. Sent as an action on the live call, so the agent stays bridged.
+	var asked []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"result":"ok"}}`))
+	}
+
+	s.Require().NoError(s.provider.SendDigits(s.ctx, "cc-1", "4123"))
+
+	s.Equal([]string{"POST /v2/calls/cc-1/actions/send_dtmf"}, asked)
+	s.Equal("4123", s.seen.body["digits"])
+}
+
+func (s *TelnyxSuite) TestPressingWithoutACallOrDigitsIsRejected() {
+	s.ErrorContains(s.provider.SendDigits(s.ctx, "", "1"), "call to press them on")
+	s.ErrorContains(s.provider.SendDigits(s.ctx, "cc-1", ""), "digits to press")
+}
+
+func (s *TelnyxSuite) TestACallWithoutBothEndsIsRejected() {
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{To: "+15550001111"})
+
+	s.ErrorContains(err, "from and a to")
+}
+
+func (s *TelnyxSuite) TestAFailureFromTelnyxSaysWhatTelnyxSaid() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"detail":"no such number"}]}`))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	s.ErrorContains(err, "422")
+	s.ErrorContains(err, "no such number")
+}
+
+// Telnyx's real answer for an area code with nothing left, such as 212.
+func (s *TelnyxSuite) TestAnAreaCodeWithNoNumbersLeftIsAnEmptySearchThatIsLogged() {
+	logged := s.logged()
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10031","title":"Invalid request filter",` +
+			`"detail":"No numbers found for the given filters. Please try again with best_effort=true."}]}`))
+	}
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "212"})
+
+	s.Require().NoError(err)
+	s.Empty(offered)
+	s.Contains(logged.String(), "level=INFO")
+	s.Contains(logged.String(), "code=10031")
+	s.Contains(logged.String(), "No numbers found")
+	s.Contains(logged.String(), "country=US")
+	s.Contains(logged.String(), "area_code=212")
+}
+
+// The same code also means a filter Telnyx does not accept, which is a bug here, not an
+// empty search.
+func (s *TelnyxSuite) TestAnInvalidFilterIsStillAFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10031","title":"Invalid request filter",` +
+			`"detail":"The request filter filter[national_destination_code] is invalid."}]}`))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", AreaCode: "212"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusBadRequest, vendorErr.Status)
+	s.Equal("10031", vendorErr.Code)
+}
+
+func (s *TelnyxSuite) TestARefusalIsAVendorErrorWithTelnyxsCode() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"10015","title":"Invalid value","detail":"no such number"}]}`))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("telnyx", vendorErr.Vendor)
+	s.Equal(http.StatusUnprocessableEntity, vendorErr.Status)
+	s.Equal("10015", vendorErr.Code)
+	s.Equal("no such number", vendorErr.Message)
+}
+
+func (s *TelnyxSuite) TestTelnyxNotAnsweringIsAVendorErrorToo() {
+	s.server.Close()
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+// parsedTexml is the TeXML a call was placed with, read back the way Telnyx reads it.
+type parsedTexml struct {
+	Play struct {
+		Digits string `xml:"digits,attr"`
+	} `xml:"Play"`
+	Dial struct {
+		Timeout string `xml:"timeout,attr"`
+		Sip     struct {
+			URI      string `xml:",chardata"`
+			Username string `xml:"username,attr"`
+			Password string `xml:"password,attr"`
+		} `xml:"Sip"`
+	} `xml:"Dial"`
+}
+
+func (s *TelnyxSuite) texml() parsedTexml {
+	raw, ok := s.seen.body["Texml"].(string)
+	s.Require().True(ok, "the call carries its TeXML inline")
+	var parsed parsedTexml
+	s.Require().NoError(xml.Unmarshal([]byte(raw), &parsed))
+	return parsed
+}
+
+func (s *TelnyxSuite) outbound() phone.Outbound {
+	return phone.Outbound{
+		From: "+15125550100",
+		To:   "+15125550123",
+		Bridge: phone.Bridge{
+			URI:      "sip:+15125550100@app.sip.example.com",
+			Username: "u",
+			Password: "secret-p",
+		},
+	}
+}
+
+// logged sends the provider's log to a buffer the test reads.
+func (s *TelnyxSuite) logged() *bytes.Buffer {
+	var logged bytes.Buffer
+	s.provider.logger = slog.New(slog.NewTextHandler(&logged, nil))
+	return &logged
+}
+
+func (s *TelnyxSuite) unknownIDWarned(logged *bytes.Buffer) {
+	s.Contains(logged.String(), "level=WARN")
+	s.Contains(logged.String(), "vendor call id is unknown")
+	s.NotContains(logged.String(), "5550100")
+	s.NotContains(logged.String(), "5550123")
+	s.NotContains(logged.String(), "secret-p")
+	s.NotContains(logged.String(), "conn-1")
+	s.NotContains(logged.String(), "KEY123")
+}
+
+func (s *TelnyxSuite) answer(body string) {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+func (s *TelnyxSuite) TestAnAnswerThatIsNotJSONIsAVendorErrorWithoutTheBody() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>not json</html>")) }
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("could not read the answer", vendorErr.Message)
+	s.Equal(http.StatusOK, vendorErr.Status)
+}
+
+func (s *TelnyxSuite) TestARingingCallIsHungUpThroughCallControl() {
+	s.answer(`{"data":{"result":"ok"}}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "v3:abc"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/v2/calls/v3:abc/actions/hangup", s.seen.path)
+}
+
+func (s *TelnyxSuite) TestACallAlreadyEndedIsNoFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"90018","title":"Call has already ended",` +
+			`"detail":"This call is no longer active and can't receive commands."}]}`))
+	}
+
+	s.NoError(s.provider.HangUp(s.ctx, "v3:abc"))
+}
+
+func (s *TelnyxSuite) TestARefusedHangUpIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"90034","title":"Invalid call control id"}]}`))
+	}
+
+	err := s.provider.HangUp(s.ctx, "v3:abc")
+
+	refused, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("90034", refused.Code)
+}
+
+func (s *TelnyxSuite) TestHangingUpWithoutACallIsRejected() {
+	s.ErrorContains(s.provider.HangUp(s.ctx, ""), "call to hang up")
+}

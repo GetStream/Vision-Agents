@@ -1,0 +1,1213 @@
+//go:build integration
+
+package api
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"image"
+	"image/png"
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+)
+
+// The providers the suite routes to. Every one of them answers in process: what a vendor
+// makes of real audio, a real picture or a real question is that provider package's own
+// suite, and what is under test here is the HTTP surface in front of them.
+
+// routableConfig is one stub provider, reachable by the shortcuts a session asks for.
+//
+// It declares every term, because what is under test here is the HTTP surface: a config
+// that asks to be diarized has to reach a provider that can be, and which providers can
+// is the routing package's own suite.
+func routableConfig() routing.ModalityConfig {
+	return routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{{
+			Provider:  "stub",
+			Model:     "stub-model",
+			Languages: []string{"en"},
+			Realtime:  true,
+			Terms:     everyTerm,
+		}},
+		Aliases: map[string]routing.Alias{
+			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
+			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
+			// Where a batch job with no target of its own goes.
+			"en-recorded":           {Languages: []string{"en"}},
+			"multilingual-recorded": {},
+			// Where a question with no target of its own goes.
+			"search-fast": {Languages: []string{"en"}},
+		},
+	}
+}
+
+// searchConfig is routableConfig at a price per search, so what a search is billed can be
+// read off its row.
+//
+// It also holds the models a question can be sent to by name to see a search fail: a vendor that is
+// down, one that cannot be built, one whose answer is a refusal about money, one whose own HTTP
+// client timed out, and one that answers nothing until the caller hangs up. No shortcut asks
+// for Latin, so none of them is ever chosen for a question that names no target.
+func searchConfig() routing.ModalityConfig {
+	config := routableConfig()
+	config.Providers[0].Price = routing.Price{PerThousandRequests: 5}
+	for _, provider := range []string{"down", "unbuildable", "broke", "slow", "hang"} {
+		config.Providers = append(config.Providers, routing.ProviderConfig{
+			Provider: provider, Model: failingSearchModels[provider], Languages: []string{"la"}})
+	}
+	return config
+}
+
+// failingSearchModels are the models searchConfig adds, by provider. They are new each run, for the
+// reason refusingModel is: a failure marks a model unavailable in a Redis other runs share.
+var failingSearchModels = map[string]string{
+	"down":        "down-" + rand.Text(),
+	"unbuildable": "unbuildable-" + rand.Text(),
+	"broke":       "broke-" + rand.Text(),
+	"slow":        "slow-" + rand.Text(),
+	"hang":        "hang-" + rand.Text(),
+}
+
+// recordingConfig adds the batch half a whole recording is served by, so a job sent to the
+// live shortcut can be told apart from one that reached the recorded one.
+func recordingConfig() routing.ModalityConfig {
+	config := routableConfig()
+	config.Providers = append(config.Providers, routing.ProviderConfig{
+		Provider: "stub", Model: "stub-batch", Languages: []string{"en"}, Terms: everyTerm,
+	}, routing.ProviderConfig{
+		Provider: "stub", Model: "stub-batch-es", Languages: []string{"es"}, Terms: everyTerm,
+	})
+	config.Aliases["multilingual-recorded"] = routing.Alias{Languages: []string{"es"}, RequireRecorded: true}
+	config.Aliases["en-recorded"] = routing.Alias{Languages: []string{"en"}, RequireRecorded: true}
+	return config
+}
+
+// everyTerm is everything a caller may ask a provider for, apart from the smart mode that
+// cannot be combined with word timings.
+var everyTerm = []options.Term{
+	options.DetectLanguage, options.Interim, options.Endpointing, options.Diarize,
+	options.MaxSpeakers, options.Keyterms, options.Format, options.Redact, options.Events,
+	options.Channels, options.Words, options.Summary, options.Entities, options.Verbatim,
+	options.ProfanityFilter, options.Speed, options.Volume, options.Emotion,
+	options.Stability, options.Similarity, options.Pronunciations, options.ChunkSchedule, options.Domains,
+	options.Category, options.Recency, options.Location, options.Contents,
+	options.OutputSchema, options.SemanticTurns, options.ManualTurns, options.Tools,
+	options.TextInput, options.InputTranscript, options.OutputTranscript,
+}
+
+// reasoningConfig adds the model that can see, which is what a subagent handed a picture
+// has to be routed to.
+func reasoningConfig() routing.ModalityConfig {
+	config := routableConfig()
+	config.Providers = append(config.Providers, routing.ProviderConfig{
+		Provider: "vision", Model: "vision-model",
+		Languages: []string{"en"}, InputModalities: []string{"image"},
+	})
+	config.Aliases["vlm"] = routing.Alias{RequireInputModalities: []string{"image"}}
+	// Reached by name only: no shortcut asks for Latin.
+	config.Providers = append(config.Providers,
+		routing.ProviderConfig{Provider: "echo", Model: "echo-model", Languages: []string{"la"}},
+		// Run by the deployment itself with no price, so it costs nothing.
+		routing.ProviderConfig{Provider: "echo", Model: "local-model", Languages: []string{"la"}, Local: true},
+		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "hanging-up", Model: "hanging-up-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "slow", Model: "slow-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "stuck", Model: "stuck-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
+			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
+		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "screened", Model: "screened-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "guarded", Model: "guarded-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "checking", Model: "checking-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "judging", Model: "judging-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "pondering", Model: "pondering-model", Languages: []string{"la"}},
+	)
+	// Where a socket that names no target goes. It pins the stub as router.yaml pins its
+	// model: the vision model speaks English too, and left to the ranking the default would
+	// be whichever of the two ranks first on the health every suite records in Redis. The pin
+	// holds only while the stub is available (routing.prefer): a fatal error recorded on the
+	// stub by any suite brings the vision model back.
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, Prefer: "stub/stub-model"}
+	return config
+}
+
+// silentEdge is a call with no network in it.
+type silentEdge struct{ inbound chan agent.InboundAudio }
+
+func (e *silentEdge) Join(context.Context) error       { return nil }
+func (e *silentEdge) Audio() <-chan agent.InboundAudio { return e.inbound }
+func (e *silentEdge) PublishAudio(audio.PcmData) error { return nil }
+
+func (e *silentEdge) Leave() error {
+	close(e.inbound)
+	return nil
+}
+
+// scriptedLLM answers with a fixed reply and, on the first turn, whatever tool the test
+// wants the model to reach for.
+type scriptedLLM struct {
+	mu    sync.Mutex
+	turns int
+	reply string
+	// then, when set, is what every turn after the first says instead of reply.
+	then  string
+	calls []llm.ToolCall
+	asked []llm.ResponseParams
+	sees  bool
+	// echoes answers with the instructions the model was given instead of reply, which is
+	// how a test reads back what a session knew before anybody spoke.
+	echoes bool
+	// recites answers with every message it was handed, one per line in the order it was
+	// handed them, which is how a test reads back the history a session was opened with.
+	recites bool
+	// held, when set, makes each reply wait for the test to let it through, which is what
+	// stopping a command mid-answer needs.
+	held chan struct{}
+	// takes, when set, is how long each reply is in the writing. A command is only
+	// stoppable while it is still being answered.
+	takes time.Duration
+	// usage is what each reply reports the model read and wrote.
+	usage llm.Usage
+	// summarises answers a request for JSON as a reviewer would, with a summary that is the
+	// whole of what it was given to read and notes that are the instructions it was given.
+	// Any other request is answered with reply.
+	summarises bool
+	// analyses answers a request for JSON as a review analyst would: one cause behind every
+	// call it was handed and one it made up, and a second cause behind made-up calls only.
+	analyses bool
+	// refuses, when set, is what every request is refused with.
+	refuses error
+	// refusesQuoting, when set, has a request quoting it refused as the prompt injection
+	// screen refuses one, after a word of the reply had streamed.
+	refusesQuoting string
+}
+
+func (s *scriptedLLM) Start(context.Context) error { return nil }
+
+func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	s.mu.Lock()
+	s.turns++
+	s.asked = append(s.asked, params)
+	first := s.turns == 1
+	reply := s.reply
+	if !first && s.then != "" {
+		reply = s.then
+	}
+	// Echoing is what the model was told: its instructions and the harness's notes, which is
+	// where what moves on during a call, such as the day, is told. Reciting is the conversation
+	// it was handed, without them.
+	if s.echoes {
+		reply = toldModel(params)
+	}
+	if s.recites {
+		handed := make([]string, 0, len(params.Input))
+		for _, message := range harness.WithoutNotes(params.Input) {
+			handed = append(handed, string(message.Role)+": "+message.Content)
+		}
+		reply = strings.Join(handed, "\n")
+	}
+	if s.summarises && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
+		summary, _ := json.Marshal(map[string]string{"summary": params.Input[0].Content, "notes": params.Instructions})
+		reply = string(summary)
+	}
+	if s.analyses && params.Text.Format == llm.FormatJSONObject && len(params.Input) > 0 {
+		ids := []string{"invented"}
+		for _, line := range strings.Split(params.Input[0].Content, "\n") {
+			if rest, found := strings.CutPrefix(line, "Call "); found {
+				ids = append(ids, strings.TrimSuffix(strings.Fields(rest)[0], ","))
+			}
+		}
+		analysis, _ := json.Marshal(map[string]any{
+			"summary": "Callers asking about refunds were not helped.",
+			"causes": []map[string]any{
+				{"title": "Ghost", "explanation": "Nothing.", "fix": "Nothing.", "call_ids": []string{"invented"}},
+				{"title": "No refund policy", "explanation": "It did not know.", "fix": "Add the policy.", "call_ids": ids},
+			},
+		})
+		reply = string(analysis)
+	}
+	held, refuses := s.held, s.refuses
+	var calls []llm.ToolCall
+	if first {
+		calls = append([]llm.ToolCall(nil), s.calls...)
+	}
+	s.mu.Unlock()
+
+	if refuses != nil {
+		return nil, refuses
+	}
+	if held != nil {
+		select {
+		case <-held:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if s.takes > 0 {
+		select {
+		case <-time.After(s.takes):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+	if s.refusesQuoting != "" && slices.ContainsFunc(params.Input, func(m llm.Message) bool { return strings.Contains(m.Content, s.refusesQuoting) }) {
+		script.OutputText("I")
+		script.Fail(fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection), "llm")
+		return script.Stream(), nil
+	}
+	script.OutputText(reply)
+	if s.usage != (llm.Usage{}) {
+		script.Usage(s.usage)
+	}
+	if len(calls) > 0 {
+		script.ToolCalls(calls...)
+	}
+	script.Done()
+	return script.Stream(), nil
+}
+
+func (s *scriptedLLM) Provider() string { return "stub" }
+func (s *scriptedLLM) Model() string    { return "stub-llm" }
+func (s *scriptedLLM) Capabilities() llm.Capabilities {
+	if s.sees {
+		return llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	}
+	return llm.Capabilities{}
+}
+func (s *scriptedLLM) Close() error { return nil }
+
+// requests is every set of parameters the router has asked this model for.
+func (s *scriptedLLM) requests() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.ResponseParams(nil), s.asked...)
+}
+
+// replies is every request the router has asked this model for a reply on. A session's
+// review is asked on the same model once the session closed, at a moment of its own (a
+// thread's session closes after each turn), so it is left out.
+func (s *scriptedLLM) replies() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var replies []llm.ResponseParams
+	for _, params := range s.asked {
+		if params.Purpose == "reply" {
+			replies = append(replies, params)
+		}
+	}
+	return replies
+}
+
+// answers lets through the replies a held model is sitting on.
+func (s *scriptedLLM) answers() {
+	s.mu.Lock()
+	held := s.held
+	s.held = nil
+	s.mu.Unlock()
+	if held != nil {
+		close(held)
+	}
+}
+
+// holds makes the model wait for answers before it replies.
+func (s *scriptedLLM) holds() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.held = make(chan struct{})
+}
+
+// quietSTT hears nothing, since these tests drive a session over HTTP rather than through
+// a microphone.
+type quietSTT struct {
+	emitter *stt.Emitter
+	// started is told when the router starts it, which a readiness probe never does.
+	started func(*quietSTT)
+}
+
+func (s *quietSTT) Start(context.Context) error {
+	s.started(s)
+	return nil
+}
+
+func (s *quietSTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
+func (s *quietSTT) Events() <-chan stt.Event                        { return s.emitter.Events() }
+func (s *quietSTT) Provider() string                                { return "stub" }
+func (s *quietSTT) Model() string                                   { return "stub-stt" }
+
+func (s *quietSTT) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
+// refusingSTT turns the account away on its first audio, as ElevenLabs answers an account
+// that has not accepted its terms (probed 2026-10-19): one fatal error, then every write
+// fails on the socket the vendor closed.
+type refusingSTT struct {
+	emitter *stt.Emitter
+	refused bool
+}
+
+// refusingModel is new each run: health is kept in a Redis that other runs share, and one
+// fatal error marks the model unavailable for everyone reading it.
+var refusingModel = fmt.Sprintf("refusing-%d", time.Now().UnixNano())
+
+// termsRefusal is ElevenLabs' own words for an account that has not accepted its terms.
+const termsRefusal = "You have not accepted the terms required to use this feature."
+
+func (s *refusingSTT) Start(context.Context) error { return nil }
+func (s *refusingSTT) Events() <-chan stt.Event    { return s.emitter.Events() }
+func (s *refusingSTT) Provider() string            { return "refusing" }
+func (s *refusingSTT) Model() string               { return refusingModel }
+
+func (s *refusingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	if s.refused {
+		return errors.New("refusing: write audio: websocket: close sent")
+	}
+	s.refused = true
+	s.emitter.Send(stt.Error{
+		Provider: "refusing", Model: refusingModel, Err: errors.New(termsRefusal),
+		Context: "unaccepted_terms", Fatal: true,
+	})
+	return nil
+}
+
+func (s *refusingSTT) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
+// handingOverModel refuses the account the way refusingModel does, for a socket that lists
+// a model after it. It is its own, and new each run, so the refusal that marks
+// refusingModel unavailable does not send that socket straight to the next model. New each
+// process: the test clears its health first, which a run before it in the process left
+// unavailable.
+var handingOverModel = fmt.Sprintf("handing-over-%d", time.Now().UnixNano())
+
+// echoingSTT settles a turn for every frame of audio it hears.
+type echoingSTT struct{ emitter *stt.Emitter }
+
+func (s *echoingSTT) Start(context.Context) error { return nil }
+func (s *echoingSTT) Events() <-chan stt.Event    { return s.emitter.Events() }
+func (s *echoingSTT) Provider() string            { return "echoing" }
+func (s *echoingSTT) Model() string               { return "echoing-model" }
+
+func (s *echoingSTT) ProcessAudio(stt.PcmData, stt.Participant) error {
+	s.emitter.Send(stt.Transcript{Text: "heard", Mode: stt.ModeFinal, Provider: "echoing", Model: "echoing-model"})
+	return nil
+}
+
+func (s *echoingSTT) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
+// batchOnlySTT is a batch model dialled live, which Deepgram's live endpoint turns away
+// as it does Nova-3: "deepgram: connect failed" (internal/stt/deepgram/deepgram.go).
+type batchOnlySTT struct{}
+
+// batchModel is new each run, for the reason refusingModel is.
+var batchModel = fmt.Sprintf("batch-%d", time.Now().UnixNano())
+
+// downModel is new each run, for the reason refusingModel is: a start that fails marks it
+// unavailable.
+var downModel = fmt.Sprintf("down-%d", time.Now().UnixNano())
+
+func (batchOnlySTT) Start(context.Context) error                     { return errors.New("batch: connect failed") }
+func (batchOnlySTT) ProcessAudio(stt.PcmData, stt.Participant) error { return nil }
+func (batchOnlySTT) Events() <-chan stt.Event                        { return nil }
+func (batchOnlySTT) Close() error                                    { return nil }
+func (batchOnlySTT) Provider() string                                { return "batch" }
+func (batchOnlySTT) Model() string                                   { return batchModel }
+
+// unconfiguredModel is new each run, as refusingModel is: health is kept in a Redis other
+// runs share.
+var unconfiguredModel = fmt.Sprintf("unconfigured-%d", time.Now().UnixNano())
+
+// errUnconfigured is what a vendor's factory says on a deployment never given its key, as
+// microsoft.New says on one with no AZURE_MAI_API_KEY.
+var errUnconfigured = errors.New("unconfigured: api key is required (set UNCONFIGURED_API_KEY)")
+
+// recordingTTS keeps what it was asked to say, in a log the suite's voices share.
+type recordingTTS struct {
+	emitter *tts.Emitter
+	said    *saidLog
+	// voice is the one it was opened with.
+	voice string
+	// started is told when the router starts it, which a readiness probe never does.
+	started func(*recordingTTS)
+	// completedByTest is set by a test that completes each synthesis itself, with the audio
+	// it says was made: completed by both, an utterance is recorded twice.
+	completedByTest atomic.Bool
+}
+
+// saidLog is what every voice it is handed to was told to say, in order.
+type saidLog struct {
+	mu   sync.Mutex
+	said []string
+}
+
+func (s *recordingTTS) Voice() string { return s.voice }
+
+func (s *recordingTTS) Start(context.Context) error {
+	s.started(s)
+	return nil
+}
+
+func (s *recordingTTS) Synthesize(request tts.Request) error {
+	s.said.mu.Lock()
+	s.said.said = append(s.said.said, request.Text)
+	s.said.mu.Unlock()
+
+	if request.Final && !s.completedByTest.Load() {
+		s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID})
+	}
+	return nil
+}
+
+func (s *recordingTTS) Interrupt() error         { return nil }
+func (s *recordingTTS) Events() <-chan tts.Event { return s.emitter.Events() }
+func (s *recordingTTS) Provider() string         { return "stub" }
+func (s *recordingTTS) Model() string            { return "stub-tts" }
+func (s *recordingTTS) Streaming() bool          { return false }
+func (s *recordingTTS) Performs() bool           { return false }
+func (s *recordingTTS) Prompt() string           { return "" }
+
+func (s *recordingTTS) Close() error {
+	s.emitter.Close()
+	return nil
+}
+
+// spoken is everything the voices given this log have been told to say.
+func (l *saidLog) spoken() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.said...)
+}
+
+// recordedTranscriber transcribes whatever it is handed into the same transcript, so a job
+// can be followed from the row it creates to the result a caller reads back. A WAV (wavOf) is
+// heard as the words a test wrote into it instead, so a voice note says what the test needs:
+// nothing, or anything. Its words refuseForMoney and failToTranscribe are not heard: the first
+// is refused for money, the second fails.
+type recordedTranscriber struct{ model string }
+
+const (
+	refuseForMoney   = "refuse for money"
+	failToTranscribe = "fail to transcribe"
+)
+
+func transcriberRegistry() *sttrouter.Transcribers {
+	registry := sttrouter.NewTranscriberRegistry()
+	registry.Register("stub", func(spec routing.Spec) (stt.Transcriber, error) {
+		return &recordedTranscriber{model: spec.Model}, nil
+	}, routing.OverrideRegion)
+	return registry
+}
+
+func (t *recordedTranscriber) Transcribe(_ context.Context, recording stt.Recording) (stt.Transcription, error) {
+	transcription := stt.Transcription{
+		Text:            "a call costs a penny",
+		Language:        "en",
+		AudioDurationMs: 4000,
+	}
+	if said, ok := bytes.CutPrefix(recording.Audio, []byte(wavHeader)); ok {
+		switch string(said) {
+		case refuseForMoney:
+			return stt.Transcription{}, fmt.Errorf("stub: %w", policy.ErrBudgetSpent)
+		case failToTranscribe:
+			return stt.Transcription{}, errors.New("stub: the provider answered 500")
+		}
+		transcription.Text = string(said)
+	}
+	if recording.Words {
+		transcription.Words = []stt.Word{
+			{Text: "a", StartMs: 0, EndMs: 200, Confidence: 0.9},
+			{Text: "call", StartMs: 200, EndMs: 600, Confidence: 0.9},
+		}
+	}
+	if recording.Diarize {
+		transcription.Speakers = []string{"speaker_0"}
+	}
+	return transcription, nil
+}
+
+func (t *recordedTranscriber) Start(context.Context) error { return nil }
+func (t *recordedTranscriber) Close() error                { return nil }
+func (t *recordedTranscriber) Provider() string            { return "stub" }
+func (t *recordedTranscriber) Model() string               { return t.model }
+
+// recordedVoice speaks whatever it is handed into the same audio, in the voice it was
+// built for.
+type recordedVoice struct{ model, voice string }
+
+func recorderRegistry() *ttsrouter.Recorders {
+	registry := ttsrouter.NewRecorderRegistry()
+	registry.Register("stub", func(spec routing.Spec) (tts.Recorder, error) {
+		return &recordedVoice{model: spec.Model, voice: spec.Voice}, nil
+	})
+	registry.Register("plain", func(spec routing.Spec) (tts.Recorder, error) {
+		return &recordedVoice{model: spec.Model}, nil
+	})
+	registry.Register("down", func(spec routing.Spec) (tts.Recorder, error) {
+		return &downVoice{recordedVoice{model: spec.Model}}, nil
+	})
+	return registry
+}
+
+// downVoice is a vendor that fails every recording, as one answering 503 does.
+type downVoice struct{ recordedVoice }
+
+func (*downVoice) Record(context.Context, tts.Recording) (tts.Recorded, error) {
+	return tts.Recorded{}, errors.New("down: record: 503 Service Unavailable: overloaded")
+}
+
+func (*downVoice) Provider() string { return "down" }
+
+func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.Recorded, error) {
+	format := recording.Format
+	if format == "" {
+		format = "mp3_44100_128"
+	}
+	return tts.Recorded{
+		Audio:           []byte{0xff, 0xfb, 0x90},
+		Format:          format,
+		AudioDurationMs: 1200,
+		Characters:      int64(len(recording.Text)),
+	}, nil
+}
+
+func (v *recordedVoice) Voice() string               { return v.voice }
+func (v *recordedVoice) Start(context.Context) error { return nil }
+func (v *recordedVoice) Close() error                { return nil }
+func (v *recordedVoice) Provider() string            { return "stub" }
+func (v *recordedVoice) Model() string               { return v.model }
+
+// answerer answers every question with the same result.
+type answerer struct{}
+
+func searchRegistry() *searchrouter.Registry {
+	registry := searchrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (search.Provider, error) { return answerer{}, nil })
+	registry.Register("down", func(routing.Spec) (search.Provider, error) {
+		return failingSearch{errors.New("down: search: 503 Service Unavailable: overloaded")}, nil
+	})
+	registry.Register("unbuildable", func(routing.Spec) (search.Provider, error) {
+		return nil, errors.New("unbuildable: dial tcp: connection refused")
+	})
+	registry.Register("broke", func(routing.Spec) (search.Provider, error) {
+		return failingSearch{fmt.Errorf("broke: %w", policy.ErrBudgetSpent)}, nil
+	})
+	registry.Register("slow", func(routing.Spec) (search.Provider, error) {
+		return failingSearch{fmt.Errorf("slow: Post \"https://vendor.test/search\": %w", context.DeadlineExceeded)}, nil
+	})
+	registry.Register("hang", func(routing.Spec) (search.Provider, error) { return hangingSearch{}, nil })
+	return registry
+}
+
+// hangingSearch is a search provider that answers nothing until the question's context ends, and
+// then fails as an HTTP client does.
+type hangingSearch struct{ failingSearch }
+
+func (hangingSearch) Search(ctx context.Context, _ search.Query) (search.Result, error) {
+	<-ctx.Done()
+	return search.Result{}, fmt.Errorf("hang: Post \"https://vendor.test/search\": %w", ctx.Err())
+}
+
+// failingSearch is a search provider whose every question fails with err.
+type failingSearch struct{ err error }
+
+func (f failingSearch) Search(context.Context, search.Query) (search.Result, error) {
+	return search.Result{}, f.err
+}
+
+func (failingSearch) Start(context.Context) error { return nil }
+func (failingSearch) Close() error                { return nil }
+func (failingSearch) Provider() string            { return "failing" }
+func (failingSearch) Model() string               { return "failing-search" }
+
+func (answerer) Search(_ context.Context, query search.Query) (search.Result, error) {
+	return search.Result{Answer: "A call costs a penny.", Documents: []search.Document{
+		{URL: "https://example.test/pricing", Title: "Pricing", Text: query.Text, Score: 0.9},
+	}}, nil
+}
+
+func (answerer) Start(context.Context) error { return nil }
+func (answerer) Close() error                { return nil }
+func (answerer) Provider() string            { return "stub" }
+func (answerer) Model() string               { return "stub-search" }
+
+// judge stands in for a classifier: it answers what it is told to.
+type judge struct {
+	name     string
+	answered decisionmodel.Result
+
+	mu    sync.Mutex
+	asked []decisionmodel.Request
+}
+
+// classifiers are the two the suite routes to, so a test can tell a target apart from the
+// default one.
+var classifiers = struct {
+	quick, careful *judge
+}{
+	quick:   &judge{name: "quick", answered: judged},
+	careful: &judge{name: "careful", answered: judged},
+}
+
+// judged is the ruling both classifiers give, one answer of each type.
+var judged = decisionmodel.Result{
+	Model: "judge-2026-09",
+	Answers: map[string]decisionmodel.Answer{
+		"refund": {Type: decisionmodel.TypeNoul, Yes: 0.91},
+		"topic": {
+			Type: decisionmodel.TypeChoice, Chosen: "billing", Confidence: 0.8,
+			Probabilities: map[string]float64{"billing": 0.9, "other": 0.1},
+		},
+		"urgency": {
+			Type: decisionmodel.TypeScore, Level: 1.4, Confidence: 0.6,
+			Legend:        map[string]string{"0": "can wait", "1": "this week", "2": "today"},
+			Probabilities: map[string]float64{"0": 0.1, "1": 0.4, "2": 0.5},
+		},
+	},
+	Usage: decisionmodel.Usage{InputTokens: 406, OutputTokens: 69},
+}
+
+// refusals are the states a test asks about to be refused instead of ruled on, since what
+// a vendor will not answer is a property of the question rather than of the classifier.
+var refusals = map[string]error{
+	"unanswerable": errors.New(`typesafe: "refund" was not answered`),
+	"rate limited": fmt.Errorf("typesafe: the API returned 429: %w", decisionmodel.ErrRateLimited),
+	"unavailable":  fmt.Errorf("typesafe: the API returned 529: %w", decisionmodel.ErrUnavailable),
+}
+
+func (j *judge) Classify(_ context.Context, request decisionmodel.Request) (decisionmodel.Result, error) {
+	j.mu.Lock()
+	j.asked = append(j.asked, request)
+	j.mu.Unlock()
+
+	state, _ := request.State.(string)
+	for asked, failure := range refusals {
+		if strings.Contains(state, asked) {
+			return decisionmodel.Result{}, failure
+		}
+	}
+	return j.answered, nil
+}
+
+func (j *judge) Start(context.Context) error { return nil }
+func (j *judge) Close() error                { return nil }
+func (j *judge) Provider() string            { return j.name }
+func (j *judge) Model() string               { return "stub" }
+
+// questions is every request this classifier has been asked to rule on.
+func (j *judge) questions() []decisionmodel.Request {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return append([]decisionmodel.Request(nil), j.asked...)
+}
+
+// ruledOn is what this classifier was asked about state, and whether it was asked at all.
+// A test names its own state, since the stub is shared.
+func (j *judge) ruledOn(state string) (decisionmodel.Request, bool) {
+	for _, asked := range j.questions() {
+		if named, ok := asked.State.(string); ok && named == state {
+			return asked, true
+		}
+	}
+	return decisionmodel.Request{}, false
+}
+
+func classifyConfig() routing.ModalityConfig {
+	return routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{
+				Provider: "quick", Model: "judge", Languages: []string{"en"},
+				Realtime: true, Tier: routing.LowLatency,
+			},
+			{
+				Provider: "careful", Model: "judge", Languages: []string{"en"},
+				Tier: routing.HighQuality,
+			},
+		},
+		Aliases: map[string]routing.Alias{
+			"classify-fast": {RequireRealtime: true, Tier: routing.LowLatency},
+		},
+	}
+}
+
+func classifierRegistry() *decisionrouter.Registry {
+	registry := decisionrouter.NewRegistry()
+	registry.Register("quick", func(routing.Spec) (decisionmodel.Provider, error) { return classifiers.quick, nil })
+	registry.Register("careful", func(routing.Spec) (decisionmodel.Provider, error) { return classifiers.careful, nil })
+	return registry
+}
+
+// painter stands in for an image provider: it draws the same picture every time.
+type painter struct {
+	name string
+
+	mu    sync.Mutex
+	asked []imagegen.Request
+}
+
+var painters = struct {
+	quick, lush *painter
+}{
+	quick: &painter{name: "quick"},
+	lush:  &painter{name: "lush"},
+}
+
+// drawn is a 32 by 32 png, which is a picture as far as the endpoint is concerned.
+var drawn = func() imagegen.Result {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 32, 32))); err != nil {
+		panic(err)
+	}
+	seed := int64(7)
+	return imagegen.Result{Images: []imagegen.Image{{
+		Data: encoded.Bytes(), MediaType: "image/png", Width: 1024, Height: 1024, Seed: &seed,
+	}}}
+}()
+
+// unsafely is the prompt a test asks for a picture it cannot have with, since what a
+// safety checker refuses is a property of the prompt rather than of the provider.
+const unsafely = "unsafe"
+
+// roses is a picture to send a model, as the data URI a caller writes one as.
+var roses = llm.ImagePart{MIME: "image/png", Data: drawn.Images[0].Data}.DataURI()
+
+func (p *painter) Generate(_ context.Context, request imagegen.Request) (imagegen.Result, error) {
+	p.mu.Lock()
+	p.asked = append(p.asked, request)
+	p.mu.Unlock()
+	if strings.Contains(request.Prompt, unsafely) {
+		return imagegen.Result{}, imagegen.Fail(imagegen.ContentFiltered, true,
+			errors.New("the safety checker flagged the picture"))
+	}
+	return drawn, nil
+}
+
+func (p *painter) Start(context.Context) error { return nil }
+func (p *painter) Close() error                { return nil }
+func (p *painter) Provider() string            { return p.name }
+func (p *painter) Model() string               { return "stub" }
+
+// prompts is every request this provider has been asked to draw.
+func (p *painter) prompts() []imagegen.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]imagegen.Request(nil), p.asked...)
+}
+
+// drew is what this provider was asked for the picture named by prompt, and whether it was
+// asked at all. A test names its own prompt, since the stub is shared.
+func (p *painter) drew(prompt string) (imagegen.Request, bool) {
+	for _, asked := range p.prompts() {
+		if asked.Prompt == prompt {
+			return asked, true
+		}
+	}
+	return imagegen.Request{}, false
+}
+
+func imageConfig() routing.ModalityConfig {
+	return routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{
+				Provider: "quick", Model: "fast", Languages: []string{"en"}, Tier: routing.LowLatency,
+				Terms: []options.Term{
+					options.Size, options.AspectRatio, options.Seed,
+					options.NegativePrompt, options.Format,
+				},
+				Price: routing.Price{PerImage: 0.04},
+			},
+			{
+				Provider: "lush", Model: "best", Languages: []string{"en"}, Tier: routing.HighQuality,
+				Terms: []options.Term{options.AspectRatio},
+				Price: routing.Price{PerImage: 0.067},
+			},
+		},
+		Aliases: map[string]routing.Alias{
+			"image-fast":    {Title: "Fast images", Tier: routing.LowLatency},
+			"image-quality": {Title: "Best images", Tier: routing.HighQuality},
+		},
+	}
+}
+
+func painterRegistry() *imagerouter.Registry {
+	registry := imagerouter.NewRegistry()
+	registry.Register("quick", func(routing.Spec) (imagegen.Provider, error) { return painters.quick, nil })
+	registry.Register("lush", func(routing.Spec) (imagegen.Provider, error) { return painters.lush, nil })
+	return registry
+}
+
+// stubConversation stands in for a speech-to-speech model, so the socket can be driven
+// without a vendor. Whatever the socket sends it is recorded; whatever the test emits on it
+// comes back down the socket.
+type stubConversation struct {
+	emitter      *sts.Emitter
+	capabilities sts.Capabilities
+	heard        chan sts.PcmData
+	typed        chan string
+	answers      chan string
+	interrupts   chan int
+	updates      chan sts.CallUpdate
+	closed       chan struct{}
+}
+
+// conversing is every stub the registry has made, so a test can reach the one its socket
+// landed on.
+var conversing = make(chan *stubConversation, 16)
+
+func stsrouterStub() (*stsrouter.Router, error) {
+	config := routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{{
+			Provider: "stub", Model: "stub-sts", Languages: []string{"en"}, Realtime: true,
+			// What a session's speech-to-speech agent asks of its model (MessageHooksSuite).
+			Terms: []options.Term{options.InputTranscript, options.OutputTranscript},
+		}},
+		// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
+		Aliases: map[string]routing.Alias{"sts-fast": {Title: "Fast", RequireRealtime: true}},
+	}
+	registry := stsrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (sts.STS, error) {
+		stub := newStubConversation(sts.Capabilities{InputTranscript: true, OutputTranscript: true})
+		select {
+		case conversing <- stub:
+		default:
+		}
+		return stub, nil
+	})
+	return stsrouter.New(stsrouter.Options{Config: config, Registry: registry})
+}
+
+func newStubConversation(capabilities sts.Capabilities) *stubConversation {
+	return &stubConversation{
+		emitter:      sts.NewEmitter(sts.EmitterBuffer),
+		capabilities: capabilities,
+		heard:        make(chan sts.PcmData, 16),
+		typed:        make(chan string, 16),
+		answers:      make(chan string, 16),
+		interrupts:   make(chan int, 16),
+		updates:      make(chan sts.CallUpdate, 16),
+		closed:       make(chan struct{}),
+	}
+}
+
+func (s *stubConversation) Start(context.Context) error { return nil }
+func (s *stubConversation) ProcessAudio(pcm sts.PcmData, _ sts.Participant) error {
+	s.heard <- pcm
+	return nil
+}
+func (s *stubConversation) SendText(text string, _ sts.Participant) error {
+	s.typed <- text
+	return nil
+}
+func (s *stubConversation) SendFrame(llm.ImagePart) error { return sts.ErrNoImages }
+func (s *stubConversation) SetInstructions(string) error  { return nil }
+func (s *stubConversation) SetTools([]llm.Tool) error     { return nil }
+func (s *stubConversation) Answer(callID, output string, _ error) error {
+	s.answers <- callID + "=" + output
+	return nil
+}
+func (s *stubConversation) Prompt(string) error { return nil }
+func (s *stubConversation) UpdatesCalls() bool  { return true }
+func (s *stubConversation) UpdateCall(update sts.CallUpdate) error {
+	s.updates <- update
+	return nil
+}
+func (s *stubConversation) Interrupt(playedMs int) error { s.interrupts <- playedMs; return nil }
+func (s *stubConversation) Events() <-chan sts.Event     { return s.emitter.Events() }
+
+func (s *stubConversation) Close() error {
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+	s.emitter.Close()
+	return nil
+}
+
+func (s *stubConversation) Provider() string               { return "stub" }
+func (s *stubConversation) Model() string                  { return "stub-sts" }
+func (s *stubConversation) SampleRate() int                { return 24_000 }
+func (s *stubConversation) Capabilities() sts.Capabilities { return s.capabilities }
+
+// knowledgeBase is a knowledge base kept in memory, keyed the way a real one is. Passages
+// replace whatever is already stored under their id, which is the property the endpoint
+// depends on for posting a document twice to be an edit rather than a second copy.
+type knowledgeBase struct {
+	mu        sync.Mutex
+	namespace string
+	// passages are each namespace's, by id.
+	passages map[string]map[string]knowledge.Document
+	// down makes every write fail, naming the namespace as turbopuffer's errors do.
+	down bool
+	// writesLeft, when set, is how many writes succeed before down is set.
+	writesLeft *int
+}
+
+func newKnowledgeBase() *knowledgeBase {
+	return &knowledgeBase{passages: map[string]map[string]knowledge.Document{}}
+}
+
+// failWrites makes every write fail until it is called with false.
+func (b *knowledgeBase) failWrites(down bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.down = down
+	b.writesLeft = nil
+}
+
+// refuseWritesAfter lets n more writes through, then fails every write until failWrites(false).
+func (b *knowledgeBase) refuseWritesAfter(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.writesLeft = &n
+}
+
+// knowledgeQueried is what the stub bills a query as having searched: the least a small
+// namespace is billed at turbopuffer.
+const knowledgeQueried = 1_280_000_000
+
+// passageBytes is a passage's logical size, as turbopuffer bills it.
+func passageBytes(document knowledge.Document) int64 {
+	return int64(len(document.ID) + len(document.Text) + len(document.Source))
+}
+
+func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []knowledge.Document) (knowledge.Billed, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.writesLeft != nil {
+		if *b.writesLeft == 0 {
+			b.down = true
+		}
+		*b.writesLeft--
+	}
+	if b.down {
+		return knowledge.Billed{}, fmt.Errorf("turbopuffer: write to %s: 503 Service Unavailable", namespace)
+	}
+	b.namespace = namespace
+	if b.passages[namespace] == nil {
+		b.passages[namespace] = map[string]knowledge.Document{}
+	}
+	billed := knowledge.Billed{Requests: 1}
+	for _, document := range documents {
+		b.passages[namespace][document.ID] = document
+		billed.BytesWritten += passageBytes(document)
+	}
+	return billed, nil
+}
+
+func (b *knowledgeBase) Delete(_ context.Context, namespace string, ids []string) (knowledge.Billed, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	billed := knowledge.Billed{Requests: 1}
+	for _, id := range ids {
+		delete(b.passages[namespace], id)
+		billed.BytesWritten += int64(len(id))
+	}
+	return billed, nil
+}
+
+func (b *knowledgeBase) Drop(_ context.Context, namespace string) (knowledge.Dropped, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.down {
+		return knowledge.Dropped{}, fmt.Errorf("turbopuffer: delete %s: 503 Service Unavailable", namespace)
+	}
+	_, existed := b.passages[namespace]
+	delete(b.passages, namespace)
+	return knowledge.Dropped{Existed: existed, Billed: knowledge.Billed{Requests: 1}}, nil
+}
+
+func (b *knowledgeBase) Fetch(_ context.Context, namespace string, ids []string) (knowledge.Found, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	found := knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}
+	for _, id := range ids {
+		if document, ok := b.passages[namespace][id]; ok {
+			found.Documents = append(found.Documents, document)
+			found.BytesReturned += passageBytes(document)
+		}
+	}
+	found.Results = int64(len(found.Documents))
+	return found, nil
+}
+
+func (b *knowledgeBase) Search(context.Context, knowledge.Query) (knowledge.Found, error) {
+	return knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}, nil
+}
+
+func (b *knowledgeBase) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
+
+func (b *knowledgeBase) Stored(context.Context, string) (knowledge.Billed, error) {
+	return knowledge.Billed{}, knowledge.ErrNoNamespace
+}
+
+func (b *knowledgeBase) Provider() string { return "kept" }
+
+func (b *knowledgeBase) Close() error { return nil }
+
+// holds reports whether the provider has the namespace.
+func (b *knowledgeBase) holds(namespace string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, ok := b.passages[namespace]
+	return ok
+}
+
+// stored is the namespace last written to and the passages every namespace holds.
+func (b *knowledgeBase) stored() (string, map[string]knowledge.Document) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	copied := map[string]knowledge.Document{}
+	for _, passages := range b.passages {
+		maps.Copy(copied, passages)
+	}
+	return b.namespace, copied
+}
+
+// pageReader answers every url with the same page, which is enough for the endpoints to be
+// exercised: what a real crawler makes of a real page is the provider's own suite.
+type pageReader struct{}
+
+func (pageReader) Read(_ context.Context, address string) (search.Page, error) {
+	return search.Page{
+		URL:   address,
+		Title: "Pricing",
+		Text:  "# Pricing\n\nA call costs a penny.\n",
+	}, nil
+}
+
+// keptMemories holds memories in a slice, and forgets them the way a real store would.
+type keptMemories struct {
+	mu   sync.Mutex
+	kept []memory.Scope
+}
+
+func (m *keptMemories) Recall(context.Context, memory.Query) (memory.Recalled, error) {
+	return memory.Recalled{Billed: memory.Billed{Requests: 1}}, nil
+}
+
+func (m *keptMemories) Remember(_ context.Context, scope memory.Scope, _ []llm.Message) (memory.Billed, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.kept = append(m.kept, scope)
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *keptMemories) Truncate(_ context.Context, appID, userID string) (memory.Billed, error) {
+	m.forget(func(kept memory.Scope) bool { return kept.AppID == appID && kept.UserID == userID })
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *keptMemories) ForgetRun(_ context.Context, appID, runID string) (memory.Billed, error) {
+	m.forget(func(kept memory.Scope) bool { return kept.AppID == appID && kept.RunID == runID })
+	return memory.Billed{Requests: 1}, nil
+}
+
+func (m *keptMemories) Provider() string { return "kept" }
+func (m *keptMemories) Close() error     { return nil }
+
+func (m *keptMemories) forget(matches func(memory.Scope) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	left := m.kept[:0]
+	for _, kept := range m.kept {
+		if !matches(kept) {
+			left = append(left, kept)
+		}
+	}
+	m.kept = left
+}
+
+// remaining is every memory still held.
+func (m *keptMemories) remaining() []memory.Scope {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]memory.Scope(nil), m.kept...)
+}
+
+// namedScheme is a scheme registered by its name alone, which is all a connector definition
+// reads of one: whether a custom definition may name it. Nothing in these suites connects
+// through it, so it acquires, issues and applies nothing.
+type namedScheme string
+
+func (n namedScheme) Name() string { return string(n) }
+
+func (namedScheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error) {
+	return core.BeginOutput{}, errors.New("a named scheme does not connect")
+}
+
+func (namedScheme) Complete(context.Context, core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	return core.StoredCredentials{}, core.AccountInfo{}, errors.New("a named scheme does not connect")
+}
+
+func (namedScheme) Retrieve(context.Context, core.StoredCredentials, core.ResolvedManifest, core.RetrieveOptions) (core.AccessCredential, core.StoredCredentials, error) {
+	return core.AccessCredential{}, core.StoredCredentials{}, errors.New("a named scheme does not connect")
+}
+
+func (namedScheme) Wrap(base http.RoundTripper, _ core.AccessCredential) http.RoundTripper {
+	return base
+}
+
+func (namedScheme) Classify(*http.Response, []byte, error) core.Outcome { return core.Outcome{} }
+
+func (namedScheme) Revoke(context.Context, core.StoredCredentials, core.ResolvedManifest) error {
+	return nil
+}

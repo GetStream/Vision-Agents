@@ -1,0 +1,107 @@
+# Gmail's hosted MCP server, moved from the plugin catalog (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
+# entry gmail, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
+# connectors/planning). Vendor pages, opened October 7, 2026:
+#   [setup] https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server
+#   [web]   https://developers.google.com/identity/protocols/oauth2/web-server
+# And the servers' own metadata, fetched on October 7, 2026 («[prm]» and «[as]»):
+#   [prm] GET https://gmailmcp.googleapis.com/.well-known/oauth-protected-resource/mcp/v1 at
+#         2026-10-07T14:28:24Z: resource https://gmailmcp.googleapis.com/mcp/v1,
+#         authorization_servers [https://accounts.google.com/], eleven gmail scopes in
+#         scopes_supported, gmail.readonly and gmail.compose among them.
+#   [as]  GET https://accounts.google.com/.well-known/oauth-authorization-server at
+#         2026-10-07T14:28:24Z, as google_calendar.yaml quotes it.
+# Opened October 16, 2026:
+#   [mcp]    https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server: the
+#            server's tools, create_draft among them and none that sends, and its two scopes,
+#            gmail.readonly and gmail.compose.
+#   [scopes] https://developers.google.com/workspace/gmail/api/auth/scopes: gmail.compose,
+#            «Manage drafts and send emails», restricted.
+#   [send]   https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send:
+#            POST https://gmail.googleapis.com/gmail/v1/users/{userId}/messages/send, which
+#            gmail.compose may call.
+id: gmail
+# A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 asks for
+# gmail.compose and gives the REST API as api_base, so a backend can send mail through the
+# connection proxy, which the MCP server cannot ([mcp]). 4 lists the tools that only read.
+revision: 4
+# [plugin]
+name: Gmail
+category: Communication
+description: Search, read and label email threads, and write drafts. A backend sends mail through the connection proxy.
+setup:
+  # [plugin] setup_url and setup_steps.
+  url: https://console.cloud.google.com/auth/clients
+  steps:
+    - title: Enable the APIs
+      # [setup]: the Gmail API and the Gmail MCP API, «Available as part of the Google
+      # Workspace Developer Preview Program».
+      description: In a Google Cloud project of your own, enable gmail.googleapis.com and gmailmcp.googleapis.com in the API Library. The server is in the Workspace Developer Preview, so enroll the project's number at developers.google.com/workspace/preview.
+    - title: Set up the consent screen
+      description: Under Google Auth Platform, Branding, name the app and give a support email. Choose Internal to let only your Workspace's accounts in, without Google's review.
+    - title: Add the scope
+      # [setup] adds gmail.readonly and gmail.compose.
+      description: Under Data Access, add https://www.googleapis.com/auth/gmail.readonly and https://www.googleapis.com/auth/gmail.compose, which writes drafts and sends mail.
+    - title: Create a web client
+      # [setup]: a web application client.
+      description: Under Clients, create a client of type Web application, with the redirect URI shown on this page as an authorized redirect URI.
+    - title: Copy the credentials
+      description: Copy the Client ID and Client secret into this page. The same client serves Google Calendar, Drive and Docs.
+endpoints:
+  # [setup]; [plugin] url; [prm]'s resource.
+  mcp: https://gmailmcp.googleapis.com/mcp/v1
+  # Pinned for the trailing slash [prm] and [as] disagree on, as in google_calendar.yaml.
+  issuer: https://accounts.google.com
+  # The REST API's host, under which the connection proxy sends a direct call such as
+  # gmail/v1/users/me/messages/send ([send]).
+  api_base: https://gmail.googleapis.com
+  # RFC 8707 resource indicator: [prm]'s resource.
+  resource: https://gmailmcp.googleapis.com/mcp/v1
+# Authorization code with PKCE S256: [as]; [web].
+schemes: [oauth2_code]
+client:
+  # As google_calendar.yaml. The plugin read GMAIL_MCP_*; Gmail joins the other three Google
+  # built-ins on GOOGLE_MCP_*, since [plugin]'s own setup step says one client serves all four.
+  registration: [operator, customer]
+  auth_method: client_secret_post
+  env: GOOGLE
+# [web]; [plugin] authorize_params.
+authorize_params:
+  access_type: offline
+  prompt: consent
+scopes:
+  # [plugin] scopes: read only, kept first so a moved grant keeps what it was granted.
+  # gmail.compose is the server's other scope ([mcp]): create_draft, and sending through the
+  # proxy ([scopes], [send]).
+  list:
+    - https://www.googleapis.com/auth/gmail.readonly
+    - https://www.googleapis.com/auth/gmail.compose
+# No identity, as google_calendar.yaml.
+refresh:
+  # Not rotating: «Refresh tokens are valid until the user revokes access or the refresh
+  # token expires» ([web], opened 2026-10-07); stress-test row 7 of the architecture doc.
+  rotating: false
+rate_limit:
+  # Per OAuth app: row 7.
+  per: app
+sources:
+  - kind: mcp
+    endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/gmail/api/reference/mcp (opened 2026-11-04, «Last
+    # updated 2026-07-21»): each tool's page under tools_list/ marks it «Read Only Hint».
+    # list_drafts reads the person's own drafts and sends nothing. create_draft, the label
+    # tools and create_label change the mailbox, so they are left out. The server also offers
+    # tools that page does not list (the trash, spam and sensitive-label tools); with no
+    # vendor page saying what they do, they are left out, as is a tool added later. get_draft
+    # is on none of those pages either; the server's tools/list, read 2026-11-04, describes it
+    # as retrieving one draft by id, in the format asked for, with a link to open it in Gmail,
+    # so it reads the same drafts list_drafts does and is listed.
+    read_only_tools:
+      - list_drafts
+      - get_draft
+      - get_thread
+      - get_message
+      - search_threads
+      - list_labels

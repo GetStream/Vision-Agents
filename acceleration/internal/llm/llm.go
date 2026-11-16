@@ -1,0 +1,155 @@
+// Package llm defines the minimal large-language-model contract shared by every provider.
+//
+// The shape follows OpenAI's Responses API: one call creates one response, and the events
+// it produces are pulled from the stream that call returns. Anything provider-specific
+// stays on the concrete type, which also exposes a Client method returning the underlying
+// SDK client so callers are never boxed in by this interface.
+//
+// Tools are here because an agent on a phone call has to do things the conversation cannot
+// do for it: hand the caller to a human, press a digit at a menu. Every provider this
+// routes to speaks the OpenAI tool schema, so standardising it turned out to be the small
+// question it was once assumed not to be.
+package llm
+
+import (
+	"context"
+	"strings"
+)
+
+// Role is who authored a message.
+type Role string
+
+const (
+	// System carries the agent's instructions.
+	System Role = "system"
+	// User is what the person said.
+	User Role = "user"
+	// Assistant is what the model said on an earlier turn.
+	Assistant Role = "assistant"
+	// ToolResult is what running a tool returned, answering an earlier assistant turn.
+	ToolResult Role = "tool"
+)
+
+// ContentPart is one piece of a message. Exactly one of Text or Image is set.
+type ContentPart struct {
+	Text  string
+	Image *ImagePart
+}
+
+// ImagePart is an image carried inline. Bytes, not base64: each provider encodes its own way.
+type ImagePart struct {
+	URL    string // HTTP(S) source; mutually exclusive with Data.
+	MIME   string // image/jpeg, image/png, image/webp
+	Data   []byte
+	Detail string // "", "auto", "low", "high" — dropped where the provider prices no such choice
+	// Caption is told to the model beside an image attached to a turn, such as which moment
+	// of a video a frame is. It is never sent as part of the image.
+	Caption string
+	// Video marks a frame taken from a video rather than a picture in its own right, so
+	// what a prompt spent on video is told apart from what it spent on images. Never sent.
+	Video bool
+}
+
+// Message is one turn of a conversation, and one item of a request's input.
+//
+// The Responses API models a call and its result as items of their own rather than as
+// fields on a message. They are kept on the message here because the providers reached
+// over an OpenAI-compatible chat endpoint need that shape anyway, and because the history
+// this comes from is held as turns everywhere else in the agent.
+//
+// Content is the text-only shorthand. Parts is set instead when the turn carries media.
+// The two are never both set.
+type Message struct {
+	Role    Role
+	Content string
+	Parts   []ContentPart
+	// ToolCalls are what an assistant turn asked to have run. A turn that called a tool
+	// has to be replayed with them, because the provider rejects a tool result that
+	// answers nothing.
+	ToolCalls []ToolCall
+	// Reasoning is what an assistant turn thought before it answered, for a provider that
+	// is sent it again with the turn.
+	Reasoning string
+	// ToolCallID names the call a ToolResult message answers.
+	ToolCallID string
+	// Speaker names who said a User turn once more than one person has spoken. No provider
+	// reads it: the agent writes it into the words it sends, and keeps Content as said.
+	Speaker string
+	// Author is the Stream user who wrote a User turn read back from a thread channel, which
+	// several people may write in. No provider reads it: the agent counts each author as it
+	// counts a speaker, and names them in Speaker once two have written.
+	Author string
+	// Typed says a User turn's words were not said on the call: typed, handed to the agent by
+	// its app ("greet the user"), or written by the router on the caller's side, such as a
+	// tool's late result, a call silence declined or a summary of the call so far. No provider
+	// reads it: a model of the call's speech is told only what was said.
+	Typed bool
+	// Document marks a file the caller attached, which goes ahead of the conversation on
+	// every reply. No provider reads it: the file was screened once, when it arrived, so a
+	// reply's own screen leaves it out.
+	Document bool
+}
+
+// Tool is something the model may do instead of, or alongside, saying something.
+type Tool struct {
+	// Name is how the model asks for it.
+	Name string
+	// Description is what the model is told the tool does, which is the whole of how it
+	// decides when to reach for one.
+	Description string
+	// Parameters is a JSON Schema object describing the arguments. It is untyped because
+	// a schema is untyped: the shape is whatever the tool accepts.
+	Parameters map[string]any
+}
+
+// ToolCall is the model asking for a tool to be run.
+type ToolCall struct {
+	// TurnID is runtime correlation supplied by the agent after provider decoding. It is
+	// not provider state and is never included when a call is replayed to a model.
+	TurnID string
+	// ID correlates the call with the result sent back, and is what the provider matches
+	// a Tool message against.
+	ID string
+	// Name is which tool was asked for.
+	Name string
+	// Arguments is the JSON object the model filled in, left as text because it is the
+	// tool that knows what shape to expect. A model may produce arguments that do not
+	// parse, and the caller is better placed than this package to say what that means.
+	Arguments string
+	// Signature is provider state that has to be handed back with the call when the turn
+	// is replayed. Gemini signs the calls it makes and rejects a conversation that
+	// returns one unsigned, which is how a tool result gets answered rather than
+	// refused. It is opaque and empty for providers that do not sign.
+	Signature string
+}
+
+// LLM is a streaming large-language-model provider.
+//
+// Create asks for one response and returns the stream it arrives on. There is no shared
+// event channel and nothing to interrupt by name: a response is abandoned by closing its
+// own stream, which is what barge-in does.
+type LLM interface {
+	Create(ctx context.Context, params ResponseParams) (*Stream, error)
+
+	// Provider is the stable provider name used in stats, e.g. "deepseek".
+	Provider() string
+	// Model is the model identifier used in stats, e.g. "DeepSeek-V4-Flash-0731".
+	Model() string
+	// Capabilities is what this model accepts, so a caller can ask for reasoning or
+	// persistence only where they mean something.
+	Capabilities() Capabilities
+	// Close abandons everything in flight and releases the provider.
+	Close() error
+}
+
+// Unfence strips the code fence a model puts around JSON it was asked for.
+//
+// Asking for JSON only mostly works, and a fenced object is the way it mostly fails. The
+// answer is otherwise exactly what was asked for, so it is read rather than rejected.
+func Unfence(answer string) string {
+	trimmed := strings.TrimSpace(answer)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	return strings.TrimSpace(trimmed)
+}

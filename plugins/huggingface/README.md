@@ -93,6 +93,8 @@ llm = huggingface.TransformersLLM(
 - `device`: `"auto"`, `"cuda"`, `"mps"`, or `"cpu"`
 - `quantization`: `"none"`, `"4bit"`, or `"8bit"`
 - `torch_dtype`: `"auto"`, `"float16"`, `"bfloat16"`, or `"float32"`
+- `trust_remote_code` (bool): Run custom code from the model repo (default: `False`)
+- `revision` (str): Commit hash, tag or branch of the model repo to load
 - `max_new_tokens` (int): Max tokens per response (default: 512)
 
 ### Local VLM
@@ -110,6 +112,8 @@ vlm = huggingface.TransformersVLM(
 - `model` (str): HuggingFace model ID
 - `device`: `"auto"`, `"cuda"`, `"mps"`, or `"cpu"`
 - `quantization`: `"none"`, `"4bit"`, or `"8bit"`
+- `trust_remote_code` (bool): Run custom code from the model repo (default: `False`). Pin `revision` to a commit hash when you turn it on
+- `revision` (str): Commit hash, tag or branch of the model repo to load
 - `fps` (int): Frames per second to capture (default: 1)
 - `frame_buffer_seconds` (int): Seconds of video to buffer (default: 10)
 - `max_frames` (int): Max frames per inference (default: 4)

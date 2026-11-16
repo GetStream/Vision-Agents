@@ -1,0 +1,1 @@
+{"entry":[{"id":"100000000000001","time":1759740000,"changes":[{"value":{"event":"APPROVED","message_template_id":400000000000001,"message_template_name":"synthetic_template","message_template_language":"en-US","reason":"NONE","message_template_category":"UTILITY"},"field":"message_template_status_update"}]}],"object":"whatsapp_business_account"}

@@ -1,0 +1,160 @@
+# Slack as an inbound channel (T35, AI-878): a customer's own Slack app, installed in one
+# workspace with a bot token, whose Events API deliveries go to the app's own Request URL,
+# POST /v1/connectors/events/slack_bot/{app id}, and whose replies go back with
+# chat.postMessage. The core's fixture testdata/manifests/slack_bot.yaml is where it started.
+# slack.yaml beside it is the user-token tool connector, a different install of a different
+# app; nobody writes to that one.
+# Slack's pages, opened October 6, 2026:
+#   [install]   https://docs.slack.dev/authentication/installing-with-oauth
+#   [verify]    https://docs.slack.dev/authentication/verifying-requests-from-slack
+#   [events]    https://docs.slack.dev/apis/events-api/
+#   [handshake] https://docs.slack.dev/reference/events/url_verification
+#   [message]   https://docs.slack.dev/reference/events/message
+#   [channels]  https://docs.slack.dev/reference/events/message.channels
+#   [im]        https://docs.slack.dev/reference/events/message.im
+#   [threads]   https://docs.slack.dev/messaging/retrieving-messages
+#   [post]      https://docs.slack.dev/reference/methods/chat.postMessage
+#   [revoked]   https://docs.slack.dev/reference/events/tokens_revoked
+#   [uninstalled] https://docs.slack.dev/reference/events/app_uninstalled
+id: slack_bot
+# A new revision for any change to what this file says; see AGENTS.md. 2 adds
+# channel.subscriptions, the events an app the router creates subscribes to (T54). 3 adds
+# channel.event_id, which keys a forward to an event destination (AI-924).
+revision: 3
+name: Slack bot
+category: Communication
+description: Answer people in Slack threads as the workspace's own bot.
+endpoints:
+  # [install]
+  authorize: https://slack.com/oauth/v2/authorize
+  token: https://slack.com/api/oauth.v2.access
+schemes: [oauth2_code]
+client:
+  # The customer's own Slack app (customer, or managed once the router creates it, T54), and
+  # Stream's for Stream's own agents (operator): architecture doc on connectors/planning,
+  # «Decisions, 2026-10-05», item 4.
+  registration: [operator, customer, managed]
+  # [install] sends client_id and client_secret in the oauth.v2.access form.
+  auth_method: client_secret_post
+  # Stream's own bot app is not the user-token app of slack.yaml (env SLACK), so its client is
+  # read under a prefix of its own: SLACK_BOT_MCP_CLIENT_ID and _SECRET (oauth2code.EnvClients).
+  # That Stream runs a separate bot app is a choice, not a Slack rule.
+  env: SLACK_BOT
+scopes:
+  # Bot scopes: chat:write for [post]; channels:history for message.channels ([channels]),
+  # im:history for message.im ([im]). Which events the app subscribes to is the app's
+  # configuration at Slack, not this file.
+  list: [chat:write, channels:history, im:history]
+  separator: ","
+capture:
+  # [install]: the oauth.v2.access answer names the workspace as team.id.
+  - name: team_id
+    from: token_response
+    path: $.team.id
+# The workspace: one bot token per workspace the app is installed in (T35, «identity = the
+# Slack team»). The bridge finds the connection of an event's workspace by it.
+identity: [team_id]
+channel:
+  verifier:
+    # [verify]: HMAC-SHA256 of v0:{timestamp}:{body} with the app's signing secret, hex,
+    # after v0= in X-Slack-Signature; the timestamp in X-Slack-Request-Timestamp, refused
+    # when it is «more than five minutes from local time».
+    kind: hmac_header
+    # Each Slack app has its own signing secret ([verify], «Slack creates a unique string for
+    # your app»), kept on the app's record (connector_oauth_clients, T40).
+    secret: provider_app
+    header: X-Slack-Signature
+    algorithm: sha256
+    encoding: hex
+    prefix: v0=
+    signed: "v0:{timestamp}:{body}"
+    timestamp_header: X-Slack-Request-Timestamp
+    max_age: 5m
+  # [verify] signs the raw JSON body.
+  format: json
+  # [handshake]: {"type": "url_verification", "challenge": "..."}, answered with the challenge.
+  challenge: $.challenge
+  # A forward to the customer's event destinations is keyed by Slack's own id for the
+  # delivery. [events]: event_id is «A unique identifier for this specific event, globally
+  # unique across all workspaces». An interaction is a form whose payload field is JSON
+  # (https://docs.slack.dev/interactivity/handling-user-interaction) and has no event_id; its
+  # trigger_id, which «can be used only once» (the same page), is the id of that one click
+  # (https://docs.slack.dev/reference/interaction-payloads/block_actions-payload).
+  event_id: [$.event_id, $.payload.trigger_id]
+  # The bot events an app the router creates subscribes to, which its manifest sends as
+  # settings.event_subscriptions.bot_events, «event types the app subscribes to», at most 100
+  # (https://docs.slack.dev/reference/app-manifest). A customer's own app (customer) is
+  # configured at Slack by the customer and does not read this. message.channels («A message
+  # was posted to a channel», scope channels:history, [channels]) and message.im (scope
+  # im:history, [im]) both arrive as event.type message, which messages.match reads.
+  # tokens_revoked is one the app must subscribe to ([revoked]); app_uninstalled is
+  # «automatically-delivered» ([uninstalled]), so it is not listed.
+  subscriptions: [message.channels, message.im, tokens_revoked]
+  messages:
+    # [message]: a message event is event.type message, in a channel ([channels]) or a direct
+    # message ([im]). app_mention is not read: an app subscribed to both gets the same post
+    # twice, and a person's message in a channel the bot is in is already a message event.
+    match:
+      $.event.type: message
+    skip_if_present:
+      # Messages an app posts carry bot_id ([threads], «such as user or bot_id»), and
+      # chat.postMessage answers the bot's own reply with it ([post]), so the bot's replies
+      # are not read back as a person's.
+      - $.event.bot_id
+      # [message]: «message events can have a subtype»: channel_join («A member joined a
+      # channel»), message_changed («A message was changed»), message_deleted, bot_message
+      # («A message was posted by an integration») and the rest of its table. None is a new
+      # message a person wrote, so every one is skipped. Two of them carry a person's words:
+      # file_share («A file was shared into a channel») and thread_broadcast («A message
+      # thread's reply was broadcast to a channel»); skipping them loses those. Whether Slack
+      # also sends a thread_broadcast reply as a plain message in the thread is not on the
+      # page. # unverified
+      - $.event.subtype
+    # [events]: team_id is on the envelope.
+    provider_unit_id: $.team_id
+    thread_key:
+      # Channel and thread: channels doc, «Other channels», the Slack row.
+      - name: channel
+        path: $.event.channel
+      # A reply carries thread_ts, the parent's ts; a message that starts a thread has none,
+      # and its own ts is the thread's ([threads]).
+      - name: thread_ts
+        path: $.event.thread_ts
+        fallback: $.event.ts
+    # [message]
+    author_id: $.event.user
+    # [message]: «ts is the unique (per-channel) timestamp»; the thread key holds the channel.
+    provider_message_id: $.event.ts
+    text: $.event.text
+  signals:
+    # [revoked]: event.tokens.bot lists the bot user ids whose bot tokens were revoked. The
+    # connection is the workspace's bot token, so a revoked bot token ends it, and a revoked
+    # user token (event.tokens.oauth) does not.
+    - kind: revoked
+      match:
+        $.event.type: tokens_revoked
+      each: $.event.tokens.bot[*]
+      identity:
+        team_id: $.team_id
+      # [events]: «event_time: The epoch timestamp in seconds indicating when this event was
+      # dispatched». A retry carries the same event; that it carries the same event_time is
+      # not on the page. # unverified
+      at: $.event_time
+    # [uninstalled]: team_id on the envelope.
+    - kind: uninstalled
+      match:
+        $.event.type: app_uninstalled
+      identity:
+        team_id: $.team_id
+      at: $.event_time
+  reply:
+    # [post]: POST, JSON accepted, the token as a bearer header (the scheme's).
+    url: https://slack.com/api/chat.postMessage
+    body:
+      channel: "{thread.channel}"
+      # [post]: thread_ts makes the message «a reply to a parent message».
+      thread_ts: "{thread.thread_ts}"
+      text: "{text}"
+    # [post]: a refusal is an HTTP 200 whose body has «"ok": false» and an error name.
+    accepted:
+      $.ok: "true"

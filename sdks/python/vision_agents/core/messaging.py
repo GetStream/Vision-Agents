@@ -1,0 +1,67 @@
+"""What an agent is given when somebody writes to it.
+
+A channel outlives the conversation that filled it, so a message posted to one is a way to
+reach an agent long after the call it came from ended. This is the shape of that message, in
+the core rather than in a plugin so an agent can be started by one without importing
+anything optional.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+
+from vision_agents.core.llm import ImageContent
+
+
+@dataclass
+class InboundMessage:
+    """Somebody has written to an agent that is not running, or to a running session whose
+    agent leaves text to dispatch.
+
+    Otherwise a message to an agent that *is* running never reaches here: the backend
+    answers it from the session itself, because that agent already knows what has been said.
+
+    Attributes:
+        channel_id: The channel it was written in, which is also the agent id a session
+            started to answer it should be given so its replies land back here.
+        channel_type: The type of that channel.
+        config_id: The agent config the last conversation on this channel ran under. Empty
+            when that conversation spelled its whole spec out instead of naming one.
+        custom: Whatever the channel was created with, carried through unread. It is where
+            a worker finds what the conversation is for and the router has no opinion
+            about: the organization to scope memory to, the locale to answer in. Whoever
+            created the channel decided what is in here, so read it as a claim rather than
+            a fact; which agent answers is `config_id`, not anything in here.
+        text: What was written. Empty when a photo was sent without text.
+        message_id: The message itself, for replying in its thread rather than after it.
+        user_id: Who wrote it.
+        user_name: Their name, which may be empty.
+        at: When it arrived.
+        session_id: The running session it was written to, set when its agent leaves text
+            to dispatch. Nothing has answered it yet; a response on this session does.
+        request_id: The request it was sent as, for that response to land on.
+        images: The photos sent with it, by the URLs the channel keeps them at, which
+            the model fetches itself. Empty when none was sent. The router sends no type with
+            a photo, so each one reads as `image/jpeg` whatever it is.
+    """
+
+    channel_id: str
+    channel_type: str = "agent"
+    config_id: str = ""
+    custom: dict[str, str] = field(default_factory=dict)
+    text: str = ""
+    message_id: str = ""
+    user_id: str = ""
+    user_name: str = ""
+    at: Optional[datetime] = None
+    session_id: str = ""
+    request_id: str = ""
+    images: list[ImageContent] = field(default_factory=list)
+
+    @property
+    def agent_id(self) -> str:
+        """The agent this was written to, which is what names the channel."""
+        return self.channel_id
+
+
+MessageContext = InboundMessage

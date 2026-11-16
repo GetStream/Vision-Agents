@@ -85,7 +85,12 @@ def _to_core_participant(
     )
 
     unique_id = f"{participant.user_id}__{participant.track_lookup_prefix}"
-    return Participant(original=participant, user_id=participant.user_id, id=unique_id)
+    return Participant(
+        original=participant,
+        user_id=participant.user_id,
+        id=unique_id,
+        name=participant.name or "",
+    )
 
 
 class StreamConnection(Connection):
@@ -166,7 +171,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
-        self.channel_type = "messaging"
+        self.channel_type = "agent"
         self._agent_user_id: str | None = None
         self._track_resolver = TrackResolver()
 
@@ -211,13 +216,29 @@ class StreamEdge(EdgeTransport[StreamCall]):
             # Participant left mid-resolve; nothing to wire up.
             return
 
+        participant = _to_core_participant(event.participant)
+        if participant is None or not participant.user_id:
+            # TrackPublished.participant is optional in the SFU protocol; the payload
+            # always names the publisher, who is already in the call.
+            participant = self._participant_for(user_id, session_id)
+
         self.events.send(
             events.TrackAddedEvent(
                 plugin_name="getstream",
                 track_id=track_id,
                 track_type=_to_core_track_type(stream_track_type),
-                participant=_to_core_participant(event.participant),
+                participant=participant,
             )
+        )
+
+    def _participant_for(self, user_id: str, session_id: str) -> Participant:
+        for known in self._connection.participants_state.get_participants():
+            if known.session_id == session_id:
+                core = _to_core_participant(known)
+                if core is not None:
+                    return core
+        return Participant(
+            original=None, user_id=user_id, id=f"{user_id}__{session_id}"
         )
 
     async def _on_track_removed(
@@ -384,7 +405,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
     async def create_call(self, call_id: str, **kwargs) -> StreamCall:
         """Shortcut for creating a call/room etc."""
         self._require_authenticated()
-        call_type = kwargs.get("call_type", "default")
+        call_type = kwargs.get("call_type", "agent")
         call = self.client.video.call(call_type, call_id)
         await call.get_or_create(data={"created_by_id": self._agent_user_id})
         return call
@@ -396,7 +417,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         This method:
         - Configures WebRTC subscription for audio/video tracks
-        - Joins the call with the agent's user ID
+        - Joins the call as the user `authenticate` was last given
         - Sets up track and audio event handlers
         - Re-emits participant and track events for the agent to consume
         - Establishes the connection and republishes existing tracks
@@ -404,22 +425,25 @@ class StreamEdge(EdgeTransport[StreamCall]):
         Args:
             agent: The Agent instance joining the call.
             call: StreamCall object representing the GetStream call to join.
-            **kwargs: Additional configuration options (unused).
+            **kwargs: Additional configuration options.
+                subscribe_audio: Subscribe to call audio. Defaults to True.
+                    A video-only worker passes False so it never decodes audio.
 
         Returns:
             StreamConnection: A connection wrapper implementing the core Connection interface.
         """
+        if self._agent_user_id is None:
+            raise ValueError("authenticate a user before joining a call")
 
-        # Traditional mode - use WebRTC connection
-        # Configure subscription for audio and video
+        subscribe_audio = kwargs.get("subscribe_audio", True)
         subscription_config = SubscriptionConfig(
-            default=self._get_subscription_config()
+            default=self._get_subscription_config(subscribe_audio=subscribe_audio)
         )
 
         # Open RTC connection and keep it alive for the duration of the returned context manager
         connection = await rtc.join(
             call,
-            agent.agent_user.id,
+            self._agent_user_id,
             subscription_config=subscription_config,
         )
         # Store immediately so close() can clean up if join is interrupted
@@ -495,15 +519,17 @@ class StreamEdge(EdgeTransport[StreamCall]):
             logger.info("🎥 Agent ready to publish video")
         # In Realtime mode we directly publish the provider's output track; no extra forwarding needed
 
-    def _get_subscription_config(self):
-        return TrackSubscriptionConfig(
-            track_types=[
-                StreamTrackType.TRACK_TYPE_VIDEO,
+    def _get_subscription_config(self, subscribe_audio: bool = True):
+        track_types = [
+            StreamTrackType.TRACK_TYPE_VIDEO,
+            StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
+        ]
+        if subscribe_audio:
+            track_types += [
                 StreamTrackType.TRACK_TYPE_AUDIO,
-                StreamTrackType.TRACK_TYPE_SCREEN_SHARE,
                 StreamTrackType.TRACK_TYPE_SCREEN_SHARE_AUDIO,
             ]
-        )
+        return TrackSubscriptionConfig(track_types=track_types)
 
     async def close(self):
         if self._real_connection:
@@ -580,6 +606,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         params = {
             "api_key": client.api_key,
             "token": token,
+            "type": call.call_type,
             "skip_lobby": "true",
             "user_name": name,
             "video_encoder": "h264",  # Use H.264 instead of VP8 for better compatibility

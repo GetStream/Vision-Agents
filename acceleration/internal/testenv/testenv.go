@@ -1,0 +1,144 @@
+// Package testenv gives the integration suites the credentials that live in the
+// repository's .env file, which is where the Python side and a local router already read
+// them from.
+//
+// Go only ever sees the environment of the process it was started in, so a suite launched
+// from an editor's run button skips itself for want of a key that is sitting in a file two
+// directories up. Importing this package for its side effect is what closes that gap, and
+// it does so the same way for a shell, an IDE and CI:
+//
+//	import _ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+//
+// It also loads the testing environment, which points the suites at their own database so
+// that running them never touches the one a local router is using.
+package testenv
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/joho/godotenv"
+	"github.com/uptrace/bun/driver/pgdriver"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
+)
+
+// init sets the testing environment over whatever the shell has, loads .env for the
+// credentials, creates the test database if it is missing and waits for the Redis the
+// suites dial to answer.
+func init() {
+	if err := os.Setenv(config.EnvVar, config.Testing); err != nil {
+		panic(err)
+	}
+	// Load writes the settings back into the environment, which is where the suites and
+	// the packages holding their own credentials read them.
+	settings, _, err := config.Load("")
+	if err != nil {
+		panic(err)
+	}
+	loadDotEnv()
+	createDatabase(settings.Postgres.DSN)
+	awaitConfiguredRedis()
+}
+
+// redisAddressVar is where the suites read the address of their Redis from.
+const redisAddressVar = "ROUTER_REDIS_ADDR"
+
+// redisAwaited is the address awaitConfiguredRedis saw answer, empty when none did.
+var redisAwaited string
+
+// awaitConfiguredRedis waits once per test process for the Redis the suites dial, so that
+// every setup that opens a client on it, through rueidis or through a constructor such as
+// live.New or appconfig.New, finds it answering. A word on stderr says when it did not.
+func awaitConfiguredRedis() {
+	address := os.Getenv(redisAddressVar)
+	if address == "" {
+		return
+	}
+	if err := redisready.Ready(address); err != nil {
+		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)
+		return
+	}
+	redisAwaited = address
+}
+
+// loadDotEnv loads the nearest .env at or above the working directory. A test runs with
+// the working directory set to its own package, so the file is looked for upwards rather
+// than beside it.
+//
+// A missing file is not a failure: every suite already skips itself on the credentials it
+// needs, which says the same thing in a better place. A file that cannot be parsed is
+// worth a word, because the suite would otherwise skip as though it were not there.
+func loadDotEnv() {
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	for {
+		path := filepath.Join(dir, ".env")
+		if _, err := os.Stat(path); err == nil {
+			// Load leaves variables that are already set alone, so a value exported in
+			// the shell or by CI wins over a stale line in the file.
+			if err := godotenv.Load(path); err != nil {
+				fmt.Fprintf(os.Stderr, "testenv: %s: %v\n", path, err)
+			}
+			return
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return
+		}
+		dir = parent
+	}
+}
+
+// Database is a database of one suite's own, created if this is the first run against it.
+//
+// A suite that empties tables or drops the schema cannot share the deployment's test
+// database with the suites reading it, since go test runs packages beside one another.
+// Such a suite asks here for a database named after itself, and is free to wipe it.
+func Database(dsn, name string) string {
+	own := strings.Replace(dsn, "_test", "_"+name+"_test", 1)
+	createDatabase(own)
+	return own
+}
+
+// maxDatabaseName is the longest identifier Postgres keeps: NAMEDATALEN is 64 and one byte
+// is the terminator. It cuts a longer one without a word, so two suites whose names agree on
+// the first 63 bytes would share a database, and the second CREATE would find it there.
+// https://www.postgresql.org/docs/16/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
+const maxDatabaseName = 63
+
+// createDatabase creates the database the DSN names, connecting through the server's
+// postgres database to do it. A server that cannot be reached is left to the suites, which
+// skip or fail on it themselves. A name Postgres would cut is a panic.
+func createDatabase(dsn string) {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return
+	}
+	name := strings.TrimPrefix(parsed.Path, "/")
+	if len(name) > maxDatabaseName {
+		panic(fmt.Sprintf("testenv: database name %q is %d bytes and Postgres keeps %d: shorten the suite's name", name, len(name), maxDatabaseName))
+	}
+	parsed.Path = "/postgres"
+	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(parsed.String())))
+	defer db.Close()
+
+	ctx := context.Background()
+	var exists bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", name).Scan(&exists); err != nil || exists {
+		return
+	}
+	if _, err := db.ExecContext(ctx, `CREATE DATABASE "`+strings.ReplaceAll(name, `"`, `""`)+`"`); err != nil {
+		fmt.Fprintf(os.Stderr, "testenv: create database %s: %v\n", name, err)
+	}
+}

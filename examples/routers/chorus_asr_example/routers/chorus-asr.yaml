@@ -1,0 +1,7 @@
+# chorus-asr alone, named outright: no shortcut routes to it. It writes the whole utterance
+# so far at each pause, then ends the utterance at a pause of 2.5 s. When to answer is yours.
+name: chorus-asr
+
+stt:
+  providers:
+    - stream/chorus-asr

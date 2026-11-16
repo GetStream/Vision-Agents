@@ -1,0 +1,1579 @@
+// Package routing picks a provider for a request and records what happened. It knows
+// nothing about any particular modality.
+//
+// A caller asks for either a concrete "provider/model" or a capability shortcut such as
+// en-low-latency. Shortcuts resolve against the capabilities declared in config and are
+// then ranked by live health, so a degraded provider drops down the list without anyone
+// editing config. Selection walks the ranked list until one provider starts, which is
+// where failover happens.
+//
+// What a started provider then does with audio, text or tokens is the modality's business:
+// each one wraps Select in a session that knows how to read its own events and turn them
+// into stat rows.
+package routing
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"maps"
+	"math"
+	"net/http"
+	"os"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+)
+
+var tracer = tracing.Tracer("routing")
+
+// Provider is the little a router needs from a model provider: it can be opened, closed
+// and named. Everything that makes a modality itself lives on the modality's own
+// interface.
+type Provider interface {
+	Start(ctx context.Context) error
+	Close() error
+	// Provider is the stable provider name used in stats, e.g. "elevenlabs".
+	Provider() string
+	// Model is the model identifier used in stats.
+	Model() string
+}
+
+// Inspector is the part of a router that does not depend on what it routes: which
+// providers exist and where a target would go. It is what lets one HTTP surface serve
+// every modality, since Router is generic and so a different type per modality.
+type Inspector interface {
+	Modality() Modality
+	Config() ModalityConfig
+	Providers(ctx context.Context) []Candidate
+	Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error)
+	InRegion(ctx context.Context, target, region string, languageHints []string) (bool, error)
+}
+
+// ErrVoiceNotPrepared says a customer's own voice exists but this provider was never
+// given it. The router treats that as a reason to try the next candidate rather than as a
+// failure, because another provider may well have it.
+var ErrVoiceNotPrepared = errors.New("routing: this provider has not been given that voice")
+
+// VoiceResolver turns what a caller asked for into the id one provider knows the voice by.
+//
+// It exists because a customer's own voice is one row to us and a different id at every
+// provider, and the router only learns which provider it has once it is picking between
+// them. A name that is not a customer's own voice is returned unchanged, so a provider's
+// library voices keep working, unless the provider says it has no such voice: that is
+// refused as an ErrRequest.
+type VoiceResolver interface {
+	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
+}
+
+// VoiceVetter is a VoiceResolver asked once per request, before any candidate is tried,
+// which providers may not be handed the voice as asked. A provider that cannot look a voice
+// up takes any id and fails on the first line spoken, so once one that can says the voice
+// does not exist, the others may take it only if their own library vouches for it. Asking
+// before the first candidate is what keeps the answer the same in whatever order health
+// ranked them. A provider it names is left out; a provider it never names refuses the voice
+// itself, in ResolveVoice.
+type VoiceVetter interface {
+	Unvouched(ctx context.Context, customerID, voice string, providers []string) []string
+}
+
+type voiceOverwritten struct{}
+
+// VoiceOverwritten reports that the voice being resolved is not the one that will be
+// spoken: this candidate's overwrites name a voice_id, which wins over the request's.
+// A resolver has no reason to check a voice nobody will ask the provider for.
+func VoiceOverwritten(ctx context.Context) bool {
+	_, ok := ctx.Value(voiceOverwritten{}).(bool)
+	return ok
+}
+
+// CustomProvider is what a customer's own model is routed under: custom/<name>.
+const CustomProvider = "custom"
+
+// CustomName is the name of the customer's model a target names as custom/<name>, if it
+// names one.
+func CustomName(target string) (string, bool) {
+	name, own := strings.CutPrefix(target, CustomProvider+"/")
+	return name, own && name != ""
+}
+
+// Endpoint is where a customer's own model is served and what it wants to let a request in.
+type Endpoint struct {
+	// BaseURL is the endpoint root, up to and including /v1.
+	BaseURL string
+	// Model is the id the endpoint serves the weights under. The candidate's own model is
+	// the customer's name for them, which is what stats and targets read.
+	Model string
+	// APIKey is empty for an endpoint that takes none.
+	APIKey string
+	// Client is how requests reach it. On a router tenants share it dials public addresses
+	// only, because the endpoint is whatever a tenant wrote.
+	Client *http.Client
+}
+
+// ModelResolver finds the models a customer serves themselves.
+//
+// They are not in the catalogue because they are nobody else's: two customers may each
+// have a model called prod. So a target naming one is resolved for the customer asking.
+type ModelResolver interface {
+	CustomModel(ctx context.Context, customerID, name string) (ProviderConfig, Endpoint, error)
+}
+
+// CustomerKeys are the keys customers keep with the router for their own accounts at a vendor,
+// one per vendor and region (BYOK). Work routed on one is billed to the customer by the vendor,
+// and priced at its BYOK entry.
+type CustomerKeys interface {
+	// CustomerKey is the customer's key for the provider in region, and false when they keep
+	// none there. Its error never holds the key.
+	CustomerKey(ctx context.Context, customerID, provider, region string) (string, bool, error)
+}
+
+// ErrModelNotAllowed says the customer's policies allow none of the models a request could
+// be routed to.
+var ErrModelNotAllowed = errors.New("routing: your policy does not allow this model")
+
+// Gate is what an organization's and an app's policies say about a customer's request
+// before anything is routed. Admit refuses a customer who may do no work at all, and
+// otherwise returns what every request of theirs is held to on top of its own, money
+// included: Admission.Spend refuses only the work that costs something. The owner's key, user
+// and categories are what the customer's limits on them are checked against.
+type Gate interface {
+	Admit(ctx context.Context, owner Owner) (Admission, error)
+}
+
+// Spender is a Gate that is told what a unit of work cost as soon as it is recorded, before
+// its row is written, so a customer spending fast is measured without waiting for the writer:
+// Settle sets the unit's hold, reserved before it started or not, to its cost. It answers the
+// grants the work is drawn from, past a spent limit, which its row names.
+type Spender interface {
+	Settle(owner Owner, usageID uuid.UUID, micros int64) []int64
+}
+
+// Reserver is a Gate that sets money aside for a unit of work before it starts, under the
+// usage id its row will carry, so a customer spending fast on several routers at once is
+// stopped before the work rather than after. A nil Reserve is the admission; a refusal is the
+// money error Admit would give, and nothing is held. Release lets go of a reservation whose
+// work never reached a vendor; the recorder settles the rest.
+type Reserver interface {
+	Reserve(owner Owner, usageID uuid.UUID, micros int64, ttl time.Duration) error
+	Release(usageID uuid.UUID)
+}
+
+// Booker sets credit aside for a purchase that costs a known amount at once, such as a number,
+// before the vendor is asked: Book refuses unless the organization's credit covers all of it,
+// whatever the limits mode. Its answer is never nil, so its methods can always be called.
+type Booker interface {
+	Book(ctx context.Context, owner Owner, micros int64) (Booked, error)
+}
+
+// Booked is credit a Booker set aside. Charged says the purchase was made and its rows
+// recorded, which then count for themselves; Release says it was not, and frees the credit at
+// once. Either may be called more than once. One never called expires on its own.
+type Booked interface {
+	Charged()
+	Release()
+}
+
+// NoBooking is a booking that set nothing aside, for a purchase there was nothing to check.
+var NoBooking Booked = noBooking{}
+
+type noBooking struct{}
+
+func (noBooking) Charged() {}
+func (noBooking) Release() {}
+
+// Admission is what a customer's policies hold every request of theirs to.
+type Admission struct {
+	// DataPolicy is the floor every request is held to, on top of whatever it asked for.
+	DataPolicy options.DataPolicy
+	// Models are the "provider/model" names the customer may be routed to. Nil allows
+	// every model, and an empty list allows none.
+	Models []string
+	// Tags are laid over the request's own on every row its work records, so a request
+	// cannot relabel what its policies attribute.
+	Tags Tags
+	// OrganizationID is the organization the customer is in, who its work is billed to.
+	// Empty when it is not known yet.
+	OrganizationID string
+	// OrganizationTier is that organization's current tier, which replaces the one a row was
+	// opened with, so a session's later work carries a tier Stream changed. Empty when it is
+	// not known.
+	OrganizationTier string
+	// Spend is why the customer may not spend money now: no credit, or a spend limit reached.
+	// Nil when they may. Work that costs nothing is still admitted.
+	Spend error
+	// Grants are the customer's one-time grants the work is admitted on, past limits of its
+	// subjects that are spent. The row its work records names them.
+	Grants []int64
+	// Limits are the settings in force for the organization, its tier's with its overrides laid
+	// over them, as its standing last said, for the checks admission leaves to the work's own
+	// path, such as a channel's. LimitsTier names that tier. Nil with no organization, before
+	// its standing is first read, and with money not enforced. Read only: it is shared.
+	Limits     *usage.Limits
+	LimitsTier string
+}
+
+// Labelled returns the tags with the policies' laid over them, leaving the ones passed in
+// untouched.
+func (a Admission) Labelled(tags Tags) Tags {
+	if len(a.Tags) == 0 {
+		return tags
+	}
+	merged := maps.Clone(tags)
+	if merged == nil {
+		merged = Tags{}
+	}
+	maps.Copy(merged, a.Tags)
+	return merged
+}
+
+// Options configures a Router. Store, Live and Voices are optional: without them the
+// router still routes, it just stops recording and stops resolving custom voices.
+type Options[P Provider] struct {
+	Validate func(P, ProviderConfig) error
+	Modality Modality
+	Config   ModalityConfig
+	Registry *Registry[P]
+	Store    *store.Store
+	Live     *live.Client
+	Voices   VoiceResolver
+	// Models resolves custom/<name>. Nil leaves a deployment with no models of a
+	// customer's own.
+	Models ModelResolver
+	// Keys are the customers' own keys, which each candidate whose factory honors
+	// OverrideAPIKey is asked on first. Nil routes on the deployment's keys alone.
+	Keys CustomerKeys
+	// Gate enforces the customer's policies. Nil enforces nothing.
+	Gate Gate
+	// Pricer prices every row the router records. Nil prices them with Prices: Config's own
+	// rates, then the vendor list embedded in the binary.
+	Pricer pricing.Pricer
+	// Writer is the process's writer, shared by every recorder. Nil gives the router one of
+	// its own over Store and Live.
+	Writer *Writer
+	Logger *slog.Logger
+}
+
+// Router selects providers and records per-request statistics.
+type Router[P Provider] struct {
+	validate func(P, ProviderConfig) error
+	modality Modality
+	config   ModalityConfig
+	registry *Registry[P]
+	recorder *Recorder
+	live     *live.Client
+	voices   VoiceResolver
+	models   ModelResolver
+	gate     Gate
+	// keys are the instances' own keys, read from the variables their api_key_env names when
+	// the router was made.
+	keys map[instance]string
+	// customerKeys are the keys customers keep for their own accounts. Nil is none.
+	customerKeys CustomerKeys
+	logger       *slog.Logger
+}
+
+// Caller is the end user a request was made on behalf of, and where they made it from. It
+// is what a per-user limit is counted against, and it is empty for work a customer's own
+// backend does for itself, which is not limited.
+type Caller struct {
+	// UserID is who the customer's token named. It is only unique within the customer, so
+	// a limit keyed by it is keyed by the pair. An anonymous caller's is the name it goes by,
+	// counted against but never recorded: the user a row records is Attribution.UserID.
+	UserID string
+	// IP is where the request came from, as far as the trusted proxies can tell.
+	IP string
+	// ServerSide is a customer's own process, trusted with its spend even when it names a
+	// user, so it is held only to the daily quotas the customer set for that user, never to
+	// the deployment's default.
+	ServerSide bool
+	// Verified is a UserID something vouched for: a token the app signed, the proxy's word,
+	// or a delivery the app's channel or plugin signed. An anonymous caller's name is not,
+	// so it is never held to that user's own quota nor spends their day.
+	Verified bool
+}
+
+// IsZero says nobody was named: a turn that was heard, not typed.
+func (c Caller) IsZero() bool {
+	return c == Caller{}
+}
+
+type callerKey struct{}
+
+// WithCaller says who sent what ctx carries: the request, or the turn of a session it asks
+// a model to answer.
+func WithCaller(ctx context.Context, caller Caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, caller)
+}
+
+// CallerFrom returns who WithCaller said sent what ctx carries, and false when nobody said.
+func CallerFrom(ctx context.Context) (Caller, bool) {
+	caller, ok := ctx.Value(callerKey{}).(Caller)
+	return caller, ok
+}
+
+type scheduledTurnKey struct{}
+
+// WithScheduledTurn marks what ctx carries as a turn a scheduled task fired:
+// nobody asked for it just now, so the work is the customer's and is never
+// counted against an end user's day.
+func WithScheduledTurn(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scheduledTurnKey{}, true)
+}
+
+// ScheduledTurn says whether what ctx carries was fired by a scheduled task.
+func ScheduledTurn(ctx context.Context) bool {
+	scheduled, _ := ctx.Value(scheduledTurnKey{}).(bool)
+	return scheduled
+}
+
+// Request is what a caller wants served.
+type Request struct {
+	// CustomerID owns the request. It is what every statistic is keyed by.
+	CustomerID string
+	// Attribution is who beside the customer the work is billed to and asked for by. A
+	// router takes it from the context it is opened with (AttributionFrom).
+	Attribution
+	// Caller is the end user the work is for, when the request came from a device rather
+	// than from the customer's own backend. It is what daily limits are counted against.
+	Caller Caller
+	// AgentID is the agent the work is for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the work happens in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty names none, and
+	// the region DataPolicy asks for, else pricing.DefaultRegion, holds. Only instances in it
+	// serve the request.
+	Region string
+	// Tags are the customer's own cost labels, recorded on every row the session writes.
+	Tags Tags
+	// Spent adds up what the session's rows cost for the request or socket that opened it. A
+	// router takes it from the context it is opened with (SpentFrom).
+	Spent *Spent
+	// Target is a "provider/model" name or a capability shortcut.
+	Target string
+	// Providers is a priority list of where to try, in the order given, and it wins over
+	// Target when it holds anything. Each entry is a bare provider name, a
+	// "provider/model" or a capability shortcut, and each is expanded where it stands, so
+	// the caller's order is the order candidates are tried in. Health only demotes what
+	// is unavailable rather than reordering the list.
+	Providers []string
+	// Realtime restricts a priority list to one half of a vendor's models: a socket must
+	// not be served by a batch model, and a recording should not be streamed at a live
+	// one. Nil does not filter, which is what a concrete target has always done.
+	Realtime *bool
+	// LanguageHints narrow multilingual models.
+	LanguageHints []string
+	// InputModalities restrict candidates to models that accept those extra input kinds,
+	// the way LanguageHints restrict them to a language. Empty leaves text-only models in.
+	InputModalities []string
+	// Voice selects the speaker for modalities that produce audio.
+	Voice string
+	// Failed names the candidates, as "provider/model", that the caller has already seen
+	// fail, so they are tried only after everything else. A voice lost part way through a
+	// call reopens with the one it lost named here, rather than with it again.
+	Failed []string
+	// Exclude names the candidates, as "provider/model", that must not serve at all. A
+	// transcription the vendor refused part way through reopens with every model that
+	// refused it named here: health would only sort them last, and is written after the
+	// reopen has already read it.
+	Exclude []string
+	// BYOK keeps only the instances built with the customer's own keys (true), or only the
+	// deployment's (false). Nil walks both, each model's on the customer's key first. A model's
+	// two instances share its name, so a caller that saw one fail asks for the other this way.
+	BYOK *bool
+	// Keyterms are the words a modality that recognises speech should expect.
+	Keyterms []string
+	// Tools are what a modality that converses may call. They are here rather than in an
+	// option block because they are the session's rather than the config's, and some
+	// models take them only as the session opens.
+	Tools []llm.Tool
+	// Terms are the optional terms this request asks for beyond a target and a language.
+	// A candidate that has not declared one of them is not a candidate, so a term is
+	// either honoured or the request fails saying nothing can serve it.
+	Terms []options.Term
+	// DataPolicy is what the caller requires of what happens to their data afterwards.
+	// It narrows candidates the same way a term does, and for the same reason: being
+	// refused is better than being served by a provider who keeps what they were sent.
+	DataPolicy options.DataPolicy
+	// STT, TTS, STS and Search are the per-modality options, handed to the factory of
+	// whichever modality this router serves.
+	STT    options.STT
+	TTS    options.TTS
+	STS    options.STS
+	Search options.Search
+}
+
+// Owner returns who the request is billed to and how it is labelled, and the region its work
+// is done in.
+func (r Request) Owner() Owner {
+	return Owner{
+		CustomerID:  r.CustomerID,
+		Attribution: r.Attribution,
+		Caller:      r.Caller,
+		AgentID:     r.AgentID,
+		CallID:      r.CallID,
+		Region:      cmp.Or(r.Region, r.DataPolicy.Region),
+		Tags:        r.Tags,
+		Spent:       r.Spent,
+	}
+}
+
+// workRegion is the region the request's work is done in: Region, else the one its data policy
+// asks for, empty when neither names one. The two naming different regions is
+// options.ErrRegionConflict, a refusal: no instance runs in both.
+func (r Request) workRegion() (string, error) {
+	if r.Region != "" && r.DataPolicy.Region != "" && r.Region != r.DataPolicy.Region {
+		return "", Refused(stack.Wrap(fmt.Errorf("routing: the work is done in %s and its data policy asks for %s: %w",
+			r.Region, r.DataPolicy.Region, options.ErrRegionConflict)))
+	}
+	return cmp.Or(r.Region, r.DataPolicy.Region), nil
+}
+
+// Candidate is one option for serving a request, in preference order.
+type Candidate struct {
+	Config ProviderConfig
+	Health live.Health
+	// endpoint is where a customer's own model is served, and empty for the catalogue's.
+	endpoint Endpoint
+	// key is the customer's own key a BYOK instance is built with, and empty for every other.
+	key string
+}
+
+// New validates the options and returns a Router.
+func New[P Provider](options Options[P]) (*Router[P], error) {
+	if options.Modality == "" {
+		return nil, errors.New("routing: modality is required")
+	}
+	if err := options.Config.Validate(); err != nil {
+		return nil, err
+	}
+	if options.Registry == nil {
+		return nil, errors.New("routing: registry is required")
+	}
+	keys, err := instanceKeys(options.Modality, options.Config, options.Registry)
+	if err != nil {
+		return nil, err
+	}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	pricer := options.Pricer
+	if pricer == nil {
+		list, err := Prices(Config{options.Modality: options.Config}, logger)
+		if err != nil {
+			return nil, err
+		}
+		pricer = list
+	}
+
+	router := &Router[P]{
+		validate: options.Validate,
+		modality: options.Modality,
+		config:   options.Config,
+		registry: options.Registry,
+		recorder: newRecorder(options.Modality, options.Store, options.Live, options.Gate, options.Writer, pricer, logger),
+		live:     options.Live,
+		voices:   options.Voices,
+		models:   options.Models,
+		gate:     options.Gate,
+		keys:     keys,
+		logger:   logger,
+
+		customerKeys: options.Keys,
+	}
+	if router.live != nil {
+		var buildable []ProviderConfig
+		for _, provider := range options.Config.Providers {
+			if router.ready(provider) == nil {
+				buildable = append(buildable, provider)
+			}
+		}
+		router.live.Track(router.liveModels(buildable)...)
+	}
+	return router, nil
+}
+
+// instanceKeys refuses an instance its factory cannot build as declared, and reads the key of
+// each instance that names one. An endpoint or a key the factory would not take would be
+// dropped in silence, and an instance outside the default region with neither an endpoint
+// nor a factory that picks the region's host would send its work to the vendor's default
+// host, which is taken to be in the default region: refusing to start is what keeps a request
+// in the region it asked for. A provider with no factory takes no override at all.
+func instanceKeys[P Provider](modality Modality, config ModalityConfig, registry *Registry[P]) (map[instance]string, error) {
+	keys := map[instance]string{}
+	for _, provider := range config.Providers {
+		named := instanceOf(provider)
+		if provider.Endpoint != "" && !registry.Honors(provider.Provider, OverrideBaseURL) {
+			return nil, fmt.Errorf("routing: %s: %s sets an endpoint, which the %s factory does not take", modality, named, provider.Provider)
+		}
+		if regionOf(provider) != pricing.DefaultRegion && provider.Endpoint == "" && !registry.Honors(provider.Provider, OverrideRegion) {
+			return nil, fmt.Errorf("routing: %s: %s sets no endpoint, and %s's default host is taken to be in %s: set the instance's regional endpoint",
+				modality, named, provider.Provider, pricing.DefaultRegion)
+		}
+		if provider.APIKeyEnv == "" {
+			continue
+		}
+		if !registry.Honors(provider.Provider, OverrideAPIKey) {
+			return nil, fmt.Errorf("routing: %s: %s sets api_key_env, which the %s factory does not take", modality, named, provider.Provider)
+		}
+		key := os.Getenv(provider.APIKeyEnv)
+		if key == "" {
+			return nil, fmt.Errorf("routing: %s: %s names its key in %s, which is not set", modality, named, provider.APIKeyEnv)
+		}
+		keys[named] = key
+	}
+	return keys, nil
+}
+
+// Modality is what this router serves.
+func (r *Router[P]) Modality() Modality { return r.modality }
+
+// Config returns the capability configuration in use.
+func (r *Router[P]) Config() ModalityConfig { return r.config }
+
+// Recorder is where a modality's session writes its stat rows.
+func (r *Router[P]) Recorder() *Recorder { return r.recorder }
+
+// Quote is what work on the provider that used that costs, priced as its row is.
+func (r *Router[P]) Quote(config ProviderConfig, used pricing.Quantities) pricing.Quote {
+	var stat Stat
+	stat.Use(used)
+	return r.recorder.QuoteStat(config, stat)
+}
+
+// Builds reports whether a provider has a factory registered here. It does not build
+// anything, so a provider whose factory would fail (a missing key) still reports true. A
+// candidate with no factory is one Select passes over, as is one Ready refuses.
+func (r *Router[P]) Builds(provider string) bool { return r.registry.Has(provider) }
+
+// TakesCustomerKey reports whether work on the provider can be routed on a key the customer keeps
+// for their own account at it: its factory builds with an instance's own key. A provider with no
+// factory takes none, and neither does a customer's own model, which keeps its key itself.
+func (r *Router[P]) TakesCustomerKey(provider string) bool {
+	return provider != CustomProvider && r.registry.Honors(provider, OverrideAPIKey)
+}
+
+// Logger returns the router's logger.
+func (r *Router[P]) Logger() *slog.Logger { return r.logger }
+
+// Close writes what is queued and stops the stat writer, unless the router shares one.
+func (r *Router[P]) Close() { r.recorder.Close() }
+
+// Providers returns every configured provider with its live health, in config order.
+func (r *Router[P]) Providers(ctx context.Context) []Candidate {
+	return r.candidates(ctx, r.config.Providers)
+}
+
+// Resolve returns the candidates for a target, best first.
+//
+// A concrete "provider/model" resolves to itself, once per region it is declared in. A
+// capability shortcut resolves to every provider that meets its requirements, ranked by
+// availability, then error rate, then average latency. Providers with no recent history keep
+// their config order rather than jumping the queue on an unmeasured zero latency. A shortcut
+// that names a preferred model puts that one first instead, for as long as it is available.
+// Which region serves a request is Walk's to say, so every region's instances are here.
+func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
+	if target == "" {
+		return nil, stack.Wrap(errors.New("routing: target is required"))
+	}
+
+	if instances := r.config.Instances(target); len(instances) > 0 {
+		return r.candidates(ctx, instances), nil
+	}
+
+	alias, ok := r.config.Aliases[target]
+	if !ok {
+		if instead, retired := r.config.Retired[target]; retired {
+			return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s is retired; ask for %s instead", target, instead)))
+		}
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: unknown target %q", target)))
+	}
+
+	var matching []ProviderConfig
+	for _, provider := range r.config.Providers {
+		if !alias.matches(provider) {
+			continue
+		}
+		// A hinted language the model cannot handle rules it out, whatever the alias says.
+		if !provider.Speaks(languageHints) {
+			continue
+		}
+		matching = append(matching, provider)
+	}
+
+	if len(matching) == 0 {
+		return nil, stack.Wrap(fmt.Errorf("routing: no provider satisfies %q for languages %s", target, strings.Join(languageHints, ",")))
+	}
+
+	candidates := r.candidates(ctx, matching)
+	rank(candidates)
+	prefer(candidates, alias.Prefer)
+	return candidates, nil
+}
+
+// InRegion reports whether a request naming target could be served in region, empty being
+// pricing.DefaultRegion: whether one of the instances it resolves to runs there, as a
+// provider/model, a capability shortcut or a vendor's name in a priority list resolves. A
+// customer's own model runs in pricing.DefaultRegion alone. Only instances that speak every one
+// of languageHints count, as when a request carrying them is routed. A target that resolves to
+// nothing in any region is the resolution's error.
+func (r *Router[P]) InRegion(ctx context.Context, target, region string, languageHints []string) (bool, error) {
+	region = cmp.Or(region, pricing.DefaultRegion)
+	if _, own := CustomName(target); own {
+		return region == pricing.DefaultRegion, nil
+	}
+	candidates, err := r.resolveEntry(ctx, "", target, languageHints)
+	if err != nil {
+		return false, err
+	}
+	_, err = regional(candidates, region)
+	return err == nil, nil
+}
+
+// Select builds and starts the best provider that will have it, falling back to the next
+// candidate when one fails to start. Failures are recorded so the next request routes
+// around them. A request error (ErrRequest) is not recorded, and when nothing serves it is
+// what the caller is told. The caller owns the returned provider and must Close it.
+func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderConfig, error) {
+	var chosen P
+	config, err := r.Walk(ctx, request, func(provider P, _ ProviderConfig) error {
+		chosen = provider
+		return nil
+	})
+	if err != nil {
+		var zero P
+		return zero, ProviderConfig{}, err
+	}
+	return chosen, config, nil
+}
+
+// Walk is Select for a caller that learns whether a candidate served only once it has used
+// it, as a recording does when the vendor answers. Each candidate Select would start is
+// handed to use, started, in Select's order, from one resolution of the request: the
+// filters, the ranking and the overwrite rule are Select's, applied once. use owns the
+// provider and closes it. The walk stops at the first use that returns nil, and returns
+// that candidate's config.
+//
+// An error use returns is classed as a start error is: ErrRequest moves on without
+// touching the model's health, anything else is a failure use has already counted. Once
+// use has failed, a context that has ended asks no further candidate. When use's error is
+// the only one the walk met, it is returned as is, with that candidate's config, as a
+// caller of Select that used the provider itself would have reported it. Otherwise every
+// candidate's error is joined in the order met; a refusal among them keeps ErrRequest, as
+// in Select. A candidate the walk moves past on a failure counts in router_failovers_total.
+func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, ProviderConfig) error) (ProviderConfig, error) {
+	if request.CustomerID == "" {
+		return ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
+	}
+	if err := request.Tags.Validate(); err != nil {
+		return ProviderConfig{}, err
+	}
+	region, err := request.workRegion()
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+
+	admission, err := r.Admit(ctx, request.Owner())
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	// Every row is recorded under the merged tags, so they have to fit what a row carries.
+	if err := admission.Labelled(request.Tags).Validate(); err != nil {
+		return ProviderConfig{}, Refused(err)
+	}
+	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
+
+	candidates, err := r.Candidates(ctx, request)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates, err = allowed(candidates, admission.Models)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates, err = serving(candidates, request.Terms, request.Target)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates, err = permitted(candidates, request.DataPolicy)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates, err = regional(candidates, region)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates, err = seeing(candidates, request.InputModalities)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+		return slices.Contains(request.Exclude, candidate.Config.Name())
+	})
+	// Last of the filters, so a customer refused money is told so only when a paying one
+	// would have been served.
+	candidates, err = affordable(candidates, admission.Spend, r.recorder.Billable)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+	untried(candidates, request.Failed)
+	candidates = r.vouched(ctx, request, candidates)
+	candidates, err = r.voiced(request, candidates)
+	if err != nil {
+		return ProviderConfig{}, err
+	}
+
+	var failures, refusals []error
+	// met is the error of every candidate asked, in the order met, and used the last candidate whose
+	// use failed, with usedErr its error. They matter only once use has failed, which
+	// Select's never does.
+	var met []error
+	var used ProviderConfig
+	var usedErr error
+	// overwritten is the vendor whose candidate refused its overwrite block. An overwrite
+	// is one vendor's: the same vendor's other models may read it (OpenAI's realtime and
+	// Live models read different structs out of one block), but another vendor is handed
+	// its own block, so serving there would drop the overwrite in silence. From then on
+	// only that vendor's candidates are tried, and if none reads it the request is refused.
+	overwritten := ""
+	// moved is the candidate the walk last moved past on a failure, a failover once another
+	// candidate is started in its place.
+	var moved *failover
+	// vendorFailed is whether a candidate on the deployment's own key failed at its vendor.
+	vendorFailed := false
+	for _, candidate := range candidates {
+		if overwritten != "" && candidate.Config.Provider != overwritten {
+			continue
+		}
+		// A caller who has gone, or a deadline that has passed, is not served by the next.
+		if usedErr != nil && ctx.Err() != nil {
+			break
+		}
+		if !r.registry.Has(candidate.Config.Provider) {
+			failures = append(failures, fmt.Errorf("%s: no factory registered", candidate.Config.Name()))
+			continue
+		}
+		// A model this deployment has no config for fails the same way for every caller, so
+		// it is passed over the way a missing factory is, with no stat to mark it down: its
+		// health is every customer's, and it was never tried. An instance on the customer's
+		// own key is built with that key, which says nothing of whether the deployment's is set.
+		if !candidate.Config.BYOK {
+			if err := r.ready(candidate.Config); err != nil {
+				failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+				continue
+			}
+		}
+
+		if moved != nil {
+			countFailover(r.modality, *moved)
+		}
+		provider, err := r.startCandidate(ctx, request, candidate)
+		started := err == nil
+		stage := failoverStart
+		if started {
+			if err = use(provider, candidate.Config); err == nil {
+				return candidate.Config, nil
+			}
+			used, usedErr = candidate.Config, err
+			stage = failoverUse
+		}
+		moved = &failover{config: candidate.Config, stage: stage, reason: failoverReason(candidate.Config, err, ctx.Err() != nil)}
+		met = append(met, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+		if errors.Is(err, ErrRequest) {
+			// One vendor's models refuse the same voice in the same words, and saying it
+			// once per model would bury it.
+			if !slices.ContainsFunc(refusals, func(seen error) bool {
+				return strings.HasSuffix(seen.Error(), ": "+err.Error())
+			}) {
+				refusals = append(refusals, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+			}
+			if errors.Is(err, ErrOverwrite) {
+				overwritten = candidate.Config.Provider
+			}
+			continue
+		}
+
+		if !started {
+			r.logger.Warn("provider failed to start, trying the next candidate",
+				"modality", r.modality, "target", request.Target, "provider", candidate.Config.Name(), "error", err)
+		}
+		vendorFailed = vendorFailed || moved.reason == failoverVendor
+		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
+	}
+
+	if usedErr != nil {
+		if len(met) == 1 {
+			return used, usedErr
+		}
+		return ProviderConfig{}, stack.Wrap(errors.Join(met...))
+	}
+	// What the caller asked for is what they can fix, so a refusal is the answer even when
+	// another candidate also failed on its own account.
+	if len(refusals) > 0 {
+		return ProviderConfig{}, stack.Wrap(errors.Join(refusals...))
+	}
+	err = fmt.Errorf("routing: every candidate for %q failed: %w", request.Target, errors.Join(failures...))
+	if vendorFailed {
+		err = vendorsFailed{err: err}
+	}
+	return ProviderConfig{}, stack.Wrap(err)
+}
+
+// Admit asks the customer's policies whether they may spend anything, and what their
+// requests are held to. A modality whose session serves many units of work asks it again
+// before each one, since a spend limit can run out mid-session.
+func (r *Router[P]) Admit(ctx context.Context, owner Owner) (Admission, error) {
+	if r.gate == nil {
+		return Admission{}, nil
+	}
+	return r.gate.Admit(ctx, owner)
+}
+
+// Candidates is where a request may go, best first: a priority list where one was given,
+// and the ranked resolution of a single target otherwise, each candidate the customer keeps a
+// key for preceded by their own instance of it (owned). A modality that fails over after it
+// has started walks this, so it falls back in the order the caller wrote.
+func (r *Router[P]) Candidates(ctx context.Context, request Request) ([]Candidate, error) {
+	var candidates []Candidate
+	var err error
+	if len(request.Providers) == 0 {
+		candidates, err = r.resolveFor(ctx, request.CustomerID, request.Target, request.LanguageHints)
+	} else {
+		candidates, err = r.resolveChain(ctx, request)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r.owned(ctx, request, candidates)
+}
+
+// owned puts the customer's own instance of each candidate in the work's region whose vendor
+// they keep a key for there immediately before it: a copy of its config, at the deployment's
+// endpoint, built with their key and priced at its BYOK entry. The order between models stays
+// the caller's or the ranking's, and each model is asked on the customer's key first; when that
+// fails the walk moves on to the deployment's instance as it would to any next candidate.
+//
+// Only a vendor whose factory honors OverrideAPIKey is asked on a customer's key. A key is
+// looked up once per vendor, for the work's region alone, since an instance in another never
+// serves the request; one that cannot be read or opened leaves the deployment's instance to
+// serve, logged. request.BYOK keeps one kind of instance.
+func (r *Router[P]) owned(ctx context.Context, request Request, candidates []Candidate) ([]Candidate, error) {
+	if r.customerKeys != nil {
+		region := cmp.Or(request.Owner().Region, pricing.DefaultRegion)
+		keys := map[string]string{}
+		withOwn := make([]Candidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			config := candidate.Config
+			if !config.BYOK && regionOf(config) == region && r.TakesCustomerKey(config.Provider) {
+				key, looked := keys[config.Provider]
+				if !looked {
+					key = r.customerKey(ctx, request.CustomerID, config.Provider, region)
+					keys[config.Provider] = key
+				}
+				if key != "" {
+					withOwn = append(withOwn, r.ownInstance(ctx, candidate, key))
+				}
+			}
+			withOwn = append(withOwn, candidate)
+		}
+		candidates = withOwn
+	}
+	if request.BYOK == nil {
+		return candidates, nil
+	}
+	kept := slices.DeleteFunc(candidates, func(candidate Candidate) bool { return candidate.Config.BYOK != *request.BYOK })
+	if len(kept) == 0 {
+		whose := "the deployment's own key"
+		if *request.BYOK {
+			whose = "a key of the customer's own"
+		}
+		return nil, stack.Wrap(fmt.Errorf("routing: no candidate for %q is built with %s", request.Target, whose))
+	}
+	return kept, nil
+}
+
+// ownInstance is the customer's instance of a candidate, built with their key. Its health is the
+// vendor's, read and never written: what the customer's key does is theirs, and is kept out of
+// what every customer is routed by (Recorder.Record).
+func (r *Router[P]) ownInstance(ctx context.Context, candidate Candidate, key string) Candidate {
+	config := candidate.Config
+	config.BYOK = true
+	health := candidate.Health
+	// The deployment's instance reads as unavailable when it cannot be built, which the
+	// customer's key can be.
+	if r.ready(candidate.Config) != nil {
+		health = r.vendorHealths(ctx, []ProviderConfig{candidate.Config})[0]
+	}
+	return Candidate{Config: config, Health: health, key: key}
+}
+
+// customerKey is the customer's key for provider in region, and empty when they keep none there
+// or it cannot be read, which is logged without the key.
+func (r *Router[P]) customerKey(ctx context.Context, customerID, provider, region string) string {
+	key, ok, err := r.customerKeys.CustomerKey(ctx, customerID, provider, region)
+	if err != nil {
+		r.logger.Error("could not read a customer's own key, so the deployment's serves",
+			"modality", r.modality, "customer_id", customerID, "provider", provider, "region", region, "error", err)
+		return ""
+	}
+	if !ok {
+		return ""
+	}
+	return key
+}
+
+// resolveFor is Resolve, plus the customer's own models, which only a request can name
+// because only it says whose they are.
+func (r *Router[P]) resolveFor(ctx context.Context, customerID, target string, languageHints []string) ([]Candidate, error) {
+	name, own := CustomName(target)
+	if !own {
+		return r.Resolve(ctx, target, languageHints)
+	}
+	if r.models == nil {
+		return nil, stack.Wrap(fmt.Errorf("routing: %q was asked for, and this deployment has no models of a customer's own", target))
+	}
+	config, endpoint, err := r.models.CustomModel(ctx, customerID, name)
+	if err != nil {
+		return nil, err
+	}
+	// Live health is kept per provider and model for everyone, and two customers may give
+	// their models the same name, so a model of one's own is never measured against it.
+	health := live.Health{Provider: config.Provider, Model: config.Model, Available: true}
+	return []Candidate{{Config: config, Health: health, endpoint: endpoint}}, nil
+}
+
+// resolveChain expands a priority list in the order it was written.
+//
+// Each entry is expanded where it stands and the results are concatenated, so a caller
+// who said one vendor comes first is asked about the second only once the first is out.
+// Within a single entry the old rules still apply: a shortcut ranks its own members by
+// health, because naming a shortcut is declining to choose between them.
+//
+// Health does not reorder the list itself. A caller who wanted the fastest available
+// model has a shortcut for that; a priority list means the order is the point, and the
+// most an unavailable provider earns is a place at the back.
+func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candidate, error) {
+	var chain []Candidate
+	var refusals []error
+
+	for _, target := range request.Providers {
+		found, err := r.resolveEntry(ctx, request.CustomerID, target, request.LanguageHints)
+		if err != nil {
+			refusals = append(refusals, err)
+			continue
+		}
+		for _, candidate := range found {
+			if request.Realtime != nil && candidate.Config.Realtime != *request.Realtime {
+				continue
+			}
+			// First position wins, so naming a vendor and then a shortcut they are in
+			// keeps them where the caller put them. A model's instances in other regions
+			// are other candidates.
+			if slices.ContainsFunc(chain, func(held Candidate) bool {
+				return instanceOf(held.Config) == instanceOf(candidate.Config)
+			}) {
+				continue
+			}
+			chain = append(chain, candidate)
+		}
+	}
+
+	if len(chain) == 0 {
+		message := fmt.Sprintf("routing: nothing in the priority list %s can serve this request",
+			strings.Join(request.Providers, ", "))
+		// Every entry resolved and was filtered out, so there is no refusal to wrap.
+		if len(refusals) == 0 {
+			return nil, stack.Wrap(errors.New(message))
+		}
+		return nil, stack.Wrap(fmt.Errorf("%s: %w", message, errors.Join(refusals...)))
+	}
+
+	demote(chain)
+	return chain, nil
+}
+
+// resolveEntry is Resolve, plus the bare vendor name only a priority list may hold.
+//
+// The vendor name is tried last, so a name that is somehow both an alias and a provider
+// still means the alias, which is what it means everywhere else.
+func (r *Router[P]) resolveEntry(ctx context.Context, customerID, target string, languageHints []string) ([]Candidate, error) {
+	candidates, err := r.resolveFor(ctx, customerID, target, languageHints)
+	if err == nil {
+		return candidates, nil
+	}
+
+	var named []ProviderConfig
+	for _, provider := range r.config.Providers {
+		if provider.Provider != target || !provider.Speaks(languageHints) {
+			continue
+		}
+		named = append(named, provider)
+	}
+	if len(named) == 0 {
+		return nil, err
+	}
+	return r.candidates(ctx, named), nil
+}
+
+func (r *Router[P]) startCandidate(ctx context.Context, request Request, candidate Candidate) (P, error) {
+	var zero P
+
+	voiceCtx := ctx
+	overwritten := r.overwriteVoice(request, candidate.Config.Provider)
+	if overwritten != "" {
+		voiceCtx = context.WithValue(ctx, voiceOverwritten{}, true)
+	}
+	voice, err := r.voice(voiceCtx, request, candidate.Config.Provider)
+	if err != nil {
+		return zero, err
+	}
+	// With no top-level voice, a TTS overwrite is the voice spoken: a factory that reads no
+	// overwrites, as Cartesia's does not, would otherwise speak its own default. A top-level
+	// voice stays what is handed over, as it always was, and no other modality reads a
+	// voice_id, so STS is left to its factories.
+	if overwritten != "" && request.Voice == "" && r.modality == TTS {
+		voice = overwritten
+	}
+
+	spec := r.instanceSpec(candidate)
+	spec.LanguageHints = request.LanguageHints
+	spec.Voice = voice
+	spec.Keyterms = request.Keyterms
+	spec.Tools = request.Tools
+	spec.STT, spec.TTS, spec.STS, spec.Search = request.STT, request.TTS, request.STS, request.Search
+	spec.DataPolicy = request.DataPolicy
+	spec.Overwrites = r.overwrites(request, candidate.Config.Provider)
+	spec.Endpoint = candidate.endpoint
+
+	provider, err := r.registry.Build(candidate.Config.Provider, spec)
+	// A setting the model cannot take says nothing about the model, and its health is
+	// every customer's.
+	if errors.Is(err, ErrRequest) {
+		return zero, err
+	}
+	if err != nil {
+		r.recorder.Record(candidate.Config, Stat{
+			Owner:        request.Owner(),
+			StartedAt:    time.Now().UTC(),
+			Success:      false,
+			ErrorCode:    "build_failed",
+			ErrorMessage: err.Error(),
+		})
+		return zero, err
+	}
+
+	startedAt := time.Now()
+	if r.validate != nil {
+		if err := r.validate(provider, candidate.Config); err != nil {
+			provider.Close()
+			return zero, stack.Wrap(err)
+		}
+	}
+	started, span := tracer.Start(ctx, "routing.provider.start", trace.WithAttributes(
+		attribute.String("routing.modality", string(r.modality)),
+		attribute.String("routing.provider", candidate.Config.Provider),
+		attribute.String("routing.model", candidate.Config.Model)))
+	err = provider.Start(started)
+	tracing.Fail(span, err)
+	span.End()
+	if err != nil {
+		provider.Close()
+		r.recorder.Record(candidate.Config, Stat{
+			Owner:        request.Owner(),
+			StartedAt:    startedAt.UTC(),
+			LatencyMs:    MsSince(startedAt),
+			Success:      false,
+			ErrorCode:    "start_failed",
+			ErrorMessage: err.Error(),
+		})
+		return zero, err
+	}
+
+	return provider, nil
+}
+
+// overwriteVoice is the voice_id this provider's overwrites name, which is spoken in place
+// of the request's voice. Empty when they name none.
+func (r *Router[P]) overwriteVoice(request Request, provider string) string {
+	var named struct {
+		VoiceID string `json:"voice_id"`
+	}
+	if json.Unmarshal(r.overwrites(request, provider), &named) != nil {
+		return ""
+	}
+	return named.VoiceID
+}
+
+// voiced leaves out the candidates that would speak in their own default voice when the
+// caller asked for one. A voice named only in overwrites is one vendor's: any other vendor
+// is handed no voice and answers in its default, and nothing in the audio says that is
+// wrong. A voice at the top level is handed to every candidate, so nothing is left out.
+// Only TTS: no STS vendor reads a voice_id, so there it routes as it always did.
+// When none of the named vendors can be built, the request is refused as the caller's,
+// rather than spoken by a vendor nobody asked a voice of.
+func (r *Router[P]) voiced(request Request, candidates []Candidate) ([]Candidate, error) {
+	if request.Voice != "" || r.modality != TTS {
+		return candidates, nil
+	}
+	var named []string
+	for provider := range r.overwriteBlocks(request) {
+		if r.overwriteVoice(request, provider) != "" {
+			named = append(named, provider)
+		}
+	}
+	if len(named) == 0 {
+		return candidates, nil
+	}
+	slices.Sort(named)
+
+	voiced := slices.DeleteFunc(slices.Clone(candidates), func(candidate Candidate) bool {
+		return !slices.Contains(named, candidate.Config.Provider)
+	})
+	var unbuilt []string
+	for _, candidate := range voiced {
+		if r.registry.Has(candidate.Config.Provider) {
+			return voiced, nil
+		}
+		unbuilt = append(unbuilt, candidate.Config.Name())
+	}
+	why := "no candidate for this request is"
+	if len(unbuilt) > 0 {
+		why = strings.Join(unbuilt, ", ") + " has no factory registered here, and no other candidate is"
+	}
+	return nil, Refused(stack.Wrap(fmt.Errorf(
+		"routing: a voice was asked for only in overwrites.%s, and %s %s; another vendor would speak in its own default voice, so none is tried",
+		strings.Join(named, ", overwrites."), why, strings.Join(named, " or "))))
+}
+
+// vouched leaves out the candidates the voice may not be handed to, see VoiceVetter. A
+// provider whose overwrites name a voice is not asked about: the voice it speaks is its own.
+func (r *Router[P]) vouched(ctx context.Context, request Request, candidates []Candidate) []Candidate {
+	vetter, ok := r.voices.(VoiceVetter)
+	if !ok || request.Voice == "" {
+		return candidates
+	}
+	var asked []string
+	for _, candidate := range candidates {
+		provider := candidate.Config.Provider
+		if !slices.Contains(asked, provider) && r.overwriteVoice(request, provider) == "" {
+			asked = append(asked, provider)
+		}
+	}
+	unvouched := vetter.Unvouched(ctx, request.CustomerID, request.Voice, asked)
+	return slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+		return slices.Contains(unvouched, candidate.Config.Provider)
+	})
+}
+
+// overwrites is the block this candidate was given, out of whichever modality's options
+// this router serves. A router only ever reads its own: the same request carries every
+// block, and a vendor that transcribes and speaks would otherwise be handed the settings
+// meant for its other half.
+func (r *Router[P]) overwrites(request Request, provider string) json.RawMessage {
+	return r.overwriteBlocks(request)[provider]
+}
+
+// overwriteBlocks is every vendor's block out of this router's modality's options.
+func (r *Router[P]) overwriteBlocks(request Request) map[string]json.RawMessage {
+	switch r.modality {
+	case STT:
+		return request.STT.Overwrites
+	case TTS:
+		return request.TTS.Overwrites
+	case STS:
+		return request.STS.Overwrites
+	default:
+		return nil
+	}
+}
+
+// voice is the id this candidate knows the requested voice by. For a name that is not a
+// customer's own voice, and where there is no resolver to say, it is what was asked for.
+func (r *Router[P]) voice(ctx context.Context, request Request, provider string) (string, error) {
+	if request.Voice == "" {
+		return "", nil
+	}
+	if r.voices == nil {
+		// A deployment with no resolver has no voices of its own, so a name asked for as
+		// one is a mistake, and passing it on would send the prefix to the provider.
+		if strings.HasPrefix(request.Voice, options.OwnVoicePrefix) {
+			return "", stack.Wrap(fmt.Errorf("routing: %q was asked for, and this deployment has no voices of its own", request.Voice))
+		}
+		return request.Voice, nil
+	}
+	return r.voices.ResolveVoice(ctx, request.CustomerID, provider, request.Voice)
+}
+
+// instanceSpec is what every build of this instance is given, whatever the request: the
+// model's own settings, and where the instance is and the key it takes, the customer's own for
+// an instance built with theirs.
+func (r *Router[P]) instanceSpec(candidate Candidate) Spec {
+	config := candidate.Config
+	key := r.keys[instanceOf(config)]
+	if config.BYOK {
+		key = candidate.key
+	}
+	return Spec{
+		Model:           config.Model,
+		Thinking:        config.Thinking,
+		ReasoningEffort: config.ReasoningEffort,
+		BaseURL:         config.Endpoint,
+		APIKey:          key,
+		BYOK:            config.BYOK,
+		Region:          regionOf(config),
+		Logger:          r.logger,
+	}
+}
+
+// ready is Registry.Ready for one of the deployment's instances, built as its requests are.
+func (r *Router[P]) ready(config ProviderConfig) error {
+	return r.registry.ReadyAs(config.Provider, r.instanceSpec(Candidate{Config: config}))
+}
+
+// candidates are the providers with their live health, in order.
+func (r *Router[P]) candidates(ctx context.Context, providers []ProviderConfig) []Candidate {
+	healths := r.healths(ctx, providers)
+	candidates := make([]Candidate, len(providers))
+	for i, provider := range providers {
+		candidates[i] = Candidate{Config: provider, Health: healths[i]}
+	}
+	return candidates
+}
+
+// healths is each provider's live health, in order, from the router's snapshot, with the ones
+// missing from it read together (live.Client.Healths). A model this deployment cannot build,
+// for a key or an endpoint it was never given, is unavailable whatever its history says.
+//
+// Health is kept per provider and model, not per instance: a model's instance in one region
+// shares the errors and latency of its twin in another, which is the vendor's health more
+// than the host's, and a request is only ever served in one region anyway. Work on a
+// customer's own key is kept out of it.
+func (r *Router[P]) healths(ctx context.Context, providers []ProviderConfig) []live.Health {
+	var ready []ProviderConfig
+	var at []int
+	healths := make([]live.Health, len(providers))
+	for i, provider := range providers {
+		if r.ready(provider) != nil {
+			healths[i] = live.Health{Provider: provider.Provider, Model: provider.Model}
+			continue
+		}
+		ready = append(ready, provider)
+		at = append(at, i)
+	}
+	for j, health := range r.vendorHealths(ctx, ready) {
+		healths[at[j]] = health
+	}
+	return healths
+}
+
+// vendorHealths is each provider and model's live health, whether or not this deployment can
+// build it. A failed read is "no information", so a broken stats path cannot take routing down
+// with it.
+func (r *Router[P]) vendorHealths(ctx context.Context, providers []ProviderConfig) []live.Health {
+	if len(providers) == 0 {
+		return nil
+	}
+	if r.live == nil {
+		healths := make([]live.Health, len(providers))
+		for i, provider := range providers {
+			healths[i] = live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
+		}
+		return healths
+	}
+
+	healths, err := r.live.Healths(ctx, r.liveModels(providers))
+	if err != nil {
+		r.logger.Warn("health lookup failed, treating the providers it missed as unmeasured",
+			"modality", r.modality, "providers", len(providers), "error", err)
+	}
+	return healths
+}
+
+// liveModels names the providers' health in the live snapshot.
+func (r *Router[P]) liveModels(providers []ProviderConfig) []live.Model {
+	models := make([]live.Model, len(providers))
+	for i, provider := range providers {
+		models[i] = live.Model{Modality: string(r.modality), Provider: provider.Provider, Model: provider.Model}
+	}
+	return models
+}
+
+// serving narrows candidates to the ones that can express every term the request names.
+//
+// A request asking for something none of them can do fails here rather than being served
+// by a provider that ignores the term: a transcript that was quietly not diarized is
+// worse than one that was refused, because nothing about it says so. A target that named
+// the one model refused is named back, since "no provider" reads as if the router had
+// looked elsewhere when the caller ruled everywhere else out.
+func serving(candidates []Candidate, terms []options.Term, target string) ([]Candidate, error) {
+	if len(terms) == 0 {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Config.Supports(terms) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) > 0 {
+		return kept, nil
+	}
+
+	// Which terms to name is the ones nothing offered, since a request refused for
+	// asking two things of which one is available should say which one is not.
+	var unserved []string
+	for _, term := range terms {
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.Supports([]options.Term{term})
+		}) {
+			unserved = append(unserved, string(term))
+		}
+	}
+	if len(unserved) == 0 {
+		unserved = []string{"that combination of terms"}
+	}
+	if len(candidates) == 1 && candidates[0].Config.Name() == target {
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", "))))
+	}
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))))
+}
+
+// allowed narrows candidates to the models the customer's policies allow. A request none of
+// whose candidates is allowed is refused rather than sent somewhere else, since an
+// allowlist that fell back to any model would not be one.
+func allowed(candidates []Candidate, models []string) ([]Candidate, error) {
+	if models == nil {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	asked := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		asked = append(asked, candidate.Config.Name())
+		if slices.Contains(models, candidate.Config.Name()) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, stack.Wrap(fmt.Errorf("%w: it allows none of %s", ErrModelNotAllowed, strings.Join(asked, ", ")))
+	}
+	return kept, nil
+}
+
+// affordable keeps only work that costs nothing when the customer may not spend money, the
+// refusal saying why, and is refused with it when there is none: a customer with no credit
+// still gets a model the deployment runs itself or one that is free.
+func affordable(candidates []Candidate, refusal error, billable func(ProviderConfig) bool) ([]Candidate, error) {
+	if refusal == nil {
+		return candidates, nil
+	}
+	free := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !billable(candidate.Config) {
+			free = append(free, candidate)
+		}
+	}
+	if len(free) == 0 {
+		return nil, refusal
+	}
+	return free, nil
+}
+
+// permitted narrows candidates to the ones allowed to do this work at all.
+//
+// It reads like serving and fails like it, but it is a different kind of no. A term is
+// something a provider cannot express; a data policy is something they are not permitted
+// to be asked. Both end in a refusal naming what went unmet, because a request that said
+// "not somewhere that trains on this" and was answered anyway has been answered wrongly
+// in a way nothing about the transcript would show.
+func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, error) {
+	if !policy.Asks() {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Config.Permits(policy) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) > 0 {
+		return kept, nil
+	}
+
+	// Which half to name is the half nothing met, since a request refused for asking two
+	// things of which one is available should say which one is not.
+	var unmet []string
+	if policy.AllowTraining != nil && !*policy.AllowTraining {
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.DataPolicy.TrainsOnData == options.ClaimNo
+		}) {
+			unmet = append(unmet, "not training on what it is sent")
+		}
+	}
+	if policy.Retention != "" {
+		ceiling := options.DataPolicy{Retention: policy.Retention}
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.Permits(ceiling)
+		}) {
+			unmet = append(unmet, retentionUnmet(policy.Retention))
+		}
+	}
+	if len(unmet) == 0 {
+		unmet = []string{"that combination of data policy requirements"}
+	}
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
+		strings.Join(unmet, " and "))))
+}
+
+// regional narrows candidates to the instances running in the region the work is done in,
+// pricing.DefaultRegion when it names none. None there is a refusal naming the region: a
+// request is never served in another one, whatever else is available.
+func regional(candidates []Candidate, region string) ([]Candidate, error) {
+	if region == "" {
+		region = pricing.DefaultRegion
+	}
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if regionOf(candidate.Config) == region {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: no candidate in region %s can serve this request", region)))
+	}
+	return kept, nil
+}
+
+// seeing narrows candidates to the ones that accept every extra input kind the request
+// named. A request carrying an image that is answered by a text-only model has been
+// answered wrongly in a way nothing about the transcript would show.
+func seeing(candidates []Candidate, modalities []string) ([]Candidate, error) {
+	if len(modalities) == 0 {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Config.Sees(modalities) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) > 0 {
+		return kept, nil
+	}
+
+	var unmet []string
+	for _, modality := range modalities {
+		if modality == "" || modality == "text" {
+			continue
+		}
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.Sees([]string{modality})
+		}) {
+			unmet = append(unmet, modality)
+		}
+	}
+	if len(unmet) == 0 {
+		unmet = []string{"that combination of input modalities"}
+	}
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", "))))
+}
+
+// retentionUnmet names a retention requirement nothing offered, in the words it was asked
+// in: asking for none is asking to be kept by nobody, not for a window of length zero.
+func retentionUnmet(required options.Retention) string {
+	if required == options.RetentionNone {
+		return "keeping nothing at all"
+	}
+	return fmt.Sprintf("a retention of %s or less", required)
+}
+
+// demote moves unavailable candidates to the back of a priority list without disturbing
+// the order of the rest.
+//
+// It is the whole of what health is allowed to do to a list the caller ordered by hand.
+// A provider that is down should be tried last rather than first, and a provider that is
+// merely slower than the next one down the list is still the one that was asked for.
+func demote(candidates []Candidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Health.Available && !candidates[j].Health.Available
+	})
+}
+
+// untried moves the candidates the caller has already seen fail to the back, keeping the
+// order of the rest, so something not yet tried is started before any of them is again.
+func untried(candidates []Candidate, failed []string) {
+	if len(failed) == 0 {
+		return
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return !slices.Contains(failed, candidates[i].Config.Name()) &&
+			slices.Contains(failed, candidates[j].Config.Name())
+	})
+}
+
+// rank orders candidates best first. The sort is stable, so equally-ranked candidates keep
+// the order they were declared in.
+func rank(candidates []Candidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i].Health, candidates[j].Health
+
+		if left.Available != right.Available {
+			return left.Available
+		}
+		if left.ErrorRate() != right.ErrorRate() {
+			return left.ErrorRate() < right.ErrorRate()
+		}
+		return latencyRank(left) < latencyRank(right)
+	})
+}
+
+// prefer moves the alias's pinned model to the front, every region's instance of it, leaving
+// the rest in ranked order behind it: the region is chosen after, and the pin holds in each.
+//
+// Only while it is available: a pin says which model this deployment wants, not that a
+// request should fail with it. Once it is back the ranking stops mattering again, which is
+// the point of pinning in the first place.
+func prefer(candidates []Candidate, name string) {
+	if name == "" {
+		return
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		pinned := func(candidate Candidate) bool { return candidate.Config.Name() == name && candidate.Health.Available }
+		return pinned(candidates[i]) && !pinned(candidates[j])
+	})
+}
+
+// latencyRank keeps unmeasured providers from winning on a latency of zero.
+func latencyRank(health live.Health) float64 {
+	if health.Requests == 0 {
+		return math.Inf(1)
+	}
+	return health.LatencyMsAvg
+}
+
+// MsSince returns the elapsed milliseconds, which is how every latency is measured.
+func MsSince(started time.Time) float64 {
+	return float64(time.Since(started).Microseconds()) / 1000
+}

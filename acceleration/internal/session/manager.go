@@ -1,0 +1,2582 @@
+package session
+
+import (
+	"cmp"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+)
+
+// EdgeFactory opens the transport a session's agent talks over.
+//
+// It is a function rather than a field so this package does not depend on any one of them.
+// The production edge is Stream's WebRTC, whose Opus path is cgo; keeping that in the
+// command that wires it means a session can be tested without a sound library or a Stream
+// account.
+//
+// It is handed the Stream app the session is pinned to, which is the app the call has to
+// be joined in: the one the customer's clients created it in.
+type EdgeFactory func(ctx context.Context, spec Spec, stream streamapp.Bound, logger *slog.Logger) (agent.Edge, error)
+
+// Transcript stores what was said, so a call leaves something behind.
+type Transcript interface {
+	Start(ctx context.Context) error
+	Record(event agent.Event)
+	// Reply stores something the agent wrote rather than said. It is separate from Record
+	// because a written answer is not an agent event: nothing was spoken, so no turn was
+	// started and no reply streamed.
+	Reply(text string)
+	// Close reports nothing, because a transcript that failed to flush its last line is
+	// not something the caller who ended the call can do anything about.
+	Close()
+}
+
+// TranscriptFactory opens the transcript for a session, in the Stream app the session is
+// pinned to. A nil factory, or one that declines, means the conversation is simply not kept.
+type TranscriptFactory func(ctx context.Context, spec Spec, stream streamapp.Bound, logger *slog.Logger) (Transcript, error)
+
+// ManagerOptions is everything a session needs that is the same for all of them.
+type ManagerOptions struct {
+	LLM *llmrouter.Router
+	// Speech routers are optional for text sessions and native speech-to-speech.
+	STT *sttrouter.Router
+	TTS *ttsrouter.Router
+	// STS is optional, and is what a session naming a speech-to-speech target holds its
+	// conversation with instead of the three above. A deployment without one refuses
+	// such a session rather than falling back to the cascade unasked.
+	STS *stsrouter.Router
+
+	// Edge is required: without it there is no call to join.
+	Edge EdgeFactory
+	// Transcript is optional.
+	Transcript TranscriptFactory
+	// Memory is optional. Without it every session starts knowing nothing.
+	Memory *metered.Memory
+	// Knowledge is optional, and is what a session with a namespace looks things up in.
+	Knowledge *metered.Knowledge
+	// Search is optional, and is what every session finds out what is true now with.
+	Search *searchrouter.Router
+	// Drawings is optional, and is where a session whose config names an image target queues
+	// the pictures it is asked for, to be drawn after the turn and posted into its conversation.
+	Drawings *imagejobs.Service
+	// Classifier is optional, and is what a session with a guardrail asks whether a turn
+	// may be answered. Without it a session declaring a guardrail that needs one is
+	// refused rather than held unguarded.
+	Classifier *decisionrouter.Router
+	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
+	// language model. Empty keeps the language model.
+	FlowJudge string
+	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
+	// its own floor control says (Spec.FloorControl), or FloorControlDefault where it chose
+	// none. Without one no session asks about turns.
+	AudioFloor *audiofloor.Client
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own (config.Agent.FloorControlDefault): empty, the flow controller, or
+	// store.FloorControlChorusASR, chorus-asr at the server's default point when AudioFloor
+	// is set, and nothing when it is not (FloorControlOf). An agent's own choice wins.
+	FloorControlDefault string
+	// Phone is optional, and is what a session with a number transfers through.
+	Phone *phone.Service
+	// SpeculativeReplies has every agent start its reply before the flow controller has
+	// ruled on the words, and hold it until the ruling says to answer.
+	SpeculativeReplies bool
+	// UnifiedReplies has the conversation model rule on a settled turn in its reply.
+	UnifiedReplies bool
+	// Stream says which Stream app, and with which credential, each session acts in. It
+	// is optional: without it a session has no app, and anything needing one fails where
+	// it needs it, as it does on a deployment with no Stream credentials.
+	Stream *streamapp.Clients
+	// Conversations is optional, and is the persistent text store a caller already holds.
+	// Without one the manager opens its own over the configured outbox directory.
+	Conversations *persistent.Service
+
+	Store *store.Store
+	// Policies is what each session's tool output retention is held to: the app's and the
+	// organization's, which its agent config can shorten and not lengthen. Nil holds it to
+	// the agent config alone.
+	Policies *policy.Enforcer
+	// Configs reads what a session is opened from -- the skills it names -- through
+	// whatever cache is in front of Postgres. Built over Store when it is not given, in
+	// which case every read is a query, which is what a deployment without Redis does.
+	Configs *appconfig.Store
+	Live    *live.Client
+	// Pricer and Writer are the process's price list and usage writer, for what a session
+	// records of its own rather than through a router or internal/metered, such as the time
+	// it runs; memory and knowledge record through the recorders they are built with. Nothing
+	// reads them yet. Nil prices nothing, and gives each such recorder a writer of its own.
+	Pricer pricing.Pricer
+	Writer *routing.Writer
+	// Directory is where this node says which sessions it is running, so the deployment's
+	// other nodes can forward what only this one can answer. Nil keeps a session
+	// reachable on this node alone.
+	Directory *node.Directory
+	// Connectors is what a session opens its agent config's connector bindings with. Zero,
+	// as on a deployment with connectors off, opens none: a required binding fails the
+	// session, and an optional one is reported unavailable.
+	Connectors Connectors
+	// Sandboxes makes each session's sandbox, billed from when it is made until it is deleted.
+	// Nil makes them unlabelled, on Daytona's default lifecycle, billed through a recorder of
+	// the manager's own on Writer, as runtime is.
+	Sandboxes *metered.Sandboxes
+	// SandboxLimits says what sandbox each session's organization may have, and bounds how many
+	// of them run at once. Nil bounds nothing.
+	SandboxLimits *policy.Enforcer
+	// ResumeHistories are the app and organization policies a session's resume_history
+	// falls back to where its own and its config's say nothing. Nil leaves those two alone.
+	ResumeHistories ResumeHistories
+	// SandboxBroker is the code_sandbox.broker setting: what holds a connection's credential for
+	// code in a sandbox, metered.SandboxSecretsBroker or egress.BrokerName.
+	SandboxBroker string
+	// SandboxProxy is the store, URL and CA certificate of egress.BrokerName's proxy; the
+	// session fills in the rest.
+	SandboxProxy egress.BrokerOptions
+	// SandboxSecretPrefix is the code_sandbox.secret_prefix setting, which names this router's
+	// environment in every credential a broker leaves with the sandbox provider. A session
+	// with a sandbox binding is refused without it.
+	SandboxSecretPrefix string
+	// GuardrailHTTP posts a webhook guardrail's checks. Nil is the guardrail's own default,
+	// egress's client, which dials public addresses alone; tests pass one that reaches their
+	// local receiver.
+	GuardrailHTTP *http.Client
+	// DetachedGrace is how long a persistent text session outlives its last watcher.
+	// Zero is defaultDetachedGrace.
+	DetachedGrace time.Duration
+	Logger        *slog.Logger
+}
+
+// defaultDetachedGrace is long enough to finish a connector login in another tab, or to leave
+// the page a conversation is on and come back to it.
+const defaultDetachedGrace = 5 * time.Minute
+
+// Manager owns the sessions this process is running.
+type Manager struct {
+	// hookPins are the apps hooks came from, by the call or channel they named.
+	hookPinsMu sync.Mutex
+	hookPins   map[string]hookPinned
+
+	logs          *logRecorder
+	conversations *persistent.Service
+	options       ManagerOptions
+	logger        *slog.Logger
+	// outcomes is how each call the router placed ended, which a phone session is refused
+	// on when nobody answered. Nil without a store.
+	outcomes *outcome.Keeper
+	// calls records conversations so they can be found after this process is gone. Nil
+	// without a store, in which case a call is only ever what is happening now.
+	calls *callRecorder
+	// records keeps sessions, turns and what each turn did, which is what an old
+	// conversation is read back from. Nil without a store, and never handed an incognito
+	// session.
+	records sessionRecords
+	// invocations logs each connector tool call. Nil without a store or with connectors off,
+	// where no session opens a connector.
+	invocations *invocationRecorder
+	// reviews says what a finished call went like, onto the row calls wrote.
+	reviews *reviewer
+	// titles names persistent conversations nobody renamed, on the session row and the channel.
+	titles *titler
+	// cards writes each phone call's episode card into the caller's omni-channel, and reads
+	// the person's cards for a session to start with. Nil without a store or Stream clients.
+	cards *callCards
+	// hosts runs the tools workers host for an agent config. Nil offers none.
+	hosts ToolHosts
+	// slots caps each connection's connector calls in flight, across every session here.
+	slots callSlots
+	// runtime records how long each session is open. Nil without a store or a writer, where
+	// nothing is recorded, though every session is still timed.
+	runtime *routing.Recorder
+	// sliceEvery is how long a slice of a session's runtime runs. Zero is routing.SliceEvery.
+	sliceEvery time.Duration
+
+	mu       sync.Mutex
+	sessions map[string]*Session
+	// kickScheduler wakes the scheduled-task worker after a scheduling tool
+	// makes or changes a task (SetSchedulerKick); nil where no worker runs.
+	kickScheduler func()
+	closed        bool
+	// closing counts the sessions taken off the map whose Close has not returned. They are
+	// still writing how they ended, so a draining router waits on them and Shutdown keeps
+	// the recorders open for them (ended).
+	closing int
+	ended   sync.WaitGroup
+	// retiring holds the sessions retired (Retire) until they are closed (CloseRetired), or a
+	// look at them finds them ended.
+	retiring map[*Session]struct{}
+}
+
+// SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
+// a task the agent makes or changes is claimed without waiting for the
+// worker's next look at the store. Sessions opened from now on use it.
+func (m *Manager) SetSchedulerKick(kick func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.kickScheduler = kick
+}
+
+// NewManager validates the options and returns a Manager. It starts nothing.
+func NewManager(options ManagerOptions) (*Manager, error) {
+	if options.SandboxBroker == egress.BrokerName && options.SandboxProxy.Store == nil {
+		return nil, errors.New("session: the proxy sandbox broker needs the store the egress proxy reads")
+	}
+	if options.LLM == nil {
+		return nil, errors.New("session: an llm router is required")
+	}
+	if options.Edge == nil {
+		return nil, errors.New("session: an edge factory is required")
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+	if options.DetachedGrace == 0 {
+		options.DetachedGrace = defaultDetachedGrace
+	}
+
+	manager := &Manager{
+		hookPins:      map[string]hookPinned{},
+		options:       options,
+		logger:        options.Logger,
+		sessions:      map[string]*Session{},
+		conversations: options.Conversations,
+	}
+	if options.Conversations != nil && options.Store != nil {
+		keepBranches(options.Conversations, options.Store)
+	}
+	// Once, here, rather than for each session it would have ruled: the router runs, and the
+	// flow controller rules every floor that chose nothing, as it would with no default.
+	if options.FloorControlDefault == store.FloorControlChorusASR && options.AudioFloor == nil {
+		options.Logger.Warn("agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, and this router has " +
+			"no chorus-asr server (ROUTER_CHORUS_ASR_URL): the flow controller rules the floor of every agent that chose none")
+	}
+	// written is the recorder behind records, which titles are written through too.
+	var written *sessionRecorder
+	if options.Store != nil {
+		if options.Configs == nil {
+			configs, err := appconfig.New(appconfig.Options{Store: options.Store, Logger: options.Logger})
+			if err != nil {
+				return nil, err
+			}
+			manager.options.Configs = configs
+		}
+		manager.logs = newLogRecorder(options.Store, options.Logger)
+		manager.calls = newCallRecorder(options.Store, options.Logger)
+		// Read only: the phone service's keeper is what counts calls, so this one names no vendors.
+		manager.outcomes = outcome.NewKeeper(options.Store, time.Now, nil, options.Logger)
+		written = newSessionRecorder(options.Store, options.Logger)
+		manager.records = written
+		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
+		if options.Connectors.Transports != nil {
+			manager.invocations = newInvocationRecorder(options.Store, options.Logger)
+		}
+	}
+	manager.titles = newTitler(options.LLM, written, options.Logger)
+	manager.cards = newCallCards(options.Store, manager.outcomes, options.Stream, options.Logger)
+	switch {
+	case options.Writer != nil:
+		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)
+	case options.Store != nil || options.Live != nil:
+		manager.runtime = routing.NewRecorder(routing.Runtime, options.Store, options.Live, options.Pricer, options.Logger)
+	}
+	if options.Sandboxes == nil {
+		// On runtime's writer, so Shutdown drains the sandboxes' last slices with runtime's.
+		var recorder *routing.Recorder
+		if manager.runtime != nil {
+			recorder = manager.runtime.For(routing.Sandbox)
+		}
+		manager.options.Sandboxes = metered.NewSandboxes(metered.SandboxesOptions{Recorder: recorder, Logger: options.Logger})
+	}
+	return manager, nil
+}
+
+// owner is who a session's own time is billed to, its runtime and its sandbox's, and the region
+// the sandbox runs in.
+func owner(spec Spec) routing.Owner {
+	return routing.Owner{
+		CustomerID:  spec.CustomerID,
+		Attribution: spec.Attribution,
+		Caller:      spec.Caller,
+		AgentID:     spec.AgentID,
+		CallID:      spec.CallID,
+		Region:      spec.Region,
+		Tags:        spec.Tags,
+	}
+}
+
+// runtimeProvider is who runtime rows are billed under: the deployment itself, which no
+// vendor prices.
+const runtimeProvider = "stream"
+
+// startRuntime starts timing a session about to open, billed as what holds it: text or voice,
+// in the session's region.
+func (m *Manager) startRuntime(spec Spec) *routing.Slices {
+	mode := store.ModalityVoice
+	if spec.Text {
+		mode = store.ModalityText
+	}
+	return routing.StartSlices(routing.SliceOptions{
+		Recorder: m.runtime,
+		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode, Region: spec.Region},
+		Owner:    owner(spec),
+		Kind:     string(routing.Runtime),
+		ID:       spec.ID,
+		Every:    m.sliceEvery,
+	})
+}
+
+// newSession is the session spec opens, timed from now by runtime, which every session is
+// given so that none is open unbilled.
+func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills harness.Skills, opening time.Time, runtime *routing.Slices) *Session {
+	// The files a fork carried are pinned and kept below, and are not the session's to hand
+	// on: a spec read off it (a fork, a reopen) reads its own files by their owner.
+	held := spec
+	held.Documents = nil
+	created := &Session{
+		logs:      m.logs,
+		persisted: conv,
+		id:        spec.ID,
+		spec:      held,
+		// Postgres keeps microseconds. The live session sorts by the same instant as its
+		// row, or a cursor taken from one would hand the other back on the next page.
+		created:       opening.Truncate(time.Microsecond),
+		began:         time.Now(),
+		logger:        m.logger,
+		watchers:      map[uint64]*watcher{},
+		detachedGrace: m.options.DetachedGrace,
+		state:         Live,
+		modality:      store.ModalityVoice,
+		runtime:       runtime,
+		runtimeMode:   store.ModalityVoice,
+		skills:        skills,
+		moving:        make(chan struct{}, 1),
+	}
+	if spec.Text {
+		created.modality = store.ModalityText
+		created.runtimeMode = store.ModalityText
+	}
+	return created
+}
+
+// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
+// team's agent configs to its own users keeps their channels in the config's team too, so
+// that Chat shows them to that team's users alone. A config of no team asks nothing.
+func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
+	if spec.ConfigTeam == "" || m.options.Configs == nil {
+		return "", nil
+	}
+	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("%w: %w", ErrAppSettingsUnreadable, err))
+	}
+	if !settings.AgentTeamsChecked() {
+		return "", nil
+	}
+	return spec.ConfigTeam, nil
+}
+
+// Create joins a call and returns the session running it.
+//
+// The agent is joined before this returns, so a caller that gets a session back has one
+// that is already listening. A failure anywhere unwinds what was opened: a half-joined
+// session would hold a model session and a place in a call that nobody holds a handle to.
+func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure error) {
+	began := time.Now()
+	if err := spec.Normalize(); err != nil {
+		return nil, stack.Wrap(err)
+	}
+	if spec.Attribution.APIKey == "" {
+		spec.Attribution = routing.AttributionFrom(ctx)
+	}
+	categories, err := usage.WithTeam(spec.Attribution.UsageCategories, spec.Team)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("session: counting the session under team %q: %w", spec.Team, err))
+	}
+	spec.Attribution.UsageCategories = categories
+	spec.Attribution.SessionID = spec.ID
+	// Refuse unsupported voice modes before opening a call or persistent resource.
+	if spec.Native() && m.options.STS == nil {
+		return nil, stack.Wrap(errors.New("session: this deployment routes no speech-to-speech model"))
+	}
+	if !spec.Text && !spec.Native() {
+		if m.options.STT == nil {
+			return nil, stack.Wrap(errors.New("session: an stt router is required for voice sessions"))
+		}
+		if m.options.TTS == nil {
+			return nil, stack.Wrap(errors.New("session: a tts router is required for voice sessions"))
+		}
+	}
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
+	}
+	held, live := m.sessions[spec.ID]
+	m.mu.Unlock()
+	if live && !replaces(spec, held) {
+		return nil, stack.Wrap(ErrSessionExists)
+	}
+	// The id is the row's primary key whoever owns it, so one somebody already used would
+	// write this session over theirs. A reopened one is the same session, its owner checked
+	// by whoever reopened it.
+	if m.options.Store != nil && spec.Reopened.IsZero() {
+		taken, err := m.options.Store.SessionExists(ctx, spec.ID)
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		// A session's channel is named after it, and a thread channel's id is taken by the
+		// external thread it holds. Compared case-folded, as threadConversation does.
+		if folded := strings.ToLower(spec.ID); !taken && strings.HasPrefix(folded, persistent.ThreadChannelPrefix) {
+			_, err := m.options.Store.ChannelThread(ctx, folded)
+			if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
+				return nil, stack.Wrap(err)
+			}
+			taken = err == nil
+		}
+		if taken {
+			return nil, stack.Wrap(ErrSessionExists)
+		}
+	}
+	// Before anything is joined or paid for: a vendor often says a call was busy before its
+	// session opens.
+	if err := m.unanswered(ctx, spec); err != nil {
+		return nil, err
+	}
+
+	if m.records != nil && !spec.Incognito {
+		floor, err := m.options.Policies.ToolOutputRetention(ctx, spec.CustomerID)
+		if err != nil {
+			m.logger.Warn("could not read the tool output retention, keeping none",
+				"customer", spec.CustomerID, "session", spec.ID, "error", err)
+		}
+		spec.ToolOutputRetention = floor.Shorter(spec.ToolOutputRetention)
+	}
+
+	// The Stream app the session acts in is settled once, before anything is done there,
+	// and the whole session keeps it: its call, its transcript and the rows it writes.
+	stream, err := m.stream(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	spec.StreamApp = stream.Identity.StreamApp
+	if err := m.keepable(ctx, spec, stream); err != nil {
+		return nil, refusedAtStart(spec, began, err)
+	}
+	if err := m.callable(ctx, spec, stream); err != nil {
+		return nil, stack.Wrap(refusedAtStart(spec, began, err))
+	}
+	// In app mode a session with no Stream app at all is pinned to none, rather than left
+	// unpinned, which reads as the deployment's own app and would let that app's hooks and
+	// backfill claim it.
+	if stream.Client == nil && m.options.Stream != nil && m.options.Stream.PerApp() {
+		spec.StreamApp = store.ForeignStreamApp
+	}
+
+	var remembering *metered.Memory
+	if spec.Memory.UserID != "" {
+		if m.options.Memory == nil {
+			return nil, stack.Wrap(ErrNoMemory)
+		}
+		if cmp.Or(spec.Region, pricing.DefaultRegion) != pricing.DefaultRegion {
+			return nil, stack.Wrap(ErrMemoryRegion)
+		}
+		remembering = m.options.Memory
+	}
+	// Set over whatever a forked spec was copied with: the app's setting is read now.
+	if spec.ChannelTeam, err = m.channelTeam(ctx, spec); err != nil {
+		return nil, err
+	}
+
+	opened := false
+	// A new conversation is kept in Stream Chat by default, but a deployment without Chat
+	// credentials still holds it: what was said is worth keeping, not worth refusing the
+	// conversation for. Resuming or forking one needs the channel, so those still fail.
+	if spec.PersistConversation && spec.ConversationID == "" && spec.Recall == nil {
+		if _, err := m.Conversations(); err != nil {
+			m.logger.Warn("not keeping the conversation in Stream Chat", "error", err)
+			spec.PersistConversation = false
+		}
+	}
+	if cid, by, handed := m.handedOut(ctx, spec, stream); handed {
+		spec.ConversationID, spec.Dispatched, spec.HandedOutBy = cid, true, by
+		ctx = persistent.RouterOpensDispatched(ctx, cid)
+	}
+	var conv *persistent.Conversation
+	var previous []llm.Message
+	if m.options.ResumeHistories != nil {
+		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
+	}
+	reading, err := m.restoring(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if spec.PersistConversation {
+		service, err := m.Conversations()
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
+		// no session that holds it.
+		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
+			m.awaitRetiring(ctx, spec.CustomerID, spec.ConversationID)
+			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
+		}
+		var truncated bool
+		open := service.OpenInApp
+		cid := spec.ConversationID
+		// A new conversation is held on a channel named after its session.
+		if cid == "" {
+			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
+		}
+		// The session's branch switches are kept under its id, and one a router left unfinished
+		// is finished as the conversation opens.
+		conv, previous, truncated, err = open(persistent.WithSession(reading, spec.ID), spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		if errors.Is(err, streamapp.ErrReadOnly) {
+			return nil, ErrConversationReadOnly
+		}
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		// A conversation is kept where it was first written, and a session resuming it
+		// acts there too, whichever app its customer acts in now.
+		if kept := conv.StreamApp(); kept != spec.StreamApp && m.options.Stream != nil {
+			if stream, err = m.options.Stream.ForApp(ctx, spec.CustomerID, kept); err != nil {
+				conv.Release()
+				if errors.Is(err, streamapp.ErrReadOnly) {
+					return nil, ErrConversationReadOnly
+				}
+				return nil, fmt.Errorf("session: the app conversation %s is kept in: %w", conv.CID(), err)
+			}
+			spec.StreamApp = kept
+		}
+		spec.ConversationID = conv.CID()
+		conv.ShowTools(spec.VisibleTools)
+		// A resume was deliberately not given an agent id, because only the conversation
+		// knows the one its transcript was written under.
+		spec.AgentID = conv.Agent()
+		spec.ContextTruncated = truncated
+		displays := map[string]persistent.ToolDisplay{}
+		for _, tool := range spec.Tools {
+			display := persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
+			if approval := tool.Approval; approval != nil {
+				display.Approval = &persistent.ToolApproval{
+					Title: approval.Title, Message: approval.Message, ReasonArgument: approval.ReasonArgument,
+					AllowTitle: approval.AllowTitle, DeclineTitle: approval.DeclineTitle,
+				}
+			}
+			displays[tool.Name] = display
+		}
+		conv.DescribeTools(displays)
+		// A fork opens an empty channel of its own and then reads the parent's, so the model
+		// carries on from what was said while the transcripts stay separate. The parent's
+		// half goes first because it happened first.
+		if spec.Recall != nil && spec.Recall.Messages == nil {
+			recalled, cut, err := service.ContextForCaller(reading, spec.CustomerID,
+				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
+			if err != nil {
+				conv.Release()
+				return nil, stack.Wrap(fmt.Errorf("session: reading the conversation being forked: %w", err))
+			}
+			previous = append(recalled, previous...)
+			spec.ContextTruncated = spec.ContextTruncated || cut
+		}
+		defer func() {
+			if !opened {
+				conv.Release()
+			}
+		}()
+	} else if spec.ConversationID != "" {
+		service, err := m.Conversations()
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		// A call on a conversation writes its words into the conversation's channel, which
+		// is only there in the app the conversation is kept in.
+		if !spec.Text {
+			if err := m.sameApp(ctx, service, spec); err != nil {
+				return nil, err
+			}
+		}
+		var truncated bool
+		previous, truncated, err = service.ContextForCaller(reading, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		spec.ContextTruncated = truncated
+	}
+	if spec.Recall != nil && spec.Recall.Messages != nil {
+		previous = append(append([]llm.Message(nil), spec.Recall.Messages...), previous...)
+	}
+	// History the caller kept itself goes where a resumed conversation's goes, and only
+	// there: it is never written down as turns, a transcript or Chat messages.
+	if len(spec.History) > 0 {
+		previous = append(persistent.Supplied(spec.History), previous...)
+	}
+	m.supersede(spec)
+	m.think(ctx, &spec)
+
+	// Before the call is joined, so a required connector that cannot be used refuses the
+	// session rather than leaving it without the tools it was configured to need.
+	connectors, connectorTools, connectorsUnavailable, err := m.attachConnectors(ctx, &spec)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if !opened && connectors != nil {
+			connectors.Close()
+		}
+	}()
+
+	skills, err := m.skills(ctx, spec)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+
+	box, err := m.box(ctx, spec, connectors)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+
+	line, err := m.line(spec)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+
+	opening := time.Now().UTC()
+	if !spec.Reopened.IsZero() {
+		opening = spec.Reopened.UTC()
+	}
+	// A session that fails to open is not billed for the time it spent trying.
+	runtime := m.startRuntime(spec)
+	defer func() {
+		if !opened {
+			runtime.Cancel()
+		}
+	}()
+	created := m.newSession(spec, conv, skills, opening, runtime)
+	// A session held ends where it closes (Session.counted); one never held ends here,
+	// unless it was turned away for a router shutting down or for a session already held
+	// under its id (a redelivered hook): neither is a session that failed.
+	turnedAway := false
+	startup := newStartup(spec, began)
+	defer func() {
+		if !opened && !turnedAway {
+			endCounter(createFailure(failure)).Inc()
+			startup.Failed()
+		}
+	}()
+	fail := func() {
+		runtime.Cancel()
+		created.Close()
+	}
+	created.tools = newBridge(
+		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
+		spec.Tools,
+		created.askTool,
+	)
+
+	// The built-in tools are this process's to run rather than the caller's. They go
+	// after the caller's so a caller cannot quietly replace a transfer, and the agent
+	// drops whichever of them nothing on this call can carry out.
+	tools := append([]harness.Tool(nil), spec.Tools...)
+	sources := map[string]ToolSource{}
+	markTools(sources, tools, ToolFromSession)
+	var callers agent.ToolRunner = created.tools
+	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
+	markTools(sources, tools[len(spec.Tools):], ToolFromWorker)
+	tools, callers = moderationTools(spec, stream, tools, callers)
+	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
+		builtin, err := harness.DefaultTools()
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		tools = append(tools, spec.callTools(builtin.Tools)...)
+	}
+
+	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
+	// connectors replaced them, and a save refuses them.
+	spec.ServerInstructions = serverInstructions(connectors.said())
+	created.spec.ServerInstructions = spec.ServerInstructions
+	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
+	// A session opened without a zone runs in its user's stored one, so the agent's
+	// clock line tells the day, and the scheduling tools read dates, in the zone its
+	// tasks will run in.
+	if user := zoneUser(spec); spec.Timezone == "" && user != "" && m.options.Store != nil {
+		if zone, err := m.options.Store.UserTimezone(ctx, spec.CustomerID, user); err == nil && zone != "" {
+			spec.Timezone, created.spec.Timezone = zone, zone
+		}
+	}
+	// A user with no zone of their own is in the config's default one, the zone a task they
+	// scheduled would take, so the agent's clock line and the scheduling tools agree.
+	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
+	// The scheduling tools are offered inside the connectors:
+	// every layer in front passes their names through to here, and a caller that
+	// declared one of the names keeps its own.
+	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
+		tools = append(tools, offered...)
+		scheduling.next = runner
+		runner = scheduling
+	}
+	// The dispatcher goes in front, so the names it opened are its own whatever else the
+	// session offers.
+	if connectors != nil {
+		if err := connectorCollision(connectorTools, tools); err != nil {
+			return nil, err
+		}
+		tools = append(tools, connectorTools...)
+		markTools(sources, connectorTools, ToolFromConnector)
+		connectors.next = runner
+		runner = connectors
+		connectors.askIn(conv, created.chose)
+		connectors.stepUps = newStepUps(m.options.Connectors.Consents, created.broadcast, m.logger)
+		created.connectors = connectors
+		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
+	}
+	created.connectorsUnavailable = connectorsUnavailable
+	created.toolSources = sources
+	// Last, so every other tool's name is taken first and a child cannot shadow one.
+	tools, runner = m.childAgents(spec, created, tools, runner)
+	if spec.ProgressiveTools {
+		tools, runner = progressively(tools, connectorTools, runner)
+	}
+
+	var toolStarted func(agent.ToolStarted)
+	if conv != nil {
+		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
+	}
+	// Only a connector binding's policy names a phrase or lets a call go on after an
+	// interruption, and only a caller's or a worker's tool that says so is cancelled by one;
+	// a session with neither runs its tools as it always has.
+	var toolPolicy func(string) agent.ToolPolicy
+	if connectors != nil {
+		toolPolicy = connectors.toolPolicy
+	}
+	if policy := interruptible(tools, toolPolicy); policy != nil {
+		toolPolicy = policy
+	}
+	screening, err := m.guardrail(ctx, spec, stream.Identity)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	if screening != nil {
+		created.closers = append(created.closers, func() {
+			if err := screening.Close(); err != nil {
+				m.logger.Error("could not close the guardrail",
+					"session", created.id, "error", err)
+			}
+		})
+	}
+	// The agent is built again whenever voice starts or stops, with everything wired up
+	// here. A text session joins nothing, so no edge is opened for it: everything downstream
+	// treats a missing edge as the conversation having no call rather than as a failure.
+	created.supersede = m.supersede
+	created.end = func(reason EndReason) { m.end(created, reason) }
+	created.machine.unreported = func() {
+		m.Machine(OwnerOf(created.Spec()).CustomerID, created.id, phone.MachineUnknown)
+	}
+	created.think = m.think
+	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
+		var edge agent.Edge
+		switch {
+		case spec.Text:
+		case spec.Edge != nil:
+			edge = spec.Edge
+		default:
+			if err := m.callable(ctx, spec, stream); err != nil {
+				return nil, stack.Wrap(err)
+			}
+			opened, err := m.options.Edge(ctx, spec, stream, m.logger)
+			if err != nil {
+				return nil, stack.Wrap(err)
+			}
+			edge = opened
+		}
+		// What controls the floor: the spec's own choice, else the router's default.
+		ruling := m.floorControl(spec)
+		return agent.New(agent.Options{
+			OnToolStarted: toolStarted,
+			OnHeard:       created.heardCaller,
+			ToolPolicy:    toolPolicy,
+			Edge:          edge,
+			Text:          spec.Text,
+			Instructions:  spec.prompt(),
+			Timezone:      zone,
+			CustomerID:    spec.CustomerID,
+			Attribution:   spec.Attribution,
+			Caller:        spec.Caller,
+			AgentID:       spec.AgentID,
+			ConfigID:      spec.ConfigID,
+			CallID:        spec.CallID,
+			Region:        spec.Region,
+			Tags:          spec.Tags,
+			LLM:           m.options.LLM,
+			LLMTarget:     spec.LLMTarget,
+			LLMFallbacks:  spec.LLMFallbacks,
+			STT:           m.options.STT,
+			STTTarget:     spec.STTTarget,
+			TTS:           m.options.TTS,
+			TTSTarget:     spec.TTSTarget,
+			// Every router the deployment has is handed over, whichever pipeline the session
+			// starts on, so it can be moved onto the other one mid-call.
+			STS:                m.options.STS,
+			STSTarget:          spec.STSTarget,
+			SubagentTarget:     spec.SubagentTarget,
+			ControllerTarget:   spec.ControllerTarget,
+			Judge:              m.options.Classifier,
+			JudgeTarget:        m.options.FlowJudge,
+			AudioFloor:         m.options.AudioFloor,
+			AudioFloorMode:     m.floorMode(created.id, ruling),
+			EndOfTurn:          EndOfTurnOf(ruling),
+			Skills:             skills,
+			Telephony:          line,
+			Destinations:       spec.destinations(),
+			Ender:              m.ender(created, spec, stream),
+			EndCallWhen:        spec.endCallWhen(),
+			ToolRunner:         runner,
+			Tools:              harness.Tools{Tools: tools},
+			Sandbox:            box,
+			Publish:            publisher(conv),
+			Tasks:              spec.Tasks,
+			Duplex:             spec.duplex(),
+			VideoSource:        spec.VideoSource,
+			VideoMaxFrames:     spec.VideoMaxFrames,
+			Voice:              spec.Voice,
+			LanguageHints:      spec.LanguageHints,
+			Keyterms:           spec.Keyterms,
+			MaxTokens:          spec.MaxTokens,
+			MaxToolRounds:      spec.MaxToolRounds,
+			Overwrites:         spec.LLMOverwrites(),
+			Memory:             remembering,
+			Knowledge:          m.options.Knowledge,
+			KnowledgeNamespace: spec.KnowledgeNamespace,
+			Search:             m.options.Search,
+			SearchTarget:       spec.SearchTarget,
+			Draws:              m.drawer(spec, conv),
+			ImageTarget:        spec.ImageTarget,
+			Guardrail:          screening,
+			SpeculativeReplies: m.options.SpeculativeReplies,
+			UnifiedReplies:     m.options.UnifiedReplies,
+			AppID:              spec.Memory.AppID,
+			SessionID:          spec.ID,
+			Incognito:          spec.Incognito,
+			MemoryUserID:       spec.Memory.UserID,
+			MemoryFilter:       spec.Memory.Filter,
+			Store:              m.options.Store,
+			Live:               m.options.Live,
+			Logger:             m.logger,
+		})
+	}
+	built, err := created.build(ctx, spec)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	created.held.Store(built)
+
+	if box != nil {
+		created.closers = append(created.closers, func() {
+			if err := box.Close(); err != nil {
+				m.logger.Error("could not release the sandbox",
+					"session", created.id, "error", err)
+			}
+		})
+	}
+
+	// A transcript is written into the conversation's channel, else the agent id's
+	// (chatlog.Options.Channel). One a device asked for under a thread channel's agent id is
+	// not written there (persistent.BarThread).
+	written := spec.ConversationID
+	if written == "" {
+		written = streamapp.AgentChannelType + ":" + spec.AgentID
+	}
+	// Where the transcript actually goes, as the transcript factory picks it.
+	if !persistent.Barred(ctx, written) {
+		created.transcribedInto = spec.TranscriptChannel()
+	}
+	if m.options.Transcript != nil && !spec.Incognito && !persistent.Barred(ctx, written) {
+		// A transcript that cannot be opened is not a reason to refuse the call. What was
+		// said is worth keeping; it is not worth not having the conversation for.
+		created.transcribe = func(ctx context.Context, spec Spec) Transcript {
+			transcript, err := m.options.Transcript(ctx, spec, stream, m.logger)
+			if err != nil {
+				m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
+				return nil
+			}
+			if err := transcript.Start(ctx); err != nil {
+				m.logger.Warn("not storing the transcript", "call", spec.CallID, "error", err)
+				transcript.Close()
+				return nil
+			}
+			return transcript
+		}
+	}
+	if !spec.Text && created.transcribe != nil {
+		created.transcript = created.transcribe(ctx, spec)
+	}
+
+	if conv == nil && spec.ConversationID != "" {
+		m.logger.Info("restored conversation history into the voice session",
+			"call", spec.CallID, "conversation", spec.ConversationID,
+			"turns", len(previous), "truncated", spec.ContextTruncated)
+	}
+	// The person's other episodes go first, as context before this conversation's own
+	// history, and only to the model: not to the title, the review or the reopened summary.
+	cards, person := m.cards.read(ctx, spec, stream)
+	created.carded = len(cards) > 0
+	if created.carded {
+		created.cardsFor = person
+	}
+	created.cards = cards
+	built.RestoreHistory(append(cards, previous...))
+	if !spec.Native() {
+		built.PinDocuments(m.documents(ctx, spec)...)
+	}
+	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
+	if !spec.Reopened.IsZero() {
+		earlier := spokenOf(previous)
+		created.said = earlier[:min(len(earlier), reviewLimit)]
+	}
+	if conv != nil {
+		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
+		created.closers = append(created.closers, conv.Release)
+		// A title the conversation opened with is a placeholder: what was said names it,
+		// until somebody renames it.
+		if service, err := m.Conversations(); err == nil {
+			created.naming = &naming{titles: m.titles, service: service, earlier: spokenOf(previous)}
+		}
+	}
+
+	// An incognito session is never handed the recorder, so nothing downstream has to
+	// remember to check the flag: there is simply nowhere for it to write.
+	//
+	// It is handed over before the fan-out starts, which reads it on every event. What the
+	// fan-out records is held until the row is queued below (startRecording).
+	if m.records != nil && !spec.Incognito {
+		created.records = m.records
+		if m.options.Store != nil {
+			created.tree = m.options.Store
+			created.restoring = func(ctx context.Context) (context.Context, error) { return m.restoring(ctx, spec) }
+		}
+		// A reopened session carries on from the newest response on its conversation, which a
+		// branch switch may have made an older one. Its last turns may still be on their way to
+		// the store.
+		if m.options.Store != nil && !spec.Reopened.IsZero() {
+			// Carrying on from the wrong one would answer the next question after a response the
+			// conversation does not show, so a store that cannot say refuses the reopen.
+			if err := m.records.Flush(ctx); err != nil {
+				fail()
+				return nil, stack.Wrap(err)
+			}
+			leaf, err := m.options.Store.ActiveLeaf(ctx, spec.CustomerID, spec.ID)
+			if err != nil {
+				fail()
+				return nil, err
+			}
+			created.leaf = leaf
+		}
+	}
+
+	run := created.track(built)
+	if spec.Greeting != "" && run != nil {
+		run.holdGreeting(created.sayGreeting(ctx, built, spec))
+	}
+	// The fan-out starts before joining so nothing said between joining and the first
+	// watcher attaching is lost to a channel nobody is reading.
+	created.running.Add(1)
+	go created.consume(built, created.transcript, run)
+
+	// Join takes the background rather than the request's context: the conversation
+	// outlives the HTTP call that asked for it, and a session cancelled when the request
+	// returned would hang up on the caller immediately.
+	if err := built.Join(agent.WithStartup(context.WithoutCancel(ctx), startup)); err != nil {
+		fail()
+		return nil, stack.Wrap(err)
+	}
+
+	// If the call does not report its participants, or if the session is text only, the
+	// agent says the greeting immediately after it joins.
+	if spec.Greeting != "" && run == nil {
+		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
+			fail()
+			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
+		}
+	}
+
+	if spec.Phone != nil && m.options.Phone != nil {
+		created.closers = append(created.closers, func() { m.hangUpRinging(created, spec) })
+	}
+
+	// The row is queued before the session is reachable, so the call cannot be recorded
+	// as ending before it is recorded as starting. An incognito session has none: the row
+	// names the session, its caller and the instructions it ran with.
+	if m.calls != nil && !spec.Incognito {
+		created.calls = m.calls
+		created.closers = append(created.closers, func() {
+			m.calls.Ended(created.id, time.Now().UTC())
+			// The review runs on a model rather than in this closer, so it is started
+			// here and lands on the row whenever it comes back.
+			if !spec.NoReview {
+				m.reviews.Review(row(created), spec.Attribution, spec.Region, spec.reviewTarget(), spec.ReviewInstructions, created.conversation())
+			}
+		})
+		m.calls.Started(row(created))
+	}
+
+	// The row is queued once the session has joined, so a call that refused it leaves no
+	// session behind, and once search has started, so its tool is among the ones stored.
+	// The turns held until now, the greeting's among them, are written after it.
+	if created.records != nil {
+		created.closers = append(created.closers, func() {
+			m.records.Closed(created.id, time.Now().UTC(), created.kept())
+		})
+		m.records.Opened(sessionRow(created), toolRows(created))
+		created.startRecording()
+	}
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		turnedAway = true
+		// Left ringing as a failed create leaves it: a hangup now would join m.ended after
+		// Shutdown has stopped waiting on it.
+		created.handedOver.Store(true)
+		fail()
+		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
+	}
+	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
+		m.mu.Unlock()
+		turnedAway = true
+		created.handedOver.Store(true)
+		fail()
+		return nil, stack.Wrap(ErrSessionExists)
+	}
+	m.sessions[created.id] = created
+	sessionsActive.Inc()
+	created.active.Store(true)
+	m.mu.Unlock()
+
+	// Said after the session is here to be found, so a peer that forwards a request on
+	// the strength of it has somewhere to forward it to.
+	if m.options.Directory != nil {
+		m.options.Directory.Hold(ctx, created.id, spec.AgentID, spec.ConversationID)
+	}
+	// Asked again now the session is held: a status that came while the call was being
+	// joined found no session to end, and one that comes after this finds it. The session
+	// has joined by now, so a refusal here ends it rather than never opening it.
+	err = m.unanswered(ctx, spec)
+	if err != nil {
+		opened = true
+		m.end(created, TimeoutUnanswered)
+	}
+	m.mu.Lock()
+	held, present := m.sessions[created.id]
+	m.mu.Unlock()
+	if err == nil && held != created {
+		// Ended between going into the map and here, by a status, a takeover or shutdown:
+		// the id is taken and nothing is left to answer with.
+		opened = true
+		err = stack.Wrap(ErrSessionExists)
+	}
+	if err != nil {
+		// An end before the hold above found no claim to take back, so the hold would
+		// otherwise be renewed for a session nobody holds. One reopened under the id since
+		// holds its own.
+		if !present {
+			m.release(created.id)
+		}
+		return nil, err
+	}
+	// A phone call's episode card, once the session holds the call (T41).
+	m.cards.started(created, stream)
+
+	m.logger.Info("session joined",
+		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
+	opened = true
+	return created, nil
+}
+
+// CallUnansweredError refuses a session for a placed call that already ended with nobody
+// answering: the agent would join a call nobody will ever be on.
+type CallUnansweredError struct {
+	Outcome outcome.Outcome
+}
+
+func (e *CallUnansweredError) Error() string {
+	return "session: the call ended without an answer: " + string(e.Outcome)
+}
+
+// unanswered is the CallUnansweredError a phone session is refused with, or nil. A call it
+// cannot read is opened as before.
+func (m *Manager) unanswered(ctx context.Context, spec Spec) error {
+	if spec.Phone == nil || m.outcomes == nil {
+		return nil
+	}
+	call, err := m.outcomes.Read(ctx, spec.CustomerID, spec.ID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return nil
+	}
+	if err != nil {
+		m.logger.Warn("could not read whether a session's placed call went unanswered",
+			"session", spec.ID, "error", err)
+		return nil
+	}
+	if call.NobodyAnswered() {
+		return stack.Wrap(&CallUnansweredError{Outcome: call.Outcome})
+	}
+	return nil
+}
+
+// replaces reports whether a session being reopened may take the place of the one held under
+// its id, which it may once that one has ended.
+func replaces(spec Spec, held *Session) bool {
+	return !spec.Reopened.IsZero() && held.State() == Ended
+}
+
+// supersede ends whatever this agent was already doing in this call, before the new one
+// joins rather than after.
+//
+// A session outlives the connection that asked for it, so an agent that was restarted or
+// killed is still in its call. Two instances of one agent hear each other: each transcribes
+// the other as a caller and they answer each other until nobody else can be heard. There is
+// never a reason to want both, so the newest wins.
+func (m *Manager) supersede(spec Spec) {
+	m.mu.Lock()
+	var left []*Session
+	for id, found := range m.sessions {
+		if sameSeat(found.Spec(), spec) {
+			left = append(left, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+	}
+
+	for _, found := range left {
+		m.logger.Info("ending the session this agent left behind in the call",
+			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		found.handedOver.Store(true)
+		if err := found.Close(); err != nil {
+			m.logger.Warn("the session left behind did not end cleanly",
+				"session", found.id, "error", err)
+		}
+	}
+}
+
+// RetireWithin bounds how long a retiring session (Session.Retire) may take to write the
+// replies it owes before it is closed all the same: as long as a written message's answer may
+// take (api.askTimeout).
+const RetireWithin = 2 * time.Minute
+
+// retirePoll is how often a session being opened checks whether a retiring one holding its
+// conversation has ended. A choice: short against a reply of seconds.
+const retirePoll = 50 * time.Millisecond
+
+// Retire marks a session as closing once it has written the replies it owes, which its
+// caller closes it after (CloseRetired, from api.retire), and reports whether it was not retiring already. A
+// session opened on its conversation meanwhile waits for it to end (awaitRetiring), its close
+// included: Close takes it off the map before its conversation is let go.
+func (m *Manager) Retire(found *Session) bool {
+	if !found.retiring.CompareAndSwap(false, true) {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.retiring == nil {
+		m.retiring = map[*Session]struct{}{}
+	}
+	m.retiring[found] = struct{}{}
+	return true
+}
+
+// CloseRetired closes a session Retire retired and forgets it: Close is synchronous, so once it
+// returns no session opened on its conversation has it to wait for (awaitRetiring).
+func (m *Manager) CloseRetired(found *Session) (bool, error) {
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.retiring, found)
+	}()
+	return m.Close(found.ID(), OwnerOf(found.Spec()))
+}
+
+// awaitRetiring waits for each retiring session holding the persistent conversation cid to
+// end, so the session being opened on it neither takes it over, cutting the replies it owes
+// short (takeOver), nor is refused it as open already. Bounded by RetireWithin, and the
+// finishWithin its close may take, and by ctx; after that it is taken over as before. A
+// retired session found ended is forgotten.
+func (m *Manager) awaitRetiring(ctx context.Context, customer, cid string) {
+	m.mu.Lock()
+	var retiring []*Session
+	for found := range m.retiring {
+		switch {
+		case found.State() == Ended:
+			delete(m.retiring, found)
+		case found.spec.CustomerID == customer && found.holds(cid):
+			retiring = append(retiring, found)
+		}
+	}
+	m.mu.Unlock()
+	if len(retiring) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, RetireWithin+finishWithin)
+	defer cancel()
+	for _, found := range retiring {
+		for found.State() != Ended && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+			case <-time.After(retirePoll):
+			}
+		}
+	}
+}
+
+// takeOver ends the session holding the persistent conversation cid when nobody is
+// watching it, so reopening the conversation does not wait out that session's grace: the
+// client reopening it is most likely the one that stopped watching, after a crash. Only the
+// Router opening a thread channel (thread) takes over a session held on one.
+func (m *Manager) takeOver(customer, cid string, thread bool) {
+	m.mu.Lock()
+	var left []*Session
+	for id, found := range m.sessions {
+		if found.spec.CustomerID == customer && found.spec.Thread == thread && found.unwatchedFor(cid) {
+			left = append(left, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range left {
+		m.release(found.id)
+		m.logger.Info("reopening a conversation nobody was watching",
+			"session", found.id, "conversation", cid)
+		found.abandon()
+	}
+}
+
+// sameSeat reports whether two specs put the same agent in the same call. A text session
+// joins nothing, so it shares a seat with nobody.
+func sameSeat(existing, wanted Spec) bool {
+	return !existing.Text && !wanted.Text &&
+		existing.CustomerID == wanted.CustomerID &&
+		existing.CallType == wanted.CallType &&
+		existing.CallID == wanted.CallID &&
+		existing.UserID == wanted.UserID
+}
+
+// Owner is who a session belongs to: the customer it is billed to, and the end user it is
+// for. That user is whoever asked from their own device, or whoever the customer's backend
+// said it was asking on behalf of.
+type Owner struct {
+	CustomerID string
+	UserID     string
+	Kind       auth.Kind
+}
+
+// OwnerOf is who the session a spec describes will belong to.
+func OwnerOf(spec Spec) Owner {
+	return Owner{CustomerID: spec.CustomerID, UserID: spec.Caller.UserID, Kind: spec.CallerKind}
+}
+
+// Reaches reports whether a caller may have a session owned by other.
+//
+// Exported because the same question has to be asked of a session that has ended, which
+// this package no longer holds: the row is read by the API and checked against this, so a
+// stored conversation is reached on exactly the terms a live one is.
+//
+// A backend reaches every session its customer has: it runs the application, so closing a
+// session a device left behind is its job. An end user reaches only their own, and both
+// halves of who they are have to match. The kind is half of it because an anonymous
+// caller may go by any name it likes: without it, typing somebody else's user id into a
+// query parameter would be enough to read their conversation.
+//
+// An anonymous caller that names nobody at all owns nothing anybody else can be told
+// apart from, so for those the session id is the whole of the authority — it is random
+// and it is never listed. Naming a user id is what makes an anonymous session private.
+//
+// The one place the kinds need not be equal is a session a backend opened in somebody's
+// name, which that person then reaches from their own device: a backend opening the
+// conversation and handing over the id is the ordinary shape of an integration, and
+// requiring equality would refuse them the session that was made for them. Anonymous is
+// left out of that, because an anonymous name is a claim nobody checked and allowing it
+// would make guessing whose a session was enough to read it.
+func (o Owner) Reaches(other Owner) bool {
+	if o.CustomerID != other.CustomerID {
+		return false
+	}
+	if o.Kind == auth.KindServer {
+		return true
+	}
+	if o.UserID != other.UserID {
+		return false
+	}
+	return o.Kind == other.Kind ||
+		(other.Kind == auth.KindServer && o.Kind.Verified() && o.UserID != "")
+}
+
+// reachedKinds is the kinds of caller whose sessions under this owner's user id the owner
+// Reaches: always its own, and a backend's when the owner is somebody a backend may open a
+// session for. Never empty, so it always narrows.
+func (o Owner) reachedKinds() []string {
+	kinds := []string{string(o.Kind)}
+	if o.Reaches(Owner{CustomerID: o.CustomerID, UserID: o.UserID, Kind: auth.KindServer}) {
+		kinds = append(kinds, string(auth.KindServer))
+	}
+	return kinds
+}
+
+// Get returns a session its owner may have. Two customers cannot see each other's and
+// neither can two people, so an id that exists but belongs to somebody else is reported
+// as not existing at all: a refusal would confirm it was real.
+func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	found, ok := m.sessions[id]
+	if !ok || !owner.Reaches(OwnerOf(found.Spec())) {
+		return nil, false
+	}
+	return found, true
+}
+
+// ByAgent returns the session writing to an agent id, whoever it belongs to.
+//
+// No customer is asked for, unlike Get, because the callers that need this have no customer
+// to ask with: an arriving message names a channel and nothing else, and the session running
+// on it is what says whose it is. An agent id names one session at a time, because a second
+// session on the same one would be two agents writing into one conversation.
+//
+// The newest wins if that ever happens, which is the one a person writing there is watching.
+func (m *Manager) ByAgent(agentID string) (*Session, bool) {
+	return m.ByAgentWhere(agentID, nil)
+}
+
+// ByAgentWhere is ByAgent among the sessions a test admits, by their customer and the Stream
+// app they act in. An agent id is the caller's to choose, so two customers' sessions may
+// share one, each in its own app.
+func (m *Manager) ByAgentWhere(agentID string, admits func(customer string, app int64) bool) (*Session, bool) {
+	if agentID == "" {
+		return nil, false
+	}
+	return m.newest(func(spec Spec) bool { return spec.AgentID == agentID }, admits)
+}
+
+// ByConversationWhere is the newest running session holding the conversation cid, among the
+// sessions a test admits, by their customer and the Stream app they act in. Unlike an agent
+// id, which any caller may name, a conversation is held only by a session opened on it.
+func (m *Manager) ByConversationWhere(cid string, admits func(customer string, app int64) bool) (*Session, bool) {
+	if cid == "" {
+		return nil, false
+	}
+	return m.newest(func(spec Spec) bool { return spec.ConversationID == cid }, admits)
+}
+
+// newest is the newest running session whose spec matches, among those admits takes.
+func (m *Manager) newest(matches func(Spec) bool, admits func(customer string, app int64) bool) (*Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var newest *Session
+	for _, found := range m.sessions {
+		if !matches(found.Spec()) {
+			continue
+		}
+		if admits != nil && !admits(found.spec.CustomerID, found.spec.StreamApp) {
+			continue
+		}
+		if newest == nil || found.created.After(newest.created) {
+			newest = found
+		}
+	}
+	return newest, newest != nil
+}
+
+// List returns the sessions an owner may have, newest first. A backend gets its
+// customer's; an end user gets their own, which is what stops a list being a way to find
+// out who else is talking to the agent.
+func (m *Manager) List(owner Owner) []*Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var theirs []*Session
+	for _, found := range m.sessions {
+		if !owner.Reaches(OwnerOf(found.Spec())) {
+			continue
+		}
+		// An anonymous caller that named nobody is told about nothing. It reaches its
+		// own session by holding the id, and listing them would hand one stranger
+		// another's.
+		if owner.Kind != auth.KindServer && owner.UserID == "" {
+			continue
+		}
+		theirs = append(theirs, found)
+	}
+	sort.Slice(theirs, func(i, j int) bool {
+		return theirs[i].created.After(theirs[j].created)
+	})
+	return theirs
+}
+
+// Found is a session a query turned up, whether or not this process still holds it.
+//
+// Live is the session if it is still running here, nil for one that ended or one another
+// instance is holding. Stored is the row, nil for a session running without a store to
+// record it. At least one of the two is set, and a caller rendering these reads the live
+// one first: a session in flight knows what it resolved its models to, which the row does
+// not carry.
+type Found struct {
+	Live   *Session
+	Stored *store.AgentSession
+}
+
+// ID is the session's id whichever half is holding it.
+func (f Found) ID() string {
+	switch {
+	case f.Live != nil:
+		return f.Live.ID()
+	case f.Stored != nil:
+		return f.Stored.ID
+	}
+	return ""
+}
+
+// ConfigID is the id of the agent config the session was opened from, whichever half is
+// holding it.
+func (f Found) ConfigID() string {
+	switch {
+	case f.Live != nil:
+		return f.Live.Spec().ConfigID
+	case f.Stored != nil:
+		return f.Stored.ConfigID
+	}
+	return ""
+}
+
+// Query returns the sessions an owner may have, most recently updated first, including ones
+// that have already ended.
+//
+// The live sessions and the stored rows are one list rather than two, deduplicated by id,
+// because a caller asking for their conversations does not care which of them this process
+// happens to be holding. A live session wins where both exist: it is the same conversation
+// and the live one knows more about it.
+//
+// Without a store this is List with filters, which is the honest answer for a deployment
+// that keeps nothing: there is no history to offer.
+func (m *Manager) Query(ctx context.Context, owner Owner, filter store.SessionFilter) ([]Found, error) {
+	return m.find(ctx, owner, "", filter)
+}
+
+// Search is Query with words instead of a filter, and needs a store: what it searches is
+// what the caller named their conversations, which only the rows carry.
+func (m *Manager) Search(ctx context.Context, owner Owner, text string, filter store.SessionFilter) ([]Found, error) {
+	return m.find(ctx, owner, text, filter)
+}
+
+func (m *Manager) find(ctx context.Context, owner Owner, text string, filter store.SessionFilter) ([]Found, error) {
+	// An end user only ever reaches their own, so the filter is narrowed here rather than
+	// trusted from the request. A user id a caller could widen is not a boundary at all.
+	if owner.Kind != auth.KindServer {
+		if owner.UserID == "" {
+			// An anonymous caller that named nobody is told about nothing, the same as in
+			// List: they reach their own session by holding its id, and listing them would
+			// hand one stranger another's.
+			return nil, nil
+		}
+		filter.UserID = owner.UserID
+		// The kind is narrowed too, in the query rather than after it so a page is still
+		// full: a row is listed on exactly the terms its session is reached by id.
+		filter.CallerKinds = owner.reachedKinds()
+	}
+
+	// A search is sorted by relevance and nothing else, as the store sorts it.
+	if text != "" {
+		filter.Order = store.SessionOrder{By: store.SessionSortRelevance}
+	} else if filter.Order.By == store.SessionSortRelevance {
+		filter.Order.By = store.SessionSortLastMessage
+	}
+
+	found := make([]Found, 0, filter.Limit)
+	seen := map[string]int{}
+	// Only a live session nothing records is listed from memory. A recorded one is listed
+	// by its row, so it sorts and pages on the row's keys like every other.
+	for _, live := range m.List(owner) {
+		// A live session has no title to search, so a search skips them unless the row
+		// behind them matches. Whatever the store turns up is merged in below.
+		if text != "" || live.records != nil || !matchesLive(live, filter) {
+			continue
+		}
+		seen[live.ID()] = len(found)
+		found = append(found, Found{Live: live})
+	}
+
+	if m.options.Store != nil {
+		// Rows are written behind the conversation, so a session opened a moment ago is
+		// only listed once the writer has caught up with it.
+		if m.records != nil {
+			if err := m.records.Flush(ctx); err != nil {
+				return nil, err
+			}
+		}
+		var rows []store.AgentSession
+		var err error
+		if text != "" {
+			rows, err = m.options.Store.SearchSessions(ctx, owner.CustomerID, text, filter)
+		} else {
+			rows, err = m.options.Store.QuerySessions(ctx, owner.CustomerID, filter)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			stored := row
+			if at, already := seen[row.ID]; already {
+				found[at].Stored = &stored
+				continue
+			}
+			entry := Found{Stored: &stored}
+			// A row this process is still holding is handed back with both halves even when
+			// the live pass skipped it, which is what a search does.
+			if live, ok := m.Get(row.ID, owner); ok {
+				entry.Live = live
+			}
+			seen[row.ID] = len(found)
+			found = append(found, entry)
+		}
+	}
+
+	// Both halves are sorted here on the same keys as the store, so a cursor from either
+	// half holds for both. The sort is stable and the store's rows arrive in this order
+	// already, so it only places the sessions nothing records among them.
+	sort.SliceStable(found, func(i, j int) bool {
+		return filter.Order.Compare(found[i].Position(), found[j].Position()) < 0
+	})
+	// One more than the page, which is how the caller tells there is another.
+	if limit := store.SessionLimit(filter.Limit) + 1; len(found) > limit {
+		found = found[:limit]
+	}
+	return found, nil
+}
+
+// Position is where the session sits in the list it was found in, which is what a cursor
+// holds: the row's keys, or for a session nothing records, when it began, which has no
+// later message, pin or review written anywhere to sort by.
+func (f Found) Position() store.SessionPosition {
+	if f.Stored != nil {
+		return f.Stored.Position()
+	}
+	if f.Live != nil {
+		return livePosition(f.Live)
+	}
+	return store.SessionPosition{}
+}
+
+// livePosition is where a session nothing records sits. Its time is cut to the microsecond
+// a row's is kept to, so a cursor on it compares the same way here and in the store.
+func livePosition(live *Session) store.SessionPosition {
+	return store.SessionPosition{LastMessageAt: live.CreatedAt().Truncate(time.Microsecond), ID: live.ID()}
+}
+
+// matchesLive applies the filter to a session that has not been written down, so a query
+// answers the same way with a store and without one.
+//
+// The filter's own fields are who the caller may see, and what the request spelled out is
+// its Where. They are ANDed here as the store ANDs them, so an $or in the request chooses
+// among the caller's sessions and never reaches another's.
+func matchesLive(live *Session, filter store.SessionFilter) bool {
+	spec := live.Spec()
+	var state string
+	switch live.State() {
+	case Live:
+		state = store.SessionRunning
+	case Ended:
+		state = store.SessionClosed
+	}
+	switch {
+	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
+		return false
+	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
+		return false
+	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
+		return false
+	// Nobody has reviewed a session that is still running, so it has no score.
+	case !filter.Where.Matches(store.SessionValues{
+		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID, ConfigID: spec.ConfigID,
+		State: state, CreatedAt: live.CreatedAt().Truncate(time.Microsecond), Custom: spec.Custom,
+	}):
+		return false
+	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:
+		return false
+	}
+	return true
+}
+
+// ErrNotRecorded is a session nothing records, which has no row to keep a pin on.
+var ErrNotRecorded = errors.New("session: nothing records this session, so it cannot be pinned")
+
+// Pin pins a running session, or unpins it, and returns when it was pinned: nil once it is
+// not. The pin is kept on the session's row, which is written behind the conversation, so
+// the writer is waited for first. A session nothing records is ErrNotRecorded.
+func (m *Manager) Pin(ctx context.Context, live *Session, pinned bool) (*time.Time, error) {
+	if live.records == nil || m.options.Store == nil {
+		return nil, stack.Wrap(ErrNotRecorded)
+	}
+	if err := live.records.Flush(ctx); err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return m.options.Store.PinSession(ctx, live.spec.CustomerID, live.id, pinned, time.Now().UTC())
+}
+
+// Recorded reports whether the session has a row: false for an incognito one and for a
+// deployment that keeps nothing.
+func (s *Session) Recorded() bool { return s.records != nil }
+
+// Close ends a session its owner may have, reporting whether they had one by that id.
+func (m *Manager) Close(id string, owner Owner) (bool, error) {
+	found, ok := m.Get(id, owner)
+	if !ok {
+		return false, nil
+	}
+
+	m.mu.Lock()
+	_, held := m.sessions[id]
+	delete(m.sessions, id)
+	if held {
+		m.closing++
+		m.ended.Add(1)
+		defer func() {
+			m.mu.Lock()
+			m.closing--
+			m.mu.Unlock()
+			m.ended.Done()
+		}()
+	}
+	m.mu.Unlock()
+	m.release(id)
+
+	return true, found.Close()
+}
+
+// end ends found when its timeout is reached, or its call will not be answered, as Close does but interrupting the agent:
+// nobody is left to hear the end of its sentence. A reopened conversation can take the id
+// of a session that ended, so it does nothing unless found is still the session held under
+// its id.
+func (m *Manager) end(found *Session, reason EndReason) {
+	done, held := m.take(found)
+	if !held {
+		return
+	}
+	defer done()
+	m.release(found.id)
+
+	found.noteEnd(reason)
+	m.logger.Info("ending the session", "session", found.id, "reason", reason)
+	found.abandon()
+}
+
+// hangUp ends found for its agent hanging up, or reason. It closes as Close does, so the
+// goodbye is not cut short, and in the background: the agent hangs up from inside its own
+// tool call, and closing the session waits for the agent.
+func (m *Manager) hangUp(found *Session, reason EndReason) {
+	done, held := m.take(found)
+	if !held {
+		return
+	}
+	found.noteEnd(reason)
+	go func() {
+		defer done()
+		m.release(found.id)
+		m.logger.Info("ending the session", "session", found.id, "reason", reason)
+		if err := found.Close(); err != nil {
+			m.logger.Warn("could not close the session its agent hung up", "session", found.id, "error", err)
+		}
+	}()
+}
+
+// take stops holding found as it begins to end, reporting whether it was still the session
+// held under its id. done is called once it has closed.
+func (m *Manager) take(found *Session) (done func(), held bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.sessions[found.id]; !ok || current != found {
+		return nil, false
+	}
+	delete(m.sessions, found.id)
+	m.closing++
+	m.ended.Add(1)
+	return func() {
+		m.mu.Lock()
+		m.closing--
+		m.mu.Unlock()
+		m.ended.Done()
+	}, true
+}
+
+// EndUnanswered ends the customer's phone session id if this node holds it and no phone caller
+// has joined it, reporting whether this node holds it.
+func (m *Manager) EndUnanswered(customerID, id string) bool {
+	m.mu.Lock()
+	found, held := m.sessions[id]
+	m.mu.Unlock()
+	if !held {
+		return false
+	}
+	spec := found.Spec()
+	if OwnerOf(spec).CustomerID == customerID && spec.Phone != nil && !found.CallerJoined() {
+		m.end(found, TimeoutUnanswered)
+	}
+	return true
+}
+
+// voicemailWithin bounds leaving a voicemail: a message of up to 1,000 characters takes
+// about a minute to say.
+const voicemailWithin = 2 * time.Minute
+
+// Machine acts on the vendor saying what picked up the customer's placed call id, reporting
+// whether this node holds its session. A session whose plan is to leave a voicemail leaves it,
+// or hangs up, once an answering machine's greeting has ended. It does the same when the
+// vendor could not tell while the caller has said nothing to the agent: a vendor calls some
+// mobile voicemail boxes unknown. A fax is hung up on. A person carries on.
+// The message is left in the background, as it takes a while to say.
+func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
+	m.mu.Lock()
+	found, held := m.sessions[id]
+	m.mu.Unlock()
+	if !held {
+		return false
+	}
+	spec := found.Spec()
+	if OwnerOf(spec).CustomerID != customerID || spec.Phone == nil || spec.Voicemail == nil {
+		return true
+	}
+	if machine == phone.MachineHuman {
+		found.checked(true)
+		return true
+	}
+	// A hang-up the agent asked for meanwhile would cut the message off. A check already over
+	// heard the caller speak to the agent, so a report that could not tell is a person.
+	if !found.checked(false) && machine != phone.MachineGreetingEnded {
+		return true
+	}
+	message := spec.Voicemail.Message
+	if machine == phone.MachineFax {
+		message = ""
+	}
+	// Vendors retry a report: only the first one to reach a session still running leaves the message.
+	if found.endsFor(EndVoicemail) {
+		go m.leaveVoicemail(found, spec, message)
+	}
+	return true
+}
+
+// leaveVoicemail says message to the answering machine, waits for it to be heard out and
+// hangs up. A session that began closing meanwhile, its call hung up, is left to close.
+func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
+	if message != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), voicemailWithin)
+		// Whatever the agent was saying to the greeting is not for the recording.
+		found.Interrupt()
+		if err := found.Say(ctx, message); err != nil && !found.closingNow() {
+			m.logger.Warn("could not leave a voicemail", "session", found.id, "error", err)
+		} else if err := found.current().Finish(ctx); err != nil && !found.closingNow() {
+			m.logger.Warn("hung up on an answering machine before the voicemail was heard out",
+				"session", found.id, "error", err)
+		}
+		cancel()
+	}
+	// Leaving the call alone would leave the machine recording until it gives up.
+	if spec.Phone.Number != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		if err := m.options.Phone.EndCall(ctx, spec.CustomerID, spec.StreamApp, spec.CallType, spec.CallID); err != nil {
+			m.logger.Warn("could not end the call of a voicemail left", "session", found.id, "error", err)
+		}
+		cancel()
+	}
+	m.hangUp(found, EndVoicemail)
+}
+
+// hangUpRinging hangs up the call created placed when it ends before anybody answered,
+// which would otherwise ring on with no agent to answer it. In the background, so a slow
+// vendor holds up neither the rest of the close nor a shutdown closing the next session.
+func (m *Manager) hangUpRinging(created *Session, spec Spec) {
+	if created.CallerJoined() || created.handedOver.Load() {
+		return
+	}
+	m.ended.Add(1)
+	go func() {
+		defer m.ended.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		defer cancel()
+		if err := m.options.Phone.HangUpUnanswered(ctx, spec.CustomerID, spec.CallID); err != nil {
+			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "call", spec.CallID, "customer", spec.CustomerID, "error", err)
+		}
+	}()
+}
+
+// hangUpTimeout bounds ending a call: at Stream once the voicemail is left, or at the vendor
+// while it still rings.
+const hangUpTimeout = 5 * time.Second
+
+// releaseTimeout bounds taking back this node's claim on a session. Short, because a
+// claim that is not taken back expires on its own.
+const releaseTimeout = 2 * time.Second
+
+// release stops telling this deployment's other nodes that a session is here.
+func (m *Manager) release(id string) {
+	if m.options.Directory == nil {
+		return
+	}
+	// Not the caller's context: a session is let go of on paths that have none, and one
+	// cancelled the moment the answer is written would leave the claim behind.
+	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	m.options.Directory.Release(ctx, id)
+}
+
+// Running reports whether this process is running a session, whoever it belongs to.
+//
+// No owner is asked for, unlike Get, because which node holds a session is not a question
+// about who may see it: the node that answers checks that for itself.
+func (m *Manager) Running(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, running := m.sessions[id]
+	return running
+}
+
+// SandboxesIn reports whether a session's sandbox can be made in region: a config naming a
+// sandbox in a region with no Daytona target here is refused as it is written.
+func (m *Manager) SandboxesIn(region string) bool {
+	return m.options.Sandboxes.Serves(region)
+}
+
+// Len is how many sessions this process is running, which is what a draining router waits
+// on before it ends the rest.
+func (m *Manager) Len() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return len(m.sessions) + m.closing
+}
+
+// FlushRecords waits until every row queued so far is written, so a session that ended a
+// moment ago can be read back from the store.
+func (m *Manager) FlushRecords(ctx context.Context) error {
+	if m.records == nil {
+		return nil
+	}
+	return m.records.Flush(ctx)
+}
+
+// Delete stops a session if it is running and deletes it: its row, its turns, and what it
+// taught the memory store. Whoever asks has to have checked the session is the owner's, since
+// one that ended is no longer here to check against.
+func (m *Manager) Delete(ctx context.Context, id string, owner Owner) error {
+	if _, err := m.Close(id, owner); err != nil {
+		return err
+	}
+	// The row is written behind the conversation, so a session opened a moment ago may not
+	// have one yet; deleting before it lands would leave it to be written afterwards.
+	if m.records != nil {
+		if err := m.records.Flush(ctx); err != nil {
+			return err
+		}
+	}
+	// The memories go before the row, so a store that fails keeps the session to delete again.
+	if m.options.Memory != nil && m.mayRemember(ctx, owner.CustomerID, id) {
+		if err := m.options.Memory.For(forgetting(ctx, owner.CustomerID)).ForgetRun(ctx, owner.CustomerID, id); err != nil {
+			return memoryFailed(ctx, err)
+		}
+	}
+	if m.options.Store == nil {
+		return nil
+	}
+	return m.options.Store.DeleteSession(ctx, owner.CustomerID, id)
+}
+
+// mayRemember is whether a session could have taught the memory store anything. Only a row
+// saying it was opened without a memory user id says no: asking the store to forget is a
+// retrieval its quota counts, and a session with nothing there need not depend on the store
+// answering. A row from before rows said, no row (an incognito session keeps none), or a row
+// that could not be read are forgotten as before, since skipping would leave memories behind.
+func (m *Manager) mayRemember(ctx context.Context, customerID, id string) bool {
+	if m.options.Store == nil {
+		return true
+	}
+	row, err := m.options.Store.StoredSession(ctx, customerID, id)
+	if err != nil {
+		return true
+	}
+	return row.Remembers == nil || *row.Remembers
+}
+
+// TruncateMemories deletes everything remembered about one of the customer's users, from
+// every session and every agent.
+//
+// The copies of the user's hidden branches go with them: they are what the user said as much
+// as what was learned from it.
+func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
+	if m.options.Memory == nil {
+		return stack.Wrap(ErrNoMemory)
+	}
+	if m.options.Store != nil {
+		if _, err := m.options.Store.DeleteUserBranchMessages(ctx, customerID, userID); err != nil {
+			return err
+		}
+	}
+	return memoryFailed(ctx, m.options.Memory.For(forgetting(ctx, customerID)).Truncate(ctx, customerID, userID))
+}
+
+// ForgetSession deletes what one session learned. Whoever asks has to have checked the
+// session is the customer's: the id alone says nothing about whose it is.
+func (m *Manager) ForgetSession(ctx context.Context, customerID, sessionID string) error {
+	if m.options.Memory == nil {
+		return stack.Wrap(ErrNoMemory)
+	}
+	return memoryFailed(ctx, m.options.Memory.For(forgetting(ctx, customerID)).ForgetRun(ctx, customerID, sessionID))
+}
+
+// forgetting is who deleting a customer's memories is recorded for: the customer, and whoever
+// asked through the request.
+func forgetting(ctx context.Context, customerID string) routing.Owner {
+	return routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx)}
+}
+
+// Shutdown ends every session, which is what a router does on its way down rather than
+// dropping calls by exiting.
+func (m *Manager) Shutdown() error {
+	m.mu.Lock()
+	m.closed = true
+	running := make([]*Session, 0, len(m.sessions))
+	for _, found := range m.sessions {
+		running = append(running, found)
+	}
+	m.sessions = map[string]*Session{}
+	m.mu.Unlock()
+
+	// Each close may wait for the agent to finish speaking, so every session stops being
+	// billed before the first of them is closed.
+	for _, found := range running {
+		found.runtime.Stop()
+	}
+	var failures []error
+	for _, found := range running {
+		if err := found.halt(); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	m.ended.Wait()
+
+	// The recorders go last so the endings those closes queued are written rather than
+	// lost on the way out. The reviews go with it: a summary is worth having, but not
+	// worth holding a shutdown open for a model to finish writing.
+	m.titles.Close()
+	m.cards.Close()
+	// A writer the manager shares is left open; its own is drained of the last slices.
+	if m.runtime != nil {
+		m.runtime.Close()
+	}
+	if m.calls != nil {
+		m.reviews.Close()
+		m.calls.Close()
+		m.records.Close()
+		m.logs.close()
+	}
+	if m.invocations != nil {
+		m.invocations.Close()
+	}
+	// A conversation store the caller passed in outlives this manager.
+	if m.conversations != nil && m.options.Conversations == nil {
+		m.conversations.Close()
+	}
+	return errors.Join(failures...)
+}
+
+// box is where the session's subagent runs the code it writes, which is nowhere unless the
+// caller asked for a sandbox. Nothing is created here: the provider opens one the first
+// time code is actually run, so a session that never delegates never pays for it. Neither
+// is a credential handed to the broker before then.
+//
+// A sandbox bigger or more open than the organization's sandbox limits allow is not made: the
+// session runs without one, as a session configured with none does.
+func (m *Manager) box(ctx context.Context, spec Spec, connectors *dispatcher) (sandbox.Sandbox, error) {
+	if spec.Sandbox == "" {
+		return nil, nil
+	}
+	if spec.Sandbox != daytonaProvider {
+		return nil, stack.Wrap(fmt.Errorf("session: there is no sandbox provider called %q", spec.Sandbox))
+	}
+	granted := connectors != nil && len(connectors.grants) > 0
+	slots, err := m.options.SandboxLimits.Sandbox(ctx, owner(spec), policy.SandboxAsk{Config: spec.SandboxOptions, Granted: granted})
+	if err != nil {
+		m.logger.Warn("the session runs without its sandbox, which its organization's sandbox limits do not allow",
+			"code", policy.SandboxLimitCode, "customer", spec.CustomerID, "session", spec.ID, "error", err)
+		return nil, nil
+	}
+	asked := metered.SandboxSpec{Config: spec.SandboxOptions, Slots: slots}
+	if granted {
+		broker, err := m.broker(spec, connectors)
+		if err != nil {
+			return nil, err
+		}
+		asked.Grants, asked.Broker = connectors.grants, broker
+	}
+	box, err := m.options.Sandboxes.Open(ctx, owner(spec), asked)
+	if err != nil || connectors == nil || !slices.ContainsFunc(asked.Grants, func(grant sandbox.Grant) bool { return grant.Late }) &&
+		len(connectors.reconnect) == 0 {
+		return box, err
+	}
+	return &connecting{Sandbox: box, d: connectors, delayed: m.options.SandboxBroker != egress.BrokerName, asks: spec.Text,
+		opened: map[string]bool{}}, nil
+}
+
+// reading reports whether this session has anything to look things up in, which is a
+// knowledge store and a namespace to read out of it.
+func (m *Manager) reading(spec Spec) bool {
+	return m.options.Knowledge != nil && spec.KnowledgeNamespace != ""
+}
+
+// searching reports whether this session can find out what is true now. Unlike a handbook
+// today is not scoped to a customer, so all this asks is that something routes the search.
+func (m *Manager) searching(spec Spec) bool {
+	return m.options.Search != nil && spec.SearchTarget != ""
+}
+
+// guardrail builds what screens this session's turns, or nil where the agent declared no
+// policy.
+//
+// A policy that cannot be honoured refuses the session rather than starting one that
+// screens nothing. That is the one decision in this feature worth being strict about:
+// every other failure here loses a reply, and this one would answer a question the
+// customer wrote a file to prevent being answered.
+func (m *Manager) guardrail(ctx context.Context, spec Spec, stream streamapp.Identity) (guardrail.Guardrail, error) {
+	if strings.TrimSpace(spec.Guardrail) == "" {
+		return nil, nil
+	}
+
+	// A native model hears the caller and speaks back on its own: nothing here sees the
+	// words before they are answered, and there is no reply to hold while a verdict
+	// arrives. Refusing is the honest answer - the alternative is a guardrail that is
+	// configured, reported, and enforcing nothing.
+	if spec.Native() {
+		return nil, stack.Wrap(errors.New(
+			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns"))
+	}
+
+	policy, err := guardrail.Parse(spec.Guardrail)
+	if err != nil {
+		return nil, err
+	}
+
+	return guardrail.New(ctx, policy, guardrail.Deps{
+		Owner: routing.Owner{
+			CustomerID:  spec.CustomerID,
+			Attribution: spec.Attribution,
+			AgentID:     spec.AgentID,
+			CallID:      spec.CallID,
+			Region:      spec.Region,
+			Tags:        spec.Tags,
+		},
+		Classifier: m.options.Classifier,
+		LLM:        m.options.LLM,
+		Secret:     stream.Secret.Reveal(),
+		APIKey:     ownKey(spec.CustomerID, stream),
+		HTTPClient: m.options.GuardrailHTTP,
+		Logger:     m.logger,
+	})
+}
+
+// stream is the Stream app a new session acts in. A deployment with no Stream app still
+// holds a text conversation, so having none is not an error here: what needs one fails
+// where it needs it.
+func (m *Manager) stream(ctx context.Context, spec Spec) (streamapp.Bound, error) {
+	nowhere := streamapp.Bound{Identity: streamapp.Identity{CustomerID: spec.CustomerID}}
+	if m.options.Stream == nil {
+		return nowhere, nil
+	}
+	// A session a hook started acts in the app the hook came from.
+	if pin, ok := m.hookPin(spec); ok {
+		bound, err := m.options.Stream.ForApp(ctx, spec.CustomerID, pin)
+		if err != nil {
+			return streamapp.Bound{}, fmt.Errorf("session: the app the hook for this session came from: %w", err)
+		}
+		return bound, nil
+	}
+	// A call that already has lines, a number's or a placed call's, is in the app they were
+	// made in, and the agent has to join it there.
+	if m.options.Store != nil && spec.CallID != "" && !spec.Text {
+		pin, found, err := m.options.Store.CallPin(ctx, spec.CustomerID, spec.CallType, spec.CallID)
+		if err != nil {
+			return streamapp.Bound{}, err
+		}
+		if found {
+			bound, err := m.options.Stream.ForApp(ctx, spec.CustomerID, pin)
+			if err != nil {
+				return streamapp.Bound{}, fmt.Errorf("session: the app call %s is in: %w", spec.CallID, err)
+			}
+			return bound, nil
+		}
+	}
+	bound, err := m.options.Stream.For(ctx, spec.CustomerID)
+	if errors.Is(err, streamapp.ErrNoIdentity) {
+		return nowhere, nil
+	}
+	if err != nil {
+		return streamapp.Bound{}, fmt.Errorf("session: which Stream app to act in: %w", err)
+	}
+	return bound, nil
+}
+
+// hookPinFor is how long a hook's app is remembered for the session it starts.
+const hookPinFor = 10 * time.Minute
+
+type hookPinned struct {
+	app int64
+	at  time.Time
+	// handedOut is a channel a message in was handed to a worker (HandOut).
+	handedOut bool
+	// deployment is a hook the deployment signed, which pins no app: the session acts in
+	// whatever app its customer acts in by the time it starts.
+	deployment bool
+	// user is the Stream user who wrote the message handed out (HandOut).
+	user string
+}
+
+// PinHook remembers which app a hook for a customer's call or channel came from, for the
+// session a worker opens to answer it, which acts there.
+func (m *Manager) PinHook(customer, cid string, app int64) {
+	m.pin(customer, cid, hookPinned{app: app})
+}
+
+// HandOut remembers that a message user wrote in a customer's channel cid was handed to one
+// of its workers, from a hook of app (deployment: the deployment signed it). The text session
+// the worker opens under the channel's id answers in that channel (handedOut), and may read
+// user's episode cards (Spec.HandedOutBy). A hook of a registered app pins the session's app
+// too, as PinHook does.
+//
+// The worker opens its session with a request of its own, which any node may take, so the
+// Directory carries the hand-out to the others.
+func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool, user string) {
+	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment, user: user})
+	if m.options.Directory == nil {
+		return
+	}
+	entry, err := json.Marshal(handOut{App: app, Deployment: deployment, User: user})
+	if err != nil {
+		m.logger.Warn("could not say a channel's message was handed to a worker", "channel", cid, "error", err)
+		return
+	}
+	m.options.Directory.HandOut(ctx, customer, cid, entry, hookPinFor)
+}
+
+// handOut is a hand-out as the Directory carries it to the other nodes, for hookPinFor.
+type handOut struct {
+	App        int64 `json:"app"`
+	Deployment bool  `json:"deployment"`
+	// User is empty in a hand-out a node from before it made, which names nobody.
+	User string `json:"user,omitempty"`
+}
+
+func (m *Manager) pin(customer, cid string, pinned hookPinned) {
+	m.hookPinsMu.Lock()
+	defer m.hookPinsMu.Unlock()
+	now := time.Now()
+	for key, pinned := range m.hookPins {
+		if now.Sub(pinned.at) > hookPinFor {
+			delete(m.hookPins, key)
+		}
+	}
+	pinned.at = now
+	m.hookPins[customer+"\x00"+cid] = pinned
+}
+
+// hookPin is the app a hook for the session's call or channel came from, if one did lately.
+func (m *Manager) hookPin(spec Spec) (int64, bool) {
+	cid := streamapp.AgentChannelType + ":" + spec.AgentID
+	if spec.CallID != "" && !spec.Text {
+		cid = spec.CallType + ":" + spec.CallID
+	}
+	m.hookPinsMu.Lock()
+	defer m.hookPinsMu.Unlock()
+	pinned, ok := m.hookPins[spec.CustomerID+"\x00"+cid]
+	if !ok || pinned.deployment || time.Since(pinned.at) > hookPinFor {
+		return 0, false
+	}
+	return pinned.app, true
+}
+
+// handedOut is the channel a text session answers in when a worker opens it to answer a
+// message the router handed out there (HandOut): its customer's own backend, with no end user
+// it acts for, asking under the channel's id, in the app the message was written in, for a
+// persistent conversation it names no channel for, within hookPinFor of the hand-out. Any
+// other session keeps a channel of its own, as it always has: a device or a backend acting
+// for one of its users is not the worker, and a channel of another customer or app is not
+// the one handed out. by is who wrote the message handed out.
+func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (cid, by string, handed bool) {
+	if !spec.Text || !spec.PersistConversation || spec.Incognito || spec.ConversationID != "" || spec.Recall != nil ||
+		spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
+		return "", "", false
+	}
+	cid = streamapp.AgentChannelType + ":" + spec.AgentID
+	pinned, ok := m.handOutOf(ctx, spec.CustomerID, cid)
+	if !ok {
+		return "", "", false
+	}
+	if pinned.deployment == stream.Identity.Registered || (!pinned.deployment && stream.Identity.StreamApp != pinned.app) {
+		return "", "", false
+	}
+	return cid, pinned.user, true
+}
+
+// handOutOf is the hand-out of a customer's channel within hookPinFor: this node's, else the
+// one another node made (HandOut).
+func (m *Manager) handOutOf(ctx context.Context, customer, cid string) (hookPinned, bool) {
+	m.hookPinsMu.Lock()
+	pinned, ok := m.hookPins[customer+"\x00"+cid]
+	m.hookPinsMu.Unlock()
+	if ok && pinned.handedOut && time.Since(pinned.at) <= hookPinFor {
+		return pinned, true
+	}
+	if m.options.Directory == nil {
+		return hookPinned{}, false
+	}
+	entry, err := m.options.Directory.HandedOut(ctx, customer, cid)
+	if err != nil {
+		m.logger.Warn("could not read whether a channel's message was handed to a worker", "channel", cid, "error", err)
+		return hookPinned{}, false
+	}
+	var handed handOut
+	if entry == nil || json.Unmarshal(entry, &handed) != nil {
+		return hookPinned{}, false
+	}
+	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true, user: handed.User}, true
+}
+
+// ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
+// app to keep it in.
+var ErrNoStreamApp = errors.New("session: this app has no Stream app to keep the conversation in: " +
+	"call through the gateway with this app's own Stream keys, or open an incognito session")
+
+// ErrConversationReadOnly is a conversation kept in the router's shared Stream app, which its
+// customer may read and no longer add to.
+var ErrConversationReadOnly = errors.New("session: this conversation is kept in the router's shared " +
+	"Stream app and can only be read there: fork it to carry on")
+
+// ErrConversationElsewhere is a call bound to a conversation kept in another Stream app than
+// the one the call is made in.
+var ErrConversationElsewhere = errors.New("session: this conversation is kept in another Stream app " +
+	"than this call is made in: fork it to carry on")
+
+// keepable refuses a conversation that has nowhere safe to be kept. In app mode
+// an app the router holds no token for has nowhere at all, which used to mean a
+// conversation quietly not kept; and an app of its own whose agent channel type lets a
+// client make, change or join a conversation's channel would keep it where anybody could
+// rewrite whose it is.
+func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
+	if m.options.Stream == nil || !m.options.Stream.PerApp() || !spec.PersistConversation {
+		return nil
+	}
+	if stream.Client == nil {
+		return ErrNoStreamApp
+	}
+	if !stream.Identity.Registered {
+		return nil
+	}
+	// A conversation the Router holds on a channel of another type, one an agent config answers
+	// in, trusts that type's grants as an agent channel's are trusted.
+	channelType, _ := spec.ConversationChannel()
+	named := cmp.Or(channelType, streamapp.AgentChannelType)
+	readiness, err := m.options.Stream.ReadinessOf(ctx, stream, named)
+	if err != nil {
+		// Stream being out of reach is found out by the conversation itself, which says so.
+		m.logger.Warn("could not check the Stream app a conversation is kept in", "customer_id", spec.CustomerID, "error", err)
+		return nil
+	}
+	var refused error
+	switch readiness.ChannelType {
+	case streamapp.TypeMissing:
+		refused = ErrNoAgentChannelType
+	case streamapp.TypeUnsafe:
+		refused = ErrUnsafeAgentChannelType
+	}
+	if refused != nil && named != streamapp.AgentChannelType {
+		return fmt.Errorf("session: the %s channel type, checked as the agent channel type is: %w", named, refused)
+	}
+	return refused
+}
+
+// ErrNoAgentChannelType is a conversation to keep in a Stream app of the customer's own that
+// has no agent channel type.
+var ErrNoAgentChannelType = fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in",
+	streamapp.AgentChannelType)
+
+// ErrUnsafeAgentChannelType is a conversation to keep in a Stream app of the customer's own
+// whose agent channel type lets clients make, change or join channels.
+var ErrUnsafeAgentChannelType = fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
+	"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+
+// ErrNoAgentCallType is a session that would join an agent call in a Stream app of the
+// customer's own that has no agent call type, which Stream refuses the call for.
+var ErrNoAgentCallType = fmt.Errorf("session: this app's Stream app has no %s call type to make the agent's call in: "+
+	`create it with getstream api CreateCallType --request '{"name":"%s"}'`, streamapp.AgentCallType, streamapp.AgentCallType)
+
+// callable refuses a session that would join a Stream call of the agent call type in an
+// app of the customer's own that Stream says has none. Only a definite answer refuses: an
+// app that could not be asked is left to the call, as before.
+func (m *Manager) callable(ctx context.Context, spec Spec, stream streamapp.Bound) error {
+	if spec.Text || spec.Edge != nil || spec.CallType != streamapp.AgentCallType {
+		return nil
+	}
+	if m.options.Stream == nil || stream.Client == nil || !stream.Identity.Registered {
+		return nil
+	}
+	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	if err != nil {
+		m.logger.Warn("could not check the Stream app a call is made in", "customer_id", spec.CustomerID, "error", err)
+		return nil
+	}
+	if readiness.CallType == streamapp.TypeMissing {
+		return ErrNoAgentCallType
+	}
+	return nil
+}
+
+// sameApp refuses a call on a conversation kept in another app than the call is made in:
+// the agent would join the call in one app and look for the conversation's channel in it,
+// where it is not.
+func (m *Manager) sameApp(ctx context.Context, service *persistent.Service, spec Spec) error {
+	if m.options.Stream == nil {
+		return nil
+	}
+	kept, err := service.AppOf(ctx, spec.CustomerID, spec.ConversationID)
+	if err != nil {
+		return err
+	}
+	deployment := m.options.Stream.DeploymentApp()
+	same := func(a, b int64) bool {
+		if a == 0 {
+			a = deployment
+		}
+		if b == 0 {
+			b = deployment
+		}
+		return a == b
+	}
+	if !same(kept, spec.StreamApp) {
+		return ErrConversationElsewhere
+	}
+	return nil
+}
+
+// ownKey is the key a guardrail webhook names when the session acts in its customer's own
+// app, so the customer can tell which of their keys signed it. A session acting in the
+// deployment's shared app names none, and is signed as it always was.
+func ownKey(customer string, stream streamapp.Identity) string {
+	if stream.StreamApp == 0 || streamapp.CustomerOf(stream.StreamApp) != customer {
+		return ""
+	}
+	return stream.APIKey
+}
+
+// line is what the session may do to the call it is on, which is nothing unless it was
+// given a number to act from.
+func (m *Manager) line(spec Spec) (agent.Telephony, error) {
+	if spec.Phone == nil || spec.Phone.Number == "" {
+		return nil, nil
+	}
+	if m.options.Phone == nil {
+		return nil, stack.Wrap(errors.New("session: this deployment has no telephony, so a number cannot be used"))
+	}
+
+	return m.options.Phone.Line(phone.LineOptions{
+		Owner:        routing.Owner{CustomerID: spec.CustomerID, Attribution: spec.Attribution, Tags: spec.Tags},
+		From:         spec.Phone.Number,
+		CallID:       spec.CallID,
+		CallType:     spec.CallType,
+		StreamApp:    spec.StreamApp,
+		Vendor:       spec.Phone.Vendor,
+		VendorCallID: spec.Phone.VendorCallID,
+	}), nil
+}
+
+// ErrSessionExists is a session asked for by an id some session already has.
+var ErrSessionExists = errors.New("session: a session with that id already exists")
+
+// ErrAppSettingsUnreadable is an app's settings that could not be read. It is the router's
+// failure, not the caller's request.
+var ErrAppSettingsUnreadable = errors.New("session: the app's settings could not be read")
+
+// ErrNoMemory is memory asked of a deployment with no memory provider.
+var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// ErrMemoryRegion is memory asked for an agent kept outside the default region. The memory
+// provider keeps everything in the US, and an agent's work is done in its own region only.
+var ErrMemoryRegion = errors.New("session: memory is kept in region us only, so a session in another region cannot remember")
+
+// ErrMemoryFailed is a memory store that failed to do what it was asked, such as a vendor
+// answering 429. Asking again later may succeed.
+var ErrMemoryFailed = errors.New("session: the memory store failed")
+
+// memoryFailed is err from the memory store, marked as the store's failure. Nil is nil.
+// A caller who hung up is not the store failing, so err stays as it is once ctx is done.
+func memoryFailed(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return err
+	}
+	return stack.Wrap(fmt.Errorf("%w: %w", ErrMemoryFailed, err))
+}
+
+// newID is a handle for an agent or a turn. It is random rather than sequential because it
+// is the only thing standing between two customers who both guessed at an id.
+func newID() string {
+	raw := make([]byte, 16)
+	// rand.Read on crypto/rand never returns an error, which is why the result is not
+	// checked: the alternative would be a session that could not be created.
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
+// keepBranches has service keep its conversations' branch switches in tree, and finish the
+// ones a router left unfinished with the sessions' responses there.
+func keepBranches(service *persistent.Service, tree *store.Store) {
+	service.SetBranches(tree)
+	service.SetSwitchHooks(switchHooks(tree))
+}
+
+func (m *Manager) Conversations() (*persistent.Service, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.conversations == nil {
+		// A conversation is kept in the Stream app its session acts in, so without a way
+		// to say which app that is there is nowhere to keep one.
+		if m.options.Stream == nil {
+			return nil, stack.Wrap(errors.New("Stream Chat credentials are required for persistent conversations"))
+		}
+		service := persistent.NewForChats(persistent.StreamApps(m.options.Stream))
+		if m.options.Store != nil {
+			service.SetPins(m.options.Store.ConversationPin)
+			keepBranches(service, m.options.Store)
+		}
+		m.conversations = service
+	}
+	return m.conversations, nil
+}
+
+// drawer queues the pictures a session is asked for into its conversation, as the agent's
+// messages. Nil, which offers no generate_image, without a deployment that draws, a
+// conversation kept in a channel to post into, or an image target.
+func (m *Manager) drawer(spec Spec, conv *persistent.Conversation) agent.Drawer {
+	if m.options.Drawings == nil || conv == nil || spec.ImageTarget == "" {
+		return nil
+	}
+	return func(ctx context.Context, request agent.DrawRequest) (bool, error) {
+		return m.options.Drawings.Queue(ctx, imagejobs.Request{
+			CustomerID: spec.CustomerID, StreamApp: conv.StreamApp(), CID: conv.CID(), AgentUser: conv.Agent(),
+			SessionID: request.SessionID, TurnID: request.TurnID, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
+			Target: request.Target, Tags: request.Tags, Attribution: request.Attribution,
+			Prompt: request.Prompt, AspectRatio: request.AspectRatio,
+		})
+	}
+}
+
+// publisher is where files the subagent's code hands back are shown: the conversation's
+// channel when the session is kept in one, and nowhere when it is not.
+func publisher(conv *persistent.Conversation) sandbox.Publisher {
+	if conv == nil {
+		return nil
+	}
+	return conv.Publish
+}
+
+// callTools is the built-in tools a config's calls settings leave on. A session opened
+// from code, with no config, keeps all of them.
+func (s Spec) callTools(builtin []harness.Tool) []harness.Tool {
+	var kept []harness.Tool
+	for _, tool := range builtin {
+		switch {
+		case tool.Name == "end_call" && !s.endsCalls():
+			continue
+		case s.ConfigID == "":
+		case tool.Name == "transfer" && !s.Calls.TransferOn() || tool.Name == "press" && !s.Calls.PressOn():
+			continue
+		}
+		kept = append(kept, tool)
+	}
+	return kept
+}
+
+// endsCalls reports whether the config lets the agent hang up. A session with no config
+// never may.
+func (s Spec) endsCalls() bool {
+	return s.ConfigID != "" && s.Calls.EndCallOn()
+}
+
+// endCallWhen is when the config tells the agent to hang up, empty for the agent's default.
+func (s Spec) endCallWhen() string {
+	if s.Calls.EndCall == nil {
+		return ""
+	}
+	return s.Calls.EndCall.When
+}
+
+// destinations are the places the config lets the agent transfer to. A session that
+// declares its own transfer keeps it, and the router keeps running it with a number.
+func (s Spec) destinations() []agent.Destination {
+	if s.ConfigID == "" || s.Calls.Transfer == nil || !s.Calls.TransferOn() {
+		return nil
+	}
+	for _, tool := range s.Tools {
+		if tool.Name == "transfer" {
+			return nil
+		}
+	}
+	var destinations []agent.Destination
+	for _, d := range s.Calls.Transfer.Destinations {
+		destinations = append(destinations, agent.Destination{Name: d.Name, Number: d.Number, When: d.When, Warm: d.Warm})
+	}
+	return destinations
+}

@@ -1,0 +1,286 @@
+import 'package:stream_chat/stream_chat.dart' as stream;
+import 'package:test/test.dart';
+import 'package:stream_agents/src/chat/chat.dart';
+import 'package:stream_agents/src/core/core.dart';
+
+void main() {
+  late StreamAgents agents;
+
+  AgentSession sessionOf(StreamAgents agents, {String conversationId = 'messaging:s1'}) =>
+      AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026), conversationId: conversationId),
+        backend: agents.backend,
+        sessions: agents.sessions,
+      );
+
+  setUp(() {
+    agents = StreamAgents(
+      url: Uri.parse('http://127.0.0.1:9'),
+      apiKey: 'stream-key',
+      userId: 'ada',
+      token: () async => 't',
+    );
+  });
+
+  tearDown(() => agents.close());
+
+  group('chat', () {
+    test('opens the channel the conversation is kept in, on the app\'s own client', () async {
+      final client = stream.StreamChatClient('stream-key');
+      agents.useChat(client);
+
+      final channel = await sessionOf(agents).chat();
+
+      expect(channel.type, 'messaging');
+      expect(channel.id, 's1');
+      expect(channel.client, same(client));
+      await agents.disconnect();
+      expect(await sessionOf(agents).chat().then((channel) => channel.client), same(client));
+      await client.dispose();
+    });
+
+    test('every session shares the one client', () async {
+      final client = stream.StreamChatClient('stream-key');
+      agents.useChat(client);
+
+      final first = await sessionOf(agents).chat();
+      final second = await sessionOf(agents, conversationId: 'messaging:s2').chat();
+
+      expect(second.client, same(first.client));
+      await client.dispose();
+    });
+
+    test('a session that keeps no transcript has no channel', () async {
+      expect(sessionOf(agents, conversationId: '').chat(), throwsStateError);
+    });
+
+    test('needs the Stream app\'s key, which a customer id alone is not', () async {
+      final byCustomer = StreamAgents(url: Uri.parse('http://127.0.0.1:9'), customerId: 'acme');
+
+      expect(sessionOf(byCustomer).chat(), throwsArgumentError);
+      byCustomer.close();
+    });
+  });
+
+  // The windows of thinking the router puts on a reply's live updates, as `reasoningWindow` in
+  // `acceleration/internal/conversation/reasoning.go` writes them.
+  group('LiveReasoning', () {
+    late LiveReasoning reasoning;
+
+    void window(String text, int offset, [String id = 'r1', String message = 'reply']) =>
+        reasoning.read(
+          stream.Message(
+            id: message,
+            text: 'ignored',
+            extraData: {
+              'reasoning': {
+                'id': id,
+                'offset': offset,
+                'text': text,
+                'length': offset + text.length,
+              },
+            },
+          ),
+        );
+
+    setUp(() => reasoning = LiveReasoning());
+
+    test('windows in order make the whole thinking', () {
+      window('The order was ', 0);
+      window('delivered unopened.', 14);
+
+      expect(reasoning[(message: 'reply', step: 'r1')], 'The order was delivered unopened.');
+    });
+
+    test('a repeat of recent thinking adds only what is new', () {
+      window('Checking the policy', 0);
+
+      window('the policy, which allows 30 days', 9);
+      window('policy', 13);
+
+      expect(
+        reasoning[(message: 'reply', step: 'r1')],
+        'Checking the policy, which allows 30 days',
+      );
+    });
+
+    test('a missed window leaves a paragraph break rather than running on', () {
+      window('First thought.', 0);
+
+      window('Much later.', 40);
+
+      expect(reasoning[(message: 'reply', step: 'r1')], 'First thought.\n\nMuch later.');
+    });
+
+    test('somebody joining midway starts from the window they get', () {
+      window('the rest of it', 300, 'r2');
+
+      expect(reasoning[(message: 'reply', step: 'r2')], 'the rest of it');
+      expect(reasoning[(message: 'reply', step: 'r1')], isNull);
+    });
+
+    test('positions count code points as the router does', () {
+      window('café ', 0);
+
+      window(' 🌸 bloom', 4);
+
+      expect(reasoning[(message: 'reply', step: 'r1')], 'café 🌸 bloom');
+    });
+
+    test('a window repeating thinking with emoji in it adds only what follows', () {
+      window('🌸 one 🌼', 0);
+
+      window('🌼 two', 6);
+
+      expect(reasoning[(message: 'reply', step: 'r1')], '🌸 one 🌼 two');
+    });
+
+    // Every reply numbers its steps from `r1`, so a later reply's first round is not the
+    // earlier one's, whether it thinks for less or for more.
+    test('each reply keeps the thinking of its own steps', () {
+      window('Looking up the order history and the return policy.', 0, 'r1', 'first');
+
+      window('Refund it.', 0, 'r1', 'second');
+      window(
+        'Checking which of the two orders arrived damaged, then the refund window.',
+        0,
+        'r1',
+        'third',
+      );
+
+      expect(
+        reasoning[(message: 'first', step: 'r1')],
+        'Looking up the order history and the return policy.',
+      );
+      expect(reasoning[(message: 'second', step: 'r1')], 'Refund it.');
+      expect(
+        reasoning[(message: 'third', step: 'r1')],
+        'Checking which of the two orders arrived damaged, then the refund window.',
+      );
+    });
+
+    test('a message with no window changes nothing', () {
+      reasoning.read(stream.Message(id: 'reply', text: 'Hello'));
+
+      expect(reasoning[(message: 'reply', step: 'r1')], isNull);
+    });
+  });
+
+  group('LiveUI', () {
+    test('overlays streaming socket UI and yields to settled Stream Chat ai_ui', () {
+      final liveUI = LiveUI();
+      final conversation = const Conversation()
+          .apply(AgentEvent.tryParse('{"type":"responding","turn_id":"t1"}')!)
+          .apply(
+            AgentEvent.tryParse(
+              '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+              r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}',
+            )!,
+          );
+
+      expect(liveUI.observe(conversation), isTrue);
+      expect(liveUI.observe(conversation), isFalse);
+
+      final inFlight = stream.Message(
+        id: 'm1',
+        text: '',
+        extraData: const {'ai_generated': true, 'generating': true},
+      );
+      final overlaid = liveUI.overlay([inFlight]);
+      expect(overlaid.single.extraData['ai_ui'], {
+        'v': 1,
+        'format': 'openui',
+        'status': 'streaming',
+        'content': 'root = Card([hdr])\nhdr = CardHeader("Kaneo")',
+      });
+      expect(identical(liveUI.overlay([inFlight]).single, overlaid.single), isTrue);
+
+      final settled = stream.Message(
+        id: 'm1',
+        text: 'Here is Kaneo.',
+        extraData: const {
+          'ai_generated': true,
+          'generating': false,
+          'ai_ui': {
+            'v': 1,
+            'format': 'openui',
+            'status': 'complete',
+            'content': 'root = Card([hdr])\nhdr = CardHeader("Kaneo")',
+          },
+        },
+      );
+      expect(identical(liveUI.overlay([settled]).single, settled), isTrue);
+    });
+
+    const card = r'root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")';
+    AgentEvent event(String json) => AgentEvent.tryParse(json)!;
+    stream.Message reply(String id, Map<String, Object?> extra) =>
+        stream.Message(id: id, text: '', extraData: {'ai_generated': true, ...extra});
+
+    test('never shows the card of the reply before on the reply to a follow-up or a tap', () {
+      final liveUI = LiveUI();
+      var conversation = const Conversation()
+          .said('Find me dinner near the lake')
+          .apply(event('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            event('{"type":"ui_completed","turn_id":"t1","format":"openui","content":"$card"}'),
+          );
+      liveUI.observe(conversation);
+      final first = reply('r1', {
+        'generating': false,
+        'ai_ui': {'v': 1, 'format': 'openui', 'status': 'complete', 'content': 'x'},
+        'support_runtime': {'role': 'assistant', 'turn_id': 't1'},
+      });
+
+      // Asked again: the new reply is in Chat before the agent starts, with no turn id yet.
+      conversation = conversation.said('Reserve table T2 (Window for 2)');
+      liveUI.observe(conversation);
+      final waiting = reply('r2', {'generating': true});
+      expect(identical(liveUI.overlay([first, waiting])[1], waiting), isTrue);
+
+      // The agent starts, and its reply names its turn, which has no UI yet.
+      conversation = conversation.apply(event('{"type":"responding","turn_id":"t2"}'));
+      liveUI.observe(conversation);
+      expect(identical(liveUI.overlay([first, waiting])[1], waiting), isTrue);
+      final writing = reply('r2', {
+        'generating': true,
+        'support_runtime': {'role': 'assistant', 'turn_id': 't2'},
+      });
+      expect(identical(liveUI.overlay([first, writing])[1], writing), isTrue);
+
+      // Its own UI streams in, with or without its turn id in Chat yet.
+      conversation = conversation.apply(
+        event(
+          '{"type":"ui_delta","turn_id":"t2","format":"openui",'
+          r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Booked\")"}',
+        ),
+      );
+      liveUI.observe(conversation);
+      for (final message in [waiting, writing]) {
+        final shown =
+            liveUI.overlay([first, message])[1].extraData['ai_ui'] as Map<Object?, Object?>;
+        expect(shown['content'], contains('Booked'));
+      }
+    });
+
+    test('shows what Chat stored once Chat says the reply is written', () {
+      final liveUI = LiveUI();
+      final conversation = const Conversation()
+          .said('Book Kaneo for two')
+          .apply(event('{"type":"responding","turn_id":"t1"}'))
+          .apply(event('{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"$card"}'));
+      liveUI.observe(conversation);
+      const turn = {'role': 'assistant', 'turn_id': 't1'};
+      final writing = reply('r1', {'generating': true, 'support_runtime': turn});
+      expect(
+        (liveUI.overlay([writing]).single.extraData['ai_ui'] as Map<Object?, Object?>)['status'],
+        'streaming',
+      );
+
+      // Refused, or interrupted: the socket never completes the UI, and Chat keeps the reply
+      // without it.
+      final refused = reply('r1', {'generating': false, 'support_runtime': turn});
+      expect(identical(liveUI.overlay([refused]).single, refused), isTrue);
+    });
+  });
+}

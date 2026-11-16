@@ -1,0 +1,399 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+
+class TestFolder < Minitest::Test
+  def setup
+    @root = File.join(Dir.mktmpdir, "jean")
+  end
+
+  def teardown
+    FileUtils.rm_rf(File.dirname(@root))
+  end
+
+  def write(name, content)
+    path = File.join(@root, name)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, content)
+  end
+
+  def test_a_directory_is_read_as_instructions_skills_and_knowledge
+    write("agent.yaml", "name: jean\n")
+    write("instructions.md", "You are Jean.\n")
+    write("skills/think.md", "---\ndescription: Work something out before answering\ndeadline: 30s\n---\n" \
+                             "Take your time and reason it through.\n")
+    write("knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "jean", folder.name
+    assert_equal "You are Jean.", folder.instructions
+    assert_equal [VA::Skill.new(name: "think", description: "Work something out before answering",
+                                instructions: "Take your time and reason it through.", deadline: 30.0)],
+                 folder.skills
+    assert_equal ["pricing.md"], folder.knowledge.map(&:source)
+  end
+
+  def test_the_fingerprint_is_the_one_every_sdk_takes
+    write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+    write("instructions.md", "You are Jean.\n")
+    write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+    write("knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+    folder = VA::Folder.load(@root)
+    assert_equal "02a7b2c8428f31e3a2b93ca2f5a6ec70", folder.fingerprint
+
+    write("knowledge/urls.yaml", "- https://example.com/plans\n")
+    refute_equal folder.fingerprint, VA::Folder.load(@root).fingerprint
+  end
+
+  def test_skill_folders_fingerprint_the_way_go_does
+    write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+    write("instructions.md", "You are Jean.\n")
+    write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n")
+    write("skills/pdf/reference/forms.md", "# Forms\n")
+    write("skills/pdf/scripts/fill.py", "print('filled')\n")
+    write("skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+    write("skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xcb\x0d\xff".b)
+    write("skills/pdf/.DS_Store", "\x00\xff".b)
+    write("knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+    assert_equal "e47f7807b97bbcbdee683c6c481d1d36", VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_skill_folder_brings_its_nested_text_files_and_leaves_hidden_ones
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    write("skills/pdf/reference/forms.md", "# Forms\n")
+    write("skills/pdf/scripts/lib/fill.py", "print('filled')\n")
+    write("skills/pdf/scripts/__pycache__/fill.py", "cached\n")
+    write("skills/pdf/.hidden/notes.md", "hidden\n")
+    write("skills/pdf/.DS_Store", "\x00\xff".b)
+
+    skill = VA::Folder.load(@root).skills[0]
+
+    assert_equal "pdf", skill.name
+    assert_equal "Fill the form.", skill.instructions
+    assert_equal({ "reference/forms.md" => "# Forms\n", "scripts/lib/fill.py" => "print('filled')\n" }, skill.files)
+    assert_equal({ "reference/forms.md" => "# Forms\n", "scripts/lib/fill.py" => "print('filled')\n" },
+                 skill.request[:files])
+  end
+
+  def test_moving_a_skill_into_a_folder_keeps_its_fingerprint_until_it_brings_a_file
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    single = VA::Folder.load(@root).fingerprint
+
+    FileUtils.mkdir_p(File.join(@root, "skills/pdf"))
+    FileUtils.mv(File.join(@root, "skills/pdf.md"), File.join(@root, "skills/pdf/SKILL.md"))
+    assert_equal single, VA::Folder.load(@root).fingerprint
+    refute VA::Folder.load(@root).skills[0].request.key?(:files)
+
+    write("skills/pdf/forms.md", "# Forms\n")
+    refute_equal single, VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_skill_folder_that_is_not_a_skill_is_refused
+    write("agent.yaml", "name: jean\n")
+    write("skills/pdf/forms.md", "# Forms\n")
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "has no SKILL.md, so it is not a skill"
+
+    write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_equal 'skill "pdf" is both pdf and pdf.md', error.message
+
+    FileUtils.rm(File.join(@root, "skills/pdf.md"))
+    write("skills/pdf/logo.png", "\x89PNG\xff".b)
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "logo.png is not text, and a skill brings only text files"
+  end
+
+  def test_refresh_hours_and_simulations_fingerprint_the_way_go_does
+    write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+    write("instructions.md", "You are Jean.\n")
+    write("knowledge/urls.yaml", "- https://example.com/pricing\n- url: https://example.com/plans\n  title: Plans\n" \
+                                 "  refresh_hours: 24\n")
+    write("simulations/b.yaml", "- name: lunch <order> & \"change\"\n  scenario: \"Order a club,\\n\\tthen swap it\"\n" \
+                                "  assertion: One veggie wrap.\n  mode: audio\n  variations: 3\n  tags:\n" \
+                                "    team: voice\n    a: b\n- name: dinner\n  scenario: Book a table\n" \
+                                "  assertion: Booked\n")
+    write("simulations/a.yml", "- name: breakfast\n  scenario: Eggs\n  assertion: Eggs\n  max_turns: 4\n  tags: {}\n")
+    write("simulations/notes.txt", "not a simulation")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal 24, folder.knowledge_urls[1].refresh_hours
+    assert_equal ["breakfast", 'lunch <order> & "change"', "dinner"], folder.simulations.map(&:name)
+    assert_equal "229a3c5c66835374f8aee179a67eedf2", folder.fingerprint
+  end
+
+  def test_a_refresh_that_is_not_a_whole_number_of_hours_is_refused
+    write("agent.yaml", "name: jean\n")
+    ["0", "1.5", "daily"].each do |hours|
+      write("knowledge/urls.yaml", "- url: https://example.com/plans\n  refresh_hours: #{hours}\n")
+
+      assert_raises(VA::ConfigurationError, hours) { VA::Folder.load(@root) }
+    end
+  end
+
+  def test_an_empty_simulations_directory_is_not_the_same_as_none
+    write("agent.yaml", "name: jean\n")
+    without = VA::Folder.load(@root)
+    FileUtils.mkdir_p(File.join(@root, "simulations"))
+    empty = VA::Folder.load(@root)
+
+    assert_nil without.simulations
+    assert_equal [], empty.simulations
+    refute_equal without.fingerprint, empty.fingerprint
+  end
+
+  def test_a_simulation_that_cannot_be_run_is_refused
+    write("agent.yaml", "name: jean\n")
+    ["- name: a\n  scenario: s\n", "- name: a\n  scenario: s\n  assertion: x\n  judge: llm\n",
+     "- name: a\n  scenario: s\n  assertion: x\n  mode: video\n", "- name: a\n  scenario: s\n  assertion: x\n  variations: many\n",
+     "name: a\n"].each do |yaml|
+      write("simulations/one.yaml", yaml)
+
+      assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+    end
+  end
+
+  def test_a_simulation_name_two_files_share_is_refused
+    write("agent.yaml", "name: jean\n")
+    write("simulations/a.yaml", "- name: lunch\n  scenario: s\n  assertion: x\n")
+    write("simulations/b.yaml", "- name: lunch\n  scenario: t\n  assertion: y\n")
+
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_includes error.message, "a.yaml"
+  end
+
+  def test_nested_knowledge_keeps_its_path_and_skips_what_is_not_a_document
+    write("agent.yaml", "name: jean\n")
+    write("knowledge/reference/api.md", "# API\n\nthe endpoints\n")
+    write("knowledge/logo.png", "not a document")
+    write("knowledge/empty.md", "   \n")
+
+    assert_equal ["reference/api.md"], VA::Folder.load(@root).knowledge.map(&:source)
+  end
+
+  def test_declared_pages_are_read_without_being_ingested
+    write("agent.yaml", "name: jean\n")
+    write("knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+    write("knowledge/urls.yaml", "- https://example.com/pricing\n- url: https://example.com/plans\n  title: Plans\n" \
+                                 "  description: What each plan includes.\n")
+    write("knowledge/reference/urls.yaml", "the urls we used to have\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal ["pricing.md", "reference/urls.yaml"], folder.knowledge.map(&:source)
+    assert_equal [VA::KnowledgeURL.new(url: "https://example.com/pricing"),
+                  VA::KnowledgeURL.new(url: "https://example.com/plans", title: "Plans",
+                                       description: "What each plan includes.")], folder.knowledge_urls
+  end
+
+  def test_a_page_that_cannot_be_fetched_or_described_is_refused
+    ["- example.com/pricing\n", "- url: https://example.com/plans\n  heading: Plans\n",
+     "- [https://example.com/plans]\n"].each do |declaration|
+      write("agent.yaml", "name: jean\n")
+      write("knowledge/urls.yaml", declaration)
+
+      assert_raises(VA::ConfigurationError, declaration) { VA::Folder.load(@root) }
+    end
+  end
+
+  def test_a_skill_needs_a_description_and_can_be_renamed
+    write("agent.yaml", "name: jean\n")
+    write("skills/01-think.md", "---\nname: think\ndescription: Work something out\n---\nReason it through.\n")
+    assert_equal "think", VA::Folder.load(@root).skills[0].name
+
+    write("skills/think.md", "Just a body, with nothing saying when to use it.\n")
+    assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+  end
+
+  def test_the_declaration_says_what_the_agent_is_called_and_runs_on
+    write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\n" \
+                        "video:\n  source: camera\ngreeting:\n  text: Hello\n  mode: exact\nharness: default\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "receptionist", folder.name
+    assert_equal "openai/gpt-5.6", folder.settings["llm"]
+    assert_equal({ "text" => "Hello", "mode" => "exact" }, folder.settings["greeting"])
+    assert_equal "default", folder.settings["harness"]
+    assert_equal ["Vision Agents"], folder.settings["keyterms"]
+    assert_equal "", folder.settings["sts"]
+    assert_equal({ "source" => "camera", "max_frames" => 1 }, folder.settings["video"])
+  end
+
+  def test_a_declaration_key_nobody_knows_is_refused
+    ["name: jean\nlmm: openai/gpt-5.6\n", "video:\n  max_frames: 9\n", "keyterms: Vision Agents\n",
+     "dispatch:\n  sms: enabled\n", "speed: 1.1\n", "thinking_llm: llm-thinking\n", "agent_plugins: [linear]\n",
+     "user_plugins: [linear]\n", "plugin_events: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
+     "greeting:\n  text: Hello\n  tone: warm\n", "sandbox_options:\n  memory: 4\n",
+     "sandbox_options:\n  timeout: 2h\n", "sandbox_options:\n  cpu: two\n",
+     "sandbox_options:\n  network: maybe\n", "end_of_turn:\n  max_wait_ms: 900\n",
+     "end_of_turn: {}\n"].each do |yaml|
+      write("agent.yaml", yaml)
+
+      assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+    end
+  end
+
+  def test_connectors_are_read_as_written
+    write("agent.yaml", "name: jean\nconnectors:\n  - linear\n  - name: issues\n    connector: linear\n" \
+                        "    tools: [list_*]\n    connection: prod\n    required: true\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal [{ "name" => "linear", "connector" => "", "tools" => nil, "connection" => nil, "required" => nil },
+                  { "name" => "issues", "connector" => "linear", "tools" => ["list_*"], "connection" => "prod",
+                    "required" => true }], folder.settings["connectors"]
+  end
+
+  def test_a_connector_the_file_cannot_bind_is_refused_with_its_reason
+    {
+      "connectors:\n  - \n" => "a connector needs a name",
+      "connectors:\n  - connector: linear\n" => "a connector needs a name",
+      "connectors:\n  - name: ''\n" => "a connector needs a name",
+      "connectors: linear\n" => "connectors must be a list",
+      "connectors: {}\n" => "connectors must be a list",
+      "connectors: {a: b}\n" => "connectors must be a list",
+      "connectors:\n  - name: x\n    tools: {}\n" => 'connector "x": tools should be a list',
+      "connectors:\n  - name: linear\n    tools: []\n" =>
+        'connector "linear": tools: [] grants nothing; leave tools out for every tool',
+      "connectors:\n  - name: linear\n    tools: list_issues\n" => 'connector "linear": tools should be a list',
+      "connectors:\n  - name: linear\n    connection: {id: conn_a}\n" =>
+        'connector "linear": connection must be a connection id or label',
+      "connectors:\n  - name: linear\n    connection: ''\n" =>
+        'connector "linear": connection must be a connection id or label',
+      "connectors:\n  - name: linear\n    required: sometimes\n" =>
+        'connector "linear": required should be true or false',
+      "connectors:\n  - name: linear\n    toools: [x]\n" => "a connector has no toools"
+    }.each do |yaml, message|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+
+      assert_includes error.message, message
+    end
+  end
+
+  # floor_control is read as written, {} included; which models there are, and whether a wait
+  # names one, is the router's to say.
+  def test_the_floor_control_is_read_as_written
+    { "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n" =>
+        { "model" => "stream/chorus-asr", "max_wait_ms" => 800 },
+      "floor_control: {model: stream/chorus-asr}\n" => { "model" => "stream/chorus-asr" },
+      "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n" => { "model" => "stream/chorus-asr" },
+      "floor_control: {max_wait_ms: 800}\n" => { "max_wait_ms" => 800 },
+      "floor_control: {}\n" => {} }.each do |yaml, want|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      assert_equal want, VA::Folder.load(@root).settings["floor_control"], yaml
+    end
+    ["floor_control:\n", "floor_control: ~\n"].each do |yaml|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      assert_nil VA::Folder.load(@root).settings["floor_control"], yaml
+    end
+  end
+
+  def test_a_floor_control_that_cannot_be_read_is_refused_naming_why
+    mapping = "floor_control is a mapping of model and, optionally, max_wait_ms"
+    { "floor_control: stream/chorus-asr\n" => mapping, "floor_control: [stream/chorus-asr]\n" => mapping,
+      "floor_control: true\n" => mapping, "floor_control: 1\n" => mapping,
+      "floor_control:\n  model: stream/chorus-asr\n  mode: act\n" =>
+        "mode is not a floor_control setting; model and max_wait_ms are",
+      "floor_control:\n  model: 1\n" => "floor_control.model must be a string",
+      "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n" => "floor_control.max_wait_ms must be an integer",
+      "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n" =>
+        "floor_control.max_wait_ms must be an integer" }.each do |yaml, message|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+
+      assert_includes error.message, message
+    end
+  end
+
+  # end_of_turn is gone: its one knob is floor_control's max_wait_ms.
+  def test_an_end_of_turn_is_refused_by_name
+    write("agent.yaml", "name: jean\nend_of_turn:\n  max_wait_ms: 900\n")
+
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+
+    assert_includes error.message, "end_of_turn is not a setting"
+  end
+
+  def test_the_fingerprint_hashes_agent_yaml_as_written_connectors_included
+    write("agent.yaml", "name: jean\n")
+    plain = VA::Folder.load(@root).fingerprint
+    write("agent.yaml", "name: jean\nconnectors: [linear]\n")
+
+    assert_equal VA::Folder.fingerprint("name: jean\nconnectors: [linear]", "", "", [], [], []),
+                 VA::Folder.load(@root).fingerprint
+    refute_equal plain, VA::Folder.load(@root).fingerprint
+  end
+
+  def test_a_directory_without_a_declaration_is_not_an_agent
+    write("instructions.md", "You are Jean.\n")
+
+    assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+  end
+
+  def test_the_stamp_records_the_hash_and_when
+    write("agent.yaml", "name: jean\n")
+    folder = VA::Folder.load(@root)
+    assert_nil folder.stamp
+
+    folder.write_stamp("abc")
+
+    recorded = JSON.parse(File.read(File.join(@root, ".agent_sync")))
+    assert_equal "abc", recorded["hash"]
+    assert_match(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00\z/, recorded["synced_at"])
+    assert_equal "abc", folder.stamp
+  end
+
+  def test_plugins_are_refused_with_a_pointer_to_connectors
+    ["plugins: [linear]\n", "plugins: [linear, slack]\n", "plugins: linear\n", "plugins: ''\n", "plugins: {}\n",
+     "plugins: {linear: true}\n", "plugins: [[]]\n", "plugins: [{name: linear}]\n", "plugins: [~]\n",
+     "plugins: [linear]\nconnectors:\n  - linear\n",
+     "plugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n"].each do |yaml|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+
+      assert_equal "#{File.join(@root, "agent.yaml")}: plugins is no longer read: plugins were replaced by " \
+                   "connectors, so name the provider under connectors", error.message, yaml
+    end
+  end
+
+  def test_plugins_that_name_nothing_load
+    ["plugins: []\n", "plugins:\n", "plugins: ~\n", "plugins: null\n"].each do |yaml|
+      write("agent.yaml", "name: jean\n#{yaml}connectors:\n  - linear\n")
+
+      folder = VA::Folder.load(@root)
+
+      assert_equal ["linear"], folder.settings["connectors"].map { |each| each["name"] }, yaml
+    end
+  end
+
+  def test_connectors_null_loads_without_error_and_is_not_stored
+    write("agent.yaml", "name: jean\nconnectors: null\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_nil folder.settings["connectors"]
+  end
+
+  def test_a_non_string_connector_entry_is_treated_as_its_string_value
+    write("agent.yaml", "name: jean\nconnectors:\n  - 123\n")
+
+    folder = VA::Folder.load(@root)
+
+    assert_equal "123", folder.settings["connectors"].first["name"]
+  end
+end

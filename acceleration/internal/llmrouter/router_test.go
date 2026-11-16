@@ -1,0 +1,628 @@
+package llmrouter
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing/pricingtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+)
+
+// stubLLM stands in for a real provider so a session can be driven without credentials.
+type stubLLM struct {
+	asked  []llm.ResponseParams
+	closed bool
+	// scripts are the responses handed out, newest last, so a test can drive one after
+	// the session has returned it.
+	scripts []*llmtest.Script
+	// capabilities is what this stub claims to accept.
+	capabilities llm.Capabilities
+	// createDelay is how long Create takes, as a provider takes to answer with its headers.
+	createDelay time.Duration
+	// createErr, if set, is what Create fails with, as a vendor that is down answers.
+	createErr error
+}
+
+func newStubLLM() *stubLLM { return &stubLLM{} }
+
+func (s *stubLLM) Start(context.Context) error { return nil }
+
+func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if s.createDelay > 0 {
+		time.Sleep(s.createDelay)
+	}
+	s.asked = append(s.asked, params)
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
+
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+	s.scripts = append(s.scripts, script)
+	return script.Stream(), nil
+}
+
+// script is the response handed out for the nth request, so a test can write it.
+func (s *stubLLM) script(n int) *llmtest.Script { return s.scripts[n] }
+
+func (s *stubLLM) Close() error {
+	s.closed = true
+	for _, script := range s.scripts {
+		script.Done()
+	}
+	return nil
+}
+
+func (s *stubLLM) Provider() string               { return "stub" }
+func (s *stubLLM) Model() string                  { return "stub-model" }
+func (s *stubLLM) Capabilities() llm.Capabilities { return s.capabilities }
+
+type LLMRouterSuite struct {
+	suite.Suite
+	ctx context.Context
+}
+
+func TestLLMRouterSuite(t *testing.T) {
+	suite.Run(t, new(LLMRouterSuite))
+}
+
+func (s *LLMRouterSuite) SetupTest() {
+	s.ctx = context.Background()
+}
+
+// newRouter routes over the built-in LLM config, which is what a deployment gets when it
+// sets no config file.
+func (s *LLMRouterSuite) newRouter() *Router {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	router, err := New(Options{Config: config[routing.LLM], Registry: DefaultRegistry()})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+// newSession returns a session over a stub provider, so event handling is the only thing
+// under test.
+func (s *LLMRouterSuite) newSession() (*Session, *stubLLM) {
+	return s.sessionFor(routing.ProviderConfig{
+		Provider: "stub",
+		Model:    "stub-model",
+		Price: routing.Price{
+			PerMillionInputTokens:  1,
+			PerMillionOutputTokens: 2,
+		},
+	})
+}
+
+func (s *LLMRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *stubLLM) {
+	provider := newStubLLM()
+	prices, err := routing.Prices(routing.Config{routing.LLM: {Providers: []routing.ProviderConfig{config}}}, slog.Default())
+	s.Require().NoError(err)
+	recorder := routing.NewRecorder(routing.LLM, nil, nil, prices, slog.Default())
+	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, nil)
+
+	s.T().Cleanup(func() {
+		_ = session.Close()
+		recorder.Close()
+	})
+	return session, provider
+}
+
+func (s *LLMRouterSuite) TestRouterServesTheLLMModality() {
+	s.Equal(routing.LLM, s.newRouter().Modality())
+}
+
+func (s *LLMRouterSuite) TestEveryShortcutResolvesToAProvider() {
+	router := s.newRouter()
+
+	for alias := range router.Config().Aliases {
+		candidates, err := router.Resolve(s.ctx, alias, nil)
+		s.Require().NoErrorf(err, "alias %s", alias)
+		s.NotEmptyf(candidates, "alias %s", alias)
+	}
+}
+
+func (s *LLMRouterSuite) TestLLMFastResolvesToALowLatencyModel() {
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-fast", nil)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(candidates)
+
+	for _, candidate := range candidates {
+		s.Equal(routing.LowLatency, candidate.Config.Tier,
+			"llm-fast must never pick a model chosen for quality over speed")
+	}
+}
+
+func (s *LLMRouterSuite) TestLowLatencyAndQualityShortcutsPickDifferentModels() {
+	router := s.newRouter()
+
+	fast, err := router.Resolve(s.ctx, "en-low-latency", nil)
+	s.Require().NoError(err)
+	best, err := router.Resolve(s.ctx, "en-high-accuracy", nil)
+	s.Require().NoError(err)
+
+	s.Require().NotEmpty(fast)
+	s.Require().NotEmpty(best)
+	s.NotEqual(fast[0].Config.Name(), best[0].Config.Name(),
+		"asking for speed and asking for quality should not land on the same model")
+}
+
+func (s *LLMRouterSuite) TestLLMFastGoesToTheModelItPins() {
+	// llm-fast names the model this deployment wants rather than leaving it to whichever
+	// of the tier is measuring quickest, so consecutive turns are answered by the same
+	// model.
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-fast", nil)
+	s.Require().NoError(err)
+
+	s.Equal("gemini/gemini-3.8-flash", candidates[0].Config.Name())
+	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
+}
+
+func (s *LLMRouterSuite) TestLLMThinkingGoesToTheModelItPins() {
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
+	s.Require().NoError(err)
+
+	s.Equal("openai/gpt-6.1-sol", candidates[0].Config.Name())
+	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
+}
+
+func (s *LLMRouterSuite) TestLLMThinkingResolvesToAQualityModel() {
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(candidates)
+
+	for _, candidate := range candidates {
+		s.Equal(routing.HighQuality, candidate.Config.Tier,
+			"what the conversation carries on without should never be picked for speed")
+	}
+}
+
+func (s *LLMRouterSuite) TestLLMModeratorPrefersLunaThenGemmaThenSol() {
+	// The agent moderator reviews on GPT-5.6 Luna for now. Our own Gemma deployment stands
+	// behind it, and GPT-6.1 Sol catches both being down or Gemma being unconfigured.
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-moderator", nil)
+	s.Require().NoError(err)
+
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		names = append(names, candidate.Config.Name())
+	}
+	s.Equal([]string{"openai/gpt-5.6-luna", "gemma/gemma-4-26B-A4B-it", "openai/gpt-6.1-sol"}, names)
+}
+
+func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {
+	_, err := s.newRouter().Resolve(s.ctx, "no-such-model", nil)
+
+	s.Error(err)
+}
+
+func (s *LLMRouterSuite) TestSessionForwardsRequestsToTheProvider() {
+	session, provider := s.newSession()
+
+	_, err := session.Create(s.ctx, llm.ResponseParams{
+		ID:    "c1",
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
+	})
+	s.Require().NoError(err)
+
+	s.Require().Len(provider.asked, 1)
+	s.Equal("c1", provider.asked[0].ID)
+}
+
+func (s *LLMRouterSuite) TestClosingAResponseAbandonsOnlyThatOne() {
+	// A caller running several responses at once has to be able to abandon only the one
+	// whose premise has gone stale.
+	session, provider := s.newSession()
+
+	first, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+	second, err := session.Create(s.ctx, llm.ResponseParams{ID: "c2", Input: prompt()})
+	s.Require().NoError(err)
+
+	s.Require().NoError(first.Close())
+	provider.script(1).OutputText("still going")
+	provider.script(1).Done()
+
+	s.Equal(llm.StatusCancelled, drain(first).Status)
+	s.Equal("still going", drain(second).OutputText,
+		"abandoning one response leaves the other alone")
+}
+
+// prompt is the smallest input a request can carry.
+func prompt() []llm.Message {
+	return []llm.Message{{Role: llm.User, Content: "hi"}}
+}
+
+// drain reads a stream to the end and returns what it settled as.
+func drain(stream *llm.Stream) llm.Response {
+	for stream.Next() {
+	}
+	return stream.Response()
+}
+
+func (s *LLMRouterSuite) TestSessionForwardsEveryProviderEvent() {
+	session, provider := s.newSession()
+
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+
+	provider.script(0).OutputText("Hi")
+	provider.script(0).Done()
+
+	var events []llm.Event
+	for stream.Next() {
+		events = append(events, stream.Current())
+	}
+
+	s.Require().Len(events, 3, "the session observes events without swallowing them")
+	s.IsType(llm.ResponseCreated{}, events[0])
+	s.IsType(llm.OutputTextDelta{}, events[1])
+	s.IsType(llm.ResponseCompleted{}, events[2])
+}
+
+func (s *LLMRouterSuite) TestEachProviderResponseReportsItsOwnTiming() {
+	session, provider := s.newSession()
+	provider.createDelay = 25 * time.Millisecond
+	var timings []llm.CallTiming
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		ID: "flow-1", Purpose: "flow", TurnID: "turn-1", Input: prompt(),
+		OnTiming: func(timing llm.CallTiming) { timings = append(timings, timing) },
+	})
+	s.Require().NoError(err)
+	provider.script(0).OutputText("continue")
+	provider.script(0).Done()
+	_ = drain(stream)
+
+	s.Require().Len(timings, 1)
+	s.Equal("flow-1", timings[0].OperationID)
+	s.Equal("turn-1", timings[0].TurnID)
+	s.Equal("flow", timings[0].Purpose)
+	s.Equal("stub-model", timings[0].Model)
+	s.True(timings[0].Success)
+	s.Positive(timings[0].DurationMs)
+	s.GreaterOrEqual(timings[0].TTFTMs, 25.0,
+		"time waiting for response headers must be included in the model call")
+	s.GreaterOrEqual(timings[0].DurationMs, timings[0].TTFTMs)
+}
+
+func (s *LLMRouterSuite) TestHeaderWaitIsNotAFirstTokenForAnEmptyReply() {
+	session, provider := s.newSession()
+	provider.createDelay = 25 * time.Millisecond
+	var timing llm.CallTiming
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		ID: "empty", Input: prompt(),
+		OnTiming: func(value llm.CallTiming) { timing = value },
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(stream.Close())
+	_ = drain(stream)
+	s.Zero(timing.TTFTMs, "no token arrived, so the header wait is not a first-token time")
+	s.GreaterOrEqual(timing.DurationMs, 25.0)
+}
+
+func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {
+	// A provider registered under a different name still aggregates under the config's
+	// name, so stats and health stay coherent.
+	session, _ := s.sessionFor(routing.ProviderConfig{
+		Provider: "deepseek",
+		Model:    "DeepSeek-V4-Flash-0731",
+	})
+
+	s.Equal("deepseek", session.Provider())
+	s.Equal("DeepSeek-V4-Flash-0731", session.Model())
+}
+
+func (s *LLMRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
+	session, _ := s.newSession()
+
+	s.EqualValues(3_000_000, session.Quote(routing.Usage{
+		InputTokens:  1_000_000,
+		OutputTokens: 1_000_000,
+	}).CostMicros, "a million tokens each way at $1 in and $2 out is $3")
+}
+
+func (s *LLMRouterSuite) TestAResponseIsQuotedWithItsCacheWritesAndTier() {
+	session, _ := s.sessionFor(routing.ProviderConfig{Provider: "openai", Model: "gpt", Price: routing.Price{
+		PerMillionInputTokens:           2,
+		PerMillionCacheWriteInputTokens: 2.5,
+		PerMillionOutputTokens:          12,
+		ServiceTiers:                    map[string]float64{"flex": 0.5},
+	}})
+
+	quote := session.QuoteResponse(llm.Response{ServiceTier: "flex", Usage: llm.Usage{
+		InputTokens:        2_389,
+		InputTokensDetails: llm.InputTokensDetails{CacheWriteTokens: 2_386},
+		OutputTokens:       22,
+	}})
+
+	s.EqualValues(3_118, quote.CostMicros, "3 fresh, 2,386 written and 22 generated tokens, at half price")
+}
+
+func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {
+	session, provider := s.newSession()
+	s.Empty(session.Capabilities().ReasoningEfforts)
+
+	provider.capabilities = llm.Capabilities{ReasoningEfforts: []string{"low"}}
+	s.Equal([]string{"low"}, session.Capabilities().ReasoningEfforts)
+}
+
+func (s *LLMRouterSuite) TestClosingTheSessionClosesTheProvider() {
+	session, provider := s.newSession()
+
+	s.Require().NoError(session.Close())
+
+	s.True(provider.closed)
+}
+
+func (s *LLMRouterSuite) TestClosingTwiceIsSafe() {
+	session, _ := s.newSession()
+
+	s.NoError(session.Close())
+	s.NoError(session.Close())
+}
+
+func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
+	s.Equal("provider_error", errorCode(llm.Response{Status: llm.StatusFailed}))
+	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
+	s.Equal(routing.ErrorCancelled, errorCode(llm.Response{Status: llm.StatusCancelled}),
+		"a response the caller abandoned is recorded as that, not as a provider failure")
+	s.Equal(routing.ErrorRefused, errorCode(llm.Response{Status: llm.StatusFailed, Refused: true}),
+		"a response the screen refused is no provider failure")
+	s.Equal(routing.ErrorRefused, errorCode(llm.Response{Status: llm.StatusFailed, Refused: true, TimedOut: true}),
+		"the refusal is what ended it, whatever deadline it also ran past")
+}
+
+func (s *LLMRouterSuite) TestARefusalWithoutUsageIsEstimatedAsAFailureAfterOutputIs() {
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true}),
+		"the screen cut it off before the vendor said what it used, as a cancel does")
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, OutputText: "Sure"}))
+	s.False(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, UsageReported: true}),
+		"a vendor that said what it used is taken at its word")
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, OutputText: "Sure"}),
+		"what streamed before the failure was generated, and the vendor bills it")
+	s.False(unreported(llm.Response{Status: llm.StatusFailed}),
+		"a failure before any output took nothing")
+}
+
+func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {
+	// What it generated before being cut off was generated all the same.
+	session, provider := s.newSession()
+
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+	provider.script(0).OutputText("half a sen")
+	provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 4})
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
+
+	response := drain(stream)
+	s.Equal(llm.StatusCancelled, response.Status)
+	s.EqualValues(4, response.Usage.OutputTokens)
+}
+
+func (s *LLMRouterSuite) TestAFailedResponseStillSettles() {
+	// One turn is one row: the failure is carried on the response rather than written as
+	// a row of its own.
+	session, provider := s.newSession()
+
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+	provider.script(0).Fail(errors.New("the model is down"), "stream")
+
+	s.Equal(llm.StatusFailed, drain(stream).Status)
+	s.ErrorContains(stream.Err(), "the model is down")
+}
+
+func (s *LLMRouterSuite) TestStartFailsWhenNoCandidateCanBeBuilt() {
+	// Nothing is registered, so every candidate for the shortcut fails and the caller is
+	// told rather than handed a session that cannot answer.
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	router, err := New(Options{Config: config[routing.LLM], Registry: NewRegistry()})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "llm-fast"})
+
+	s.Error(err)
+	s.ErrorContains(err, "llm-fast")
+}
+
+func (s *LLMRouterSuite) TestStartFailsOverToTheNextCandidate() {
+	// The first candidate cannot be built, so routing moves on rather than giving up.
+	// This is what keeps a shortcut working while Gemma is undeployed.
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	registry := NewRegistry()
+	registry.Register("deepseek", func(routing.Spec) (Provider, error) {
+		return nil, errors.New("no credentials")
+	})
+	registry.Register("openai", func(routing.Spec) (Provider, error) {
+		provider := newStubLLM()
+		provider.capabilities.InputModalities = []string{llm.ModalityImage}
+		return Started[llm.LLM](provider, nil)
+	})
+
+	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "llm-fast"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { session.Close() })
+
+	s.Equal("openai", session.Provider(), "the candidate that could be built served the turn")
+}
+
+func (s *LLMRouterSuite) TestTheBuiltInOpusEntrySeesWhatItDeclares() {
+	sent := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		s.NoError(json.NewDecoder(r.Body).Decode(&body))
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, claudeAnswer("a rose", 5, 2))
+	}))
+	s.T().Cleanup(server.Close)
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRegistry()
+	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: server.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "anthropic/claude-opus-5-5", InputModalities: []string{llm.ModalityImage}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { session.Close() })
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: []llm.Message{{
+		Role:  llm.User,
+		Parts: []llm.ContentPart{{Text: "what flower"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8}}}},
+	}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+
+	s.Equal("a rose", response.OutputText)
+	body := <-sent
+	s.Equal("claude-opus-5-5", body["model"])
+	s.Contains(fmt.Sprint(body["messages"]), "base64")
+}
+
+func (s *LLMRouterSuite) TestClaudesCacheIsCountedAndPricedLikeAnyOtherCache() {
+	// Of a 100k-token prompt, 90k were read from the cache and 9k written to it.
+	answer := strings.Replace(claudeAnswer("done", 1000, 10), `"input_tokens":1000`,
+		`"input_tokens":1000,"cache_creation_input_tokens":9000,"cache_read_input_tokens":90000`, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, answer)
+	}))
+	s.T().Cleanup(server.Close)
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRegistry()
+	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: server.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "anthropic/claude-opus-5-5"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { session.Close() })
+
+	timings := make(chan llm.CallTiming, 1)
+	stream, err := session.Create(s.ctx, llm.ResponseParams{
+		Input:    []llm.Message{{Role: llm.User, Content: "why"}},
+		OnTiming: func(timing llm.CallTiming) { timings <- timing },
+	})
+	s.Require().NoError(err)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	timing := <-timings
+	s.EqualValues(100_000, timing.InputTokens, "the whole prompt, cached and written parts included")
+	s.EqualValues(90_000, timing.CachedInputTokens)
+	// 1k fresh, 90k read, 9k written and 10 out, at the prices the router bills with: the
+	// vendor list's rates times the factor.
+	list, err := routing.Prices(config, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	opus := pricing.Item{Modality: "llm", Provider: anthropic.ProviderName, Model: "claude-opus-5-5", Region: pricing.RegionUS}
+	s.Equal(pricingtest.Micros(s.T(), list, opus, pricing.Quantities{pricing.InputTokens: 1_000,
+		pricing.CachedInputTokens: 90_000, pricing.CacheWriteInputTokens: 9_000, pricing.OutputTokens: 10}), timing.CostMicros)
+}
+
+func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {
+	config := routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{Provider: "text", Model: "model", Languages: []string{"en"}, InputModalities: []string{"image"}},
+			{Provider: "vision", Model: "model", Languages: []string{"en"}, InputModalities: []string{"image"}},
+		},
+		Aliases: map[string]routing.Alias{"vlm": {RequireInputModalities: []string{"image"}}},
+	}
+	registry := NewRegistry()
+	registry.Register("text", func(routing.Spec) (Provider, error) { return Started[llm.LLM](newStubLLM(), nil) })
+	registry.Register("vision", func(routing.Spec) (Provider, error) {
+		p := newStubLLM()
+		p.capabilities.InputModalities = []string{"image"}
+		return Started[llm.LLM](p, nil)
+	})
+	router, err := New(Options{Config: config, Registry: registry})
+	s.Require().NoError(err)
+	defer router.Close()
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "vlm"})
+	s.Require().NoError(err)
+	defer session.Close()
+	s.Equal("vision", session.Provider())
+}
+
+func (s *LLMRouterSuite) TestDirectModelSendsConfiguredReasoningToProvider() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Thinking struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+			Effort string `json:"reasoning_effort"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Thinking.Type != "enabled" || request.Effort != "low" {
+			http.Error(w, "missing configured reasoning", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Configured\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	s.T().Setenv("BASETEN_API_KEY", "test-key")
+	s.T().Setenv("DEEPSEEK_BASE_URL", server.URL+"/v1")
+	router, err := New(Options{
+		Registry: DefaultRegistry(),
+		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+			Provider: "deepseek", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
+			Thinking: true, ReasoningEffort: "low",
+		}}},
+	})
+	s.Require().NoError(err)
+	defer router.Close()
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "deepseek/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
+	s.Require().NoError(err)
+	defer session.Close()
+	stream, err := session.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Hello"}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+	s.Equal("Configured", response.OutputText)
+}

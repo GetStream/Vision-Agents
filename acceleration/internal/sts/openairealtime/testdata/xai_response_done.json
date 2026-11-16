@@ -1,0 +1,33 @@
+{
+  "type": "response.done",
+  "event_id": "event_1",
+  "response": {
+    "id": "resp_1",
+    "object": "realtime.response",
+    "output": [
+      {
+        "id": "item_1",
+        "object": "realtime.item",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [{"type": "audio", "transcript": "The capital of France is Paris."}],
+        "replayed": false
+      }
+    ],
+    "status": "completed",
+    "status_details": "unimplemented",
+    "usage": {}
+  },
+  "response_id": "resp_1",
+  "usage": {
+    "input_tokens": 7,
+    "input_token_details": {"text_tokens": 7, "audio_tokens": 0, "grok_tokens": 0},
+    "output_tokens": 119,
+    "output_token_details": {"text_tokens": 7, "audio_tokens": 112, "grok_tokens": 0},
+    "total_tokens": 126,
+    "output_audio_seconds": 2.24,
+    "billable_audio_seconds": 2
+  },
+  "previous_item_id": null
+}

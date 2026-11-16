@@ -1,0 +1,105 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// CreateRecording accepts a job and fills in its id and timestamps. It is written before
+// anything is sent to a provider, so a caller handed an id can always ask about it.
+func (s *Store) CreateRecording(ctx context.Context, recording *Recording) error {
+	if recording.CustomerID == "" {
+		return stack.Wrap(errors.New("store: customer id is required"))
+	}
+	if recording.Modality == "" {
+		return stack.Wrap(errors.New("store: a recording names the modality it is for"))
+	}
+
+	recording.ID = newID()
+	now := time.Now().UTC()
+	recording.CreatedAt = now
+	recording.UpdatedAt = now
+	recording.Status = RecordingQueued
+	if recording.Tags == nil {
+		recording.Tags = map[string]string{}
+	}
+
+	if _, err := s.shard.NewInsert().Model(recording).Exec(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: create recording: %w", err))
+	}
+	return nil
+}
+
+// StartRecording marks a job as at the provider and records which one took it.
+func (s *Store) StartRecording(ctx context.Context, id, provider, model string) error {
+	_, err := s.shard.NewUpdate().Model((*Recording)(nil)).
+		Set("status = ?", RecordingRunning).
+		Set("provider = ?", provider).
+		Set("model = ?", model).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: start recording: %w", err)
+	}
+	return nil
+}
+
+// FinishRecording writes the result a job produced, or the reason it produced none.
+func (s *Store) FinishRecording(ctx context.Context, id, provider, model string, result json.RawMessage, failure error) error {
+	now := time.Now().UTC()
+	status := RecordingCompleted
+	reason := ""
+	if failure != nil {
+		status = RecordingFailed
+		// A provider's text can echo the key it was sent, and a caller reads this back.
+		reason = SafeLogText(failure.Error())
+	}
+
+	_, err := s.shard.NewUpdate().Model((*Recording)(nil)).
+		Set("status = ?", status).
+		Set("provider = ?", provider).
+		Set("model = ?", model).
+		Set("result = ?", result).
+		Set("error = ?", reason).
+		Set("updated_at = ?", now).
+		Set("completed_at = ?", now).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: finish recording: %w", err)
+	}
+	return nil
+}
+
+// Recording returns one job a customer holds.
+func (s *Store) Recording(ctx context.Context, customerID, id string) (Recording, error) {
+	if customerID == "" || id == "" {
+		return Recording{}, stack.Wrap(errors.New("store: a customer and a recording id are required"))
+	}
+
+	recording, err := whicheverShard(ctx, s, func(ctx context.Context, db bun.IDB) (Recording, error) {
+		var recording Recording
+		err := db.NewSelect().Model(&recording).
+			Where("id = ?", id).
+			Where("customer_id = ?", customerID).
+			Limit(1).
+			Scan(ctx)
+		return recording, err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Recording{}, stack.Wrap(fmt.Errorf("store: there is no recording %s", id))
+	}
+	if err != nil {
+		return Recording{}, stack.Wrap(fmt.Errorf("store: recording: %w", err))
+	}
+	return recording, nil
+}

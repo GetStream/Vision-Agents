@@ -1,0 +1,4481 @@
+{
+  "version": 1,
+  "source": "AMI Meeting Corpus manual annotations 1.6.2, CC BY 4.0, https://groups.inf.ed.ac.uk/ami/corpus/",
+  "contracts": {
+    "meeting": "You are one of four colleagues in a product design meeting at Real Reactions, a company designing a new television remote control. Everything said in the meeting is said to the whole group, you included. Take part the way a colleague would: answer a question put to the group or to you, and do not talk over whoever holds the floor."
+  },
+  "cases": [
+    {
+      "id": "ami-respond-es2002a-132.03s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2002a 132.03s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um, as you can see it's supposed to be original, trendy and user friendly."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um so that's kind of our our brief, as it were."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um and so there are three different stages to the design."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um I'm not really sure what what you guys have already received um in your emails."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "What did you get?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2002b-163.02s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2002b 163.02s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "So um, we're just gonna keep it simple and it'll just control the T_V_."
+        },
+        {
+          "speaker": "agent",
+          "text": "And the other thing was that the company want the corporate colour and slogan to be implemented in the new design."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um I'm not entirely sure what the corporate colour is."
+        },
+        {
+          "speaker": "agent",
+          "text": "It might be yellow, because there seems to be a lot of yellow everywhere."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And the slogan, like the actual written slogan, or just to embody the idea of the slogan?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2002c-647.42s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2002c 647.42s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Uh Craig do you wanna"
+        },
+        {
+          "speaker": "colleague",
+          "text": "uh plug yours in then?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Is it working?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Not quite."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Did you press F_ eight?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2002d-234.30s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2002d 234.30s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "in fact a pen is about ten centimetres usually,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "that sounds like a really good size, if you see it there."
+        },
+        {
+          "speaker": "colleague",
+          "text": "That's great"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and it's very bright as well."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Is these are these the colours that of production, or is this just what we had available?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2003a-26.16s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2003a 26.16s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um, yeah,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "go for it mate."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um, N_E_Z_"
+        },
+        {
+          "speaker": "agent",
+          "text": "E_R_."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And your role is?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2003b-809.98s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2003b 809.98s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "if we could hear from our Industrial engineer, or Designer."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh, I was still working on stuff,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I hadn't got it finished."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "where do I have to save it?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2003c-521.42s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2003c 521.42s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "should I go on,"
+        },
+        {
+          "speaker": "agent",
+          "text": "or go back?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Mm, if we only have twelve Pounds fifty,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "twelve Euros, not even twelve Pounds."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Twelve Euros, what's that, like eight pounds or something like that, nine Pounds?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2003d-441.30s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2003d 441.30s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "If we imagine it's actually straight,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and just give it a a score."
+        },
+        {
+          "speaker": "colleague",
+          "text": "uh how well have we realised the dream of being able to stop remotes from from being lost, or to be able to find them once they are lost."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah, that's still part of the design."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And Adam, we can keep that in?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2004a-286.61s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2004a 286.61s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I'm going to tell you that's supposed to be a tiger."
+        },
+        {
+          "speaker": "agent",
+          "text": "And I see them as majestic, and independent, and proud."
+        },
+        {
+          "speaker": "agent",
+          "text": "Now, who would like to go next?"
+        },
+        {
+          "speaker": "agent",
+          "text": "'Kay."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Where did this come from?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2004b-78.86s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2004b 78.86s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "this is our second meeting"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and I might be a bit all over the place."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "do you want us to give you a second?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2004c-498.86s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2004c 498.86s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I saw the um the standard double A_ and triple A_"
+        },
+        {
+          "speaker": "agent",
+          "text": "which we thought were a bit bit too bulky at the moment,"
+        },
+        {
+          "speaker": "agent",
+          "text": "dynamo charging,"
+        },
+        {
+          "speaker": "agent",
+          "text": "I thought that that might be a bit silly to be to be honest,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "can you explain that?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2004d-666.18s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2004d 666.18s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Adding those up, we've got a six and a five, eleven divided by four is what?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh two and three quarters, it that right."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Mm yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "Almost three."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Two and three quarters?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2005b-85.52s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2005b 85.52s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "were you anybody got, raring to go?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Raring to go?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay. Good stuff."
+        },
+        {
+          "speaker": "agent",
+          "text": "Just about."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Sh do you want me to hold it?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2005c-360.87s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2005c 360.87s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "so we don't want to have any harm to the society,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Cool."
+        },
+        {
+          "speaker": "colleague",
+          "text": "A remote control? Yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And were there any factors that weren't important in the survey, that they said we don't want?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2005d-49.82s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2005d 49.82s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay, almost there."
+        },
+        {
+          "speaker": "colleague",
+          "text": "We'll sta I'll use the PowerPoint, I guess."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "How was that, was that fun?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2006a-243.33s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2006a 243.33s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "but the conceptual design is um perhaps bigger than that"
+        },
+        {
+          "speaker": "agent",
+          "text": "and includes the how people are going to use it and and that kind of thing."
+        },
+        {
+          "speaker": "colleague",
+          "text": "How how it will be done."
+        },
+        {
+          "speaker": "colleague",
+          "text": "whe where do we identify the components of our uh product?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "it's in the conceptual design phase that we identify the components of our product?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2006b-136.82s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2006b 136.82s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "the main goal is to come up with those two things, target group and functions of the remote control."
+        },
+        {
+          "speaker": "agent",
+          "text": "And we've got forty minutes to do that in."
+        },
+        {
+          "speaker": "colleague",
+          "text": "You said uh targ target groups,"
+        },
+        {
+          "speaker": "agent",
+          "text": "yeah?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "what does that mean?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2006c-232.68s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2006c 232.68s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "so these are the different options that we have."
+        },
+        {
+          "speaker": "agent",
+          "text": "So they can be simple which is like uh the normal batteries in uh our uh the cells, yeah?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Uh thes these are the kind different kind of batteries that the company makes, right?"
+        },
+        {
+          "speaker": "agent",
+          "text": "And dynamos."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Does that mean like a wind-up one?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2006d-183.69s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2006d 183.69s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Wow."
+        },
+        {
+          "speaker": "colleague",
+          "text": "and uh the the L_C_D_ and and the scroll are inside."
+        },
+        {
+          "speaker": "colleague",
+          "text": "well, everything else is probably user interface, so."
+        },
+        {
+          "speaker": "agent",
+          "text": "Rubber."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Is it to scale, or do you think you can make it a bit smaller?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2007a-403.07s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2007a 403.07s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Okay, well done."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Great."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah. Miss mar Miss Marketing?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Not quite sure how this is gonna work."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Can I just draw the face?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2007b-23.56s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2007b 23.56s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Right it was function F_ eight or something."
+        },
+        {
+          "speaker": "agent",
+          "text": "This one right there."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Who is gonna do a PowerPoint presentation?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "You will as well?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2007c-385.91s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2007c 385.91s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "but I don't know if it's worth the cost."
+        },
+        {
+          "speaker": "agent",
+          "text": "So we've got to discuss that."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay, jolly good."
+        },
+        {
+          "speaker": "agent",
+          "text": "You can have uh a curved one or a double curved one,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "What's a double curved one?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2007d-6.71s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2007d 6.71s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "It's Play-Doh."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Play-Doh's edible."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Did you know that?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2008a-197.40s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2008a 197.40s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And you have the pretty little shell going on."
+        },
+        {
+          "speaker": "agent",
+          "text": "Some little eyes. Happy."
+        },
+        {
+          "speaker": "agent",
+          "text": "There you go."
+        },
+        {
+          "speaker": "agent",
+          "text": "That's a turtle."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "So what are your favourite characteristics?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2008b-137.64s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2008b 137.64s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and we have forty minutes."
+        },
+        {
+          "speaker": "agent",
+          "text": "First of all the functional design objectives."
+        },
+        {
+          "speaker": "agent",
+          "text": "three presentations,"
+        },
+        {
+          "speaker": "agent",
+          "text": "um you can go in any order you choose um."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm shall we go in the order that you just did it?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2008c-420.33s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2008c 420.33s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "technological if they don't need to be,"
+        },
+        {
+          "speaker": "agent",
+          "text": "'cause that'll keep our manufacturing price way down."
+        },
+        {
+          "speaker": "agent",
+          "text": "That's what I have for options."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um I'd appreciate anyone's input,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Is double-curved like would be like two hands kind of thing?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2008d-268.00s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2008d 268.00s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um on, off?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Uh that would be one of your channels, basically,"
+        },
+        {
+          "speaker": "agent",
+          "text": "so like channel zero would be t to switch switch the machine off,"
+        },
+        {
+          "speaker": "agent",
+          "text": "yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Could the middle button of the on-screen menu function as a power button?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2009a-188.17s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2009a 188.17s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "but you wanna say you went to Harvard or something like that,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "why not,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I guess we can have a little bit of fun with it."
+        },
+        {
+          "speaker": "colleague",
+          "text": "So are you guys okay with that"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "does that seem logical?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2009b-278.93s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2009b 278.93s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "which adm admittedly is gonna come at the cost of a certain aesthetic value,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "that maybe do have some kind of aesthetic value"
+        },
+        {
+          "speaker": "colleague",
+          "text": "on the lapt on these laptops and other ones they use a a pretty nice,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "It needs, yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "you can do i is there some kind of nice colo der quality plastic that we can work with?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2009c-201.28s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2009c 201.28s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Um, the case, we have a few options, plastic, rubber or wood."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um and then as far as the way it's shaped, we can do standard boring flat,"
+        },
+        {
+          "speaker": "agent",
+          "text": "which we probably don't wanna do,"
+        },
+        {
+          "speaker": "agent",
+          "text": "curved or very sexy double curved."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "What kind of th thickness are we looking at?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2009d-343.65s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2009d 343.65s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "if you give it a touch it does have actually a bit of a spongy feel,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I think that will work well with regards to our market."
+        },
+        {
+          "speaker": "colleague",
+          "text": "let's see,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "clearly there's gonna be some more colours and what not available."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "do you have anything else to add to that?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2010a-43.59s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2010a 43.59s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um I'm Mandy and I'm the Project Manager."
+        },
+        {
+          "speaker": "colleague",
+          "text": "And I know all your names again, Courtney, Fenella and Amber."
+        },
+        {
+          "speaker": "colleague",
+          "text": "so first let's go through this PowerPoint."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I wonder what button I press?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2010b-202.55s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2010b 202.55s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "it's in the should be in the m Project."
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "You know you could you could do it yourself actually."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Did you send it?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2010c-290.98s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2010c 290.98s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Great. Great presentation."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Ready?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay"
+        },
+        {
+          "speaker": "colleague",
+          "text": "'Kay."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Which one is it?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2010d-294.48s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2010d 294.48s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay so, we're using the criteria uh for a seven point scale,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and so we need to discuss how we feel. It falls within this range,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "so for easy to use,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "do we feel it's very easy to use?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2011a-554.93s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2011a 554.93s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Our selling price goal is twenty five Euro"
+        },
+        {
+          "speaker": "agent",
+          "text": "and profit aim is fifty million Euro."
+        },
+        {
+          "speaker": "agent",
+          "text": "So I'm guessing that we're not actually in Scotland, we're in some European country."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um, and we will hope to sell this internationally."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Sorry can you just say that what's the what are our price goals again?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2011b-136.48s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2011b 136.48s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Can you see?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "So what happens it doesn't work?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "It sh it takes a few seconds I think."
+        },
+        {
+          "speaker": "colleague",
+          "text": "No."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Is it in the right thing?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2011c-545.59s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2011c 545.59s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "So so okay, let me get this right."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Conceptual User Interface."
+        },
+        {
+          "speaker": "colleague",
+          "text": "we're gonna try to talk about, um what kind of uh how people are actually going to be using this iPod-ish remote control, based on fruit vegetable design."
+        },
+        {
+          "speaker": "colleague",
+          "text": "And, um, basically, so, this is a touched ba a touch-based graphical interface system."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I mean I assume, are we still on the screen idea?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2011d-346.22s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2011d 346.22s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "There's plastic for that area around the button."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um and then rubber would be the squishy like thing right?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Mm-hmm."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um and lots of special colours actually."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Do you see anything that I've missed?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-respond-es2012a-641.40s",
+      "state": "respond",
+      "contract": "meeting",
+      "source": "AMI ES2012a 641.40s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "that's a bit vague."
+        },
+        {
+          "speaker": "colleague",
+          "text": "no"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I mean do you think there's a risk if it doesn't look like remote control,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh I suppose suppose that's up to the marketing to to make make people aware of the product."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Any other thoughts about um th the physical appearance of a of remote controls?",
+      "expect": "answer"
+    },
+    {
+      "id": "ami-wait-es2002a-522.91s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2002a 522.91s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um I dunno."
+        },
+        {
+          "speaker": "colleague",
+          "text": "That's a good question."
+        },
+        {
+          "speaker": "agent",
+          "text": "Our sale our sale anyway."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I imagine it probably is our sale actually"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "because it's probably up to the",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2002c-297.84s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2002c 297.84s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Number two was that it be innovative."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay so that tells me that we have to find a way to be innovative without a adding just unnecessary um sort of functional bits to it."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh and third priority uh for ease of use,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "so again that kind of gives us a general picture of how it has to be, um quite user friendly while still having technology."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "is that I think um what we should think about is how the um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2002d-178.51s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2002d 178.51s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "they're not like huge"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Looks good."
+        },
+        {
+          "speaker": "agent",
+          "text": "say a button's about this size, right,"
+        },
+        {
+          "speaker": "agent",
+          "text": "so you would still have plenty of space for a slogan, say even for that."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "So if this isn't to scale, what kind of",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2003a-430.75s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2003a 430.75s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "when I was a kid."
+        },
+        {
+          "speaker": "agent",
+          "text": "And uh they're just the most feared of of uh animals in the wild."
+        },
+        {
+          "speaker": "agent",
+          "text": "that's why I like them."
+        },
+        {
+          "speaker": "agent",
+          "text": "Didn't say an anything about me really"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Dave, if you'd like to uh",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2003b-91.32s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2003b 91.32s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "We introduced ourselves,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "discussed the possibility of a macro facility, interac interacting the T_V_ a bit more, um mentioning of bar-code, joystick for user manipulation, um and ergonomics of the remote control as well."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um it's come to my attention the following."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Teletext has become outdated due to the populat popularity of the internet."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Remote control should only be used for the T_V_. Um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2003c-173.97s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2003c 173.97s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "we decide what it's gonna be."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Probably plastic. Uh"
+        },
+        {
+          "speaker": "colleague",
+          "text": "we need the infra-red transmitter."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Get that off the shelf."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Uh joystick we'll probably if we're gonna use it, um could be",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2003d-169.01s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2003d 169.01s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "You could simply have a slightly ovoid shaped joystick"
+        },
+        {
+          "speaker": "colleague",
+          "text": "that could then just be turn uh twisted round,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "so that the uh sticky uh so that the bit that sticks out a bit more is on one side or the other."
+        },
+        {
+          "speaker": "colleague",
+          "text": "But as you as you see with the uh with holding it in the left hand, the L_ uh the L_C_D_ is nowhere useful,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "so that would need to be articulated",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2004a-849.58s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2004a 849.58s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "So that's a problem regardless of of any design modifications you you come up with,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "that's gonna be a problem anyway with the older generation perhaps,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Mm, yeah, the age gap."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah, what it just needs to be as long as it's sort of self-intuitive and you can can work out",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2004b-129.48s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2004b 129.48s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Uh, no that's okay,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "we decided upon a universal control, one handset for all, T_V_, video equipment."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um, that it was important that the product was accessible to a wide range of consumers, wide age range, not limiting anyone."
+        },
+        {
+          "speaker": "colleague",
+          "text": "We decided it was important to reflect the company's image in our product, we put fashion in electronics, you know that kind of s thing."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "try not to reflect our budget, um that we might",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2004c-115.01s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2004c 115.01s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "from the last meeting,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah, yeah I was getting that impression as well."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I th I I think yeah um."
+        },
+        {
+          "speaker": "colleague",
+          "text": "This is where we talk about um properties, materials, user-interface and trend-watching."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "So I think we've touched on a few things",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2004d-202.59s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2004d 202.59s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "they would be attached,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "but we can we can come up with that."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um the um wide choice of colours and sort of patterns,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "so you've got you've got a lot of customisation with it."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "and uh the um the top L_C_D_ screen that you can see that would b would be sort of um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2005a-34.46s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2005a 34.46s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "So presumably that might be an idea to put into."
+        },
+        {
+          "speaker": "colleague",
+          "text": "But but to sell it for twenty five you need a lot of neat features. For sure."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah, yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Uh 'cause I mean, what uh twenty five Euros, that's about",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2005b-1763.56s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2005b 1763.56s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and that also kind of takes out the speech recognition in terms of the interference of it not working very well and things like that,"
+        },
+        {
+          "speaker": "agent",
+          "text": "And the expense."
+        },
+        {
+          "speaker": "colleague",
+          "text": "yeah and expense and the time."
+        },
+        {
+          "speaker": "colleague",
+          "text": "well I mean like the thing about the there's the problem with the T_F_T_ or the L_C_D_ kind of thing is if you're also wanting the the kind of"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "uh organic globby sort of feeling to it then",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2005c-1214.51s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2005c 1214.51s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "I mean double-curved sounds good to me if we're talking about sorta ergonomic and easy use,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Mm-hmm. Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "a bit comfier, you know."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm 'kay so the shape we wanna go",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2005d-79.86s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2005d 79.86s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Alright, okay, yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "He's gonna get his pen."
+        },
+        {
+          "speaker": "agent",
+          "text": "Oh right. Okay."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Um Will you guys first with your prototype",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2006a-618.67s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2006a 618.67s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "I'm from Estonia"
+        },
+        {
+          "speaker": "colleague",
+          "text": "uh, yep."
+        },
+        {
+          "speaker": "agent",
+          "text": "Estonia."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um so is there anything else you'd like to know?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "um so um in the different um stages of the design, so at first I will be responsible for um for yeah, designing the technical functions of the um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2006b-313.77s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2006b 313.77s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "so it's a cyclical process."
+        },
+        {
+          "speaker": "colleague",
+          "text": "these were the basic findings from today."
+        },
+        {
+          "speaker": "colleague",
+          "text": "The last three bullets have been integrated from uh the last minute uh email."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh I just quickly jotted them down."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "as I told you the identification of how the remote control works and what are the various parts to it",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2006c-314.64s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2006c 314.64s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and then we can come back and discuss what what we think from uh everybody's perspective."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "There are different cases that can be provided."
+        },
+        {
+          "speaker": "colleague",
+          "text": "They can be basically the shape of the cases, they can be flat,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "they can be curved with uh one-sided",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2006d-405.86s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2006d 405.86s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Okay, so maybe if we go on to evaluation cri criteria"
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah, see the budget."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I suspect we're gonna have a couple of minor finance issues,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "but um we'll se I'm sure we can get around them somehow."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "We'll just send all of our manufacturing to",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2007a-358.83s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2007a 358.83s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "No."
+        },
+        {
+          "speaker": "agent",
+          "text": "No."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Oh it's a hilarious movie."
+        },
+        {
+          "speaker": "colleague",
+          "text": "You have to see it."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "and it's best characteristic is it's pretty much",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2007b-178.60s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2007b 178.60s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "uh 'cause I know what I'm supposed to be doing now."
+        },
+        {
+          "speaker": "colleague",
+          "text": "and, uh yeah, I'm just here to"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and get things going, get people talking"
+        },
+        {
+          "speaker": "colleague",
+          "text": "what this meeting is all about is um I'm gonna have some presentations from all three of you,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "what you've been working on for the last",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2007c-782.99s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2007c 782.99s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Th the the speech recognition um option is it doesn't seem really very promising for us uh,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "It's not something that we wanna t go into with this product."
+        },
+        {
+          "speaker": "colleague",
+          "text": "The yeah the example that they're already using it for is with the coffee machine,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "where, basically, you can program a sample wi um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2007d-573.24s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2007d 573.24s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "And we have to do it on a scale of one to seven,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "one being true, so it's it's more like it's fits the criteria,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and seven being as in it doesn't fit the criteria."
+        },
+        {
+          "speaker": "colleague",
+          "text": "And this is false,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "this is just like",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2008a-543.43s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2008a 543.43s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and I don't know if I necessarily like that"
+        },
+        {
+          "speaker": "colleague",
+          "text": "'cause I feel like you end up with multimedia overload."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I just wanna watch the T_V_ um."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Always gets lost."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Some sort of like",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2008b-344.92s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2008b 344.92s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and found that the desire for voice recognition was inversely related to age,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "so younger people were more inclined to want something with voice recognition,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "whereas the older people in the like sixty and above segment or so did not really think that they would pay more money for voice recognitions."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um people also had certain frustrations,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "that I think that we could try to take into consideration with",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2008c-971.68s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2008c 971.68s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "No,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I think I think we're talking menu like contrast and tuning the V_C_R_ or something if I've understood you correctly, rather than menu as what's on."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah, that that would be one of the features, yes."
+        },
+        {
+          "speaker": "agent",
+          "text": "'Cause that would be more specifically a digital box,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "something to bear in mind is that if we put a display on the remote control",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2008d-468.19s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2008d 468.19s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "and then I wonder if it's if it's more just a gimmick then anything else."
+        },
+        {
+          "speaker": "agent",
+          "text": "ho how many times do you really, seriously lose your remote control"
+        },
+        {
+          "speaker": "agent",
+          "text": "and would would a device like that actually help you to find it?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "There might be something that you can do in the circuit board and the chip",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2009a-336.45s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2009a 336.45s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and then ov obviously uh the U_I_D_ and the I_D_ you know you you can keep on the you know sort of at the cutting edge of how to get about maximising what is possible"
+        },
+        {
+          "speaker": "colleague",
+          "text": "um to try t of sync it all up."
+        },
+        {
+          "speaker": "colleague",
+          "text": "So that's the detailed design."
+        },
+        {
+          "speaker": "colleague",
+          "text": "So it's a three stage kind of thing."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "for now just for th the white board um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2009b-1096.51s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2009b 1096.51s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um I think we've had a bit of discussion already on this thing,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "s there any other questions comments that came up in these presentations?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Interface?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah I think that would be best."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "based on what sh on what you guys have all said to me let's go for a plastic",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2009c-209.53s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2009c 209.53s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "which we probably don't wanna do,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "curved or very sexy double curved."
+        },
+        {
+          "speaker": "agent",
+          "text": "What kind of th thickness are we looking at?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um, I imagine that we could specify."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Um, I don't see any reason to go outside of the convention of",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2009d-183.94s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2009d 183.94s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "That would include some mostly just the simple design features for a television operation"
+        },
+        {
+          "speaker": "colleague",
+          "text": "but with a slide or a fold-out bay for more advanced functions for users."
+        },
+        {
+          "speaker": "colleague",
+          "text": "the U_I_D_ and the I_D_ were asked to go ahead and start developing a prototype for us to look at."
+        },
+        {
+          "speaker": "colleague",
+          "text": "That's sorted,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "back to the main",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2010b-1500.94s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2010b 1500.94s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "It's when we get satellite."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I guess, we're gonna discuss the project financing later,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "making sure that we can fit all of the stuff that we want to on our budget. Um."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And don't forget we need to include the colour",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2010c-1114.45s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2010c 1114.45s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "I don't think wood is a viable option."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah wood."
+        },
+        {
+          "speaker": "agent",
+          "text": "No."
+        },
+        {
+          "speaker": "agent",
+          "text": "go ahead."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I was saying that titanium, if we're being restricted then",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2010d-745.10s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2010d 745.10s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "'Cause I'd forgotten that that wasn't our decision, yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "minus it being just merely a T_V_ remote we got to choose what we wanted to do with it."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Right,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "and we got say over",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2011a-107.77s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2011a 107.77s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "I forgot to s say I'm the Project Manager but I figured you all knew that already,"
+        },
+        {
+          "speaker": "agent",
+          "text": "I'm Krista and I'm the Industrial Designer."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um so f here's our agenda for today."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Um we're gonna do some tool training, project plan and discuss",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2011b-422.42s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2011b 422.42s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Oh function, I see it."
+        },
+        {
+          "speaker": "agent",
+          "text": "yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "It should be yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "This my presentation about the uh technical functions design"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "and I basically just tried to focus on um",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2011c-334.37s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2011c 334.37s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "which is quite shocking."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Right, um, I have been searching the current trends, um, both on the web and via fashion-watchers,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and the findings are that the first thing to aim for is a fashion uh, fancy look and feel."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um. Next comes technologic technology and the innovations to do with that."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And th last thing is the",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2011d-416.32s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2011d 416.32s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Boo yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "Did y what did you work on?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um evaluation criteria."
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Right what happens is we have to um decide whether this this whole",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2012a-169.00s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2012a 169.00s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "in fact we will do that by by going round the table quickly"
+        },
+        {
+          "speaker": "agent",
+          "text": "and and saying what what contribution you you're looking to make."
+        },
+        {
+          "speaker": "agent",
+          "text": "So we'll start with Andrew."
+        },
+        {
+          "speaker": "colleague",
+          "text": "my name's Andrew"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I'm a I'm the Market Research",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-wait-es2012b-514.39s",
+      "state": "wait",
+      "contract": "meeting",
+      "source": "AMI ES2012b 514.39s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "See that, as we kinda noticed, seventy five percent of people find their remote controls ugly."
+        },
+        {
+          "speaker": "colleague",
+          "text": "So some kind of a new style should be incorporated that's less ugly."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh along with um looking less ugly, if it looks better, eighty percent of people said they'd spend more money on it."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Which is a a plus for us,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "if we can make it look better, it'd be uh",
+      "expect": "wait"
+    },
+    {
+      "id": "ami-stop-es2002a-602.87s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2002a 602.87s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "So, possibly."
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "And then a and then al the other thing international is on top of the price."
+        },
+        {
+          "speaker": "agent",
+          "text": "What, just like in terms of like the wealth of the country?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Or just like, basic",
+      "agent_speaking": true,
+      "agent_said": "Like how much money people have to spend on things",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2002b-962.27s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2002b 962.27s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "so d it doesn't just look like a big panel,"
+        },
+        {
+          "speaker": "agent",
+          "text": "kinda like when you you look at, you know, a new computer keyboard,"
+        },
+        {
+          "speaker": "agent",
+          "text": "or something that is quite explanatory."
+        },
+        {
+          "speaker": "agent",
+          "text": "If you want audio, if you want visual, then you have those."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Repetitive strain injury.",
+      "agent_speaking": true,
+      "agent_said": "and I will admit I don't know what R_S_I_ stands for",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2002c-1094.87s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2002c 1094.87s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Okay um then there's um how the case actually looks."
+        },
+        {
+          "speaker": "agent",
+          "text": "It can actually be flat or it can be curved,"
+        },
+        {
+          "speaker": "agent",
+          "text": "um and then the different types of materials that you can use,"
+        },
+        {
+          "speaker": "agent",
+          "text": "um I don't think you can use them in a combination,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "We you couldn't have like plastic",
+      "agent_speaking": true,
+      "agent_said": "but I don't think you can actually use them in a combination",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2002d-146.11s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2002d 146.11s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "The L_C_D_ panel just displays um functionally what you're doing."
+        },
+        {
+          "speaker": "agent",
+          "text": "it only has four columns, it's a very simple L_C_D_ like,"
+        },
+        {
+          "speaker": "agent",
+          "text": "whereas many the minimum amount we need that the user will automatically know like this is brightness or this is contrast."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay cool."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Oh right okay.",
+      "agent_speaking": true,
+      "agent_said": "It might even be one, a bit more complex L_C_D_ panel with pictures like maybe the sun or the, you know, the the symbols of the various",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2003c-1217.43s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2003c 1217.43s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Spongy."
+        },
+        {
+          "speaker": "agent",
+          "text": "I've als I've been saying everything's the new black."
+        },
+        {
+          "speaker": "agent",
+          "text": "spongy's the new black as well."
+        },
+        {
+          "speaker": "agent",
+          "text": "we have the choice between rubber and plastic."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I forgot to mention that.",
+      "agent_speaking": true,
+      "agent_said": "If it's the type of rubber that you can squeeze, you know, it's spongy, then can I",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2003d-967.80s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2003d 967.80s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "I believe so, yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "That would probably not be in keeping with the um the fashion statement and such,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Fashion."
+        },
+        {
+          "speaker": "colleague",
+          "text": "yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Being manipulated by the joystick,",
+      "agent_speaking": true,
+      "agent_said": "the only new thing is the L_C_D_ on the",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2004a-361.74s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2004a 361.74s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "it doesn't discriminate between you, based on what you are."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Second it's loyal"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and third thing it's got intuition."
+        },
+        {
+          "speaker": "colleague",
+          "text": "so basically these are the three unique features I think belong to a dog."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Well since you guys have chosen the",
+      "agent_speaking": true,
+      "agent_said": "you can get to the top, with standing on a chair",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2004b-326.17s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2004b 326.17s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Could I can I interject to ask a question there,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Mm-hmm."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah sure."
+        },
+        {
+          "speaker": "agent",
+          "text": "is that appropriate?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "if you if you look at if you",
+      "agent_speaking": true,
+      "agent_said": "You're saying the triple A_ batteries are small or the surrounding",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2004c-363.56s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2004c 363.56s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "uh again in contrast to last year."
+        },
+        {
+          "speaker": "colleague",
+          "text": "So a lot of interesting feedback there,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "both from our market research departments and from our people in Paris and Milan."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Be interesting to see what our design people make of that."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Fine. It's okay with me.",
+      "agent_speaking": true,
+      "agent_said": "let's start from the inside and work our way out",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2004d-1197.38s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2004d 1197.38s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "One double curve."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Two,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "'cause it's two."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Two curves, yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "what's a single curve then?",
+      "agent_speaking": true,
+      "agent_said": "But it has a slightly flattened bottom so it can sit. So it can",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2005b-560.84s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2005b 560.84s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "There you go."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Computer adjusting, yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay. Cool."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh F_ five."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Um, F_ five and escape'll",
+      "agent_speaking": true,
+      "agent_said": "and I press that again to get it off as well",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2005c-530.55s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2005c 530.55s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And that's the kind of idea we're going for."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Looks pretty complicated."
+        },
+        {
+          "speaker": "agent",
+          "text": "There's um an L_C_D_ thing,"
+        },
+        {
+          "speaker": "agent",
+          "text": "I thought could get a bit confusing and a bit expensive as well for us."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm, like the middle",
+      "agent_speaking": true,
+      "agent_said": "This one is got a kind of scroll like a mouse",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2005d-573.33s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2005d 573.33s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "agent",
+          "text": "It One of the buttons is sticking, I don't know."
+        },
+        {
+          "speaker": "colleague",
+          "text": "No input, like this."
+        },
+        {
+          "speaker": "colleague",
+          "text": "No it's not."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah, it's not working",
+      "agent_speaking": true,
+      "agent_said": "No, it's 'cause the uh the shift button's stuck",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2006a-862.59s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2006a 862.59s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "l it's a kind of lizard."
+        },
+        {
+          "speaker": "agent",
+          "text": "And I I like geckos"
+        },
+        {
+          "speaker": "agent",
+          "text": "and, and where I was living in Cambodia they used to live in my house"
+        },
+        {
+          "speaker": "agent",
+          "text": "and they were on the ceiling"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I hope you don't like snakes,",
+      "agent_speaking": true,
+      "agent_said": "and they would make little gecko noises",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2006b-1622.62s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2006b 1622.62s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Seventy six point three percent."
+        },
+        {
+          "speaker": "colleague",
+          "text": "It was seventy something, yeah, yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "so it was sti still still quite popular amongst them."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah, I kn I mean I know what you're saying",
+      "agent_speaking": true,
+      "agent_said": "So even they are seventy six percent, is that high",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2006c-1257.82s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2006c 1257.82s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Okay, apparently, fruit and vegetables will be providing inspiration."
+        },
+        {
+          "speaker": "agent",
+          "text": "I discovered clip art."
+        },
+        {
+          "speaker": "agent",
+          "text": "So I mean, I'm taking this to mean, you know, curviness."
+        },
+        {
+          "speaker": "agent",
+          "text": "Do you know?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "and possibly even uneven",
+      "agent_speaking": true,
+      "agent_said": "'Cause you don't tend to get flat vegetables",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2006d-261.81s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2006d 261.81s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "It's it's quite standard mm place for it"
+        },
+        {
+          "speaker": "agent",
+          "text": "and and also the colour is quite often red,"
+        },
+        {
+          "speaker": "agent",
+          "text": "so it's it's kind of user friendly."
+        },
+        {
+          "speaker": "agent",
+          "text": "like the previous one and the next one."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "So where's the volume?",
+      "agent_speaking": true,
+      "agent_said": "And and we would also have a l little um thing saying here, previous and ne prevon prevon next",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2007a-859.44s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2007a 859.44s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and then on the other side o one uh a remote control that would be very very simple with just the channel, program plus and minus, and the just the mute button, for example."
+        },
+        {
+          "speaker": "agent",
+          "text": "I can real keep it really really simple on one side and the other side be very complicated."
+        },
+        {
+          "speaker": "colleague",
+          "text": "One side for kids, one side for adults."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I'm not sure if it's a good idea to have a two",
+      "agent_speaking": true,
+      "agent_said": "Or grandma as well, you know it's like what",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2007b-266.30s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2007b 266.30s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Don't feel pressurised into using this thing."
+        },
+        {
+          "speaker": "agent",
+          "text": "'Cause I don't."
+        },
+        {
+          "speaker": "agent",
+          "text": "You okay over there? Reissa,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I'm fine. Yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I uh yeah, yeah.",
+      "agent_speaking": true,
+      "agent_said": "are you uh b are you joining in with this meeting here",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2007c-306.13s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2007c 306.13s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "It's here."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Would that work?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "a hand dynamo which is which was used uh in the fifties for torches,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I don't think any of us remember the fifties."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "It wouldn't be very fancy.",
+      "agent_speaking": true,
+      "agent_said": "Is it like a crank thing or something",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2007d-597.38s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2007d 597.38s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Okay, cool."
+        },
+        {
+          "speaker": "agent",
+          "text": "Okay, first criteria, look and feel."
+        },
+        {
+          "speaker": "agent",
+          "text": "So the does remote look and feel fashionable to what we talked about?"
+        },
+        {
+          "speaker": "agent",
+          "text": "As it is it colour-wise and is it spongy?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I would give it a seven",
+      "agent_speaking": true,
+      "agent_said": "So what mark should we",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2008c-1441.65s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2008c 1441.65s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Mm-hmm."
+        },
+        {
+          "speaker": "agent",
+          "text": "The button on an iPod, is it what is it,"
+        },
+        {
+          "speaker": "agent",
+          "text": "is it just four buttons"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "'cause there's one in the middle.",
+      "agent_speaking": true,
+      "agent_said": "or is it li more like a scroll",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2008d-957.95s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2008d 957.95s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "We might wanna keep it yellow."
+        },
+        {
+          "speaker": "agent",
+          "text": "I know it would make it a little less c a little more confusing,"
+        },
+        {
+          "speaker": "agent",
+          "text": "but if we had all the buttons in black, and a design in and the outside in yellow, that'd be our corporate one"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "but if you had like a silvery kind of",
+      "agent_speaking": true,
+      "agent_said": "and we could also have alternative colours, one a more conservative one, one that's",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2009a-1146.38s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2009a 1146.38s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Awesome."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I assume that that can be done with uh kind of around the world."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I'm liking that idea, this idea of a touch screen remote with multi-format features. Um."
+        },
+        {
+          "speaker": "agent",
+          "text": "I think, making it out of a nice material would be very important,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Keeping it nice and slick, would",
+      "agent_speaking": true,
+      "agent_said": "because so many of those remotes that you see, these universal remotes look so cheap and low quality",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2009c-1046.95s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2009c 1046.95s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um, I say that we provisionally go with the touch screen"
+        },
+        {
+          "speaker": "colleague",
+          "text": "or wh y wh what was your thought on the matter Ron?"
+        },
+        {
+          "speaker": "agent",
+          "text": "I'm thinking that's uh definitely a good idea"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "See if we can cut some corners.",
+      "agent_speaking": true,
+      "agent_said": "and I also think that we could probably come up with some sort of a cheaper uh means to to go about this kind of production",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2009d-595.39s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2009d 595.39s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Actually this bottom red ring here just unclips"
+        },
+        {
+          "speaker": "agent",
+          "text": "and then you put a a new a new uh a new plate on top of that."
+        },
+        {
+          "speaker": "agent",
+          "text": "we definitely priced out a spongy even spongier non-natural look um materials"
+        },
+        {
+          "speaker": "agent",
+          "text": "which I think worked out fine."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "It's not it's not quite",
+      "agent_speaking": true,
+      "agent_said": "We also continued on with the ideas that f following uh Apple's colour schemes with the kind of the uh light orange and",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2010a-458.00s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2010a 458.00s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Right."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I think they'll be phasing V_H_S_ out shortly."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah, TiVo."
+        },
+        {
+          "speaker": "colleague",
+          "text": "But it's still there, so"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "They're never universal. That's right",
+      "agent_speaking": true,
+      "agent_said": "It needs to be compatible 'cause universal remote controls are never universal",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2010b-872.84s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2010b 872.84s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "So the red would be the front of the remote though, right?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah, that's gonna be what's communicating with the T_V_,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Like that we know the battery's working",
+      "agent_speaking": true,
+      "agent_said": "but the other bulb, I think, is good to just to indicate, I'm doing something, it's sort of like a",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2010c-193.74s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2010c 193.74s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um. But as for the fruits and vegetable patterns, I don't know if we really want to go with that,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "because it is just a trend,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and our product we want to stay around for much longer than just a few months,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Right."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I mean that could just be a Spring",
+      "agent_speaking": true,
+      "agent_said": "People don't buy a new remote every",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2010d-408.48s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2010d 408.48s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "but that's because it's only two dimensions, really."
+        },
+        {
+          "speaker": "agent",
+          "text": "And we discussed that being included."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Then yes,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "what else would it need for it to be technologically innovative?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "And it doesn't cover anything",
+      "agent_speaking": true,
+      "agent_said": "Well we don' have the you know, we can't say channel, and it changes the channel",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2011a-654.15s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2011a 654.15s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "So f that's a fifty percent um uh."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um, I don't know what these mean because I didn't actually make the slide-show."
+        },
+        {
+          "speaker": "agent",
+          "text": "Experience with remote control."
+        },
+        {
+          "speaker": "agent",
+          "text": "So I guess we have to reflect on our experiences with remote controls to decide what um we would like to see in a convenient, practical, nice remote control."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Um, I think one thing",
+      "agent_speaking": true,
+      "agent_said": "Um so do we have any initial ideas for uh how this remote control should be designed or formatted or the the buttons",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2011b-982.93s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2011b 982.93s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and I was thinking, I_R_ is line of sight, so unless the remote is like actually in front of the T_V_ it's not gonna work,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "um so probably like a radio signal like on a on a cell phone."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Sends out a signal and then the the remote hears the signal and so it beeps probably."
+        },
+        {
+          "speaker": "colleague",
+          "text": "It would have to be sold separately because if the sender's on the remote then you'd have to find the remote first to click the button to find the remote."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah, it'd probably just stick it on your T_V_",
+      "agent_speaking": true,
+      "agent_said": "So do you plug it in the T_ you plug it in T_V_, this",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2011c-548.98s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2011c 548.98s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Conceptual User Interface."
+        },
+        {
+          "speaker": "colleague",
+          "text": "we're gonna try to talk about, um what kind of uh how people are actually going to be using this iPod-ish remote control, based on fruit vegetable design."
+        },
+        {
+          "speaker": "colleague",
+          "text": "And, um, basically, so, this is a touched ba a touch-based graphical interface system."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I mean I assume, are we still on the screen idea?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "'Cause if we're gonna have to ha if we have",
+      "agent_speaking": true,
+      "agent_said": "Oh we s hadn't discussed it last",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2011d-887.38s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2011d 887.38s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Oh I thought it was the other way round."
+        },
+        {
+          "speaker": "agent",
+          "text": "I thought it was the other way round too."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I should've kept the table up",
+      "agent_speaking": true,
+      "agent_said": "I I was thinking one means no points, you know, all the way up to the top",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2012a-594.74s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2012a 594.74s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Think a lot of the time, remotes that come with T_V_ players and T_V_s and D_V_ players, like they aren't"
+        },
+        {
+          "speaker": "agent",
+          "text": "like an area that's put a lot of effort into,"
+        },
+        {
+          "speaker": "agent",
+          "text": "they're very boring,"
+        },
+        {
+          "speaker": "agent",
+          "text": "very plain."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Um what so wh what's in",
+      "agent_speaking": true,
+      "agent_said": "Easily put us one step ahead of the current competition",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2012b-886.92s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2012b 886.92s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um no"
+        },
+        {
+          "speaker": "colleague",
+          "text": "this is for pay more for speech recognition."
+        },
+        {
+          "speaker": "agent",
+          "text": "again, we don't know the relative proportion the relative numbers in the age groups."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah, that's true."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "the only problem I can think of with that",
+      "agent_speaking": true,
+      "agent_said": "If we wanted something different, truly different, then the buttonless remote control",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2012c-904.21s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2012c 904.21s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "second question,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "do we need the five buttons for channel change, up down, volume up down and on off, just as a a backup or just so that people can uh j j just sit there pressing buttons?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I think so.",
+      "agent_speaking": true,
+      "agent_said": "Yeah, I I would say we do, yeah",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2013b-937.12s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2013b 937.12s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "I think we just need channel selection, volume up, volume down"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and I think an an enter function where you can access it's not like teletext, but along the same lines, access things on the screen. Uh"
+        },
+        {
+          "speaker": "colleague",
+          "text": "not related to the internet one that you mentioned,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "because that'd be far outside our budget and what we want this to do."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "really exceed the requirements,",
+      "agent_speaking": true,
+      "agent_said": "And exceed the requirements they're expecting",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2013c-1247.14s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2013c 1247.14s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "so what I had been thinking was something chunky and yellow and plastic with black buttons with a logo on it."
+        },
+        {
+          "speaker": "colleague",
+          "text": "let's see then."
+        },
+        {
+          "speaker": "agent",
+          "text": "I I don't know how important that is to keep it exactly the colours of the Real Reaction company."
+        },
+        {
+          "speaker": "agent",
+          "text": "It's just what I'd understood we'd be doing."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "We we could we could do um",
+      "agent_speaking": true,
+      "agent_said": "That's before I heard about all this hot tips about the future, fruit-wise",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-stop-es2013d-1070.45s",
+      "state": "stop",
+      "contract": "meeting",
+      "source": "AMI ES2013d 1070.45s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "they're both yellow with black buttons,"
+        },
+        {
+          "speaker": "agent",
+          "text": "it's just that we didn't have any more dough to represent uh that,"
+        },
+        {
+          "speaker": "agent",
+          "text": "but if you can just imagine banana shape with these bits as black."
+        },
+        {
+          "speaker": "agent",
+          "text": "So what we re really need to decide is whether we want the actual banana shape or just a a purely blob or some sort of abstraction in between the two"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "I think that many of us are abstract",
+      "agent_speaking": true,
+      "agent_said": "but that isn't actually recognisable as a banana, you know, with the grooves and the stalk and stuff",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "ami-continue-ack-es2002a-135.08s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2002a 135.08s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Um so that's kind of our our brief, as it were."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um and so there are three different stages to the design."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Um I'm not really sure what what you guys have already received um in your emails."
+        },
+        {
+          "speaker": "colleague",
+          "text": "What did you get?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "Um, I just got the project announcement about",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2002b-465.62s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2002b 465.62s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "but yeah you don't want to lose out on, you know, what it does,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "you know you get a lot of remote controls where you kind of flip the thing open,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I think that's a good idea."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um, do we have any functions that um we'd want on it?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "I mean so far I've got um on and off",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2002c-114.76s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2002c 114.76s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Um and then after that we'll have to make some decisions about stuff, right."
+        },
+        {
+          "speaker": "agent",
+          "text": "So if you wanna take this."
+        },
+        {
+          "speaker": "agent",
+          "text": "Screwed in quite tightly."
+        },
+        {
+          "speaker": "agent",
+          "text": "uh how did we leave it with speech recognition now?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "We did we say we were gonna try maybe incorporate it but we hadn't made a definite",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2002d-140.72s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2002d 140.72s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "The L_C_D_ panel just displays um functionally what you're doing."
+        },
+        {
+          "speaker": "agent",
+          "text": "it only has four columns, it's a very simple L_C_D_ like,"
+        },
+        {
+          "speaker": "agent",
+          "text": "whereas many the minimum amount we need that the user will automatically know like this is brightness or this is contrast."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay cool."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Okay",
+      "agent_speaking": true,
+      "agent_said": "It might even be one, a bit more complex L_C_D_ panel with",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2003a-717.09s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2003a 717.09s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "that was profiting,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "that was an amount, so that's the amount made,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Yep."
+        },
+        {
+          "speaker": "agent",
+          "text": "fifty million,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "and if you're making twelve point five Euros on each one, then",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2003b-1549.60s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2003b 1549.60s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "However I don't know exactly where we'll be going with that,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "but it might not even be the avenue of the Marketing Expert,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "that might be sales,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "who are not in this meeting."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "It's just, the way I figure it, twelve point five Euros per unit",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2003c-208.55s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2003c 208.55s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Uh joystick we'll probably if we're gonna use it, um could be plastic w or rubber even as well. Um"
+        },
+        {
+          "speaker": "agent",
+          "text": "it's like two or three slides down."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "agent",
+          "text": "this is what I found we can use. Uh"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Okay.",
+      "agent_speaking": true,
+      "agent_said": "three different types of batteries. Um can either use a hand dynamo, or the kinetic type ones, you know that they use in watches, or",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2003d-781.72s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2003d 781.72s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Do you have any data on how much um different prints cost?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "I mean can you get the entire thing printed with a design um?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Um b b b da is you mean on the plastic, or?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Let's have a look."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah, yeah.",
+      "agent_speaking": true,
+      "agent_said": "You now have as much information as I do",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2004a-258.31s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2004a 258.31s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and um sum up the characteristics of that animal."
+        },
+        {
+          "speaker": "agent",
+          "text": "We're running out of blue."
+        },
+        {
+          "speaker": "agent",
+          "text": "I'm not gonna ask you to guess,"
+        },
+        {
+          "speaker": "agent",
+          "text": "I'm going to tell you that's supposed to be a tiger."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "And I see them as majestic,",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2004b-319.15s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2004b 319.15s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Um, most of them are powered by some form of battery."
+        },
+        {
+          "speaker": "agent",
+          "text": "Now our one, I'm I'm not sure whether we want to look at the size issue"
+        },
+        {
+          "speaker": "agent",
+          "text": "because most of them are powered by triple A_ batteries"
+        },
+        {
+          "speaker": "agent",
+          "text": "but those can be quite bulky"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "so I d I didn't know if you wanted to look at something else um so we could shrink down the size",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2004c-109.85s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2004c 109.85s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I think we're slightly ahead of ourselves"
+        },
+        {
+          "speaker": "agent",
+          "text": "from the last meeting,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah, yeah I was getting that impression as well."
+        },
+        {
+          "speaker": "agent",
+          "text": "I th I I think yeah um."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Etcetera.",
+      "agent_speaking": true,
+      "agent_said": "This is where we talk about um properties, materials, user-interface and",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2004d-141.73s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2004d 141.73s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yes, yes you can."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Wait a second,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Going a bit crazy over here."
+        },
+        {
+          "speaker": "colleague",
+          "text": "and you can just take it off."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm 'kay.",
+      "agent_speaking": true,
+      "agent_said": "this is our look and feel presentation",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2005a-51.19s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2005a 51.19s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah, yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "Mm."
+        },
+        {
+          "speaker": "agent",
+          "text": "my first thoughts would be most remote controls are grey or black."
+        },
+        {
+          "speaker": "agent",
+          "text": "As you said they come with the T_V_"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Uh-huh.",
+      "agent_speaking": true,
+      "agent_said": "so it's normally just your basic grey",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2005b-351.27s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2005b 351.27s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Then if we look at this slide,"
+        },
+        {
+          "speaker": "agent",
+          "text": "uh these are in your shared documents, you can see,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "what was the question for this?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Or is are you coming on to that?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Okay.",
+      "agent_speaking": true,
+      "agent_said": "Ah t look all the market potential, what",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2005c-39.92s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2005c 39.92s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "So the meeting will have about the same format as the last time."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "So switching over I've just left uh",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2005d-1367.71s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2005d 1367.71s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "So trends."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Can you explain what you want us to write there?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "How it how conforms to the current trends?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Yeah, again the the fashion trends,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "this also like whether it it will be fashionable to have these products in the",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2006a-1128.64s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2006a 1128.64s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Something that's a little less crowded than this,"
+        },
+        {
+          "speaker": "agent",
+          "text": "like I mean you know, theoretically you can do all kinds of things with your T_V_, right?"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "But what do most people do?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "They turn it on, they watch",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2006b-481.87s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2006b 481.87s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "which is then communicated to the remote site,"
+        },
+        {
+          "speaker": "agent",
+          "text": "which h has an infrared receiver."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um the there can be uh a bulb here or something to indicate whether the remote is on or communicating."
+        },
+        {
+          "speaker": "agent",
+          "text": "so a all the functionality of the remote control,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "whatever new functions that we need to do, um make the chip more complicated uh",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2006c-479.96s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2006c 479.96s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "The P_C_B_ is uh inexpensive, so we can put put in uh whatever we want,"
+        },
+        {
+          "speaker": "agent",
+          "text": "but the various integrated circuit options are, we have either a simple one"
+        },
+        {
+          "speaker": "agent",
+          "text": "or a regular"
+        },
+        {
+          "speaker": "agent",
+          "text": "or advanced."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "And uh the price goes up",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2006d-206.96s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2006d 206.96s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "so we said the back side round, yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "It l does look like the curvy"
+        },
+        {
+          "speaker": "agent",
+          "text": "and then the whole shape's curvy,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "so I would say that this",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2007a-787.82s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2007a 787.82s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Per unit, yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Cost."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Close pr I don't know how much it would cost. Yeah."
+        },
+        {
+          "speaker": "agent",
+          "text": "'cause we this is what we th what we're doing at the moment is just saying what what we'd like,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Right.",
+      "agent_speaking": true,
+      "agent_said": "and then after we after we've found out what we can like, some different ideas, we can then go and do the research to find out if these any of these ideas are feasible",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2007b-72.11s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2007b 72.11s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Oh I thought we all were."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah, I have one too, okay."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "agent",
+          "text": "'cause basically I can't re I've really crap at remembering everyone's name"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Okay.",
+      "agent_speaking": true,
+      "agent_said": "so I just wanna rather than going uh Miss Marketing and Miss this and Miss that",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2007c-211.81s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2007c 211.81s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and who we all are and stuff like that,"
+        },
+        {
+          "speaker": "agent",
+          "text": "mm get bit more of an idea together of what's going on."
+        },
+        {
+          "speaker": "agent",
+          "text": "now that we know what it is that we are doing, now we know that it's a T_V_ remote and stuff"
+        },
+        {
+          "speaker": "agent",
+          "text": "and you guys have just been off doing some some uh R_ and D_ for that,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "that's research and development for",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2007d-33.43s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2007d 33.43s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I didn't know was edible.."
+        },
+        {
+          "speaker": "colleague",
+          "text": "yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "It's made edible 'cause kids eat it,"
+        },
+        {
+          "speaker": "agent",
+          "text": "Actually that makes sense,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "because I remember like, peopl I dunno if my Mom ever did it but I remember other people's Moms making like home-made Play-Doh where you just like make the colouring and make some sort of sort of",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2008a-680.00s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2008a 680.00s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "or do all remotes require batteries?"
+        },
+        {
+          "speaker": "agent",
+          "text": "but it's possible we could use like a lithium battery"
+        },
+        {
+          "speaker": "agent",
+          "text": "um that would last a lot longer than like double A_s."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "Um like tho those are the batteries that are used in a lot of um M_P_ three players now and that kind of thing",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2008b-1436.67s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2008b 1436.67s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Okay."
+        },
+        {
+          "speaker": "agent",
+          "text": "Like, we can we can play around with it a little bit."
+        },
+        {
+          "speaker": "agent",
+          "text": "we need to talk about our functions and our target group."
+        },
+        {
+          "speaker": "agent",
+          "text": "We need to decide who our target group is."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "You um in your analysis of different market um of the marketing",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2008c-138.56s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2008c 138.56s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and we said it's for all age groups, different um functions of it."
+        },
+        {
+          "speaker": "agent",
+          "text": "Our main objectives were simplicity and fashion."
+        },
+        {
+          "speaker": "agent",
+          "text": "specific functions are something to keep the remote from getting lost, large buttons for the essential functions, a possibility for extra functions, like a sliding a sliding piece and a long-life battery or a charging station."
+        },
+        {
+          "speaker": "agent",
+          "text": "now three presentations."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yep.",
+      "agent_speaking": true,
+      "agent_said": "I'd like to do it in this order, first do the conceptual specification of components, properties and materials um and then the conceptual specification of user interface",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2008d-272.77s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2008d 272.77s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "so like channel zero would be t to switch switch the machine off,"
+        },
+        {
+          "speaker": "agent",
+          "text": "yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Could the middle button of the on-screen menu function as a power button?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Um not really,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "it would make it hard to turn",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2009a-1084.15s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2009a 1084.15s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Mm."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I don't think one exists."
+        },
+        {
+          "speaker": "colleague",
+          "text": "An interesting option."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Be a good idea."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "Needs it needs one outstanding",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2009b-251.24s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2009b 251.24s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and uh probably a two hundred foot range."
+        },
+        {
+          "speaker": "agent",
+          "text": "Uh and the receiver of course is any number of electronic devices."
+        },
+        {
+          "speaker": "agent",
+          "text": "Um but in this case it'll only be T_V_s."
+        },
+        {
+          "speaker": "agent",
+          "text": "I really think that we should use plastic as opposed to metal,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Fine.",
+      "agent_speaking": true,
+      "agent_said": "um, the company simply",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2009c-528.65s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2009c 528.65s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "a different shape"
+        },
+        {
+          "speaker": "colleague",
+          "text": "not the example I would choose,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "and th apparently the feel of the next couple of years is spongy,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "though if we can get around to getting piloting, I thought maybe a casing option like uh"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm-hmm.",
+      "agent_speaking": true,
+      "agent_said": "As far as the rubber that we can use",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2009d-295.10s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2009d 295.10s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "and what we've done here is come up with a bit of a natural look here"
+        },
+        {
+          "speaker": "agent",
+          "text": "um f we call it fruity"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Appropriate, okay."
+        },
+        {
+          "speaker": "agent",
+          "text": "of course that's uh interchangeable"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Mm 'kay.",
+      "agent_speaking": true,
+      "agent_said": "and uh I think it would be desirable for the uh for the regular product in the in the in the",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2010a-31.73s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2010a 31.73s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Um I'm Mandy and I'm the Project Manager."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yep.",
+      "agent_speaking": true,
+      "agent_said": "And I know all your names again, Courtney",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2010b-297.36s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2010b 297.36s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And then functions for V_H_S_, D_V_D_,"
+        },
+        {
+          "speaker": "agent",
+          "text": "for example, play, rewind, fast-forward, stop, pause, enter."
+        },
+        {
+          "speaker": "agent",
+          "text": "And enter would be for like, you know, the menus."
+        },
+        {
+          "speaker": "agent",
+          "text": "whether that means like um we can go and decide the brightness of the screen, things like that, all the more complicated functions of menus."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Okay.",
+      "agent_speaking": true,
+      "agent_said": "And we can decide if that's what we want,, um if we",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2010c-753.02s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2010c 753.02s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "What is that?"
+        },
+        {
+          "speaker": "agent",
+          "text": "Um that would be two curvatures,"
+        },
+        {
+          "speaker": "agent",
+          "text": "so it would actually, if you the shape of your hand, you curve here and you curve here, so you could have two curves that match the shape of your hand to make it more comfortable to hold."
+        },
+        {
+          "speaker": "agent",
+          "text": "Now if you wanted that, you can't do titanium."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Right.",
+      "agent_speaking": true,
+      "agent_said": "And uh so you functions what for the buttons, scrolling",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2010d-884.95s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2010d 884.95s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "The Toronto district school would only use his Macs with their kids."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Exactly,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Just the Mac font bothers me even."
+        },
+        {
+          "speaker": "colleague",
+          "text": "But I do like iPods,"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "They want all those words for",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2011a-398.29s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2011a 398.29s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "Yeah he he doesn't look that smart."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Uh-oh there goes the ten."
+        },
+        {
+          "speaker": "colleague",
+          "text": "They sleep all day, they're easy to draw."
+        },
+        {
+          "speaker": "colleague",
+          "text": "Do you wanna anything?"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "ah.",
+      "agent_speaking": true,
+      "agent_said": "Well I had the cat as well, but",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2011b-927.25s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2011b 927.25s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "and also, if the T_V_ is on it's making sound and the people on the T_V_ are talking, and if somebody says like one, then the T_V_'s gonna switch itself to channel one,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Yeah yeah yeah."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I'm not sure how you would implement it."
+        },
+        {
+          "speaker": "colleague",
+          "text": "I just put the values in."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah.",
+      "agent_speaking": true,
+      "agent_said": "if you consider our budget, to",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2011c-716.46s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2011c 716.46s",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "or, like you can tap just to get to different channels."
+        },
+        {
+          "speaker": "agent",
+          "text": "Like if you just wanted to go to like from five to six you could tap or someth"
+        },
+        {
+          "speaker": "agent",
+          "text": "And then there's also the concern about you know um how do you get to the menu if you wanna change the brightness of your television,"
+        },
+        {
+          "speaker": "agent",
+          "text": "or if you want to um you know switch around, I don't know, like, these different modes"
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Yeah",
+      "agent_speaking": true,
+      "agent_said": "like turn on the timer or like",
+      "expect": "continue"
+    },
+    {
+      "id": "ami-continue-ack-es2011d-307.31s",
+      "state": "continue-ack",
+      "contract": "meeting",
+      "source": "AMI ES2011d 307.31s",
+      "history": [
+        {
+          "speaker": "colleague",
+          "text": "is that right?"
+        },
+        {
+          "speaker": "agent",
+          "text": "My impression was that flat meant like like one of those square remotes."
+        },
+        {
+          "speaker": "agent",
+          "text": "But it's really not very clear,"
+        },
+        {
+          "speaker": "colleague",
+          "text": "Oh. Okay."
+        }
+      ],
+      "participant": "A colleague",
+      "heard": "Right.",
+      "agent_speaking": true,
+      "agent_said": "because you got single curve and double curve and",
+      "expect": "continue"
+    }
+  ]
+}

@@ -1,0 +1,618 @@
+# Stream acceleration plugin
+
+Runs the voice pipeline in the Go acceleration backend instead of in Python. The backend
+joins the call, hears the caller, answers and speaks; Python configures it and runs the
+functions the model asks for.
+
+```bash
+uv add vision-agents-plugins-stream
+```
+
+It talks to Stream's hosted router with your app's credential:
+
+```bash
+STREAM_API_KEY=your_api_key
+STREAM_API_SECRET=your_api_secret
+```
+
+To use a router running locally instead, name it and the customer it bills:
+
+```bash
+STREAM_ACCELERATION_URL=http://localhost:8080
+STREAM_ACCELERATION_CUSTOMER_ID=acme
+```
+
+Unset, the hosted router in us-east4 is used. For another region, set
+`STREAM_ACCELERATION_REGION=europe-west4` (or pass `region="europe-west4"`) instead of a URL.
+
+## The whole pipeline, remotely
+
+```python
+from vision_agents.core import Agent
+from vision_agents.plugins import getstream, stream
+
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    llm=stream.Accelerated(model="gemma4", stt="realtime-best", tts="sonic_36"),
+    cost_tracking={"project": "moderation", "environment": "dev"},
+    memory_filter={"user_id": "222", "company_id": "12312"},
+)
+
+
+@agent.llm.register_function(description="The weather where the caller is")
+async def weather(city: str) -> str:
+    return f"It is raining in {city}."
+```
+
+`register_function` works as it does with any other LLM. The model asks for the function
+over the session's socket, this plugin runs it here and sends back what it returned.
+
+What the model is told a function takes is its signature, read by Pydantic: a parameter can
+be any type Pydantic knows, and `Annotated` with a `Field` adds a description or a limit.
+A function that takes one Pydantic model is given the model's fields as its arguments:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class BookFlight(BaseModel):
+    flight_id: str = Field(pattern=r"^[A-Z]{2}\d{1,4}$", description="e.g. LH400")
+    seats: int = Field(ge=1, le=9)
+    cabin: Literal["economy", "business", "first"] = "economy"
+
+
+@agent.llm.register_function(description="Book a flight for the caller")
+async def book_flight(booking: BookFlight) -> str:
+    return await bookings.book(booking.flight_id, booking.seats, booking.cabin)
+```
+
+```python
+from typing import Annotated
+
+from pydantic import Field
+
+
+@agent.llm.register_function(description="Book a flight for the caller")
+async def book_flight(
+    flight_id: Annotated[str, Field(pattern=r"^[A-Z]{2}\d{1,4}$", description="e.g. LH400")],
+    seats: Annotated[int, Field(ge=1, le=9)],
+) -> str:
+    return await bookings.book(flight_id, seats)
+```
+
+The arguments the model sends are checked and converted before the function runs, so
+`booking` is a `BookFlight` and `seats` an `int`. Arguments that do not fit are refused with
+a `ToolArgumentsError` naming each one and why, which the model is told so it can ask again.
+`parameters_schema=` still takes a JSON Schema as it is, for a function that reads its own
+arguments.
+
+A function can say how the backend treats its calls, and take the call it is running for as
+its first argument, annotated `ToolCallContext`. The model is not told about that argument:
+
+```python
+from vision_agents.core.llm import ToolCallContext
+
+
+@agent.llm.register_function(
+    description="Book a flight for the caller",
+    timeout=20,
+    needs_approval="Book flight {flight_id}?",
+)
+async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
+    await tool_call_context.update("checking seats")
+    await tool_call_context.disallow_interruptions()
+    return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
+```
+
+- `interruptible=True` lets the caller talking over the agent cancel a call in flight. By
+  default it keeps running and the model is told it is still going.
+- `timeout` is how long one call may take, in seconds, in place of the session's
+  `tool_timeout`. A call that takes longer fails with a `TimeoutError`.
+- `needs_approval` is a question the caller answers before each call runs, where each
+  `{name}` is one of the function's arguments. On a voice call the agent asks it out loud
+  and waits 15 seconds for a yes; `tool_call_context.approved` is then true. In writing the
+  question goes to the app, which asks. A `{name}` the function does not take is refused
+  when it is registered.
+
+`tool_call_context` is the call being answered: its `id`, which a call sent again keeps, so it
+is the key to make a side effect happen once; `session_id`, `turn_id`, the `user` whose turn
+asked, and the `conversation`. `update(text)` says how the call is going: a voice agent
+tells the caller in its own words once nobody is talking. `say(text)` has it say `text` as
+written, which a speech-to-speech model may paraphrase. `disallow_interruptions()` keeps the
+call going from then on, for a write that must not stop halfway, and raises `CallNotHeld`
+when the call had already been stopped. Under a model that does not say, it is an empty
+call whose methods do nothing; a unit test of the function passes it a `ToolCallContext(...)`.
+
+A call the router addresses to another watcher of the session (`run: false`), or for a
+function this process does not hold, is left for whoever runs it.
+
+The session is held by the call's id with voice on, so the backend's agent joins the same
+`agent:<call id>` call. What the agent is told to be is agent config, synced from its
+directory or `define_agent`, never set per session.
+
+`cost_tracking` and `memory_filter` are configuration rather than behaviour: they are
+serialized into the session and acted on by the backend. `memory_filter["user_id"]` is who
+the memories are about, and everything else in it narrows recall further.
+
+The agent's transcripts, conversation and events all work as they do locally, because the
+events the backend sends back are recorded into the same places.
+
+The harness (the subagent, its sandbox and its skills) is agent config, never session
+config: declare `subagent:`, `sandbox:` and `skills/` in the agent's directory, or pass
+`subagent=` and `vm=` to `define_agent`. `sandbox: daytona` gives the subagent somewhere to
+run code it writes, and needs `DAYTONA_API_KEY` on the backend. Only a voice agent names a
+`subagent`: a text agent runs everything, skills included, on its `llm`.
+
+## An agent as a directory
+
+`agents/customer_support/agent.yaml` is what makes a directory an agent, and
+`instructions.md`, `skills/*.md` and `knowledge/` are what it holds. Joining a call
+stores them on the backend, so naming the config is the whole of it:
+
+```python
+from vision_agents.core import Agent
+
+agent = Agent(config="customer_support")
+```
+
+`agent.yaml` also says what the agent runs on, so the models are decided on disk with
+everything else:
+
+```yaml
+name: customer_support
+description: Support for a subscription business.
+mode: voice
+region: eu  # or us, where all of the agent's work is done; us when left out
+llm: llm-fast
+subagent: llm-thinking
+stt: stt-fast
+tts: tts-fast
+voice: aurora
+harness: default
+search: search-fast
+greeting:
+  text: Thanks for calling, how can I help?
+  mode: exact  # or variation, the model's own take on it every call
+sandbox: daytona
+connectors:
+  - github
+keyterms:
+  - Vision Agents
+floor_control:                    # leave it out to keep the stored choice; {} is no choice, the router's default; {model: flow-controller} keeps the flow controller
+  model: stream/chorus-asr
+  max_wait_ms: 800                # optional: how long a caller may wait once they stop
+tags:
+  project: support
+```
+
+Everything but the name is optional, and a setting the file leaves out leaves whatever is
+stored, so a model chosen in the dashboard survives a sync that says nothing about it. A key
+nobody knows is refused rather than dropped: a misspelled `llm` that went quietly would
+leave the agent running on a model the file does not name.
+`plugins` and `plugin_events` are refused too: connectors replaced them, so name each
+under `connectors` instead.
+`region` is where the agent's work is done, `us` or `eu` for now: every model it runs, its
+knowledge base and its sandbox are there and nowhere else. The router refuses a sync naming a
+model with no instance in the region, naming each, and one whose knowledge base is already kept
+in another region, since a knowledge base is never moved.
+A connector entry is its id alone, or a mapping with `name` and any of `connector`, `tools`,
+`connection`, `required`, `sandbox: true` (code in the sandbox may call the connector's API)
+and `require_approval` (tools whose every call waits for the user to allow it).
+
+A page in `knowledge/urls.yaml` written as a mapping may say `refresh_hours: 24` to be read
+again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenario`,
+`assertion`, and optionally `mode`, `variations`, `max_turns`, `caller_target`,
+`judge_target`, `caller_stt`, `caller_tts`, `caller_voice`, `tags`). A sync makes them the
+config's simulations exactly, so an empty `simulations/` deletes them; without the
+directory the stored ones are left alone. Run them with `stream.Client().simulations.run(id)`.
+
+`.agent_sync` next to `agent.yaml` records the md5 of what was last stored, so a run that
+changed nothing costs a file read rather than a request. `sync_agent("customer_support")`
+is still there for storing a directory ahead of time, without joining anything.
+
+`Agent(config=)` fills in the edge, the remote pipeline and a phone, so the Go
+backend handles routing. See `examples/voice_agents/` for customer support, an outbound
+recruiter and an inbound restaurant.
+
+## A conversation held in writing
+
+The same agent, with the voice left off. No call is joined, nothing is transcribed and
+nothing is spoken, but everything between hearing a question and answering it is unchanged:
+the same skills handed to the same slower model, and the same knowledge base looked up
+mid-answer.
+
+```python
+from vision_agents.core import Agent
+from vision_agents.core.harness import Skill
+from vision_agents.plugins import stream
+
+config = await stream.define_agent(
+    name="docs-agent",
+    instructions="Answer questions about the documentation.",
+    llm="llm-fast",
+    subagent="llm-smart",
+    skills=[Skill(name="explain", description="...", instructions="...")],
+    knowledge="docs",
+)
+
+agent = Agent(config=config.name)
+async with agent.chat():
+    async for event in agent.ask("how does failover work?"):
+        if event.type == "agent_speech_delta":
+            print(event.text, end="", flush=True)
+```
+
+`define_agent` stores a named configuration in the backend's Postgres, along with the skills
+it names. Both are found by name before writing, so running it again edits what is stored
+rather than storing another copy. An agent then names the config, which is how the same
+agent is reached from a script, from a phone call and from anywhere else without any of them
+repeating the configuration.
+
+`agent.ask` streams back what the backend did on its way to an answer: `agent_speech_delta`
+as it is written, `looked_up` when the knowledge base was searched, `delegated` and
+`task_settled` around work handed to a skill, and `agent_speech` when the turn is finished.
+Delegated work outlives the turn that asked for it, so the model says something while it runs
+and the answer arrives when it comes back.
+
+`agent.chat(agent_id)` answers in a conversation that already exists rather than in one of
+the agent's own, which is how a message written to a channel is answered where it was asked.
+
+See [the docs agent](../../examples/text_agents/docs_agent) for the whole thing, including
+reading this repo's markdown into a knowledge base.
+
+A config can also be named rather than looked up by id, which is what an agent usually
+wants:
+
+```python
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    llm=stream.Accelerated(config="john"),
+)
+```
+
+The name is resolved when the agent joins, so the config can be defined somewhere else and
+need not exist yet when the agent is built. Anything else passed to `Accelerated` overrides
+what the config says.
+
+## Sessions, memories and simulations
+
+```python
+api = stream.Client()
+docs = api.agent("docs")
+
+session = await docs.sessions.create(stream.SessionOptions(project_id="support"))
+await session.update(title="Pricing", llm="openai/gpt-5")
+await session.voice.start()  # the agent joins agent:<session id>; voice.stop() leaves
+await session.close()  # stops it; what it recorded and remembered is kept
+
+session = await docs.sessions.resume(session.id)  # carry on where it left off
+
+# A filter is the router's own, written as a dict: the keys of one dict are ANDed, and
+# $and and $or nest. A query from an agent is always narrowed to that agent.
+either = {"$or": [{"project_id": "support"}, {"project_id": "sales"}]}
+page = await docs.sessions.query(either, limit=50)
+while page.has_more:
+    page = await docs.sessions.query(either, limit=50, cursor=page.next_cursor)
+
+pinned_first = await docs.sessions.query(
+    filter={"project_id": {"$in": ["support", "sales"]}, "user_id": "u1"},
+    sort=[
+        {"field": "pinned", "direction": -1},
+        {"field": "last_message_at", "direction": -1},
+    ],
+)
+poorly_reviewed = await docs.sessions.query(
+    filter={"review_score": {"$lte": 2}},
+    sort=[{"field": "review_score", "direction": 1}],
+)
+found = await docs.sessions.search("refund policy", {"project_id": "support"})
+
+await session.pin()  # session.unpin() undoes it; a row's pinned_at says when
+await docs.sessions.pin(session.id)  # by id, an ended one too
+
+await docs.sessions.update(session.id, title="Pricing, again")  # an ended one too
+await docs.sessions.delete_memories(session.id)
+await docs.sessions.delete(session.id)  # its turns and memories go with it
+await api.memories.truncate("u1")  # everything remembered about one user
+
+await docs.update_config(stream.AgentConfigPatch(guardrail="Never discuss pricing."))
+
+run = await api.simulations.run(simulation_id)
+run = await api.simulations.runs.get(run.id)
+```
+
+Lists page by cursor: each returns `items`, `has_more` and `next_cursor`.
+
+Anything the router refuses, a socket included, raises `RouterError` with the router's
+message and `status`, `type`, `code` (what to branch on; new ones appear), `doc_url` and
+`request_id`, the `X-Request-Id` to quote to support. A body that is not the router's own,
+such as a proxy's error page, is the message as it was, with `type`, `code` and `doc_url`
+left None; so is a refused socket, whose body aiohttp never reads.
+
+## Spend limits, teams and usage categories
+
+A spend limit is what one subject may spend in each day, week, two weeks or month: the
+organization, an app, a key, an end user, a team, or a usage category of the customer's own.
+Work for a subject with nothing left is refused with `RouterError` `402
+spend_limit_reached`, or `429 user_limit_reached` for one end user's limit. Server side only.
+
+```python
+from vision_agents.plugins import stream
+
+api = stream.Client()  # STREAM_API_KEY and STREAM_API_SECRET from the environment
+limits = api.spend_limits
+
+await limits.create("organization", interval="monthly", usd=20_000)
+
+# Every key of app 1234 gets $50 a day; one key gets $10, noted
+await limits.create("api_key", app_id="1234", interval="daily", usd=50)
+await limits.create(
+    "api_key", app_id="1234", api_key="mz7kq2xa9b", interval="daily", usd=10,
+    note="CI key",
+)
+[ci] = await limits.list(subject="api_key", api_key="mz7kq2xa9b")
+await limits.update(ci.id, usd=25)
+await limits.delete(ci.id)
+
+# Every user of app 1234 gets $20 a day; user-42 gets $50
+await limits.create("user", app_id="1234", interval="daily", usd=20)
+await limits.create("user", app_id="1234", user_id="user-42", interval="daily", usd=50)
+
+await api.teams.set_limit("finance", interval="monthly", usd=8_000)
+
+# A session counted under the team, from a backend
+await api.agent("support").sessions.create(stream.SessionOptions(team="finance"))
+
+# Everything this client and its router do counts under the team
+finance = stream.Client(team="finance")
+router = finance.router("dentist_ai")
+
+# user-42's weekly window counts from now; what it spent stays spent
+await limits.reset(
+    "user", app_id="1234", user_id="user-42", intervals=["weekly"],
+    reason="refunded a broken session",
+)
+```
+
+An agent's `agent.yaml` with `tags: team: finance` counts that agent's sessions under the
+team. A token's team always wins, then the session's, then the agent's tag.
+
+- **Money** is dollars as a `Decimal`, an `int` or a `str`, converted to the router's
+  millionths of a dollar exactly. A `float` raises `TypeError`. Answers keep the router's
+  `*_micros` fields, and `stream.usd(micros)` reads one back as a `Decimal`.
+- **The level** follows the ids: `subject="user"` with `user_id` is that user's own limit,
+  with only `app_id` the default for every user of the app, and alone the default for every
+  user of the organization. Keys go the same way, and `level=` overrides it. A team or a
+  category with `app_id` is the one within that app.
+- **A team has no members list.** A user is in the team its token names, from
+  `create_user_token` or `for_user`, fixed when the token is signed. A client's own work is
+  counted the same way: `stream.Client(team="finance", usage_categories=["project:x"])`.
+  A team is 1 to 59 characters of `A-Z a-z 0-9 _ . -`; a category 1 to 64 of
+  `A-Z a-z 0-9 _ . : -`, never starting `team:`; at most 10 together. Anything else raises
+  `ValueError` before a token is signed.
+- **Grants** are the one way past a spent limit: `api.teams.grant("finance", usd=5_000,
+  reason=..., expires_at=...)`, or `api.spend_limits.grant(...)` for any other subject,
+  revoked with `revoke_grant`. A grant never lifts a parent's limit, or
+  Stream's spend limit for the organization, `402 system_limit_reached`, which only
+  Stream's staff change and `spend_hard_limit` on the account shows.
+- **Spend over time:** `await api.usage.spend(start=..., end=..., group_by="who:team")`.
+- **Refusals** carry `code`: `limit_above_parent`, `limit_exists`, `no_limit`, `use_team`,
+  `invalid_expiry`, `too_many_grants` and `server_side_only`.
+
+## Tools hosted for an agent
+
+A session's own functions run in the process that opened it. `dispatch.host` is the other
+direction: the router offers an agent's functions to every session under that agent,
+wherever it was opened, and sends each call to this worker.
+
+```python
+agent = stream.Client().agent("stream-support")
+
+
+@agent.register(description="Read the SDK's source")
+async def investigate_sdk(sdk: str) -> str:
+    return await read_source(sdk)
+
+
+dispatch = stream.Dispatch()
+dispatch.host(agent, tool_timeout=60)
+await dispatch.run()
+```
+
+`tool_timeout` is how long the router gives one call, in seconds; zero takes its default
+of 30. A hosted function takes the same `interruptible`, `timeout` and `needs_approval` as
+`register_function`, can take its call as its first argument, and is cancelled when the router
+gives up on it. The worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
+router refuses them.
+
+## Calling somebody
+
+`stream.Phone` is the telephony half of the backend, and `Agent(phone=...)` is where a call
+is placed from. Stream's SIP is inbound only, so this is a vendor ringing the person and
+bridging the answered leg into a Stream call; the agent is in that call before the phone
+rings, so nobody answers to silence.
+
+```python
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    llm=stream.Accelerated(config="john"),
+    phone=stream.Phone(),
+)
+
+async with agent.outbound_call(from_=held, to=person, call_id="hello"):
+    await agent.responses.create("greet the user and let them know you're a friendly AI agent")
+    await agent.finish()
+```
+
+`outbound_call` also takes `ring_timeout`, `initial_digits` for reaching an extension behind
+a menu, `headers` for custom SIP headers and `custom` for fields the agent can read off the
+call. Vendors do not all support all of them, and one that cannot express a term refuses the
+call rather than placing it without: a ring timeout that was dropped is a call sitting in
+somebody's voicemail. Seven of the backend's eight implemented vendors can place a call at
+all; DIDWW cannot, because it has no call control API.
+
+A placed call is held by a session, and the answered leg lands in its call,
+`agent:<session id>`, so `call_id` is that session's id. A number given to `Phone.attach`
+gets every caller a session of their own: the `InboundCall` dispatch hands over names it in
+`session_id`.
+
+See [example 13](../../examples/old/13_outbound_call_example) for the whole thing.
+
+## One modality at a time
+
+For a pipeline that stays in Python, each modality can be routed on its own. Failover and
+cost tracking work the same way, because it is the same router:
+
+```python
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    stt=stream.STT("en-low-latency"),
+    llm=stream.LLM("llm-fast"),
+    tts=stream.TTS("sonic_36", voice="dc4e4a1f"),
+)
+```
+
+`stream.STT("en-low-latency", keyterms=["metformin"])` sends up to 100 words the
+transcriber would otherwise get wrong. A model that takes none refuses them, and `start()`
+raises the router's refusal as a `RouterError`.
+
+`Router().resolve("sonic_36")` asks the backend which kind of model a name is and returns the
+plugin for it. That costs a request at startup, so naming the modality is better when you
+know it.
+
+## A router config, four modalities
+
+`client.router(name)` is the same routing with the options said once. It names a stored router
+config, which also says which model answers (`target`), and every keyword on a call overrides
+one field of it:
+
+```python
+from vision_agents.plugins.stream import Client, define_router
+
+await define_router(
+    "healthcare",
+    stt={"target": "en-low-latency", "diarize": True, "keyterms": ["metformin", "sertraline"]},
+    tts={"voice": "dc4e4a1f", "speed": 1.1},
+    search={"include_domains": ["pubmed.ncbi.nlm.nih.gov"]},
+)
+
+router = Client().router("healthcare")
+
+async with router.stt.realtime() as stt:
+    ...
+
+agent = Agent(edge=getstream.Edge(), agent_user=agent_user, stt=router.stt.realtime())
+```
+
+`realtime()` returns a configured, not-yet-started session: `async with` starts and closes
+it, and handing the same object to an `Agent` lets the agent own its lifecycle instead.
+
+`recording()` is the non-realtime form — a whole source in, a whole result out, served by the
+batch half of a vendor rather than the streaming one, which is both cheaper and more accurate:
+
+```python
+transcript = await router.stt.recording("interview.mp4", diarize=True, words=True)
+print(transcript.text, transcript.speakers)
+
+audiobook = await router.tts.recording(chapter, format="mp3_44100_128")
+hits = await router.search("perioperative antibiotic guidance", results=5)
+```
+
+A recording takes a URL, a path or the bytes, and waits for the job unless you pass a
+`callback`, in which case it returns as soon as the job is accepted.
+`router.tts.recording(text, inline=True)` instead speaks a short text (at most 16000
+characters) while the request waits and returns the audio, storing nothing: the cheap way to
+check that a voice works on an app. It takes no `callback`.
+
+An option a modality does not have is refused rather than sent and ignored, and so is one no
+provider behind that target can express: a transcript that was quietly not diarized is worse
+than being told. What each provider can express is in the `router-stt`, `router-tts`,
+`router-llm` and `router-search` skills.
+
+## Images and delegated vision
+
+Keep the conversation on `llm-fast` and put the subagent on a model that can see, in
+`agent.yaml`:
+
+```yaml
+llm: llm-fast
+subagent: vlm
+video:
+  max_frames: 1
+```
+
+A skill with `capture_video: true` captures evidence when asked and hands it to the
+subagent. The built-in `vision` skill is one. It is only offered to an agent that names
+it, since it needs a subagent that can see and the rest of the built-in set does not. Opening the
+subagent, encoding frames and inference run asynchronously, so the conversation can
+continue. `stream.define_agent` also accepts `video_source` and `video_max_frames`.
+
+Explicit attachments go to the same skill in an accelerated agent:
+
+```python
+from vision_agents.core.llm import ImageContent
+
+await agent.responses.create(
+    "Compare these pictures.",
+    images=[ImageContent(data=first_jpeg), ImageContent(url=second_url)],
+)
+```
+
+The main conversation receives the question, pending task and eventual findings. The
+subagent receives the images. For standalone inference, use
+`stream.LLM(target="vlm").responses.create(...)` and iterate the response stream. The
+standalone API also accepts an ordered list of strings and `ImageContent` as its first
+argument to preserve text/image interleaving. With an attached conversation, images remain
+on their original turns for follow-up questions and are released when those turns are
+removed from history. Image URLs are HTTP(S) URLs or bytes encoded
+by the SDK; the wire format is `{"type":"image_url","image_url":{"url":"…","detail":"auto"}}`.
+Image detail accepts `auto`, `low` or `high`. `vlm` requires image capability before model
+selection; `llm-fast` retains its existing routing policy.
+
+Camera evidence uses local receive timestamps in Unix milliseconds; the backend's clock and
+the clock of the process capturing video must be synchronized. Each observation
+buffer retains at most 64 frames and 32 MiB. Capture selects 1–8 frames at or before task
+acceptance, pins them for that task, and rejects missing or stale evidence. The newest
+selected frame must be no more than five seconds old. Multiple available cameras require
+an explicit source; missing or ambiguous evidence produces a clarification question.
+`video.source` can name a raw `participant/track` or a processor source such as
+`roboflow_streaming`. A vision directive can override selection for one question, for
+example `<ask skill="vision" frames="2">What changed?</ask>`.
+
+Roboflow continues processing independently. Its observations retain raw frames and
+separately timestamped predictions; unavailable prediction/frame alignment is stated
+explicitly. See the [standalone image example](../../examples/video_agents/describe_image).
+
+On the session socket, `get_video_frames` is a reserved capture request carrying a task
+ID, source, acceptance timestamp and limit. The matching `tool_result` carries ordered
+metadata/image parts. A `tool_cancel` event with that request ID cancels capture or a
+running local tool; late results are discarded. Existing native speech-to-speech video
+forwarding is unchanged. Integrating those engines with the shared task/result lifecycle
+is a separate milestone.
+
+## Regenerating the client
+
+`_generated/` comes from `acceleration/api/openapi.yaml` and is committed. After changing
+the spec:
+
+```bash
+uv run plugins/stream/generate.py
+```
+
+The WebSockets are hand-written in `_socket.py`, since OpenAPI stops at the upgrade.
+
+`templates/` replaces two of openapi-python-client's templates. Every string enum gets
+`_decode`, and every model's `from_dict` reads its enums with it. A value the client lists is
+its member, as before. Any other string is a member of its own that carries the value, so
+`str(session.end_reason)` is `"closed"` and `to_dict` writes `"closed"` back. A router adds
+values before every client is released (AI-2951), and a rollback leaves them in stored rows.
+`SessionEndReason("closed")` written by a caller still raises `ValueError`, and a value that is
+not a string still fails to decode. An option block a caller writes (`define_router`, a
+`router.yaml`) goes through `from_dict` too, so `_routerconfig.block` checks its enums against
+the values the client lists.

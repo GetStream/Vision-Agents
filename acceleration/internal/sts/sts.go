@@ -1,0 +1,219 @@
+// Package sts defines the minimal speech-to-speech contract shared by every native audio
+// model: the caller's audio and, where the model sees, frames in; audio, transcripts and
+// turn boundaries out.
+//
+// The model owns endpointing, transcription, synthesis and barge-in detection. A running
+// session is the voice activity detector, the turn detector, the transcriber and the voice
+// all at once, and nothing in front of it may act as one of them. Only the pieces the
+// router needs are standardised here; anything provider-specific stays on the concrete
+// type.
+package sts
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// InputSampleRate is the rate every provider is fed, which is what the call edge and the
+// transcribers already produce. A model that wants another rate resamples on its own side
+// rather than asking the edge to change.
+const InputSampleRate = stt.SampleRate
+
+// PcmData is a chunk of signed 16-bit PCM audio.
+type PcmData = audio.PcmData
+
+// Participant identifies who is speaking, and is what a transcript is attributed to.
+type Participant = stt.Participant
+
+// These are what a provider answers with for what its model cannot do. They are refusals
+// rather than silences: a typed turn that was dropped would leave the caller believing it
+// had been heard.
+var (
+	ErrNoText            = errors.New("sts: this model does not take typed turns")
+	ErrNoImages          = errors.New("sts: this model does not accept images")
+	ErrNoTools           = errors.New("sts: this model does not call tools")
+	ErrInstructionsFixed = errors.New("sts: this model takes its instructions only when the session opens")
+	ErrToolsFixed        = errors.New("sts: this model takes its tools only when the session opens")
+	ErrNoCallUpdates     = errors.New("sts: this model cannot be told how an open tool call is going")
+)
+
+// Capabilities is what one model can be asked for.
+//
+// It is static per model rather than learned from the session, because routing checks a
+// model's declaration in config against it before a session is opened, and a config that
+// promised a term the code behind the model cannot send has to fail then rather than on a
+// call.
+type Capabilities struct {
+	// InputModalities are the input kinds this model accepts besides audio, e.g. "image".
+	InputModalities []string
+	// Text reports whether a typed turn can be injected into the conversation.
+	Text bool
+	// Tools reports whether the model calls functions.
+	Tools bool
+	// InputTranscript and OutputTranscript report whether the model writes down what it
+	// heard and what it said.
+	InputTranscript  bool
+	OutputTranscript bool
+	// SemanticTurns is a turn detector that reads the words, ManualTurns one the caller
+	// drives, and Endpointing a silence timer whose threshold can be set.
+	SemanticTurns bool
+	ManualTurns   bool
+	Endpointing   bool
+	// FullDuplex reports whether the model can listen while producing audio.
+	FullDuplex bool
+	// InstructionsMidSession and ToolsMidSession report whether either can change once
+	// the session is open. Where they cannot, the matching method returns an error.
+	InstructionsMidSession bool
+	ToolsMidSession        bool
+	// Usage reports whether the model says what a response cost in tokens.
+	Usage bool
+	// SessionBilled reports a vendor that bills every second the session is open, which it
+	// reports in SessionUsage, rather than its replies. The replies are then recorded unbilled,
+	// for their timing, and the seconds are the bill.
+	SessionBilled bool
+	// BilledAudio reports a vendor that keeps a running count of the audio it bills, and
+	// reports its growth on every reply it settles (Usage.AudioBilled). A reply settled
+	// without it, cut off before the vendor said, bills no audio: the vendor's next count
+	// includes what was heard, or the session's last row does.
+	BilledAudio bool
+	// Resumable reports whether a session survives its connection, so the provider can
+	// reconnect without the conversation starting over.
+	Resumable bool
+	// MaxDuration is how long the vendor lets one session run. Zero means the vendor has
+	// published no limit, which is not the same as there being none.
+	MaxDuration time.Duration
+}
+
+// Accepts reports whether this model takes that input kind. Audio and text are implicit.
+func (c Capabilities) Accepts(modality string) bool {
+	if modality == "" || modality == "text" || modality == "audio" {
+		return true
+	}
+	return slices.Contains(c.InputModalities, modality)
+}
+
+// Expresses reports whether this model can honour a term a request may name. A term this
+// modality has no word for is refused, so a config cannot declare one by mistake.
+func (c Capabilities) Expresses(term options.Term) bool {
+	switch term {
+	case options.SemanticTurns:
+		return c.SemanticTurns
+	case options.FullDuplex:
+		return c.FullDuplex
+	case options.ManualTurns:
+		return c.ManualTurns
+	case options.Endpointing:
+		return c.Endpointing
+	case options.Tools:
+		return c.Tools
+	case options.TextInput:
+		return c.Text
+	case options.InputTranscript:
+		return c.InputTranscript
+	case options.OutputTranscript:
+		return c.OutputTranscript
+	default:
+		return false
+	}
+}
+
+// STS is one live speech-to-speech conversation.
+//
+// Start opens the upstream session and returns once the model has acknowledged its
+// configuration, so a caller told the session is ready is not told early. ProcessAudio
+// feeds it, and Events carries audio, transcripts and turn boundaries back. Events is
+// closed by Close.
+type STS interface {
+	Start(ctx context.Context) error
+	// ProcessAudio streams one chunk of the caller's speech, mono at InputSampleRate.
+	ProcessAudio(pcm PcmData, participant Participant) error
+	// SendText injects a turn as though the participant had typed it. A model that takes
+	// no typed turns returns ErrNoText rather than dropping it.
+	SendText(text string, participant Participant) error
+	// SendFrame offers a still image to a model that sees. One that does not returns
+	// ErrNoImages.
+	SendFrame(frame llm.ImagePart) error
+	// SetInstructions changes the system prompt mid-call, on the models that allow it.
+	SetInstructions(text string) error
+	// SetTools replaces the tools the model may call, on the models that allow it.
+	SetTools(tools []llm.Tool) error
+	// Answer returns what a tool produced, or the error it failed with, against the call
+	// that asked for it. A model whose wire needs a nudge to carry on after a tool result
+	// gets it here, so the caller need not know which do.
+	Answer(callID string, output string, err error) error
+	// Prompt asks the model to respond now, guided by the text. It is not verbatim
+	// speech: the model says what it makes of the text, which is what a greeting or a
+	// "speak when idle" needs and what a caller wanting exact words must not be given.
+	Prompt(text string) error
+	// Interrupt stops the response in flight. playedMs is how much of it the listener
+	// heard, so a model that keeps the conversation can be told where it was cut off;
+	// zero means unknown, and the provider uses what it has sent. It is not an error to
+	// interrupt silence.
+	Interrupt(playedMs int) error
+	Events() <-chan Event
+	Close() error
+
+	// Provider is the stable provider name used in stats, e.g. "openai".
+	Provider() string
+	// Model is the model identifier used in stats, e.g. "gpt-realtime-2".
+	Model() string
+	// SampleRate is the rate the audio on Events arrives at.
+	SampleRate() int
+	// Capabilities is what this model can be asked for.
+	Capabilities() Capabilities
+}
+
+// CallUpdater is a model that can be told how a tool call it is waiting on is going, and
+// says so to the caller while the call stays open.
+type CallUpdater interface {
+	// UpdatesCalls reports whether this session takes UpdateCall.
+	UpdatesCalls() bool
+	// UpdateCall has the model speak about an open call. It calls no tool for that, and the
+	// call still waits for its Answer. One that takes none returns ErrNoCallUpdates.
+	UpdateCall(update CallUpdate) error
+}
+
+// CallUpdate is what a model is told about a call that is still open.
+type CallUpdate struct {
+	CallID string
+	// Status is what whoever runs the call reports, or with Verbatim, words to say.
+	Status   string
+	Verbatim bool
+	// Guidance is how to say it, and Instructions the agent's own, for a model whose reply
+	// takes instructions in place of the session's.
+	Guidance     string
+	Instructions string
+}
+
+// statusGuidance and sayGuidance are what a model is asked to say about a call that is
+// still open: a status in its own words, or words as written, which a model can only be
+// asked for.
+const (
+	statusGuidance = "Something the caller asked for is still being worked on, and whoever is doing it " +
+		"reports: %q. Tell the caller where it has got to in one short sentence, in your own words. It is " +
+		"still running: do not call it again and do not guess its result."
+	sayGuidance = "Something the caller asked for is still being worked on. Say this to the caller now, " +
+		"in these words or close to them: %q. It is still running: do not call it again and do not guess its result."
+)
+
+// Guidance is how a model is asked to say status, or with verbatim, to say it as written.
+func Guidance(status string, verbatim bool) string {
+	if verbatim {
+		return fmt.Sprintf(sayGuidance, status)
+	}
+	return fmt.Sprintf(statusGuidance, status)
+}
+
+// Voiced is a model that can say which voice it speaks in. Empty means the vendor
+// chooses on its side.
+type Voiced interface {
+	Voice() string
+}

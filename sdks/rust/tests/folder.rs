@@ -1,0 +1,892 @@
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use vision_agents::{Folder, types};
+
+fn write(root: &Path, name: &str, content: impl AsRef<[u8]>) {
+    let path = root.join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, content).unwrap();
+}
+
+fn directory(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join(name);
+    std::fs::create_dir_all(&root).unwrap();
+    (temporary, root)
+}
+
+#[test]
+fn a_directory_is_read_as_instructions_skills_and_knowledge() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(&root, "instructions.md", "You are Jean.\n");
+    write(
+        &root,
+        "skills/think.md",
+        "---\ndescription: Work something out before answering\ndeadline: 30s\n---\nTake your time and reason it through.\n",
+    );
+    write(
+        &root,
+        "knowledge/pricing.md",
+        "# Pricing\n\nA call costs a penny.\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert_eq!(folder.name, "jean");
+    assert_eq!(folder.instructions, "You are Jean.");
+    assert_eq!(folder.skills.len(), 1);
+    let skill = &folder.skills[0];
+    assert_eq!(
+        (skill.name.as_str(), skill.description.as_str()),
+        ("think", "Work something out before answering")
+    );
+    assert_eq!(skill.deadline, Duration::from_secs(30));
+    assert_eq!(skill.instructions, "Take your time and reason it through.");
+    assert_eq!(folder.knowledge.len(), 1);
+    assert_eq!(folder.knowledge[0].source, "pricing.md");
+    assert_eq!(folder.knowledge_namespace(), "jean");
+}
+
+#[test]
+fn a_directory_with_only_instructions_is_an_agent() {
+    let (_temporary, root) = directory("quiet");
+    write(&root, "agent.yaml", "");
+    write(&root, "instructions.md", "Say little.\n");
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert!(folder.skills.is_empty() && folder.knowledge.is_empty());
+    assert_eq!(folder.knowledge_namespace(), "");
+    assert_eq!(folder.name, "quiet");
+}
+
+#[test]
+fn nested_knowledge_keeps_the_path_it_was_found_at() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "knowledge/reference/api.md",
+        "# API\n\nthe endpoints\n",
+    );
+    write(&root, "knowledge/logo.png", "not a document");
+    write(&root, "knowledge/empty.md", "   \n");
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert_eq!(folder.knowledge.len(), 1);
+    assert_eq!(folder.knowledge[0].source, "reference/api.md");
+}
+
+#[test]
+fn declared_pages_are_read_without_being_ingested() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "knowledge/pricing.md",
+        "# Pricing\n\nA call costs a penny.\n",
+    );
+    write(
+        &root,
+        "knowledge/urls.yaml",
+        "- https://example.com/pricing\n- url: https://example.com/plans\n  title: Plans\n  description: What each plan includes.\n",
+    );
+    write(
+        &root,
+        "knowledge/reference/urls.yaml",
+        "the urls we used to have\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    let sources: Vec<_> = folder
+        .knowledge
+        .iter()
+        .map(|document| document.source.as_str())
+        .collect();
+    assert_eq!(sources, ["pricing.md", "reference/urls.yaml"]);
+    assert_eq!(folder.knowledge_urls.len(), 2);
+    let (bare, described) = (&folder.knowledge_urls[0], &folder.knowledge_urls[1]);
+    assert_eq!(
+        (
+            bare.url.as_str(),
+            bare.title.as_str(),
+            bare.description.as_str()
+        ),
+        ("https://example.com/pricing", "", "")
+    );
+    assert_eq!(
+        (
+            described.url.as_str(),
+            described.title.as_str(),
+            described.description.as_str()
+        ),
+        (
+            "https://example.com/plans",
+            "Plans",
+            "What each plan includes."
+        )
+    );
+}
+
+#[test]
+fn a_directory_with_only_pages_has_somewhere_to_look_things_up_in() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "knowledge/urls.yaml",
+        "- https://example.com/pricing\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert!(folder.knowledge.is_empty());
+    assert_eq!(folder.knowledge_namespace(), "jean");
+}
+
+#[test]
+fn a_page_that_cannot_be_fetched_or_described_is_refused() {
+    for declaration in [
+        "- example.com/pricing\n",
+        "- url: https://example.com/plans\n  heading: Plans\n",
+        "- [https://example.com/plans]\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", "name: jean\n");
+        write(&root, "knowledge/urls.yaml", declaration);
+
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+#[test]
+fn a_skill_without_a_description_is_refused() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "skills/think.md",
+        "Just a body, with nothing saying when to use it.\n",
+    );
+
+    assert!(Folder::load(&root).is_err());
+}
+
+#[test]
+fn a_skill_can_be_named_something_other_than_its_file() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "skills/01-think.md",
+        "---\nname: think\ndescription: Work something out\ncapture_video: true\n---\nReason it through.\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert_eq!(folder.skills[0].name, "think");
+    assert!(folder.skills[0].capture_video);
+}
+
+#[test]
+fn a_skill_folder_brings_the_files_nested_in_it() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "skills/pdf/SKILL.md",
+        "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+    );
+    write(&root, "skills/pdf/reference/forms.md", "# Forms\n");
+    write(&root, "skills/pdf/scripts/lib/fill.py", "print('filled')\n");
+    write(&root, "skills/plain.md", "---\ndescription: d\n---\nbody\n");
+
+    let folder = Folder::load(&root).unwrap();
+
+    let pdf = &folder.skills[0];
+    assert_eq!(
+        (pdf.name.as_str(), pdf.instructions.as_str()),
+        ("pdf", "Fill the form.")
+    );
+    let files: Vec<_> = pdf
+        .files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("reference/forms.md", "# Forms\n"),
+            ("scripts/lib/fill.py", "print('filled')\n")
+        ]
+    );
+    assert!(folder.skills[1].files.is_empty());
+}
+
+#[test]
+fn hidden_files_and_pycache_are_left_out_of_a_skill_folder() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "skills/pdf/SKILL.md",
+        "---\ndescription: Fill PDF forms\n---\nFill the form.\n",
+    );
+    write(&root, "skills/pdf/fill.py", "print('filled')\n");
+    write(&root, "skills/pdf/.DS_Store", [0x00, 0xff]);
+    write(&root, "skills/pdf/.hidden/notes.md", "secret\n");
+    write(
+        &root,
+        "skills/pdf/__pycache__/fill.cpython-313.pyc",
+        [0xcb, 0x0d, 0xff],
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    let paths: Vec<_> = folder.skills[0].files.keys().map(String::as_str).collect();
+    assert_eq!(paths, ["fill.py"]);
+}
+
+#[test]
+fn a_skill_folder_without_skill_md_is_refused() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(&root, "skills/pdf/fill.py", "print('filled')\n");
+
+    let error = Folder::load(&root).unwrap_err().to_string();
+
+    assert!(
+        error.ends_with("has no SKILL.md, so it is not a skill"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_skill_that_is_both_a_file_and_a_folder_is_refused() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(&root, "skills/pdf.md", "---\ndescription: d\n---\nbody\n");
+    write(
+        &root,
+        "skills/pdf/SKILL.md",
+        "---\ndescription: d\n---\nbody\n",
+    );
+
+    let error = Folder::load(&root).unwrap_err().to_string();
+
+    assert!(
+        error.ends_with("skill \"pdf\" is both pdf and pdf.md"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_skill_folder_brings_only_text() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    write(
+        &root,
+        "skills/pdf/SKILL.md",
+        "---\ndescription: d\n---\nbody\n",
+    );
+    write(&root, "skills/pdf/logo.png", [0x89, 0x50, 0xff]);
+
+    let error = Folder::load(&root).unwrap_err().to_string();
+
+    assert!(
+        error.ends_with("not text, and a skill brings only text files"),
+        "{error}"
+    );
+}
+
+#[test]
+fn moving_a_skill_into_a_folder_keeps_its_hash_until_it_brings_a_file() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    let skill = "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n";
+    write(&root, "skills/pdf.md", skill);
+    let single = Folder::load(&root).unwrap().hash();
+
+    std::fs::remove_file(root.join("skills/pdf.md")).unwrap();
+    write(&root, "skills/pdf/SKILL.md", skill);
+    let moved = Folder::load(&root).unwrap().hash();
+    write(&root, "skills/pdf/reference/forms.md", "# Forms\n");
+    let with_file = Folder::load(&root).unwrap().hash();
+
+    assert_eq!(moved, single);
+    assert_ne!(with_file, moved);
+}
+
+#[test]
+fn a_deadline_is_a_go_duration_or_seconds() {
+    for (written, wanted) in [
+        ("1m30s", 90_000),
+        ("250ms", 250),
+        ("1.5", 1_500),
+        ("2h", 7_200_000),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", "");
+        write(
+            &root,
+            "skills/think.md",
+            format!("---\ndescription: d\ndeadline: {written}\n---\nbody\n"),
+        );
+
+        let folder = Folder::load(&root).unwrap();
+
+        assert_eq!(folder.skills[0].deadline.as_millis(), wanted, "{written}");
+    }
+}
+
+#[test]
+fn a_directory_without_a_declaration_is_not_an_agent() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "instructions.md", "You are Jean.\n");
+
+    assert!(Folder::load(&root).is_err());
+}
+
+#[test]
+fn the_declaration_says_what_the_agent_is_called_and_runs_on() {
+    let (_temporary, root) = directory("jean");
+    write(
+        &root,
+        "agent.yaml",
+        "name: receptionist\nllm: openai/gpt-5.6\nsubagent: openai/gpt-5.6-sol\nsts: \"\"\nkeyterms: [Vision Agents]\nmode: voice\nsandbox: daytona\ngreeting:\n  text: Hello.\n  mode: variation\nvideo:\n  source: camera\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert_eq!(folder.name, "receptionist");
+    let settings = &folder.settings;
+    assert_eq!(settings.llm, "openai/gpt-5.6");
+    assert_eq!(settings.subagent, "openai/gpt-5.6-sol");
+    assert_eq!(
+        settings.greeting,
+        Some(types::Greeting {
+            text: "Hello.".into(),
+            mode: Some(types::GreetingMode::Variation),
+        })
+    );
+    assert_eq!(settings.keyterms, ["Vision Agents"]);
+    assert_eq!(settings.sts.as_deref(), Some(""));
+    assert_eq!(settings.mode, Some(types::AgentMode::Voice));
+    assert_eq!(settings.sandbox, Some(types::Sandbox::Daytona));
+    let video = settings.video.as_ref().unwrap();
+    assert_eq!((video.source.as_str(), video.max_frames), ("camera", 1));
+}
+
+#[test]
+fn saying_nothing_about_speech_to_speech_is_not_turning_it_off() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+
+    assert_eq!(Folder::load(&root).unwrap().settings.sts, None);
+}
+
+#[test]
+fn a_declaration_key_nobody_knows_is_refused() {
+    for declaration in [
+        "name: jean\nlmm: openai/gpt-5.6\n",
+        "agent_plugins: [sentry]\n",
+        "video:\n  max_frames: 9\n",
+        "keyterms: Vision Agents\n",
+        "video:\n  frames: 2\n",
+        "sandbox: docker\n",
+        "dispatch:\n  sms: enabled\n",
+        "dispatch:\n  text: on\n",
+        "sandbox_options:\n  memory: 4\n",
+        "sandbox_options:\n  timeout: 2h\n",
+        "sandbox_options:\n  cpu: two\n",
+        "sandbox_options:\n  network: maybe\n",
+        "end_of_turn:\n  max_wait_ms: 900\n",
+        "end_of_turn: {}\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+/// floor_control is read as written, {} included; which models there are, and whether a wait
+/// names one, is the router's to say.
+#[test]
+fn the_floor_control_is_read_as_written() {
+    let chosen = |model: Option<&str>, max_wait_ms: Option<i64>| {
+        Some(types::FloorControl {
+            model: model.map(str::to_owned),
+            max_wait_ms,
+        })
+    };
+    for (declaration, want) in [
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+            chosen(Some("stream/chorus-asr"), Some(800)),
+        ),
+        (
+            "floor_control: {model: stream/chorus-asr}\n",
+            chosen(Some("stream/chorus-asr"), None),
+        ),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n",
+            chosen(Some("stream/chorus-asr"), None),
+        ),
+        (
+            "floor_control: {max_wait_ms: 800}\n",
+            chosen(None, Some(800)),
+        ),
+        ("floor_control: {}\n", chosen(None, None)),
+        ("floor_control:\n", None),
+        ("floor_control: ~\n", None),
+        ("llm: openai/gpt-5.6\n", None),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        let folder = Folder::load(&root).unwrap_or_else(|error| panic!("{declaration:?}: {error}"));
+
+        assert_eq!(folder.settings.floor_control, want, "{declaration:?}");
+    }
+}
+
+#[test]
+fn a_floor_control_that_cannot_be_read_is_refused_naming_why() {
+    let mapping = "floor_control is a mapping of model and, optionally, max_wait_ms";
+    for (declaration, reason) in [
+        ("floor_control: stream/chorus-asr\n", mapping),
+        ("floor_control: [stream/chorus-asr]\n", mapping),
+        ("floor_control: true\n", mapping),
+        ("floor_control: 1\n", mapping),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  mode: act\n",
+            "\"mode\" is not a floor_control setting; model and max_wait_ms are",
+        ),
+        (
+            "floor_control:\n  model: 1\n",
+            "floor_control.model must be a string",
+        ),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n",
+            "floor_control.max_wait_ms must be an integer",
+        ),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n",
+            "floor_control.max_wait_ms must be an integer",
+        ),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        let error = Folder::load(&root).unwrap_err().to_string();
+
+        assert!(
+            error.contains(reason),
+            "{declaration:?} was refused as {error:?}"
+        );
+    }
+}
+
+/// end_of_turn is gone: its one knob is floor_control's max_wait_ms.
+#[test]
+fn an_end_of_turn_is_refused_by_name() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "end_of_turn:\n  max_wait_ms: 900\n");
+
+    let error = Folder::load(&root).unwrap_err().to_string();
+
+    assert!(
+        error.contains("\"end_of_turn\" is not a setting agent.yaml knows"),
+        "refused as {error:?}"
+    );
+}
+
+#[test]
+fn plugins_and_plugin_events_are_refused_unless_they_declare_nothing() {
+    let wording = |key: &str| {
+        format!(
+            "{key} is no longer read: plugins were replaced by connectors, so name the provider under connectors"
+        )
+    };
+    for (declaration, key) in [
+        ("plugins: [github]\n", "plugins"),
+        ("plugins: github\n", "plugins"),
+        ("plugins:\n  github: {}\n", "plugins"),
+        ("plugins: [github]\nconnectors: [github]\n", "plugins"),
+        (
+            "plugin_events: [{plugin: github, event: push}]\n",
+            "plugin_events",
+        ),
+        ("plugin_events: push\n", "plugin_events"),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", format!("name: jean\n{declaration}"));
+
+        let error = Folder::load(&root).unwrap_err().to_string();
+
+        assert!(
+            error.contains(&wording(key)) && error.contains("agent.yaml"),
+            "{declaration:?} was refused as {error:?}"
+        );
+    }
+    for declaration in [
+        "plugins: []\n",
+        "plugins:\n",
+        "plugins: ~\n",
+        "plugin_events: []\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", format!("name: jean\n{declaration}"));
+
+        let folder = Folder::load(&root).unwrap();
+
+        assert_eq!(folder.name, "jean", "{declaration:?}");
+    }
+}
+
+#[test]
+fn a_directory_hashes_the_way_the_python_and_go_sdks_hash_it() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+    write(&root, "instructions.md", "You are Jean.\n");
+    write(
+        &root,
+        "skills/think.md",
+        "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+    );
+    write(&root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+
+    let folder = Folder::load(&root).unwrap();
+    assert_eq!(folder.hash(), "02a7b2c8428f31e3a2b93ca2f5a6ec70");
+
+    write(
+        &root,
+        "knowledge/urls.yaml",
+        "- https://example.com/plans\n",
+    );
+    assert_ne!(Folder::load(&root).unwrap().hash(), folder.hash());
+}
+
+#[test]
+fn skill_folders_hash_the_way_the_python_and_go_sdks_hash_them() {
+    let (_temporary, root) = directory("jean");
+    write(
+        &root,
+        "agent.yaml",
+        "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n",
+    );
+    write(&root, "instructions.md", "You are Jean.\n");
+    write(
+        &root,
+        "skills/think.md",
+        "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+    );
+    write(
+        &root,
+        "skills/pdf/SKILL.md",
+        "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n",
+    );
+    write(&root, "skills/pdf/reference/forms.md", "# Forms\n");
+    write(&root, "skills/pdf/scripts/fill.py", "print('filled')\n");
+    write(
+        &root,
+        "skills/pdf/scripts/lib/fill_lib.py",
+        "def fill():\n    return 1\n",
+    );
+    write(
+        &root,
+        "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc",
+        [0xcb, 0x0d, 0xff],
+    );
+    write(&root, "skills/pdf/.DS_Store", [0x00, 0xff]);
+    write(&root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+
+    assert_eq!(
+        Folder::load(&root).unwrap().hash(),
+        "e47f7807b97bbcbdee683c6c481d1d36"
+    );
+}
+
+#[test]
+fn schedules_and_simulations_hash_the_way_the_go_sdk_hashes_them() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+    write(&root, "instructions.md", "You are Jean.\n");
+    write(
+        &root,
+        "skills/think.md",
+        "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+    );
+    write(&root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+    write(
+        &root,
+        "knowledge/urls.yaml",
+        "- url: https://example.com/plans\n  refresh_hours: 24\n",
+    );
+    write(
+        &root,
+        "simulations/a.yaml",
+        "- name: lunch <& more>\n  scenario: Order a club.\n  assertion: One club.\n  variations: 3\n  tags: {team: support}\n- name: dinner\n  scenario: Order soup.\n  assertion: Soup.\n  mode: audio\n",
+    );
+
+    let folder = Folder::load(&root).unwrap();
+
+    assert_eq!(folder.knowledge_urls[0].refresh_hours, 24);
+    let simulations = folder.simulations.as_ref().unwrap();
+    assert_eq!(simulations.len(), 2);
+    assert_eq!(simulations[1].mode, "audio");
+    assert_eq!(folder.hash(), "cd4143470d394f065b6f39a0026a817c");
+}
+
+#[test]
+fn an_empty_simulations_directory_is_not_the_same_as_none() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    let without = Folder::load(&root).unwrap();
+    std::fs::create_dir(root.join("simulations")).unwrap();
+    let empty = Folder::load(&root).unwrap();
+
+    assert_eq!(without.simulations, None);
+    assert_eq!(empty.simulations, Some(vec![]));
+    assert_ne!(without.hash(), empty.hash());
+}
+
+#[test]
+fn a_simulation_that_is_misspelt_unfinished_or_named_twice_is_refused() {
+    for (file, declaration) in [
+        (
+            "a.yaml",
+            "- name: lunch\n  scenario: s\n  assertion: a\n  judge: x\n",
+        ),
+        ("a.yaml", "- name: lunch\n  scenario: s\n"),
+        (
+            "a.yaml",
+            "- name: lunch\n  scenario: s\n  assertion: a\n  mode: video\n",
+        ),
+        ("b.yml", "- name: first\n  scenario: s\n  assertion: a\n"),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", "name: jean\n");
+        write(
+            &root,
+            "simulations/a.yaml",
+            "- name: first\n  scenario: s\n  assertion: a\n",
+        );
+        write(&root, &format!("simulations/{file}"), declaration);
+
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+#[test]
+fn a_page_is_read_again_at_least_an_hour_apart() {
+    for declaration in [
+        "- url: https://example.com/plans\n  refresh_hours: 0\n",
+        "- url: https://example.com/plans\n  refresh_hours: 1.5\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", "name: jean\n");
+        write(&root, "knowledge/urls.yaml", declaration);
+
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+#[test]
+fn the_declaration_names_a_harness_and_refuses_the_keys_it_no_longer_takes() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\nharness: default\n");
+
+    let settings = Folder::load(&root).unwrap().settings;
+
+    assert_eq!(settings.harness, Some(types::Harness::Default));
+    for declaration in [
+        "harness: fancy\n",
+        "speed: 1.1\n",
+        "thinking_llm: openai/gpt-5.6-sol\n",
+        "greeting: Hello.\n",
+        "greeting:\n  text: Hello.\n  mode: loud\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+        assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+#[test]
+fn something_that_is_not_a_directory_is_not_an_agent() {
+    let temporary = tempfile::tempdir().unwrap();
+    write(temporary.path(), "jean.md", "You are Jean.");
+
+    assert!(Folder::load(temporary.path().join("jean.md")).is_err());
+}
+
+#[test]
+fn an_agent_directory_is_found_from_anywhere_below_the_repository() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repository = temporary.path();
+    write(
+        repository,
+        "examples/voice_agents/jean/agent.yaml",
+        "name: jean\n",
+    );
+    write(repository, "agents/ada/agent.yaml", "name: ada\n");
+    std::fs::create_dir_all(repository.join("deep/down")).unwrap();
+
+    let from = repository.join("deep/down");
+    assert_eq!(
+        Folder::find("jean", &from),
+        Some(repository.join("examples/voice_agents/jean"))
+    );
+    assert_eq!(
+        Folder::find("ada", &from),
+        Some(repository.join("agents/ada"))
+    );
+    assert_eq!(Folder::find("nobody", &from), None);
+    let inside = repository.join("examples/voice_agents/jean");
+    assert_eq!(Folder::find("jean", &inside), Some(inside.clone()));
+}
+
+#[test]
+fn a_stamp_records_what_was_synced() {
+    let temporary = tempfile::tempdir().unwrap();
+
+    assert_eq!(vision_agents::folder::read_stamp(temporary.path()), "");
+    vision_agents::folder::write_stamp(temporary.path(), "abc").unwrap();
+
+    assert_eq!(vision_agents::folder::read_stamp(temporary.path()), "abc");
+    let written = std::fs::read_to_string(temporary.path().join(".agent_sync")).unwrap();
+    assert!(written.ends_with('\n'));
+    let stamp: serde_json::Value = serde_json::from_str(&written).unwrap();
+    let synced_at = stamp["synced_at"].as_str().unwrap();
+    assert_eq!(
+        synced_at.len(),
+        "2026-09-24T10:00:00+00:00".len(),
+        "{synced_at}"
+    );
+}
+
+fn connectors(declaration: &str) -> Result<Vec<vision_agents::folder::ConnectorSettings>, String> {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", declaration);
+    Folder::load(&root)
+        .map(|folder| {
+            folder
+                .settings
+                .connectors
+                .expect("connectors were declared")
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn a_connector_is_the_alias_alone_or_a_mapping() {
+    let declared = connectors(
+        "connectors:
+  - github
+  - name: issues
+    connector: linear
+    tools: [search, create_*]
+    connection: work
+    required: true
+  - name: slack
+    tools:
+",
+    )
+    .unwrap();
+
+    assert_eq!(
+        declared,
+        vec![
+            vision_agents::folder::ConnectorSettings {
+                name: "github".into(),
+                ..Default::default()
+            },
+            vision_agents::folder::ConnectorSettings {
+                name: "issues".into(),
+                connector: "linear".into(),
+                tools: Some(vec!["search".into(), "create_*".into()]),
+                connection: Some("work".into()),
+                required: Some(true),
+            },
+            vision_agents::folder::ConnectorSettings {
+                name: "slack".into(),
+                ..Default::default()
+            },
+        ]
+    );
+}
+
+#[test]
+fn saying_nothing_about_connectors_is_not_listing_none() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\n");
+    assert_eq!(Folder::load(&root).unwrap().settings.connectors, None);
+
+    write(&root, "agent.yaml", "name: jean\nconnectors:\n");
+    assert_eq!(Folder::load(&root).unwrap().settings.connectors, None);
+
+    write(&root, "agent.yaml", "connectors: []\n");
+    assert_eq!(
+        Folder::load(&root).unwrap().settings.connectors,
+        Some(Vec::new())
+    );
+}
+
+#[test]
+fn a_connector_that_names_nothing_grants_nothing_or_connects_nowhere_is_refused() {
+    for (declaration, wording) in [
+        ("connectors:\n  -\n", "a connector needs a name"),
+        ("connectors:\n  - ''\n", "a connector needs a name"),
+        (
+            "connectors:\n  - connector: github\n",
+            "a connector needs a name",
+        ),
+        (
+            "connectors:\n  - name: github\n    tools: []\n",
+            "connector \"github\": tools: [] grants nothing; leave tools out for every tool",
+        ),
+        (
+            "connectors:\n  - name: github\n    connection: ''\n",
+            "connector \"github\": connection must be a connection id or label",
+        ),
+        (
+            "connectors:\n  - name: github\n    connection:\n      id: c1\n",
+            "connector \"github\": connection must be a connection id or label",
+        ),
+        ("connectors: github\n", "connectors must be a list"),
+        ("connectors: {}\n", "connectors must be a list"),
+        (
+            "connectors:\n  - name: github\n    tool: [search]\n",
+            "\"tool\" is not a connector setting",
+        ),
+        (
+            "connectors:\n  - name: github\n    tools: {}\n",
+            "connectors.tools is a list of strings",
+        ),
+    ] {
+        let error = connectors(declaration).unwrap_err();
+
+        assert!(
+            error.contains(wording),
+            "{declaration:?} was refused as {error:?}, not {wording:?}"
+        );
+    }
+}
+
+#[test]
+fn connectors_are_hashed_as_written() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "name: jean\nconnectors:\n  - github\n");
+
+    // md5(1) of the declaration, then a newline for each of the two empty parts.
+    assert_eq!(
+        Folder::load(&root).unwrap().hash(),
+        "c6be0c5bb3f7882ba3be686f1c057a14"
+    );
+}

@@ -1,0 +1,770 @@
+// Package openai reaches OpenAI's own Responses API.
+//
+// This is the one provider on the real endpoint rather than the chat completions shim the
+// others share, which is what earns it the things chat completions has nowhere to put: a
+// reasoning effort alongside tools rather than instead of them, a stored response to
+// continue from, and a cache key that lets one agent's instructions be written to the
+// cache once and read back on every turn of every call it takes.
+package openai
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// ProviderName is the stable name used in routing config and stats.
+const ProviderName = "openai"
+
+// apiKeyEnvVar holds the credentials when Options does not.
+const apiKeyEnvVar = "OPENAI_API_KEY"
+
+// defaultBaseURL is OpenAI's endpoint.
+const defaultBaseURL = "https://api.openai.com/v1"
+
+// defaultModel is used when the caller names no model. The cheapest, fastest tier is the
+// right default for a conversation; a caller who wants a better answer names one.
+const defaultModel = "gpt-5.6-luna"
+
+// defaultTimeout bounds one response. A conversational turn that takes this long has
+// already failed as far as the listener is concerned.
+const defaultTimeout = 2 * time.Minute
+
+// cacheTTL is the only prefix lifetime the API currently takes.
+const cacheTTL = 30 * time.Minute
+
+// modelCapabilities is what each model family accepts.
+//
+// The 5.6 family is the first to take max, and the first where reasoning and tools can be
+// asked for together. Anything older is offered the smaller set it answers to, which is
+// the whole reason this is a table rather than one list. GPT-6 keeps the 5.6 ladder, except
+// Astra and GPT-6.1 Sol, which answer none with a 400, so the least thinking they can be
+// asked for is low. GPT-6.1 Sol also stops at xhigh and answers max with a 400. Every
+// family here takes a strict JSON Schema (Structured Outputs, which OpenAI documents from
+// GPT-4o on: https://platform.openai.com/docs/guides/structured-outputs).
+//
+// None of them reports Store or Conversations, so every turn sends the whole conversation, as
+// it does to every other provider. An organisation with Zero Data Retention answers
+// previous_response_id with a 400, a customer's own key can belong to one, and a continued
+// response is billed for the whole chain anyway.
+var modelCapabilities = map[string]llm.Capabilities{
+	"gpt-6": {
+		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
+		DefaultEffort:    "none",
+		Verbosities:      []string{"low", "medium", "high"},
+		PromptCacheKey:   true,
+		JSONSchema:       true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
+	"gpt-6-astra": {
+		ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+		DefaultEffort:    "low",
+		Verbosities:      []string{"low", "medium", "high"},
+		PromptCacheKey:   true,
+		JSONSchema:       true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
+	"gpt-6.1-sol": {
+		ReasoningEfforts: []string{"low", "medium", "high", "xhigh"},
+		DefaultEffort:    "low",
+		Verbosities:      []string{"low", "medium", "high"},
+		PromptCacheKey:   true,
+		JSONSchema:       true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
+	"gpt-5.6": {
+		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
+		DefaultEffort:    "none",
+		StreamsReasoning: false,
+		Verbosities:      []string{"low", "medium", "high"},
+		PromptCacheKey:   true,
+		JSONSchema:       true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
+	"gpt-5.5": {
+		ReasoningEfforts: []string{"none", "minimal", "low", "medium", "high", "xhigh"},
+		DefaultEffort:    "none",
+		Verbosities:      []string{"low", "medium", "high"},
+		PromptCacheKey:   true,
+		JSONSchema:       true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
+	"gpt-5": {
+		ReasoningEfforts: []string{"minimal", "low", "medium", "high"},
+		DefaultEffort:    "minimal",
+		Verbosities:      []string{"low", "medium", "high"},
+		PromptCacheKey:   true,
+		JSONSchema:       true,
+		InputModalities:  []string{llm.ModalityImage},
+	},
+}
+
+// fallbackCapabilities does not assume image support for unknown model families.
+var fallbackCapabilities = llm.Capabilities{PromptCacheKey: true}
+
+// Options configures the provider.
+type Options struct {
+	APIKey string
+	Model  string
+	// BaseURL overrides the endpoint, which is useful for a gateway in front of OpenAI.
+	BaseURL string
+	// ReasoningEffort is what the model is asked for when a request names none. Empty
+	// leaves the model family's own default, which for a conversation is the least
+	// thinking it will do.
+	ReasoningEffort string
+	// Timeout bounds one response.
+	Timeout    time.Duration
+	HTTPClient option.HTTPClient
+	Logger     *slog.Logger
+}
+
+// LLM is OpenAI reached over the Responses API.
+type LLM struct {
+	options      Options
+	capabilities llm.Capabilities
+	client       openai.Client
+	logger       *slog.Logger
+
+	mu sync.Mutex
+	// inFlight cancels the responses that have not settled, so closing the provider
+	// abandons them rather than leaving them to their own timeouts.
+	inFlight map[uint64]context.CancelFunc
+	nextID   atomic.Uint64
+	closed   bool
+}
+
+// New builds the provider, reading the API key from the environment when it is not given.
+func New(options Options) (*LLM, error) {
+	// Pinned, because a cached prompt prefix is only read back within the organisation that
+	// wrote it, and a pool can hold keys from more than one.
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar).Pin()
+	if keys.Len() == 0 {
+		return nil, stack.Wrap(errors.New("openai: " + apiKeyEnvVar + " is required"))
+	}
+	options.APIKey = keys.Peek()
+	if options.Model == "" {
+		options.Model = defaultModel
+	}
+	if options.BaseURL == "" {
+		options.BaseURL = defaultBaseURL
+	}
+	if options.Timeout == 0 {
+		options.Timeout = defaultTimeout
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+
+	capabilities := capabilitiesFor(options.Model)
+	if options.ReasoningEffort != "" {
+		if err := capabilities.Validate(
+			llm.ResponseParams{Reasoning: llm.ReasoningParams{Effort: options.ReasoningEffort}},
+		); err != nil {
+			return nil, stack.Wrap(fmt.Errorf("openai: %s: %w", options.Model, err))
+		}
+		capabilities.DefaultEffort = options.ReasoningEffort
+	}
+
+	clientOptions := []option.RequestOption{
+		option.WithAPIKey(options.APIKey),
+		option.WithBaseURL(options.BaseURL),
+		option.WithHTTPClient(keys.WrapDoer(options.HTTPClient, keypool.Bearer)),
+	}
+
+	return &LLM{
+		options:      options,
+		capabilities: capabilities,
+		client:       openai.NewClient(clientOptions...),
+		logger:       options.Logger.With("provider", ProviderName, "model", options.Model),
+		inFlight:     map[uint64]context.CancelFunc{},
+	}, nil
+}
+
+// Client exposes the underlying SDK client, so anything this package does not standardise
+// is still one call away.
+func (l *LLM) Client() *openai.Client { return &l.client }
+
+// Create asks for one response and returns the stream it arrives on.
+func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if len(params.Input) == 0 {
+		return nil, stack.Wrap(errors.New("openai: a request needs input"))
+	}
+	if err := l.capabilities.Validate(params); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("openai: %w", err))
+	}
+
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, stack.Wrap(errors.New("openai: provider is closed"))
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, l.options.Timeout)
+	id := l.nextID.Add(1)
+	l.inFlight[id] = cancel
+	l.mu.Unlock()
+
+	upstream := l.client.Responses.NewStreaming(requestCtx, l.params(params))
+	if err := upstream.Err(); err != nil {
+		_ = upstream.Close()
+		cancel()
+		l.forget(id)
+		return nil, stack.Wrap(err)
+	}
+	return llm.NewStream(
+		llm.StreamOptions{
+			ResponseID: params.ID,
+			Provider:   ProviderName,
+			Model:      l.options.Model,
+		},
+		&puller{llm: l, id: id, upstream: upstream, cancel: cancel},
+	), nil
+}
+
+// Close abandons everything in flight.
+func (l *LLM) Close() error {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil
+	}
+	l.closed = true
+	cancels := make([]context.CancelFunc, 0, len(l.inFlight))
+	for _, cancel := range l.inFlight {
+		cancels = append(cancels, cancel)
+	}
+	l.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	return nil
+}
+
+// Provider is the stable provider name used in stats.
+func (l *LLM) Provider() string { return ProviderName }
+
+// Model is the model identifier used in stats.
+func (l *LLM) Model() string { return l.options.Model }
+
+// Capabilities is what this model accepts.
+func (l *LLM) Capabilities() llm.Capabilities { return l.capabilities }
+
+// forget releases a response that has settled.
+func (l *LLM) forget(id uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.inFlight, id)
+}
+
+// capabilitiesFor looks a model up by the longest family prefix that matches it, so a
+// dated snapshot such as gpt-5.6-sol-2026-02-11 is recognised as its family.
+func capabilitiesFor(model string) llm.Capabilities {
+	best := ""
+	for family := range modelCapabilities {
+		if strings.HasPrefix(model, family) && len(family) > len(best) {
+			best = family
+		}
+	}
+	if best == "" {
+		return fallbackCapabilities
+	}
+	return withVision(modelCapabilities[best])
+}
+
+// withVision marks the known model families above as accepting images.
+func withVision(c llm.Capabilities) llm.Capabilities {
+	if len(c.InputModalities) == 0 {
+		c.InputModalities = []string{llm.ModalityImage}
+	}
+	return c
+}
+
+// puller turns the Responses stream events into what a Stream reports.
+type puller struct {
+	llm      *LLM
+	id       uint64
+	upstream *ssestream.Stream[responses.ResponseStreamEventUnion]
+	cancel   context.CancelFunc
+
+	// names remembers the call each function_call output item belongs to, because the
+	// argument deltas that follow carry only the item id.
+	names map[string]call
+
+	err  error
+	done bool
+}
+
+// call is what an output item said about a function call before its arguments arrived.
+type call struct {
+	index  int64
+	callID string
+	name   string
+}
+
+// Advance reads one event and records what it carried.
+func (p *puller) Advance(w *llm.ResponseWriter) bool {
+	if p.done {
+		return false
+	}
+	if !p.upstream.Next() {
+		p.finish(w)
+		return false
+	}
+
+	event := p.upstream.Current()
+	switch event.Type {
+	case "response.created", "response.in_progress":
+		w.SetProviderResponseID(event.Response.ID)
+
+	case "response.output_text.delta":
+		w.OutputText(event.Delta)
+
+	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+		w.ReasoningText(event.Delta)
+
+	case "response.output_item.added":
+		if event.Item.Type == "function_call" {
+			p.remember(event.Item.ID, event.OutputIndex, event.Item.CallID, event.Item.Name)
+			w.FunctionCall(event.OutputIndex, event.Item.CallID, event.Item.Name, "", "")
+		}
+
+	case "response.function_call_arguments.delta":
+		known := p.names[event.ItemID]
+		w.FunctionCall(known.index, "", "", event.Delta, "")
+
+	case "response.completed", "response.incomplete", "response.failed":
+		p.settle(w, event.Response)
+
+	case "error":
+		p.err = failure(event.Code, event.Message)
+	}
+	return true
+}
+
+// Err is the provider failure that ended the stream, if there was one.
+func (p *puller) Err() error { return stack.Wrap(p.err) }
+
+// Close abandons the response. It only cancels: the upstream is released by the goroutine
+// reading it, once the cancellation has unblocked it.
+func (p *puller) Close() error {
+	p.cancel()
+	return nil
+}
+
+// remember records which call an output item is, so its argument deltas can be attributed.
+func (p *puller) remember(itemID string, index int64, callID, name string) {
+	if p.names == nil {
+		p.names = map[string]call{}
+	}
+	p.names[itemID] = call{index: index, callID: callID, name: name}
+}
+
+// settle records the terminal response, which is where usage and the reason it stopped
+// arrive.
+func (p *puller) settle(w *llm.ResponseWriter, response responses.Response) {
+	w.SetProviderResponseID(response.ID)
+	w.Usage(llm.Usage{
+		InputTokens: response.Usage.InputTokens,
+		InputTokensDetails: llm.InputTokensDetails{
+			CachedTokens:     response.Usage.InputTokensDetails.CachedTokens,
+			CacheWriteTokens: response.Usage.InputTokensDetails.CacheWriteTokens,
+		},
+		OutputTokens: response.Usage.OutputTokens,
+		OutputTokensDetails: llm.OutputTokensDetails{
+			ReasoningTokens: response.Usage.OutputTokensDetails.ReasoningTokens,
+		},
+		TotalTokens: response.Usage.TotalTokens,
+	})
+	w.ServiceTier(string(response.ServiceTier))
+
+	switch response.Status {
+	case "incomplete":
+		w.Incomplete(string(response.IncompleteDetails.Reason))
+	case "failed":
+		message := "the model failed to answer"
+		if response.Error.Message != "" {
+			message = response.Error.Message
+		}
+		p.err = failure(string(response.Error.Code), message)
+	}
+}
+
+// failure is an error OpenAI sent inside a stream, with the code it named, if any. The codes
+// that name OpenAI's own side are transient: the server failing or overloaded, the request
+// being rate limited, or a lookup it ran on the request's behalf timing out. Every other code
+// it lists (an invalid prompt or image, a policy, a residency mismatch) is the request's own.
+func failure(code, message string) error {
+	if code == "" {
+		return fmt.Errorf("openai: %s", message)
+	}
+	transient := false
+	switch responses.ResponseErrorCode(code) {
+	case responses.ResponseErrorCodeServerError, responses.ResponseErrorCodeRateLimitExceeded,
+		responses.ResponseErrorCodeVectorStoreTimeout, serverOverloaded, slowDown:
+		transient = true
+	}
+	return &llm.ProviderFailure{Err: fmt.Errorf("openai: %s: %s", code, message), Transient: transient}
+}
+
+// serverOverloaded and slowDown are the codes OpenAI documents for a model temporarily
+// overloaded (503) and for a request rate that rose too quickly (429), in its error-codes and
+// rate-limits guides. An error after a stream began arrives as a stream event, and the SDK's
+// list of a failed response's codes names neither.
+const (
+	serverOverloaded responses.ResponseErrorCode = "server_is_overloaded"
+	slowDown         responses.ResponseErrorCode = "slow_down"
+)
+
+// finish releases the upstream and works out what ended it.
+func (p *puller) finish(w *llm.ResponseWriter) {
+	p.done = true
+
+	switch err := p.upstream.Err(); {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
+		// A cancelled stream is barge-in or shutdown, not a provider failure.
+		w.Cancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Ours or the caller's: the provider billed what it generated until then.
+		w.TimedOut()
+		p.err = err
+	default:
+		p.err = err
+	}
+
+	p.upstream.Close()
+	p.cancel()
+	p.llm.forget(p.id)
+}
+
+// params builds the upstream request.
+func (l *LLM) params(request llm.ResponseParams) responses.ResponseNewParams {
+	params := responses.ResponseNewParams{
+		Model: shared.ResponsesModel(l.options.Model),
+		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: l.input(request)},
+	}
+	if request.MaxOutputTokens > 0 {
+		params.MaxOutputTokens = param.NewOpt(int64(request.MaxOutputTokens))
+	}
+	if request.Temperature != nil {
+		params.Temperature = param.NewOpt(*request.Temperature)
+	}
+	if effort := l.capabilities.Effort(request); effort != "" {
+		params.Reasoning = shared.ReasoningParam{Effort: shared.ReasoningEffort(effort)}
+	}
+	if request.Text.Verbosity != "" {
+		params.Text.Verbosity = responses.ResponseTextConfigVerbosity(request.Text.Verbosity)
+	}
+	if schema := l.capabilities.Schema(request.Text); schema != nil {
+		params.Text.Format = responses.ResponseFormatTextConfigUnionParam{
+			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
+				Name:   schema.Name,
+				Schema: schema.Schema,
+				Strict: param.NewOpt(true),
+			},
+		}
+	} else if request.Text.Format.JSON() {
+		params.Text.Format = responses.ResponseFormatTextConfigUnionParam{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+		}
+	}
+	if len(request.Tools) > 0 {
+		params.Tools = tools(request.Tools)
+	}
+	if request.ToolChoice != "" {
+		params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{
+			OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptions(request.ToolChoice)),
+		}
+	}
+	// Nothing continues from a response, and with store left out OpenAI keeps it as
+	// application state for at least 30 days.
+	params.Store = param.NewOpt(false)
+	if request.PromptCacheKey != "" {
+		params.PromptCacheKey = param.NewOpt(request.PromptCacheKey)
+	}
+	if options := l.cacheOptions(request.PromptCacheOptions); options != nil {
+		params.PromptCacheOptions = *options
+	}
+	if len(request.Metadata) > 0 {
+		params.Metadata = shared.Metadata(request.Metadata)
+	}
+	return params
+}
+
+// input renders the conversation as the items the API takes.
+//
+// The instructions travel as a developer message rather than in the top-level instructions
+// field, because that is the only place a cache breakpoint can be put: the boundary the
+// whole agent shares is the end of what it was told to be, and a breakpoint attaches to a
+// content part.
+func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
+	items := make(responses.ResponseInputParam, 0, len(request.Input)+1)
+	if request.Instructions != "" {
+		items = append(items, l.instructions(request))
+	}
+
+	for _, message := range request.Input {
+		switch message.Role {
+		case llm.System:
+			items = append(items, userOrSystem(message, responses.EasyInputMessageRoleDeveloper)...)
+		case llm.Assistant:
+			items = append(items, assistant(message)...)
+		case llm.ToolResult:
+			items = append(items, functionOutput(message))
+		default:
+			items = append(items, userOrSystem(message, responses.EasyInputMessageRoleUser)...)
+		}
+	}
+	return items
+}
+
+// instructions renders the system prompt, marking the end of it as a reusable prefix when
+// the caller asked for explicit breakpoints.
+func (l *LLM) instructions(request llm.ResponseParams) responses.ResponseInputItemUnionParam {
+	text := responses.ResponseInputTextParam{Text: request.Instructions}
+	if request.PromptCacheOptions.Mode == llm.CacheExplicit {
+		// The constructor sets mode; the zero value is dropped by the field's omitzero tag,
+		// and an explicit-mode request with no breakpoint caches nothing.
+		text.PromptCacheBreakpoint = responses.NewResponseInputTextPromptCacheBreakpointParam()
+	}
+	return responses.ResponseInputItemParamOfInputMessage(
+		responses.ResponseInputMessageContentListParam{{OfInputText: &text}},
+		string(responses.EasyInputMessageRoleDeveloper),
+	)
+}
+
+// assistant replays a turn the model took. The calls it made are items of their own here,
+// because the result sent back answers one of them by id and the API rejects a
+// conversation where a result answers nothing.
+func assistant(message llm.Message) []responses.ResponseInputItemUnionParam {
+	items := make([]responses.ResponseInputItemUnionParam, 0, len(message.ToolCalls)+1)
+	if text := messageText(message); text != "" {
+		items = append(items, responses.ResponseInputItemParamOfMessage(
+			text, responses.EasyInputMessageRoleAssistant))
+	}
+	for _, made := range message.ToolCalls {
+		items = append(items, responses.ResponseInputItemParamOfFunctionCall(
+			made.Arguments, made.ID, made.Name))
+	}
+	return items
+}
+
+// userOrSystem renders a turn that is words, or words and images.
+func userOrSystem(message llm.Message, role responses.EasyInputMessageRole) []responses.ResponseInputItemUnionParam {
+	if len(message.Parts) == 0 {
+		return []responses.ResponseInputItemUnionParam{
+			responses.ResponseInputItemParamOfMessage(message.Content, role),
+		}
+	}
+	return []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(inputParts(message.Parts), role),
+	}
+}
+
+func functionOutput(message llm.Message) responses.ResponseInputItemUnionParam {
+	if len(message.Parts) == 0 {
+		return responses.ResponseInputItemParamOfFunctionCallOutput(
+			message.ToolCallID, message.Content)
+	}
+	items := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(message.Parts))
+	for _, part := range message.Parts {
+		if part.Image != nil {
+			image := responses.ResponseInputImageContentParam{
+				ImageURL: param.NewOpt(part.Image.DataURI()),
+			}
+			if part.Image.Detail != "" {
+				image.Detail = responses.ResponseInputImageContentDetail(part.Image.Detail)
+			}
+			items = append(items, responses.ResponseFunctionCallOutputItemUnionParam{OfInputImage: &image})
+			continue
+		}
+		if part.Text != "" {
+			items = append(items, responses.ResponseFunctionCallOutputItemParamOfInputText(part.Text))
+		}
+	}
+	return responses.ResponseInputItemParamOfFunctionCallOutput(message.ToolCallID, items)
+}
+
+func inputParts(parts []llm.ContentPart) responses.ResponseInputMessageContentListParam {
+	rendered := make(responses.ResponseInputMessageContentListParam, 0, len(parts))
+	for _, part := range parts {
+		if part.Image != nil {
+			image := responses.ResponseInputImageParam{
+				ImageURL: param.NewOpt(part.Image.DataURI()),
+				Detail:   imageDetail(part.Image.Detail),
+			}
+			rendered = append(rendered, responses.ResponseInputContentUnionParam{OfInputImage: &image})
+			continue
+		}
+		if part.Text != "" {
+			rendered = append(rendered, responses.ResponseInputContentParamOfInputText(part.Text))
+		}
+	}
+	return rendered
+}
+
+func imageDetail(detail string) responses.ResponseInputImageDetail {
+	if detail == "" {
+		return responses.ResponseInputImageDetailAuto
+	}
+	return responses.ResponseInputImageDetail(detail)
+}
+
+func messageText(message llm.Message) string {
+	if message.Content != "" {
+		return message.Content
+	}
+	return llm.TextOf(message.Parts)
+}
+
+// tools renders the tools a request offers.
+//
+// A schema with an optional property, at any depth, is sent with strict false. Without it, the
+// Responses API turns the schema into strict mode by marking every property required, so the
+// model has to fill optional ones (an empty thread_ts that Slack refuses). "If you omit strict,
+// ... Responses requests will attempt to normalize your schema into strict mode when possible",
+// and strict mode needs "All fields in properties must be marked as required":
+// https://developers.openai.com/api/docs/guides/function-calling. A schema whose properties are
+// all required is sent as before, without strict: that normalization loses nothing from it.
+func tools(offered []llm.Tool) []responses.ToolUnionParam {
+	rendered := make([]responses.ToolUnionParam, 0, len(offered))
+	for _, tool := range offered {
+		function := &responses.FunctionToolParam{Name: tool.Name}
+		if tool.Description != "" {
+			function.Description = param.NewOpt(tool.Description)
+		}
+		if len(tool.Parameters) > 0 {
+			function.Parameters = tool.Parameters
+			if HasOptional(tool.Parameters) {
+				function.Strict = param.NewOpt(false)
+			}
+		}
+		rendered = append(rendered, responses.ToolUnionParam{OfFunction: function})
+	}
+	return rendered
+}
+
+// HasOptional reports whether a schema, or any schema inside it, has a property its required
+// list leaves out. A function tool offered to a Responses model with such a schema needs strict
+// false, or the API normalizes it to strict mode and the model fills every optional property
+// (see tools). openailive's backend tools follow the same rule.
+//
+// It reads decoded JSON ([]any) and Go literals ([]string required, as internal/agent/native.go
+// and internal/sandbox/sandbox.go write them). Values under a data keyword are skipped, so a
+// default or an enum that holds an object with a properties key is not read as a schema.
+func HasOptional(schema map[string]any) bool {
+	return optionalIn(schema)
+}
+
+// dataKeywords hold instance values, not schemas: enum and const (JSON Schema 2020-12
+// validation, sections 6.1.2 and 6.1.3), default and examples (sections 9.2 and 9.5),
+// https://json-schema.org/draft/2020-12/json-schema-validation.
+var dataKeywords = map[string]bool{"enum": true, "const": true, "default": true, "examples": true}
+
+// namedSchemas hold schemas under names the schema's author chose, so a name there is never a
+// keyword (JSON Schema 2020-12 core, section 8.2.4 for $defs; applicator, sections 10.2.2.2
+// and 10.2.2.4 for patternProperties and dependentSchemas; definitions is the draft-07 name
+// of $defs).
+var namedSchemas = map[string]bool{"$defs": true, "definitions": true, "patternProperties": true, "dependentSchemas": true}
+
+func optionalIn(node any) bool {
+	switch value := node.(type) {
+	case map[string]any:
+		properties, _ := value["properties"].(map[string]any)
+		required := map[string]bool{}
+		switch names := value["required"].(type) {
+		case []string:
+			for _, name := range names {
+				required[name] = true
+			}
+		case []any:
+			for _, name := range names {
+				if name, ok := name.(string); ok {
+					required[name] = true
+				}
+			}
+		}
+		for name, property := range properties {
+			if !required[name] || optionalIn(property) {
+				return true
+			}
+		}
+		for key, child := range value {
+			if key == "properties" || dataKeywords[key] {
+				continue
+			}
+			if namedSchemas[key] {
+				named, _ := child.(map[string]any)
+				for _, schema := range named {
+					if optionalIn(schema) {
+						return true
+					}
+				}
+				continue
+			}
+			if optionalIn(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if optionalIn(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cacheOptions renders the request's cache policy, returning nil when it asked for nothing
+// the model takes.
+//
+// A TTL the API does not offer is dropped rather than refused: it is a hint about how long
+// a prefix should stay warm, and getting the provider's own lifetime instead is not a
+// failure worth ending a call over.
+func (l *LLM) cacheOptions(policy llm.PromptCacheOptions) *responses.ResponseNewParamsPromptCacheOptions {
+	options := responses.ResponseNewParamsPromptCacheOptions{}
+	set := false
+
+	if policy.Mode != "" {
+		options.Mode = string(policy.Mode)
+		set = true
+	}
+	if policy.TTL > 0 {
+		for _, offered := range l.capabilities.CacheTTLs {
+			if offered == policy.TTL {
+				options.Ttl = shortDuration(policy.TTL)
+				set = true
+				break
+			}
+		}
+	}
+	if !set {
+		return nil
+	}
+	return &options
+}
+
+// shortDuration spells a lifetime the way the API does, as 30m rather than 30m0s.
+func shortDuration(ttl time.Duration) string {
+	if ttl%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int(ttl/time.Hour))
+	}
+	return fmt.Sprintf("%dm", int(ttl/time.Minute))
+}

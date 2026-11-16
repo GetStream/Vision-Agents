@@ -1,0 +1,1414 @@
+// Package harness sits between what a caller says and the model that answers them.
+//
+// The model on the live path is chosen for how quickly it starts talking, which is not
+// the same as how well it thinks. Rather than accept that trade on every sentence, the
+// harness gives that model somewhere to put the work it is bad at: it writes a request
+// for help into its reply, the harness takes the request back out before the reply
+// reaches the voice, and a slower model answers it while the conversation carries on.
+//
+// Nothing here waits. Delegating returns as soon as the request is on its way, and the
+// answer is folded into a later turn whenever it arrives — or abandoned, if the caller
+// has moved on by then.
+package harness
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	llmoptions "github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// Default is the harness every agent runs unless its config names another. It is named so
+// that a config can say which it wants once there is more than one to choose from.
+const Default = "default"
+
+// eventBuffer is how many events may queue before a slow consumer applies backpressure.
+const eventBuffer = 32
+
+// defaultTasks caps delegated work in flight when the caller names no limit. A model
+// that asks for help on every sentence would otherwise open a session's worth of them.
+const defaultTasks = 3
+
+// Options configures a Harness.
+type Options struct {
+	// Text says the conversation is held in writing: skills are offered for written
+	// requests rather than speech repair, and the model is told its reply is read rather
+	// than heard, both when it hands a result over and before it calls a tool.
+	Text bool
+	// Model is the fast voice model. The harness holds it because a turn goes to the
+	// harness first and it is the harness that decides what to ask.
+	Model *llmrouter.Session
+	// Subagent is the slower, more capable model that runs delegated work. Without one
+	// the harness offers no skills and the fast model answers everything itself. The
+	// harness takes ownership of the session and closes it.
+	Subagent *llmrouter.Session
+	// OpenSubagent starts the subagent in the background, in place of Subagent, so the
+	// conversation does not wait for it. The harness takes ownership of what it opens.
+	OpenSubagent func(context.Context) (*llmrouter.Session, error)
+	Capture      func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
+	// Controller is a second fast-model session that decides when evolving speech is
+	// complete, relevant, or interrupting. The harness takes ownership of it.
+	Controller *llmrouter.Session
+	// Judge is a decision model the flow controller asks in place of Controller, which it
+	// then ignores. The harness takes ownership of it.
+	Judge Judge
+	// Hearer is asked before Judge or Controller, which decide the turns it can't.
+	Hearer Hearer
+	// Skills are what the fast model may hand over. They mean nothing without a subagent.
+	Skills Skills
+	// Tools are what the fast model may do rather than say. The harness offers them and
+	// reports what was asked for; the agent is what runs them.
+	Tools Tools
+	// Sandbox is where the subagent runs code it writes. It is offered to the subagent
+	// alone: running code takes seconds, and the model holding the conversation does not
+	// have seconds. Nil means the subagent works everything out in its head.
+	Sandbox sandbox.Sandbox
+	// Publish puts the files the subagent's code hands back where the caller can see them.
+	// Nil means there is nowhere to, and the subagent is told so.
+	Publish sandbox.Publisher
+	// Lookup answers the subagent's question out of the knowledge base, and Search out of
+	// the web, each in words the model can read. Nil means the subagent is not offered it.
+	Lookup func(ctx context.Context, turnID, query string) (string, error)
+	Search func(ctx context.Context, turnID, query string) (string, error)
+	// Tasks caps how much delegated work may run at once.
+	Tasks int
+	// MaxTokens caps each reply. Zero leaves the model's own default in place.
+	MaxTokens int
+	// Overwrites is what the caller asked to change about how the model answers: how hard
+	// to think, how long to answer, how random to be. It is written over every turn this
+	// harness takes, and over the delegated work as well, because a caller asking for more
+	// thinking means the thinking too.
+	//
+	// The options package is imported under another name here because every constructor in
+	// this file takes a parameter called options, which would otherwise shadow it.
+	Overwrites llmoptions.LLM
+	// CacheKey buckets this agent's requests in the provider's prompt cache, so the
+	// instructions every one of them opens with are written once and read back after.
+	// It is shared by every call the agent takes and means nothing to a provider whose
+	// capabilities do not report PromptCacheKey.
+	CacheKey    string
+	OnModelCall func(llm.CallTiming)
+	Logger      *slog.Logger
+}
+
+// noted is something for the fast model to be told, and the skill it came from. The skill
+// is empty for a note about the harness itself rather than about work that ran. asking
+// marks a note that is a question for the caller rather than something to pass on.
+type noted struct {
+	skill string
+	// text is what the harness tells the model about it, in words of its own.
+	text string
+	// data is what the work came back with, as a JSON envelope (envelope), or empty when
+	// there is none. It goes to the model as data on the user's side, never in text.
+	data   string
+	asking bool
+	// quiet marks a correction of a reply that was itself delivering one. It rides along
+	// with the next turn rather than earning one, or the model answering each correction
+	// with the same mistake talks to itself until the call ends.
+	quiet bool
+	// turn is the reply handed this note, empty while no reply has been.
+	turn string
+	// origin is the turn that requested the work, even before any reply takes its result.
+	origin string
+	// asked is the turn whose reply wrote the tag this note answers. A refusal of that
+	// turn drops the note, because the tag was written on input nothing may act on.
+	asked string
+	// cutOff marks a note whose reply was talked over after it was written.
+	cutOff bool
+}
+
+// cutOffNote is added to a note whose reply was cut off before the caller heard it.
+const cutOffNote = "Your last reply passing this on was cut off before the caller heard " +
+	"it, so they still need to be told."
+
+// talkedOverNote is added instead to a note whose reply the caller talked over, taking the
+// floor before they heard it: they said something since, which may have moved on from it.
+const talkedOverNote = "The caller talked over your last reply passing this on, so they did " +
+	"not hear it. Tell them only if it still fits what they have said since."
+
+// writtenReply is a reply the model has finished writing that may still be playing.
+type writtenReply struct {
+	turn  string
+	notes []noted
+}
+
+// Turn is what the harness is asked to answer.
+// toolReplyEffort is how hard the model thinks before answering a tool result.
+const toolReplyEffort = "low"
+
+// raises reports whether asking for effort is a floor this model's own default sits
+// below: a model whose default already thinks harder (Claude's high) keeps it rather
+// than being turned down. ReasoningEfforts are listed weakest first.
+func raises(model llm.Capabilities, effort string) bool {
+	want := slices.Index(model.ReasoningEfforts, effort)
+	if want < 0 {
+		return false
+	}
+	return slices.Index(model.ReasoningEfforts, model.DefaultEffort) < want
+}
+
+type Turn struct {
+	// ID correlates the reply with the turn the agent is measuring.
+	ID string
+	// Instructions is the agent's own system prompt, already carrying whatever it
+	// recalled about the caller. The harness adds to it rather than replacing it. It must
+	// not change from one turn to the next: a provider caches a prompt by its prefix, and
+	// what changes from turn to turn goes in Note or Tell instead.
+	Instructions string
+	// History is the conversation so far, oldest first, ending with what to reply to.
+	History []llm.Message
+	// Documents are the files the caller attached in this conversation (DocumentMessage),
+	// sent ahead of History on every reply. They are not History: compaction never sums them
+	// up, and a colleague is not handed them.
+	Documents []llm.Message
+	// Note is something true of this turn alone, such as the caller not having been
+	// heard clearly. It goes at the end of what this reply is sent and is not kept.
+	Note string
+	// Tell is something the model should know from now on, such as the hour having moved
+	// on. It goes at the end of what this reply is sent and, once the reply is written,
+	// stays in the conversation (Remember).
+	Tell string
+	// Images go with the caller's last message in History for this reply alone, the way
+	// Note does. The conversation the harness keeps, and hands a colleague who may not see,
+	// stays as it was said.
+	Images []llm.ImagePart
+	// AfterTool says the reply follows a tool result rather than the caller.
+	AfterTool bool
+	// Answers says the reply is offered no tools and must answer from what it has: the
+	// chain of tools before it has reached its limit. It reads the same on a call and in
+	// text, so it says nothing of time or of anyone waiting.
+	Answers bool
+	// NoTools offers the reply no tools without telling it to answer now: nobody has spoken
+	// yet, so there is nothing to act on.
+	NoTools bool
+	// Asked is what the caller asked to change about this reply, written over the
+	// session's own overwrites.
+	Asked llmoptions.LLM
+	// Attributes go on the reply's usage row, asked for when it is written
+	// (llm.ResponseParams.Attributes). Nil adds none.
+	Attributes func() map[string]string
+	// Generation tells apart two replies asked for under one ID, such as a speculative
+	// reply thrown away and the answer asked for after it. A reply that may be forgotten
+	// (Forget) carries one that is not zero and unique to it; every other reply leaves it zero.
+	Generation uint64
+}
+
+// answerNow is the note a reply that Answers is given.
+const answerNow = "No more tools this turn: answer now from what the tools returned, " +
+	"and say plainly what you could not get."
+
+// Harness decides what the fast model is asked and what becomes of what it answers.
+type Harness struct {
+	options Options
+	logger  *slog.Logger
+	emitter *Emitter
+	// tasks is nil when there is no subagent, which is what makes delegation optional
+	// rather than a second thing to configure before the agent works at all.
+	tasks *manager
+	flow  *flow
+
+	mu sync.Mutex
+	// notes are what has come back from the subagent since the fast model last spoke.
+	// They are folded into the next prompt, and forgotten once that reply has finished.
+	notes []noted
+	// written is the last reply that finished being written and the notes it carried.
+	// Finishing the writing is not finishing the speaking: the reply can still be talked
+	// over while it plays, and what it carried is then owed again. Only one reply is on
+	// its way to the caller at a time, so the last one is all that is kept.
+	written writtenReply
+	// cancelledTurns also excludes results that finished before cancellation but have yet
+	// to be consumed. Notes and their originating turns are retired under the same lock.
+	cancelledTurns map[string]string
+	// reporting is the skills whose answers the reply being written was handed, so it can
+	// be stopped from handing the same work back.
+	reporting []string
+	// asking is whether the reply being written carries a colleague's question for the
+	// caller, which is the one turn that has nothing to look up.
+	asking bool
+	// correcting is whether the reply being written was handed a correction of its own.
+	correcting bool
+	// asked is tool calls the model wrote as skill tags. They wait until the reply
+	// finishes, because running one mid-sentence would start a second turn while the
+	// first is still being spoken.
+	asked []llm.ToolCall
+	// askN numbers those calls so each has an id the provider can match a result to.
+	askN int
+	// history is the conversation as of the last turn, so a request for help carries the
+	// context it was asked in rather than only the sentence that prompted it.
+	history []llm.Message
+	// charged marks who sent the last turn and whether a scheduled task fired it (chargedAs),
+	// so the work it hands to the subagent is counted as the turn is.
+	charged context.Context
+	// stored is what the provider has already read of this conversation, when it keeps
+	// what it generates.
+	stored stored
+	// carried is what each reply in flight was sent after the conversation it was given,
+	// which joins the conversation once the reply is written (Remember).
+	carried map[string][]llm.Message
+	// toolless is the replies in flight that were offered no tools (Turn.Answers,
+	// Turn.NoTools, a colleague's question), until they are written (DropUnoffered).
+	toolless map[string]bool
+	// generations is the reply last asked for under an ID that a speculative reply was asked
+	// for under, so a Forget that lands after another reply took the ID leaves what that
+	// reply recorded alone. An ID is only there from the speculative reply until it is
+	// forgotten, written or cut off.
+	generations map[string]uint64
+	// shape is what the last request opened with besides the conversation: instructions,
+	// tools, tool choice and effort. cold reports that it changed, which costs the
+	// provider's cache of the conversation and so says nothing about whether it pays.
+	shape string
+	cold  bool
+	// compaction is private summary work in flight.
+	compaction *compaction
+	// measured is the history MaybeCompact last judged, so the next judgement can tell a
+	// prompt the provider has seen the start of from one rewritten since.
+	measured []llm.Message
+
+	// scan splits replies into speech and requests for help. Only the consumer of the
+	// model's deltas touches it, which is one goroutine.
+	scan scanner
+
+	running   sync.WaitGroup
+	closeOnce sync.Once
+}
+
+// New validates the options and returns a Harness. It opens nothing: the sessions it is
+// given are already started.
+func New(options Options) (*Harness, error) {
+	if options.Model == nil && options.Subagent == nil && options.OpenSubagent == nil {
+		return nil, stack.Wrap(errors.New("harness: a model session is required"))
+	}
+	if options.Tasks <= 0 {
+		options.Tasks = defaultTasks
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+	if err := options.Skills.Validate(); err != nil {
+		return nil, err
+	}
+	if err := options.Tools.Validate(); err != nil {
+		return nil, err
+	}
+
+	h := &Harness{
+		options:     options,
+		logger:      options.Logger,
+		emitter:     NewEmitter(eventBuffer),
+		charged:     context.Background(),
+		carried:     make(map[string][]llm.Message),
+		toolless:    make(map[string]bool),
+		generations: make(map[string]uint64),
+	}
+
+	if options.Subagent != nil || options.OpenSubagent != nil {
+		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, options.Overwrites, h.logger)
+		h.tasks.onModelCall = options.OnModelCall
+		h.tasks.capture = options.Capture
+		h.tasks.load = options.Skills.Load
+		h.tasks.publish = options.Publish
+		h.tasks.lookup = options.Lookup
+		h.tasks.search = options.Search
+		if options.Subagent == nil {
+			h.tasks.open(options.OpenSubagent)
+		}
+		h.running.Add(1)
+		go h.consumeTasks()
+	}
+	if options.Controller != nil || options.Judge != nil {
+		h.flow = newFlow(options.Controller, h.emitter, h.logger)
+		h.flow.judge = options.Judge
+		h.flow.hearer = options.Hearer
+		h.flow.onModelCall = options.OnModelCall
+	}
+	return h, nil
+}
+
+// stored is what a provider that keeps what it generates has already read.
+//
+// The whole conversation is sent again by default, because routing may answer consecutive
+// turns from different providers and a conversation held by the caller survives that. This
+// is the shortcut taken when it is provably safe: the same model, the same instructions,
+// and an input that only appends to what it last saw.
+type stored struct {
+	// responseID is what the provider called the last reply it kept.
+	responseID string
+	// identity is the provider and model that kept it. A failover changes it, and the
+	// shortcut is dropped rather than offered to a provider that never saw the response.
+	identity string
+	// instructions is what that reply was told. Changed instructions mean the turn is no
+	// longer a continuation of it.
+	instructions string
+	// sent is exactly the input the provider has read, so what to append can be worked
+	// out rather than assumed. Compaction rewrites the conversation from the front, and
+	// what it produces is not a continuation of anything.
+	sent []llm.Message
+}
+
+// Remember records the reply a provider kept, so the next turn can continue from it, and
+// returns what the reply was sent after the conversation it was given: the notes it was
+// handed and anything it was told. The caller keeps those in the conversation, ahead of
+// the reply, because that is what the model read; nothing is returned for a reply that
+// failed, whose notes are owed again.
+func (h *Harness) Remember(response llm.Response) []llm.Message {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	carried := h.carried[response.ID]
+	delete(h.carried, response.ID)
+	delete(h.toolless, response.ID)
+	delete(h.generations, response.ID)
+	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
+		h.release(response.ID, false)
+		carried = nil
+	} else {
+		handed := slices.DeleteFunc(slices.Clone(h.notes), func(written noted) bool { return written.turn != response.ID })
+		h.notes = slices.DeleteFunc(h.notes, func(written noted) bool { return written.turn == response.ID })
+		h.written = writtenReply{turn: response.ID, notes: handed}
+	}
+	// A truncated response can retain an unfinished tool call at the provider even
+	// though its invalid arguments were discarded locally. Continuing that response
+	// demands a result for a call we could never run. Replay our history instead.
+	if response.Status != llm.StatusCompleted || response.ProviderResponseID == "" {
+		h.stored = stored{}
+		return carried
+	}
+	h.stored.responseID = response.ProviderResponseID
+	h.stored.identity = response.Provider + "/" + response.Model
+	return carried
+}
+
+// Forget drops a reply that was asked for and then thrown away unread, such as a
+// speculative one the flow ruled against. Respond recorded its input as sent, so without
+// this the next turn with the same words would send nothing new and continue from a reply
+// that never saw them; the next turn sends the whole conversation instead. The notes it
+// was handed were never read, so they are owed again.
+//
+// It runs when the reply has been read out, which can be after the turn was asked for again
+// under the same ID. generation is the Turn.Generation the reply was asked for with: when
+// another reply has since taken the ID, what was recorded is that reply's and is left alone.
+func (h *Harness) Forget(turnID string, generation uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if current, taken := h.generations[turnID]; taken && current != generation {
+		return
+	}
+	h.stored = stored{}
+	delete(h.carried, turnID)
+	delete(h.toolless, turnID)
+	delete(h.generations, turnID)
+	for i := range h.notes {
+		if h.notes[i].turn == turnID {
+			h.notes[i].turn = ""
+		}
+	}
+}
+
+// resume works out how much of the input still has to be sent, and what to continue from.
+//
+// It returns the whole input and no previous response whenever the shortcut cannot be
+// proven safe, which costs bandwidth and nothing else.
+func (h *Harness) resume(instructions string, input []llm.Message) ([]llm.Message, string) {
+	model := h.options.Model.Capabilities()
+	if !model.Store {
+		return input, ""
+	}
+
+	previous := h.stored
+	// The new input belongs to the response being requested. If it is interrupted
+	// before Remember, the old response cannot stand in for having read that input.
+	h.stored = stored{instructions: instructions, sent: input}
+
+	if previous.responseID == "" ||
+		previous.identity != h.options.Model.Provider()+"/"+h.options.Model.Model() ||
+		previous.instructions != instructions ||
+		!appendsTo(previous.sent, input) {
+		return input, ""
+	}
+	return input[len(previous.sent):], previous.responseID
+}
+
+// appendsTo reports whether the longer conversation starts with the shorter one unchanged.
+func appendsTo(sent, input []llm.Message) bool {
+	if len(sent) > len(input) {
+		return false
+	}
+	for i, message := range sent {
+		if !sameMessage(message, input[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameMessage(a, b llm.Message) bool {
+	return llm.SameMessage(a, b)
+}
+
+// Respond asks the fast model to answer a turn and returns the stream the reply arrives
+// on. The caller drains it and passes each delta through Filter.
+func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
+	working := h.Working()
+	h.mu.Lock()
+	session, overwrites := h.options.Model, h.options.Overwrites
+	if session == nil {
+		h.mu.Unlock()
+		return nil, errors.New("harness: no text conversation model")
+	}
+	h.history = WithoutNotes(turn.History)
+	h.charged = chargedAs(context.Background(), ctx)
+	model := session.Capabilities()
+	instructions, carried, transient := h.prompt(turn, working)
+	// A colleague asks only for what the caller alone can say, so a reply carrying its
+	// question has nothing to look up. Left able to call a tool the model reaches for one
+	// and narrates the reaching instead, and the question never reaches the caller. The
+	// tools stay offered and are switched off by tool choice, because the tools open the
+	// prompt and changing them costs the provider's cache of everything after them.
+	tools := h.options.Tools.Requests()
+	toolChoice := ""
+	offersNone := h.asking || turn.Answers || turn.NoTools
+	if offersNone {
+		h.toolless[turn.ID] = true
+	}
+	if _, taken := h.generations[turn.ID]; taken || turn.Generation != 0 {
+		h.generations[turn.ID] = turn.Generation
+	}
+	if offersNone && len(tools) > 0 {
+		if len(model.ToolChoices) == 0 || slices.Contains(model.ToolChoices, "none") {
+			toolChoice = "none"
+		} else {
+			tools = nil
+		}
+	}
+	input := slices.Concat(turn.Documents, WithImages(turn.History, turn.Images), carried)
+	if transient != "" {
+		input = append(input, llm.Message{Role: llm.System, Content: noteHeader + "\n" + transient})
+	}
+	if len(carried) > 0 {
+		h.carried[turn.ID] = carried
+	}
+	input, previous := h.resume(instructions, input)
+	h.mu.Unlock()
+
+	// A reply to a tool result is given a little thinking. The caller was told to wait
+	// while the tool ran, so it costs them nothing they notice, and without it a model can
+	// ask the caller to confirm a step the result already lets it take.
+	var reasoning llm.ReasoningParams
+	if turn.AfterTool && raises(model, toolReplyEffort) {
+		reasoning.Effort = toolReplyEffort
+	}
+
+	params := llm.ResponseParams{
+		ID:                 turn.ID,
+		Purpose:            llm.PurposeReply,
+		Reasoning:          reasoning,
+		TurnID:             turn.ID,
+		OnTiming:           h.options.OnModelCall,
+		Attributes:         turn.Attributes,
+		Instructions:       instructions,
+		Input:              input,
+		MaxOutputTokens:    h.options.MaxTokens,
+		Tools:              tools,
+		ToolChoice:         toolChoice,
+		Store:              model.Store,
+		PreviousResponseID: previous,
+		// Every turn of every call this agent takes opens with the same instructions, so
+		// they are written to the provider's cache once under a key the agent owns and
+		// read back from there on every turn after.
+		PromptCacheKey: h.options.CacheKey,
+	}.Overwrite(overwrites).Overwrite(turn.Asked)
+
+	h.mu.Lock()
+	shape := shapeOf(params)
+	h.cold = h.shape != "" && h.shape != shape
+	h.shape = shape
+	h.mu.Unlock()
+
+	stream, err := session.Create(ctx, params)
+	if err != nil {
+		// A reply that never started read nothing: what it took is owed to the next one.
+		// A speculation cancelled in Create can fail after the answer took its ID, and what
+		// is recorded under the ID is then the answer's, as in Forget.
+		h.mu.Lock()
+		if current, taken := h.generations[turn.ID]; !taken || current == turn.Generation {
+			h.release(turn.ID, false)
+		}
+		h.mu.Unlock()
+	}
+	return stream, err
+}
+
+// shapeOf is what a request opens with besides the conversation, as one string to compare.
+func shapeOf(params llm.ResponseParams) string {
+	names := make([]string, 0, len(params.Tools))
+	for _, tool := range params.Tools {
+		names = append(names, tool.Name)
+	}
+	return strings.Join([]string{params.Instructions, strings.Join(names, ","), params.ToolChoice, params.Reasoning.Effort}, "\x00")
+}
+
+// Release makes what a reply was handed owed to the caller again, because that reply was
+// cut off before it was heard.
+func (h *Harness) Release(turnID string) {
+	h.mu.Lock()
+	h.release(turnID, false)
+	h.mu.Unlock()
+}
+
+// ReleaseTalkedOver is Release for a reply the caller cut off by taking the floor. What it
+// was handed is still theirs to hear, but it no longer earns a turn of its own: it rides
+// along with the reply to what they said (quiet), so the model passes it on there if it still
+// fits. Owed a turn of its own, it was said again over the caller as soon as the reply
+// stopped, every time they talked over it, and their words went unanswered.
+func (h *Harness) ReleaseTalkedOver(turnID string) {
+	h.mu.Lock()
+	h.release(turnID, true)
+	h.mu.Unlock()
+}
+
+func (h *Harness) release(turnID string, talkedOver bool) {
+	// A reply cut off before it was written keeps nothing of what it was sent: its notes are
+	// owed again, data and all, so carrying them into the conversation as well would send
+	// what came back twice.
+	delete(h.carried, turnID)
+	delete(h.toolless, turnID)
+	delete(h.generations, turnID)
+	if h.written.turn == turnID {
+		// The conversation keeps the reply as it was written, so the model would otherwise
+		// read itself as having already said this.
+		for _, carried := range h.written.notes {
+			carried.turn = ""
+			// What the work came back with is already in the conversation, ahead of the
+			// reply that was cut off, so only the note to tell it again is owed.
+			carried.data = ""
+			// A correction of the harness's own is not something the caller was being told.
+			if !carried.cutOff && carried.skill != "" {
+				carried.cutOff = true
+				carried.text += " " + cutOff(talkedOver)
+			}
+			carried.quiet = carried.quiet || talkedOver
+			h.notes = append(h.notes, carried)
+		}
+		h.written = writtenReply{}
+	}
+	for i := range h.notes {
+		if h.notes[i].turn == turnID {
+			h.notes[i].turn = ""
+			if talkedOver {
+				if !h.notes[i].cutOff && h.notes[i].skill != "" {
+					h.notes[i].cutOff = true
+					h.notes[i].text += " " + cutOff(true)
+				}
+				h.notes[i].quiet = true
+			}
+		}
+	}
+}
+
+// cutOff is the line a released note is told again with.
+func cutOff(talkedOver bool) string {
+	if talkedOver {
+		return talkedOverNote
+	}
+	return cutOffNote
+}
+
+// SetModel moves the conversation, and the flow controller when one is given, onto other
+// sessions from the next turn. The new model has read nothing, so the next turn sends the
+// whole conversation. The caller still owns and closes the model it replaced; a replaced
+// controller closes with the harness, once what it was deciding has settled.
+func (h *Harness) SetModel(model, controller *llmrouter.Session) {
+	h.mu.Lock()
+	h.options.Model = model
+	h.stored = stored{}
+	h.mu.Unlock()
+
+	if controller != nil && h.flow != nil {
+		h.flow.setModel(controller)
+	}
+}
+
+// SetSubagent opens delegated work on another model in the background. Tasks already
+// running finish on the one they started with.
+func (h *Harness) SetSubagent(open func(context.Context) (*llmrouter.Session, error)) {
+	if h.tasks != nil {
+		h.tasks.open(open)
+	}
+}
+
+// SetOverwrites changes how the model answers from the next turn and the next task.
+func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
+	h.mu.Lock()
+	h.options.Overwrites = overwrites
+	h.mu.Unlock()
+	if h.tasks != nil {
+		h.tasks.setOverwrites(overwrites)
+	}
+}
+
+// resumption is what a turn nobody prompted is asked, when the conversation so far ends
+// with the agent's own words and nothing came back to pass on as data. A completion answers
+// whatever came last, so a history ending in the assistant's own turn asks the model to
+// follow itself; providers disagree on what that means and Gemini refuses it outright. It
+// states no outcome: the note that prompted the turn may say that nothing ran, and told that
+// work had come back, Gemma told a caller "You're all set" for a booking it never made.
+const resumption = "Carry on with the caller from the note that follows. Say only what a " +
+	"tool or your colleague actually returned."
+
+// WithImages puts images on the caller's last message in history, after its words and each
+// beside its caption. That is the last message of a reply to the caller, and comes before
+// the tool calls and results a reply to a tool follows.
+func WithImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
+	at := len(history) - 1
+	for at >= 0 && history[at].Role != llm.User {
+		at--
+	}
+	if len(images) == 0 || at < 0 {
+		return history
+	}
+	out := append([]llm.Message(nil), history...)
+	asked := out[at]
+	parts := append([]llm.ContentPart(nil), asked.Parts...)
+	if len(parts) == 0 {
+		parts = llm.TextParts(asked.Content)
+	}
+	for _, image := range images {
+		if image.Caption != "" {
+			parts = append(parts, llm.ContentPart{Text: image.Caption})
+		}
+		parts = append(parts, llm.ContentPart{Image: &image})
+	}
+	asked.Content, asked.Parts = "", parts
+	out[at] = asked
+	return out
+}
+
+// Requested reports the tools the model asked to have run in one reply.
+//
+// A call for a tool that was never offered is dropped rather than passed on: models invent
+// them, and the agent should not have to know which names are real. Running the rest is the
+// agent's job, because a tool acts on the call and the harness does not know there is one.
+func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
+	for _, call := range calls {
+		tool, known := h.options.Tools.Lookup(call.Name)
+		if !known {
+			h.logger.Debug("the model asked for a tool that does not exist", "tool", call.Name)
+			continue
+		}
+		call.Arguments = Coerce(tool.Parameters, call.Arguments)
+		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call})
+	}
+}
+
+// DropUnoffered returns the calls a finished reply asked for, or none when the reply was
+// offered no tools. Such a reply, one made to answer after the tool rounds ran out or sent
+// before anyone had spoken, was told it could not call a tool, and what a provider returns
+// anyway is not run or followed, or a model that ignored it would chain past the limit.
+func (h *Harness) DropUnoffered(turnID string, calls []llm.ToolCall) []llm.ToolCall {
+	h.mu.Lock()
+	toolless := h.toolless[turnID]
+	h.mu.Unlock()
+	if !toolless || len(calls) == 0 {
+		return calls
+	}
+	h.logger.Warn("a reply offered no tools asked for some, which were dropped", "turn", turnID, "calls", len(calls))
+	return nil
+}
+
+// Decide asks the fast flow controller what to do with an evolving transcript.
+func (h *Harness) Decide(turn FlowTurn) error {
+	if h.flow == nil {
+		return stack.Wrap(errors.New("harness: a flow controller is required"))
+	}
+	return h.flow.Decide(turn)
+}
+
+// CancelDecision abandons a flow decision whose transcript changed.
+func (h *Harness) CancelDecision(candidateID string) error {
+	if h.flow == nil {
+		return nil
+	}
+	return h.flow.Cancel(candidateID)
+}
+
+// CancelTurn abandons delegated work whose conversational premise changed.
+func (h *Harness) CancelTurn(turnID, reason string) {
+	h.mu.Lock()
+	if h.cancelledTurns == nil {
+		h.cancelledTurns = make(map[string]string)
+	}
+	h.cancelledTurns[turnID] = reason
+	dropped := func(written noted) bool {
+		return written.origin == turnID || reason == ReasonRefused && written.asked == turnID
+	}
+	h.notes = slices.DeleteFunc(h.notes, dropped)
+	h.written.notes = slices.DeleteFunc(h.written.notes, dropped)
+	h.mu.Unlock()
+	if h.tasks != nil {
+		h.tasks.CancelTurn(turnID, reason)
+	}
+}
+
+// Filter takes a delta of a reply and returns the part of it the caller should hear.
+//
+// A request for help is not speech, so it never reaches the voice. Everything else is
+// released as soon as it is known not to be one, because the caller is listening to the
+// gap.
+func (h *Harness) Filter(turnID, delta string) string {
+	speech, directives := h.scan.Add(delta)
+	for _, found := range directives {
+		h.act(turnID, found)
+	}
+	return speech
+}
+
+// Flush releases what the filter was still holding when a reply ended.
+func (h *Harness) Flush() string { return h.scan.Flush() }
+
+// Reset forgets a reply that was abandoned part-way through.
+func (h *Harness) Reset() {
+	h.scan.Reset()
+	h.mu.Lock()
+	h.asked = nil
+	h.mu.Unlock()
+}
+
+// TakeAsked returns the tool calls the model wrote as skill tags in the reply that just
+// finished, and forgets them. The agent records them on the turn before running them, so a
+// provider that matches results to calls is not handed an answer to nothing.
+func (h *Harness) TakeAsked() []llm.ToolCall {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	asked := h.asked
+	h.asked = nil
+	return asked
+}
+
+// Delegating reports whether the subagent is still working on something, which is what
+// tells the agent the conversation is not finished even though nobody is talking.
+func (h *Harness) Delegating() bool {
+	if h.tasks == nil {
+		return false
+	}
+	return h.tasks.RunningPublic() > 0
+}
+
+// Working names the skills still working on something the caller is waiting for.
+func (h *Harness) Working() []string {
+	if h.tasks == nil {
+		return nil
+	}
+	return h.tasks.RunningSkills()
+}
+
+// Pending reports whether anything has come back that the caller has not been told
+// about. The agent uses it to know it owes them a turn nobody asked for.
+func (h *Harness) Pending() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.ContainsFunc(h.notes, func(written noted) bool { return written.turn == "" && !written.quiet })
+}
+
+// correct notes something the harness did instead of what turnID's reply asked for. It must
+// be called with the lock held.
+func (h *Harness) correct(turnID, text string) {
+	h.correctWith(turnID, text, "")
+}
+
+// correctWith is correct with what the reply wrote as data, such as a name it made up.
+func (h *Harness) correctWith(turnID, text, data string) {
+	if h.cancelledTurns[turnID] == ReasonRefused {
+		return
+	}
+	h.notes = append(h.notes, noted{text: text, data: data, quiet: h.correcting, asked: turnID})
+}
+
+// Events carries what the harness decided. It is closed by Close.
+func (h *Harness) Events() <-chan Event { return h.emitter.Events() }
+
+// Subagent is the slower model delegated work runs on. Nil when the agent answers
+// everything itself.
+func (h *Harness) Subagent() *llmrouter.Session {
+	if h.tasks == nil {
+		return nil
+	}
+	current := h.tasks.current()
+	select {
+	case <-current.ready:
+		return current.session
+	default:
+		return nil
+	}
+}
+
+// Close abandons every task in flight and releases the subagent.
+func (h *Harness) Close() error {
+	var err error
+	h.closeOnce.Do(func() {
+		var failures []error
+		if h.flow != nil {
+			if failure := h.flow.Close(); failure != nil {
+				failures = append(failures, failure)
+			}
+		}
+		if h.tasks != nil {
+			if failure := h.tasks.Close(); failure != nil {
+				failures = append(failures, failure)
+			}
+		}
+		h.running.Wait()
+		h.emitter.Close()
+		err = errors.Join(failures...)
+	})
+	return err
+}
+
+// act carries out one request the model made of the harness.
+func (h *Harness) act(turnID string, found directive) {
+	if found.kind == kindDrop {
+		// A cancelled turn's reply can still be streaming, and the work it would drop is
+		// another turn's.
+		h.mu.Lock()
+		_, cancelled := h.cancelledTurns[turnID]
+		h.mu.Unlock()
+		if cancelled {
+			return
+		}
+		if _, offered := h.options.Tools.Lookup(found.skill); offered {
+			h.emitter.Send(ToolDropped{Name: found.skill})
+			return
+		}
+		if h.tasks != nil {
+			h.tasks.CancelSkill(found.skill, ReasonDropped)
+		}
+		return
+	}
+
+	if found.kind == kindCall {
+		h.actCall(turnID, found)
+		return
+	}
+
+	skill, known := h.options.Skills.Lookup(found.skill)
+	if !known {
+		h.actUnknown(turnID, found)
+		return
+	}
+	if h.tasks == nil || strings.TrimSpace(found.body) == "" {
+		return
+	}
+
+	h.mu.Lock()
+	history := append([]llm.Message(nil), h.history...)
+	charged := h.charged
+	complete := !h.options.Text && identifiersAlreadyComplete(history)
+	if complete && !skill.CaptureVideo {
+		h.correct(turnID, "Those values are already complete. "+
+			"Call the tool yourself this turn; do not wait for a colleague.")
+		h.mu.Unlock()
+		h.logger.Debug("not delegating, the caller already gave complete identifiers",
+			"skill", skill.Name)
+		return
+	}
+	// This reply was written to tell the caller what the colleague said, and handing the
+	// same work straight back is how the two of them talk to each other: the colleague
+	// asks its question again, the answer earns another turn, and round it goes without
+	// the caller ever being asked anything. Models do it with the question verbatim.
+	if slices.Contains(h.reporting, skill.Name) {
+		h.mu.Unlock()
+		h.logger.Debug("the model handed back the work it was just told about",
+			"skill", skill.Name, "prompt", found.body)
+		return
+	}
+	h.mu.Unlock()
+	// The model is told a colleague is already looking at what the caller sent, and asks
+	// for it anyway. Its copy has none of the images, so it would only replace the task
+	// that does.
+	if h.tasks != nil && h.tasks.Attached(skill.Name, turnID) {
+		h.logger.Debug("the caller's attachments are already being looked at",
+			"skill", skill.Name, "prompt", found.body)
+		return
+	}
+
+	if skill.CaptureVideo {
+		skill.VideoSource = found.source
+		if found.frames != "" {
+			frames, err := strconv.Atoi(found.frames)
+			if err != nil || frames < 1 || frames > 8 {
+				h.reject(turnID, skill.Name, fmt.Errorf("request between 1 and 8 video frames"))
+				return
+			}
+			skill.VideoFrames = frames
+		}
+	}
+	startedAt := time.Now().UTC()
+	taskID, err := h.tasks.Create(charged, skill, found.body, history, turnID, false)
+	if errors.Is(err, errTurnCancelled) {
+		return
+	}
+	if err != nil {
+		h.reject(turnID, skill.Name, err)
+		return
+	}
+	h.emitter.Send(Delegated{
+		StartedAt: startedAt,
+		TaskID:    taskID,
+		Skill:     skill.Name,
+		Prompt:    found.body,
+		TurnID:    turnID,
+	})
+}
+
+// actUnknown handles a request for a skill that was never declared. Voice models mix up
+// the two ways of asking for help: they write a skill tag for a tool they were offered,
+// then go quiet waiting for a colleague who is not coming. A name that is a tool is run
+// as one. Anything else is a note, so the next turn can tell the caller rather than hang.
+func (h *Harness) actUnknown(turnID string, found directive) {
+	if tool, offered := h.options.Tools.Lookup(found.skill); offered {
+		if strings.TrimSpace(found.body) == "" {
+			return
+		}
+		arguments, ok := h.proseArguments(turnID, tool, found.body)
+		if !ok {
+			return
+		}
+		h.logger.Debug("the model asked for a tool as if it were a skill", "tool", tool.Name)
+		h.mu.Lock()
+		h.askN++
+		h.asked = append(h.asked, llm.ToolCall{
+			ID:        fmt.Sprintf("ask-%d", h.askN),
+			Name:      tool.Name,
+			Arguments: arguments,
+		})
+		h.mu.Unlock()
+		return
+	}
+
+	h.logger.Debug("the model asked for a skill that does not exist", "skill", found.skill)
+	h.mu.Lock()
+	h.correctWith(turnID, noteNoSkill, envelope(payload{Kind: "unknown_name", Name: found.skill}))
+	h.mu.Unlock()
+}
+
+// actCall runs a tool the model called in a tag rather than as a tool call, with the tag's
+// attributes as its arguments, or its body when it has none.
+func (h *Harness) actCall(turnID string, found directive) {
+	tool, offered := h.options.Tools.Lookup(found.skill)
+	if !offered {
+		h.logger.Debug("the model called a tool that does not exist", "tool", found.skill)
+		h.mu.Lock()
+		h.correctWith(turnID, noteNoTool, envelope(payload{Kind: "unknown_name", Name: found.skill}))
+		h.mu.Unlock()
+		return
+	}
+	arguments := "{}"
+	if len(found.arguments) > 0 {
+		raw, err := json.Marshal(found.arguments)
+		if err != nil {
+			h.reject(turnID, tool.Name, err)
+			return
+		}
+		arguments = string(raw)
+	} else if strings.TrimSpace(found.body) != "" {
+		var ok bool
+		arguments, ok = h.proseArguments(turnID, tool, found.body)
+		if !ok {
+			return
+		}
+	}
+	h.logger.Debug("the model wrote a tool call as a tag", "tool", tool.Name)
+	h.mu.Lock()
+	h.askN++
+	h.asked = append(h.asked, llm.ToolCall{
+		ID:        fmt.Sprintf("ask-%d", h.askN),
+		Name:      tool.Name,
+		Arguments: arguments,
+	})
+	h.mu.Unlock()
+}
+
+// proseArguments turns a tool tag's prose body into arguments when that leaves no required
+// fields missing. A body that cannot supply all required fields becomes corrective feedback
+// instead of an external call with a fabricated argument.
+func (h *Harness) proseArguments(turnID string, tool Tool, body string) (string, bool) {
+	arguments, required := argumentsFor(tool, body)
+	if len(required) == 0 {
+		return arguments, true
+	}
+	h.mu.Lock()
+	h.correct(turnID, fmt.Sprintf("The prose body for %s was not run; this tool requires named arguments: %s. "+
+		"Use details already in the caller's request, and ask only for values that are missing.",
+		tool.Name, strings.Join(required, ", ")))
+	h.mu.Unlock()
+	return "", false
+}
+
+// argumentsFor turns a prose body into the legacy scalar argument for a tool. A body that
+// is already a JSON object is already structured and is left alone.
+func argumentsFor(tool Tool, body string) (string, []string) {
+	body = strings.TrimSpace(body)
+	if json.Valid([]byte(body)) && strings.HasPrefix(body, "{") {
+		return body, nil
+	}
+
+	name := "query"
+	if props, ok := tool.Parameters["properties"].(map[string]any); ok {
+		if _, exists := props["query"]; !exists {
+			name = firstRequired(tool.Parameters["required"])
+			if name == "" {
+				name = "query"
+			}
+		}
+	}
+	required := requiredNames(tool.Parameters["required"])
+	for _, field := range required {
+		if field != name {
+			return "", required
+		}
+	}
+
+	raw, err := json.Marshal(map[string]string{name: body})
+	if err != nil {
+		return "{}", nil
+	}
+	return string(raw), nil
+}
+
+func requiredNames(required any) []string {
+	var names []string
+	switch fields := required.(type) {
+	case []any:
+		for _, field := range fields {
+			if name, ok := field.(string); ok {
+				names = append(names, name)
+			}
+		}
+	case []string:
+		names = append(names, fields...)
+	}
+	return names
+}
+
+func firstRequired(required any) string {
+	switch names := required.(type) {
+	case []any:
+		if len(names) > 0 {
+			if name, ok := names[0].(string); ok {
+				return name
+			}
+		}
+	case []string:
+		if len(names) > 0 {
+			return names[0]
+		}
+	}
+	return ""
+}
+
+// consumeTasks folds finished work into the next prompt and reports it.
+func (h *Harness) consumeTasks() {
+	defer h.running.Done()
+
+	for result := range h.tasks.Results() {
+		if result.Skill == compactionSkillName {
+			h.finishCompaction(result)
+			continue
+		}
+		h.mu.Lock()
+		if reason, cancelled := h.cancelledTurns[result.TurnID]; cancelled {
+			result.State, result.Reason = Cancelled, reason
+			result.Text, result.Question = "", ""
+			result.Err, result.Files = nil, nil
+		}
+		if written, data := note(result); written != "" {
+			h.notes = append(h.notes, noted{
+				skill:  result.Skill,
+				text:   written,
+				data:   data,
+				asking: result.Question != "",
+				origin: result.TurnID,
+			})
+		}
+		h.mu.Unlock()
+		h.emitter.Send(Settled{Result: result})
+	}
+}
+
+// prompt is what a turn is sent besides the conversation: the system prompt, which is the
+// same on every turn of the call, then what to put after the conversation. carried is kept
+// with the conversation once the reply is written (Remember): what work came back with, as
+// data on the user's side, then one note saying what to do with it and anything the turn
+// was told. transient is true of this reply alone and is not kept. It must be called with the
+// lock held, because taking the notes is what hands them to the turn.
+//
+// A note an earlier reply was handed is taken too. Only one reply is ever on its way to
+// the caller, so one that has not finished by the time the next is asked for was dropped
+// or cut off, and what it carried was never heard.
+func (h *Harness) prompt(turn Turn, working []string) (instructions string, carried []llm.Message, transient string) {
+	// Taking the notes is also what settles which skills this turn is reporting on, so a
+	// reply written to deliver an answer cannot ask for that answer again.
+	h.reporting = nil
+	h.asking = false
+	h.correcting = false
+	lines := make([]string, 0, len(h.notes)+1)
+	for i, written := range h.notes {
+		h.notes[i].turn = turn.ID
+		if written.data != "" {
+			carried = append(carried, llm.Message{Role: llm.User, Content: written.data})
+		}
+		lines = append(lines, written.text)
+		if written.skill != "" {
+			h.reporting = append(h.reporting, written.skill)
+		} else {
+			h.correcting = true
+		}
+		h.asking = h.asking || written.asking
+	}
+	if turn.Tell != "" {
+		lines = append(lines, turn.Tell)
+	}
+
+	parts := make([]string, 0, 6)
+	if turn.Instructions != "" {
+		parts = append(parts, turn.Instructions)
+	}
+	if h.tasks != nil {
+		index := h.options.Skills.Prompt()
+		if h.options.Text {
+			index = h.options.Skills.TextPrompt()
+		}
+		if index != "" {
+			parts = append(parts, index)
+		}
+	}
+	use := h.options.Tools.Prompt()
+	if h.options.Text {
+		use = h.options.Tools.TextPrompt()
+	}
+	if use != "" {
+		parts = append(parts, use)
+		if order := h.options.Tools.SourceOrder(); order != "" {
+			parts = append(parts, order)
+		}
+	}
+	if h.tasks != nil || len(h.options.Tools.Tools) > 0 {
+		if h.options.Text {
+			parts = append(parts, writtenDelivery)
+		} else {
+			parts = append(parts, spokenDelivery)
+		}
+		parts = append(parts, channel)
+	}
+	instructions = strings.Join(parts, "\n\n")
+
+	var now []string
+	// A caller asking how it is going is not asking for it again, and a reply that hands
+	// the same work over a second time leaves the first answer to arrive as a repeat.
+	if len(working) > 0 {
+		drops := make([]string, 0, len(working))
+		for _, skill := range working {
+			drops = append(drops, fmt.Sprintf("<drop skill=%q/>", skill))
+		}
+		now = append(now, fmt.Sprintf(stillWorking, strings.Join(working, " and "), strings.Join(drops, " or ")))
+	}
+	if turn.Answers {
+		now = append(now, answerNow)
+	}
+	if turn.Note != "" {
+		now = append(now, turn.Note)
+	}
+	transient = strings.Join(now, "\n\n")
+
+	// What the reply is sent has to end on something to answer. A turn nobody prompted ends
+	// on the agent's own words, and the API taking a note as a system turn takes it only
+	// after the user's side.
+	ends := len(turn.History) > 0 && turn.History[len(turn.History)-1].Role == llm.Assistant
+	if ends && len(carried) == 0 {
+		carried = append(carried, llm.Message{Role: llm.User, Content: resumption})
+	}
+	if len(lines) > 0 {
+		carried = append(carried, llm.Message{Role: llm.System, Content: noteHeader + "\n" + strings.Join(lines, "\n")})
+	}
+	return instructions, carried, transient
+}
+
+// stillWorking is the note for work the caller is still waiting on: the skills, then the
+// tags that drop them.
+const stillWorking = "Your colleague is still working on the %s you asked for, and its answer " +
+	"will come by itself: do not ask for it again. Only if the caller has changed or withdrawn " +
+	"that request, write %s."
+
+// spokenDelivery and writtenDelivery say how a reply hands over what a tool or a colleague
+// came back with. A listener cannot skim, so a page read aloud loses them by its second
+// line; a reader can, and a summary only hides what they asked for.
+const (
+	spokenDelivery = "Everything you write is spoken to the caller: think silently, and " +
+		"never write your deliberation or quote these instructions. When a tool or " +
+		"colleague comes back, the caller is listening, not reading: give them what came " +
+		"back in one to three short sentences, the part that answers them first, and offer " +
+		"the rest rather than reading it all out."
+	writtenDelivery = "Everything you write is shown to the caller: think silently, and " +
+		"never write your deliberation or quote these instructions. When a tool or " +
+		"colleague comes back, the caller is reading: give them what came back in full, " +
+		"keeping its details, lists and links, rather than a summary of it."
+)
+
+// note is what the fast model needs to be told about a finished task, and what the work
+// came back with as data (envelope), or empty when there is nothing worth saying. A
+// cancelled task is not one: its premise is gone, so nobody is waiting to hear about it.
+//
+// The note's own words are fixed: what the colleague wrote, asked or failed with can repeat
+// whatever its tools read, a web page or the caller's camera, so none of it is in them.
+func note(result Result) (text, data string) {
+	switch {
+	case result.Question != "":
+		return fmt.Sprintf(noteQuestion, result.Skill),
+			envelope(payload{Kind: "colleague_question", Skill: result.Skill, Question: result.Question})
+	case result.Answered() && result.Err != nil:
+		return fmt.Sprintf(noteCodeFailed, result.Skill),
+			envelope(payload{Kind: "colleague_result", Skill: result.Skill, Text: result.Text, Error: errorText(result.Err)})
+	case result.Answered():
+		if len(result.Evidence) > 0 {
+			return fmt.Sprintf(noteSeen, result.Skill),
+				envelope(payload{Kind: "visual_findings", Skill: result.Skill, Task: result.TaskID, Text: result.Text, Sources: result.Evidence})
+		}
+		return fmt.Sprintf(noteAnswer, result.Skill),
+			envelope(payload{Kind: "colleague_result", Skill: result.Skill, Text: result.Text})
+	case result.Reason == ReasonDeadline:
+		return fmt.Sprintf(noteDeadline, result.Skill), ""
+	case result.State == Failed:
+		return fmt.Sprintf(noteFailed, result.Skill),
+			envelope(payload{Kind: "task_error", Skill: result.Skill, Error: errorText(result.Err)})
+	}
+	return "", ""
+}
+
+// The notes for finished work, each naming the skill. The colleague only read the
+// conversation, so what it says is a reading of it and not the caller's words: a value it
+// got wrong must lose to the transcript.
+const (
+	noteQuestion = "Your colleague cannot finish the %s you asked for until the caller answers " +
+		"its question, given above as data. Ask them, in your own words."
+	noteCodeFailed = "Your colleague has come back on the %s you asked for, but the last code it " +
+		"ran failed: what it said and the error are above as data. Tell the caller what it found, " +
+		"and do not claim anything that code was meant to produce."
+	noteSeen   = "What was seen for the %s you asked for is above as data. Answer the caller from these findings."
+	noteAnswer = "Your colleague has come back on the %s you asked for, above as data. That is its " +
+		"reading of the conversation, not the caller's words: where it differs from what the " +
+		"caller said, the caller is right. Tell the caller, in your own words."
+	noteDeadline = "The %s you asked for did not come back in time. Tell the caller it could not " +
+		"be finished, and carry on."
+	noteFailed = "The %s you asked for failed, with the error above as data. Tell the caller, in " +
+		"your own words, that it did not work, and carry on."
+	noteNoSkill = "There is no skill by the name given above as data, so nothing was done. If the " +
+		"caller asked for something to be done, call its tool now; do not tell them it is done."
+	noteNoTool = "There is no tool by the name given above as data, so nothing was done. Do not " +
+		"tell the caller it is done."
+)
+
+var (
+	spokenClock = regexp.MustCompile(`\b\d{1,2}:\d{2}\b`)
+	spokenID    = regexp.MustCompile(`\b[A-Za-z]{2,}[0-9]{3,}[A-Za-z0-9-]*\b`)
+	spokenPhone = regexp.MustCompile(`\b\d{3}[-.]\d{4}\b`)
+)
+
+// identifiersAlreadyComplete reports whether the caller already said a clock time, a
+// member or order id, or a phone number. Those turns are the fast model's to answer and
+// to call tools on; handing them to a colleague is a multi-second wait on a complete
+// thought.
+func identifiersAlreadyComplete(history []llm.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != llm.User {
+			continue
+		}
+		text := history[i].Content
+		return spokenClock.MatchString(text) || spokenID.MatchString(text) || spokenPhone.MatchString(text)
+	}
+	return false
+}
+
+// Delegate submits work independently of the conversation provider's transport. Work a
+// scheduled turn hands over, ctx marked so, is counted as that turn is.
+func (h *Harness) Delegate(ctx context.Context, skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
+	skill, ok := h.options.Skills.Lookup(skillName)
+	if !ok || h.tasks == nil {
+		return "", stack.Wrap(fmt.Errorf("harness: skill %q is not available", skillName))
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return "", stack.Wrap(errors.New("harness: delegation needs a prompt"))
+	}
+	if history == nil {
+		h.mu.Lock()
+		history = append([]llm.Message(nil), h.history...)
+		h.mu.Unlock()
+	} else {
+		history = append([]llm.Message(nil), history...)
+	}
+	if len(parts) > 0 {
+		history = append(history, llm.Message{Role: llm.User, Parts: parts})
+		skill.CaptureVideo = false
+	}
+	id, err := h.tasks.Create(ctx, skill, prompt, history, turnID, false)
+	if err == nil {
+		h.emitter.Send(Delegated{StartedAt: time.Now().UTC(), TaskID: id, Skill: skill.Name, Prompt: prompt, TurnID: turnID})
+	}
+	return id, err
+}
+
+// Offers reports whether work can be handed to a skill, which takes both the skill and a
+// subagent to run it.
+func (h *Harness) Offers(skill string) bool {
+	_, known := h.options.Skills.Lookup(skill)
+	return known && h.tasks != nil
+}
+
+// CancelSkill abandons work the caller no longer needs without interrupting speech.
+func (h *Harness) CancelSkill(skill string) error {
+	if _, known := h.options.Skills.Lookup(skill); !known || h.tasks == nil {
+		return fmt.Errorf("harness: skill %q is not available", skill)
+	}
+	h.tasks.CancelSkill(skill, ReasonDropped)
+	return nil
+}
+
+// TakeNotes returns completed work for delivery through a native speech session.
+func (h *Harness) TakeNotes() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	lines := make([]string, 0, 2*len(h.notes))
+	for _, written := range h.notes {
+		if written.data != "" {
+			lines = append(lines, written.data)
+		}
+		lines = append(lines, written.text)
+	}
+	h.notes = nil
+	return strings.Join(lines, "\n")
+}
+
+func (h *Harness) reject(turnID, skill string, err error) {
+	result := Result{Skill: skill, State: Failed, Err: err}
+	h.mu.Lock()
+	if h.cancelledTurns[turnID] == ReasonRefused {
+		// Nothing a refused turn's tags asked for is reported: no note, no settled task.
+		h.mu.Unlock()
+		return
+	}
+	text, data := note(result)
+	h.notes = append(h.notes, noted{skill: skill, text: text, data: data, asked: turnID})
+	h.mu.Unlock()
+	h.emitter.Send(Settled{Result: result})
+}

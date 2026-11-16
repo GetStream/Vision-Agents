@@ -1,0 +1,962 @@
+package twilio
+
+import (
+	"context"
+	"encoding/xml"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+)
+
+type TwilioSuite struct {
+	suite.Suite
+	ctx      context.Context
+	server   *httptest.Server
+	provider *Provider
+
+	// seen is what the last request asked for, which is how these tests check that what
+	// the caller wanted arrived in Twilio's own shape.
+	seen request
+	// seenPricing is the last request to the pricing host, kept apart so a search's own
+	// request is still the one in seen.
+	seenPricing request
+	// pricingCalls counts requests to the pricing host.
+	pricingCalls int
+	// respond answers the next request.
+	respond func(w http.ResponseWriter, r *http.Request)
+}
+
+// request is what a handler recorded about a call.
+type request struct {
+	method string
+	path   string
+	query  url.Values
+	form   url.Values
+	user   string
+	pass   string
+}
+
+func TestTwilio(t *testing.T) { suite.Run(t, new(TwilioSuite)) }
+
+func (s *TwilioSuite) SetupTest() {
+	// A key exported in the shell would sign as the key, not the AC these tests expect.
+	s.T().Setenv("TWILIO_API_KEY_SID", "")
+	s.ctx = context.Background()
+	s.seen = request{}
+	s.seenPricing = request{}
+	s.pricingCalls = 0
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) }
+
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		user, pass, _ := r.BasicAuth()
+		got := request{
+			method: r.Method,
+			path:   r.URL.Path,
+			query:  r.URL.Query(),
+			form:   r.PostForm,
+			user:   user,
+			pass:   pass,
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			s.pricingCalls++
+			s.seenPricing = got
+		} else {
+			s.seen = got
+		}
+		w.Header().Set("Content-Type", "application/json")
+		s.respond(w, r)
+	}))
+
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		AuthToken:  "secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.provider = provider
+}
+
+func (s *TwilioSuite) TearDownTest() { s.server.Close() }
+
+func (s *TwilioSuite) TestCredentialsAreRequired() {
+	s.T().Setenv("TWILIO_ACCOUNT_SID", "")
+	s.T().Setenv("TWILIO_AUTH_TOKEN", "")
+
+	_, err := New(Options{})
+
+	s.ErrorContains(err, "TWILIO_ACCOUNT_SID")
+}
+
+func (s *TwilioSuite) TestSearchingAsksForTheCountryAndReturnsWhatIsOffered() {
+	s.answer(`{"available_phone_numbers":[
+		{"phone_number":"+15125551234","iso_country":"US","region":"TX","locality":"Austin",
+		 "capabilities":{"voice":true,"SMS":true,"MMS":false,"fax":false}}]}`)
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{
+		Country:      "us",
+		AreaCode:     "512",
+		Limit:        5,
+		Capabilities: []phone.Capability{phone.Voice},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("512", s.seen.query.Get("AreaCode"))
+	s.Equal("5", s.seen.query.Get("PageSize"))
+	s.Equal("true", s.seen.query.Get("VoiceEnabled"))
+	s.Equal("AC123", s.seen.user)
+	s.Equal("secret", s.seen.pass)
+
+	s.Require().Len(offered, 1)
+	s.Equal("+15125551234", offered[0].E164)
+	s.Equal("Austin", offered[0].Locality)
+	s.Equal([]phone.Capability{phone.Voice, phone.SMS}, offered[0].Capabilities)
+}
+
+func (s *TwilioSuite) TestAnAPIKeySignsRequestsWhileTheAccountStaysInThePath() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+	s.Equal("SK456", s.seenPricing.user)
+	s.Equal("key-secret", s.seenPricing.pass)
+}
+
+func (s *TwilioSuite) TestTheAPIKeyIsReadFromTheEnvironment() {
+	s.T().Setenv("TWILIO_API_KEY_SID", "SK456")
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.answer(oneNumber)
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+}
+
+func (s *TwilioSuite) TestAnAPIKeyLeavesTheAccountInTheCallAndPurchasePaths() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/Calls.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	s.answer(`{"sid":"PN9","phone_number":"+15125551234","iso_country":"US","monthly_price":"1.15"}`)
+	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	var paths []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}]}`))
+	}
+	s.Require().NoError(provider.ReleaseNumber(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"DELETE /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+
+	paths = nil
+	s.Require().NoError(provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	}))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+
+	paths = nil
+	s.Require().NoError(provider.StopInbound(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+}
+
+const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
+	{"number_type":"local","base_price":"1.15","current_price":"1.00"},
+	{"number_type":"toll free","base_price":"2.15","current_price":"2.00"}]}`
+
+const oneNumber = `{"available_phone_numbers":[{"phone_number":"+15125550100","iso_country":"US",
+	"capabilities":{"voice":true}}]}`
+
+func (s *TwilioSuite) TestSearchingQuotesTheCurrentPriceForTheTypeSearched() {
+	s.answerWithPrices(oneNumber, usPrices)
+
+	local, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "us"})
+	s.Require().NoError(err)
+	tollFree, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Type: phone.TollFree})
+	s.Require().NoError(err)
+
+	s.Equal(int64(1_000_000), local[0].MonthlyCostMicros, "current_price, which has the account's discounts")
+	s.Equal(int64(2_000_000), tollFree[0].MonthlyCostMicros, `twilio names this type "toll free", with a space`)
+	s.Equal(1, s.pricingCalls, "a country's prices are asked for once")
+}
+
+func (s *TwilioSuite) TestPricesAreAskedForOnTheCountryWithTheAccountsCredentials() {
+	s.answerWithPrices(oneNumber, usPrices)
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "us"})
+	s.Require().NoError(err)
+
+	s.Equal("/v1/PhoneNumbers/Countries/US", s.seenPricing.path)
+	s.Equal("AC123", s.seenPricing.user)
+	s.Equal("secret", s.seenPricing.pass)
+}
+
+func (s *TwilioSuite) TestSearchingStillReturnsNumbersWhenPricesCannotBeHad() {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Require().Len(offered, 1)
+	s.Zero(offered[0].MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestAFailedPriceLookupIsAskedAgainOnTheNextSearch() {
+	pricingDown := true
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			if pricingDown {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	first, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+	pricingDown = false
+	second, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Zero(first[0].MonthlyCostMicros)
+	s.Equal(int64(1_000_000), second[0].MonthlyCostMicros)
+	s.Equal(2, s.pricingCalls)
+}
+
+func (s *TwilioSuite) TestPricesAreNotAskedForWhenTheSearchFails() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	s.Error(err)
+	s.Zero(s.pricingCalls)
+}
+
+func (s *TwilioSuite) TestAPriceInAnotherCurrencyIsNotQuotedAsDollars() {
+	s.answerWithPrices(oneNumber, `{"price_unit":"EUR","phone_number_prices":[
+		{"number_type":"local","current_price":"1.00"}]}`)
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Zero(offered[0].MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestATypeTwilioHasNoPriceForIsNotQuoted() {
+	s.answerWithPrices(oneNumber, usPrices)
+
+	offered, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Type: phone.Mobile})
+	s.Require().NoError(err)
+
+	s.Zero(offered[0].MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{})
+
+	s.ErrorContains(err, "country is required")
+	s.Empty(s.seen.path, "nothing was asked of twilio")
+}
+
+func (s *TwilioSuite) TestBuyingANumberReturnsWhatIsNeededToManageItLater() {
+	s.answer(`{"sid":"PN9","phone_number":"+15125551234","iso_country":"US",
+		"monthly_price":"1.15","capabilities":{"voice":true,"SMS":true}}`)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+	s.Require().NoError(err)
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", s.seen.path)
+	s.Equal("+15125551234", s.seen.form.Get("PhoneNumber"))
+
+	s.Equal("PN9", bought.VendorID, "the sid is what releasing it later needs")
+	s.Equal("twilio", bought.Vendor)
+	s.Equal(int64(1_150_000), bought.MonthlyCostMicros)
+}
+
+// boughtAsTwilioAnswers is a purchase as Twilio really answers it: the number resource has
+// neither a country nor a price.
+const boughtAsTwilioAnswers = `{"sid":"PN9","phone_number":"+15125551234",
+	"capabilities":{"voice":true,"SMS":true}}`
+
+func (s *TwilioSuite) TestBuyingANumberKeepsTheOrdersCountryWhenTwilioNamesNone() {
+	s.answerWithPrices(boughtAsTwilioAnswers, usPrices)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("US", bought.Country)
+}
+
+func (s *TwilioSuite) TestBuyingANumberIsPricedLikeTheSearchThatOfferedIt() {
+	s.answerWithPrices(boughtAsTwilioAnswers, usPrices)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal(int64(1_000_000), bought.MonthlyCostMicros, "the local price, since twilio quotes none on the number")
+	s.Equal("/v1/PhoneNumbers/Countries/US", s.seenPricing.path)
+}
+
+func (s *TwilioSuite) TestBuyingATollFreeNumberIsPricedAsTollFree() {
+	s.answerWithPrices(`{"sid":"PN9","phone_number":"+18885551234"}`, usPrices)
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+18885551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal(int64(2_000_000), bought.MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestBuyingANumberStillSucceedsWhenPricesCannotBeHad() {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(boughtAsTwilioAnswers))
+	}
+
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234", Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("PN9", bought.VendorID)
+	s.Zero(bought.MonthlyCostMicros)
+}
+
+func (s *TwilioSuite) TestReleasingANumberLooksUpItsSidFirst() {
+	var paths []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}]}`))
+	}
+
+	s.Require().NoError(s.provider.ReleaseNumber(s.ctx, "+15125551234"))
+
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"DELETE /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+}
+
+func (s *TwilioSuite) TestANumberThisAccountDoesNotOwnCannotBeReleased() {
+	s.answer(`{"incoming_phone_numbers":[]}`)
+
+	err := s.provider.ReleaseNumber(s.ctx, "+15125551234")
+
+	s.ErrorContains(err, "not one of this account's numbers")
+}
+
+func (s *TwilioSuite) TestConfiguringInboundPointsTheNumberAtTheBridge() {
+	s.answer(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}],
+		"sid":"PN9","phone_number":"+15125551234"}`)
+
+	err := s.provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164: "+15125551234",
+		Bridge: phone.Bridge{
+			URI:      "sip:trunk-7@sip.stream-io-api.com",
+			Username: "agent",
+			Password: "hunter2",
+		},
+	})
+	s.Require().NoError(err)
+
+	voiceURL := s.seen.form.Get("VoiceUrl")
+	s.Require().NotEmpty(voiceURL)
+	instructions := s.twiml(voiceURL)
+	s.Contains(instructions, "sip:trunk-7@sip.stream-io-api.com")
+	s.Contains(instructions, `username="agent"`)
+	s.Contains(instructions, `password="hunter2"`)
+}
+
+func (s *TwilioSuite) TestStoppingInboundClearsTheVoiceURL() {
+	s.answer(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}],
+		"sid":"PN9","phone_number":"+15125551234"}`)
+
+	s.Require().NoError(s.provider.StopInbound(s.ctx, "+15125551234"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json", s.seen.path)
+	s.Equal([]string{""}, s.seen.form["VoiceUrl"])
+	s.NotContains(s.seen.form, "VoiceMethod")
+}
+
+func (s *TwilioSuite) TestStoppingInboundOfAnUnknownNumberFails() {
+	s.answer(`{"incoming_phone_numbers":[]}`)
+
+	err := s.provider.StopInbound(s.ctx, "+15125551234")
+
+	s.ErrorContains(err, "is not one of this account's numbers")
+	s.Equal(http.MethodGet, s.seen.method, "no number was changed")
+}
+
+func (s *TwilioSuite) TestInboundIsRefusedWithoutASipBridge() {
+	err := s.provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "https://example.com/hook"},
+	})
+
+	s.ErrorContains(err, "not a sip uri")
+	s.Empty(s.seen.path, "a bad bridge is caught before the number is looked up")
+}
+
+func (s *TwilioSuite) TestDiallingOutBridgesTheAnsweredCallIntoTheTrunk() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	placed, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/Calls.json", s.seen.path)
+	s.Equal("+15550001111", s.seen.form.Get("To"))
+	s.Contains(s.seen.form.Get("Twiml"), "<Sip>sip:trunk-7@sip.stream-io-api.com</Sip>")
+	s.Equal("CA1", placed.VendorCallID)
+	s.Equal("queued", placed.Status)
+}
+
+func (s *TwilioSuite) TestCallsShareTheirNumbersTrunk() {
+	s.Equal(phone.StreamLegShared, phone.StreamLegOf(s.provider))
+}
+
+func (s *TwilioSuite) TestTheTrunkLegCarriesTheCallID() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"},
+		CallID: "abc",
+	})
+	s.Require().NoError(err)
+
+	s.Contains(s.seen.form.Get("Twiml"), "<Sip>sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=abc</Sip>")
+}
+
+func (s *TwilioSuite) TestAnOutboundWithoutACallIDDialsThePlainURI() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.form.Get("Twiml"), "x-stream-call-id")
+}
+
+func (s *TwilioSuite) TestTheRingTimeoutAndInitialDigitsRideOnTheCallRatherThanTheTwiml() {
+	// Both concern the leg to the person: Timeout is how long they are rung for, and
+	// SendDigits is pressed at them once they answer. The TwiML runs after that and only
+	// says where to bridge to.
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:          "+15125551234",
+		To:            "+15550001111",
+		Bridge:        phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		RingTimeout:   25 * time.Second,
+		InitialDigits: "ww1234#",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("25", s.seen.form.Get("Timeout"))
+	s.Equal("ww1234#", s.seen.form.Get("SendDigits"))
+	s.NotContains(s.seen.form.Get("Twiml"), "1234", "the digits are pressed at the person, not the trunk")
+}
+
+func (s *TwilioSuite) TestACallWithNoTermsAsksTwilioForNoneOfThem() {
+	// An unset ring timeout has to leave Twilio's own default rather than becoming zero,
+	// which would be a call that gives up before it rings.
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.False(s.seen.form.Has("Timeout"))
+	s.False(s.seen.form.Has("SendDigits"))
+}
+
+func (s *TwilioSuite) TestACallWithAStatusURLAsksTwilioToPostHowItEnded() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	statusURL := "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:      "+15125551234",
+		To:        "+15550001111",
+		Bridge:    phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		StatusURL: statusURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal(statusURL, s.seen.form.Get("StatusCallback"))
+	s.Equal("completed", s.seen.form.Get("StatusCallbackEvent"))
+	s.Equal(http.MethodPost, s.seen.form.Get("StatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.False(s.seen.form.Has("StatusCallback"))
+	s.False(s.seen.form.Has("StatusCallbackEvent"))
+	s.False(s.seen.form.Has("StatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestACallWithAMachineURLAsksTwilioForAsyncMachineDetection() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	machineURL := "https://router.example/v1/phone/machine/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:       "+15125551234",
+		To:         "+15550001111",
+		Bridge:     phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		MachineURL: machineURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal("DetectMessageEnd", s.seen.form.Get("MachineDetection"))
+	s.Equal("true", s.seen.form.Get("AsyncAmd"))
+	s.Equal(machineURL, s.seen.form.Get("AsyncAmdStatusCallback"))
+	s.Equal(http.MethodPost, s.seen.form.Get("AsyncAmdStatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestACallWithoutAMachineURLAsksForNoDetection() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	for _, name := range []string{"MachineDetection", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
+		s.False(s.seen.form.Has(name), name)
+	}
+}
+
+func (s *TwilioSuite) TestEachAnsweredByIsWhoPickedUp() {
+	for answeredBy, machine := range map[string]phone.Machine{
+		"human":               phone.MachineHuman,
+		"machine_end_beep":    phone.MachineGreetingEnded,
+		"machine_end_silence": phone.MachineGreetingEnded,
+		"machine_end_other":   phone.MachineGreetingEnded,
+		"machine_start":       phone.MachineUnknown,
+		"fax":                 phone.MachineFax,
+		"unknown":             phone.MachineUnknown,
+		"something_new":       phone.MachineUnknown,
+	} {
+		got, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1&AnsweredBy="+answeredBy))
+		s.Require().NoError(err)
+		s.Equal(phone.MachineReport{Machine: machine, Word: answeredBy}, got, answeredBy)
+	}
+}
+
+func (s *TwilioSuite) TestAMachineReportWithoutAnAnsweredByIsRefused() {
+	_, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1"))
+
+	s.ErrorContains(err, "AnsweredBy")
+}
+
+func (s *TwilioSuite) TestAMachineReportThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadMachine("application/json", []byte(`{"AnsweredBy":"human"}`))
+
+	s.Error(err)
+}
+
+func (s *TwilioSuite) TestEachFinalStatusIsAnOutcome() {
+	for word, result := range map[string]phone.CallResult{
+		"completed": phone.CallCompleted,
+		"busy":      phone.CallBusy,
+		"no-answer": phone.CallNoAnswer,
+		"failed":    phone.CallFailed,
+		"canceled":  phone.CallCanceled,
+	} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1&CallStatus="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Result: result, Word: word}, status, word)
+	}
+}
+
+func (s *TwilioSuite) TestARingingStatusDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1&CallStatus=ringing"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+}
+
+// twilioNoAnswer is the StatusCallback of a call nobody answered before its Timeout, with the
+// parameters Twilio's call resource lists (https://www.twilio.com/docs/voice/api/call-resource)
+// and SipResponseCode as given.
+func twilioNoAnswer(sipResponseCode string) []byte {
+	return []byte("CallSid=CA1&AccountSid=AC1&Direction=outbound-api&ApiVersion=2010-04-01&CallStatus=no-answer" +
+		"&CallDuration=0&Timestamp=Sun%2C+01+Mar+2026+10%3A00%3A30+%2B0000&CallbackSource=call-progress-events" +
+		"&SequenceNumber=0&SipResponseCode=" + sipResponseCode)
+}
+
+func (s *TwilioSuite) TestAFinalStatusCarriesItsSIPCode() {
+	status, err := s.provider.ReadStatus(formType, twilioNoAnswer("487"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "no-answer", SIPCode: 487}, status)
+}
+
+func (s *TwilioSuite) TestASIPCodeThatIsNoNumberLeavesTheStatusAsItIs() {
+	status, err := s.provider.ReadStatus(formType, twilioNoAnswer("busy"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "no-answer"}, status)
+}
+
+func (s *TwilioSuite) TestAStatusWithoutACallStatusIsRefused() {
+	_, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1"))
+
+	s.ErrorContains(err, "CallStatus")
+}
+
+func (s *TwilioSuite) TestAStatusThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadStatus("application/json", []byte(`{"CallStatus":"busy"}`))
+
+	s.Error(err)
+}
+
+// formType is how Twilio posts a call's status.
+const formType = "application/x-www-form-urlencoded; charset=utf-8"
+
+func (s *TwilioSuite) TestRingingForLongerThanTwilioAllowsIsRefusedBeforeItIsAsked() {
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:        "+15125551234",
+		To:          "+15550001111",
+		Bridge:      phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		RingTimeout: 20 * time.Minute,
+	})
+
+	s.ErrorContains(err, "600s twilio will ring for")
+	s.ErrorIs(err, phone.ErrInvalid)
+	s.Empty(s.seen.path, "a call twilio would reject is not sent")
+}
+
+func (s *TwilioSuite) TestPressingDigitsIsRefusedRatherThanEndingTheCall() {
+	// The only way to make tones at Twilio is to replace the TwiML the leg is running,
+	// which is the <Dial> holding the agent on the call. Refusing is the honest answer.
+	err := s.provider.SendDigits(s.ctx, "CA1", "1")
+
+	s.ErrorIs(err, phone.ErrNotImplemented)
+	s.ErrorContains(err, "without ending the call")
+}
+
+func (s *TwilioSuite) TestACallWithoutBothEndsIsRejected() {
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{From: "+15125551234"})
+
+	s.ErrorContains(err, "from and a to")
+}
+
+func (s *TwilioSuite) TestAFailureFromTwilioSaysWhatTwilioSaid() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Authenticate"}`))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	s.ErrorContains(err, "401")
+	s.ErrorContains(err, "Authenticate")
+}
+
+func (s *TwilioSuite) TestANumberThatNeedsAnAddressIsToldApartFromOtherRefusals() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":21631,"message":"Phone Number Requires an Address but the 'AddressSid' parameter was empty.","more_info":"https://www.twilio.com/docs/errors/21631","status":400}`))
+	}
+
+	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+442071234567"})
+
+	s.ErrorIs(err, phone.ErrAddressRequired)
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok, "the vendor's own error is still there for the log")
+	s.Equal("twilio", vendorErr.Vendor)
+	s.Equal(http.StatusBadRequest, vendorErr.Status)
+	s.Equal("21631", vendorErr.Code)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", vendorErr.Path)
+}
+
+func (s *TwilioSuite) TestAnotherRefusalIsAVendorErrorWithItsCode() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":21452,"message":"No phone numbers found"}`))
+	}
+
+	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+
+	s.NotErrorIs(err, phone.ErrAddressRequired)
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("21452", vendorErr.Code)
+	s.Equal("No phone numbers found", vendorErr.Message)
+}
+
+func (s *TwilioSuite) TestARefusalThatIsNotJSONKeepsItsText() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream down"))
+	}
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusBadGateway, vendorErr.Status)
+	s.Empty(vendorErr.Code)
+	s.Equal("upstream down", vendorErr.Message)
+}
+
+func (s *TwilioSuite) TestTwilioNotAnsweringIsAVendorErrorToo() {
+	s.server.Close()
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok, "a transport error holds the full url, account id included")
+	s.Zero(vendorErr.Status)
+	s.Error(vendorErr.Cause)
+}
+
+func (s *TwilioSuite) answer(body string) {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// answerWithPrices answers a number search with numbers and the pricing call with prices.
+func (s *TwilioSuite) answerWithPrices(numbers, prices string) {
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			_, _ = w.Write([]byte(prices))
+			return
+		}
+		_, _ = w.Write([]byte(numbers))
+	}
+}
+
+// twiml pulls the instructions back out of the echo url they were configured through.
+func (s *TwilioSuite) twiml(voiceURL string) string {
+	parsed, err := url.Parse(voiceURL)
+	s.Require().NoError(err)
+	return parsed.Query().Get("Twiml")
+}
+
+// TestTheInstructionsTwilioIsGivenAreValidXML matters because a malformed one would only
+// be discovered when somebody called the number.
+func (s *TwilioSuite) TestTheInstructionsTwilioIsGivenAreValidXML() {
+	instructions, err := dialBridge(phone.Bridge{URI: "sip:trunk@sip.example.com", Username: "u"})
+	s.Require().NoError(err)
+	s.True(strings.HasPrefix(instructions, "<?xml"), "twiml needs a declaration")
+
+	var parsed twiml
+	s.Require().NoError(xml.Unmarshal([]byte(instructions), &parsed))
+	s.Equal("sip:trunk@sip.example.com", parsed.Dial.SIP.URI)
+	s.Equal("u", parsed.Dial.SIP.Username)
+}
+
+func (s *TwilioSuite) TestAnAnswerThatIsNotJSONIsAVendorErrorWithoutTheBody() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>not json</html>")) }
+
+	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+
+	vendorErr, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("could not read the answer", vendorErr.Message)
+	s.Equal(http.StatusOK, vendorErr.Status)
+}
+
+// hangUps records every request to a call's path, answering each with the next reply.
+func (s *TwilioSuite) hangUps(replies ...string) *[]url.Values {
+	var forms []url.Values
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		forms = append(forms, r.PostForm)
+		_, _ = w.Write([]byte(replies[len(forms)-1]))
+	}
+	return &forms
+}
+
+func (s *TwilioSuite) TestARingingCallIsCanceled() {
+	forms := s.hangUps(`{"sid":"CA123","status":"canceled"}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "CA123"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/Calls/CA123.json", s.seen.path)
+	s.Require().Len(*forms, 1)
+	s.Equal("canceled", (*forms)[0].Get("Status"))
+}
+
+func (s *TwilioSuite) TestAnAnsweredCallIsCompletedAfterCancelLeftItUp() {
+	forms := s.hangUps(`{"sid":"CA123","status":"in-progress"}`, `{"sid":"CA123","status":"completed"}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "CA123"))
+
+	s.Require().Len(*forms, 2)
+	s.Equal("canceled", (*forms)[0].Get("Status"))
+	s.Equal("completed", (*forms)[1].Get("Status"))
+}
+
+func (s *TwilioSuite) TestACallAlreadyOverIsNoFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":21220,"message":"Call is not in-progress. Cannot redirect."}`))
+	}
+
+	s.NoError(s.provider.HangUp(s.ctx, "CA123"))
+}
+
+func (s *TwilioSuite) TestARefusedHangUpIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":20404,"message":"not found"}`))
+	}
+
+	err := s.provider.HangUp(s.ctx, "CA123")
+
+	refused, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("20404", refused.Code)
+}
+
+// completeAnswering answers a cancel that left the call up, then the complete after it with
+// status and body.
+func (s *TwilioSuite) completeAnswering(status int, body string) *int {
+	var posts int
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		posts++
+		if posts == 1 {
+			_, _ = w.Write([]byte(`{"sid":"CA123","status":"in-progress"}`))
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}
+	return &posts
+}
+
+func (s *TwilioSuite) TestACallThatEndsBetweenCancelAndCompleteIsNoFailure() {
+	posts := s.completeAnswering(http.StatusBadRequest, `{"code":21220,"message":"Call is not in-progress. Cannot redirect."}`)
+
+	s.NoError(s.provider.HangUp(s.ctx, "CA123"))
+	s.Equal(2, *posts)
+}
+
+func (s *TwilioSuite) TestARefusedCompleteIsAVendorError() {
+	posts := s.completeAnswering(http.StatusNotFound, `{"code":20404,"message":"not found"}`)
+
+	err := s.provider.HangUp(s.ctx, "CA123")
+
+	s.Equal(2, *posts)
+	refused, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok, err)
+	s.Equal("20404", refused.Code)
+}
+
+func (s *TwilioSuite) TestHangingUpWithoutACallIsRejected() {
+	s.ErrorContains(s.provider.HangUp(s.ctx, ""), "call to hang up")
+}
+
+func (s *TwilioSuite) TestACallThatEndedOnItsOwnIsNotCompletedAgain() {
+	forms := s.hangUps(`{"sid":"CA123","status":"no-answer"}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "CA123"))
+
+	s.Len(*forms, 1)
+}

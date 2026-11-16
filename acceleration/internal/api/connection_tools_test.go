@@ -1,0 +1,1254 @@
+//go:build integration
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// suiteConnectorTimeout bounds one request a connection's client sends in the router suites:
+// the router's connectorHTTPTimeout (cmd/router), 10 s.
+const suiteConnectorTimeout = 10 * time.Second
+
+// ConnectionToolsSuite sets a connection's credentials, validates it and reads its tools, end
+// to end: the router's resolver and core.Transports over the suite's database, the mcp source,
+// and T5's fake provider as the token endpoint and the MCP server. One fake serves the whole
+// suite, since the schemes the router is built with are fixed when it starts; each test makes
+// its own connector and connection in the suite's app.
+type ConnectionToolsSuite struct {
+	RouterSuite
+	// logged is what the router logged, for a test of the credential event lines.
+	logged   *lockedLog
+	provider *fakeprovider.Server
+	// token is an access token the fake issued, which its MCP endpoint takes: the value a
+	// bearer connection is given. Synthetic, fresh per suite.
+	token string
+	// builtinID is the built-in connector the test's builtin made last.
+	builtinID string
+	// afterList, when set, runs after the mcp source listed a connection's tools, before the
+	// validate goes on: where a consent can finish while a validate is listing.
+	afterList func()
+}
+
+// afterListSource is the mcp source that calls the suite's afterList once Discover returns.
+type afterListSource struct {
+	core.ToolSource
+	suite *ConnectionToolsSuite
+}
+
+func (a *afterListSource) Discover(ctx context.Context, b core.ResolvedBinding) ([]core.ToolSpec, error) {
+	specs, err := a.ToolSource.Discover(ctx, b)
+	if hook := a.suite.afterList; hook != nil {
+		hook()
+	}
+	return specs, err
+}
+
+func TestConnectionToolsSuite(t *testing.T) {
+	runSuite(t, new(ConnectionToolsSuite))
+}
+
+// SetupSuite builds the schemes against the fake: oauth2_code with the operator's client in
+// the environment as FAKE_MCP_CLIENT_ID and _SECRET, oauth2_client_credentials, bearer and
+// none, and the mcp source. Every connection's client reaches the fake on loopback.
+func (s *ConnectionToolsSuite) SetupSuite() {
+	s.provider = fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	environment := map[string]string{"FAKE_MCP_CLIENT_ID": s.provider.ClientID, "FAKE_MCP_CLIENT_SECRET": s.provider.ClientSecret}
+	code, err := oauth2code.New(oauth2code.Config{
+		HTTP: s.provider.Client(),
+		Clients: func(ctx context.Context, ref core.ConnectionRef, m core.ResolvedManifest, registration core.ClientRegistrationMethod) (oauth2code.Client, bool, error) {
+			return ConnectorClients(s.store, s.sealer, func(name string) string { return environment[name] })(ctx, ref, m, registration)
+		},
+		PublicEndpoint: loopbackOrPublic,
+	})
+	s.Require().NoError(err)
+	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic})
+	s.Require().NoError(err)
+	s.connectors = core.Registry{
+		Schemes: map[string]core.Scheme{oauth2code.Name: code, oauth2cc.Name: clientCredentials,
+			bearer.Name: bearer.New(), none.Name: none.New(), apikey.Name: apikey.New()},
+		ToolSources: map[string]core.ToolSource{mcp.Kind: &afterListSource{ToolSource: mcp.New(), suite: s}},
+	}
+	s.connectorHTTP = s.provider.Client()
+	s.token = s.issue()
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *ConnectionToolsSuite) SetupTest() {
+	s.useFixture("standard")
+}
+
+func (s *ConnectionToolsSuite) TestOnlyTheAppsBackendMaySetCredentials() {
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		id := s.connection(bearer.Name)
+		return as.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil)
+	})
+}
+
+func (s *ConnectionToolsSuite) TestOnlyTheAppsBackendMayValidateAndReadTools() {
+	id := s.connected(bearer.Name)
+
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil)
+	})
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, nil)
+	})
+}
+
+func (s *ConnectionToolsSuite) TestAnotherAppIsToldTheConnectionDoesNotExist() {
+	id := s.connected(bearer.Name)
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(2, s.token), nil)
+	})
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, nil)
+	})
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return as.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, nil)
+	})
+}
+
+// TestATokenIsStoredAndNeverShownAgain: no answer of any connection operation carries it.
+func (s *ConnectionToolsSuite) TestATokenIsStoredAndNeverShownAgain() {
+	id := s.connection(bearer.Name)
+
+	status, body := s.serverClient.call(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token))
+
+	s.Require().Equal(http.StatusOK, status, string(body))
+	var connection Connection
+	s.Require().NoError(json.Unmarshal(body, &connection))
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+	s.Equal(2, connection.Revision)
+	for _, path := range []string{"", "/tools"} {
+		_, read := s.serverClient.call(http.MethodGet, "/v1/agents/connections/"+id+path, nil)
+		s.NotContains(string(read), s.token, path)
+	}
+	_, validated := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil)
+	s.NotContains(string(body)+string(validated), s.token)
+}
+
+func (s *ConnectionToolsSuite) TestAStaleExpectedRevisionIsAConflict() {
+	id := s.connected(bearer.Name)
+
+	status := s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, "another-token"), nil)
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(2, s.get(id).Revision, "the credentials stayed as they were")
+}
+
+func (s *ConnectionToolsSuite) TestAValueTheSchemeDoesNotTakeIsRefusedWithoutBeingQuoted() {
+	id := s.connection(bearer.Name)
+
+	status, body := s.serverClient.call(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{"password": "do-not-echo-me"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `\"password\" is not a value bearer takes`)
+	s.NotContains(string(body), "do-not-echo-me")
+	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(id).Status)
+}
+
+func (s *ConnectionToolsSuite) TestAConnectorThatNeedsNoCredentialIsActivatedWithNothing() {
+	id := s.connection(none.Name)
+
+	var connection Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": 1}, &connection))
+
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+}
+
+// TestAClientCredentialsConnectionIsSetUpWithItsClient: what no endpoint took before this
+// one, so an app-owned oauth2_client_credentials connection (a Salesforce integration user)
+// could not be set up. The client is tried at the token endpoint at once, and the token it
+// gets lists the tools.
+func (s *ConnectionToolsSuite) TestAClientCredentialsConnectionIsSetUpWithItsClient() {
+	id := s.connection(oauth2cc.Name)
+
+	var connection Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{
+			oauth2cc.SuppliedClientID: s.provider.ClientID, oauth2cc.SuppliedClientSecret: s.provider.ClientSecret,
+		}}, &connection))
+
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+	s.Equal(validationConnected, string(s.validate(id).Status))
+}
+
+// TestAnImportedGrantConnectsWithTheConnectorsEndpoints: the grant names no endpoint and no
+// client; the scheme takes both from the manifest and the operator's environment.
+func (s *ConnectionToolsSuite) TestAnImportedGrantConnectsWithTheConnectorsEndpoints() {
+	id := s.connection(oauth2code.Name)
+
+	var connection Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.importedGrant(s.token, "chat:write"), &connection))
+
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+	s.Equal([]string{"chat:write"}, connection.GrantedScopes)
+	s.Equal(validationConnected, string(s.validate(id).Status))
+}
+
+// TestAnImportedGrantIsAuditedAndLoggedByTheTokensItReplaced: the credentials write names the
+// tokens it stored by fingerprint on its audit row and its log line, a second one those it
+// replaced, and the connector's refresh_ttl shows as when the refresh token expires (AI-990).
+// No token is logged.
+func (s *ConnectionToolsSuite) TestAnImportedGrantIsAuditedAndLoggedByTheTokensItReplaced() {
+	connector := s.connector(oauth2code.Name, "refresh:\n  refresh_ttl: 720h\n")
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	firstAccess, firstRefresh := "first-access-"+s.utils.uuid(), "first-refresh-"+s.utils.uuid()
+	secondAccess, secondRefresh := "second-access-"+s.utils.uuid(), "second-refresh-"+s.utils.uuid()
+	for revision, tokens := range [][2]string{{firstAccess, firstRefresh}, {secondAccess, secondRefresh}} {
+		grant := s.importedGrant(tokens[0], "chat:write")
+		grant["expected_revision"] = revision + 1
+		grant["values"].(map[string]string)[oauth2code.SuppliedRefreshToken] = tokens[1]
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials", grant, nil))
+	}
+
+	var page ConnectorAuditPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connector-audit?connection_id="+created.ID, nil, &page))
+	s.Require().Len(page.Items, 2)
+	first, second := page.Items[1].Credential, page.Items[0].Credential
+	s.Require().NotNil(first)
+	s.Require().NotNil(second)
+	s.Equal(core.Fingerprint(firstAccess), first.AccessFingerprint)
+	s.Equal(core.Fingerprint(firstRefresh), first.RefreshFingerprint)
+	s.Empty(first.PreviousAccessFingerprint)
+	s.Equal(core.Fingerprint(secondAccess), second.AccessFingerprint)
+	s.Equal(core.Fingerprint(firstAccess), second.PreviousAccessFingerprint)
+	s.Equal(core.Fingerprint(firstRefresh), second.PreviousRefreshFingerprint)
+	s.True(second.Rotated)
+	s.Require().NotNil(second.AccessExpiresAt)
+	s.Require().NotNil(second.RefreshExpiresAt, "the connector's refresh_ttl")
+	s.WithinDuration(time.Now().Add(720*time.Hour), *second.RefreshExpiresAt, time.Minute)
+
+	var line string
+	for l := range strings.Lines(s.logged.String()) {
+		if strings.Contains(l, "event=grant_created") && strings.Contains(l, " connection="+created.ID+" ") &&
+			strings.Contains(l, " access_fingerprint="+core.Fingerprint(secondAccess)) {
+			line = l
+		}
+	}
+	s.Require().NotEmpty(line, "one INFO line for the second credentials write")
+	s.Contains(line, "level=INFO")
+	s.Contains(line, " previous_access_fingerprint="+core.Fingerprint(firstAccess))
+	s.Contains(line, " refresh_fingerprint="+core.Fingerprint(secondRefresh))
+	s.Contains(line, " rotated=true")
+	for _, token := range []string{firstAccess, firstRefresh, secondAccess, secondRefresh} {
+		s.NotContains(s.logged.String(), token)
+	}
+}
+
+func (s *ConnectionToolsSuite) TestValidateListsTheToolsAndToolsReadsThemBack() {
+	id := s.connected(bearer.Name)
+
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Require().NotNil(validation.CheckedAt)
+	s.Equal(validation.ToolsDigest, tools.Digest)
+	s.Equal(validation.CheckedAt.UTC(), tools.CheckedAt.UTC())
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+		s.Len(tool.SchemaDigest, 64, tool.Name)
+	}
+	s.Equal([]string{"echo", "fail"}, names, "both of the fake's tools/list pages")
+}
+
+func (s *ConnectionToolsSuite) TestToolsIsEmptyUntilAValidate() {
+	id := s.connected(bearer.Name)
+
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Empty(tools.Tools)
+	s.Nil(tools.CheckedAt)
+}
+
+func (s *ConnectionToolsSuite) TestAPendingConnectionValidatesAsPendingWithoutAskingTheProvider() {
+	id := s.connection(bearer.Name)
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	validation := s.validate(id)
+
+	s.Equal(validationPending, string(validation.Status))
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
+}
+
+// TestAConnectionThatNeedsAReconnectSaysSoWithoutAskingTheProvider: the provider revoked the
+// grant (as a verified tokens_revoked does), and validate opens no MCP session.
+func (s *ConnectionToolsSuite) TestAConnectionThatNeedsAReconnectSaysSoWithoutAskingTheProvider() {
+	id := s.connected(bearer.Name)
+	s.Require().NoError(s.resolver.Revoke(context.Background(), core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}, core.SignalRevoked, time.Time{}))
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.NotEmpty(validation.Error)
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
+}
+
+// TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect: a channel bridge invalidates a
+// connection with OutcomeScopeRequired when the provider refuses it for want of access; for a
+// token or key a reconnect cannot help, so the validate says to replace it (AI-990).
+func (s *ConnectionToolsSuite) TestAStaticTokenThatLacksScopeSaysToReplaceItNotToReconnect() {
+	id := s.connected(bearer.Name)
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}
+	sent, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().NoError(s.resolver.Invalidate(context.Background(), ref, sent, core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"repo"}}))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
+}
+
+// TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization: the MCP server answers
+// 401 invalid_token, nothing renews a static token, so core.Transports invalidates it and the
+// validate reports what the connection now needs: new credentials, not a reconnect (AI-990),
+// with a code a program branches on.
+func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToNeedsReauthorization() {
+	id := s.connection(bearer.Name)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, "not-a-token-the-fake-issued"), nil))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(s.get(id).Revision, s.token), nil))
+	s.Equal(validationConnected, string(s.validate(id).Status), "a new token is what fixes it")
+}
+
+// TestAValidateTheProviderRefusesLogsItsStatusAndMessageNotTheToken: the provider answers a 4xx
+// whose JSON-RPC error repeats the bearer token, padded past the 1 KiB a line keeps. The validate
+// logs one WARN line with the connection, the connector, the provider's status and its words, cut
+// out of the token and to 1 KiB, and answers as it always has (the fixed sentence and the stored
+// row, as on b3b76357c), with none of the provider's text.
+func (s *ConnectionToolsSuite) TestAValidateTheProviderRefusesLogsItsStatusAndMessageNotTheToken() {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusBadRequest} {
+		s.Run(strconv.Itoa(status), func() {
+			token := "tok-" + s.utils.uuid()
+
+			validation, connection, _ := s.echoCredential(bearer.Name, status, token)
+
+			s.Equal(validationNeedsReauthorization, string(validation.Status))
+			s.Equal(codeCredentialRejected, validation.Code)
+			s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
+			s.Require().NotNil(connection.LastValidation)
+			s.Equal(validationNeedsReauthorization, string(connection.LastValidation.Status))
+			s.Equal(codeCredentialRejected, connection.LastValidation.Code)
+			s.Equal(validation.Error, connection.LastValidation.Error)
+
+			var lines []string
+			for line := range strings.Lines(s.logged.String()) {
+				if strings.Contains(line, " connection="+connection.ID+" ") && strings.Contains(line, "refused by the provider") {
+					lines = append(lines, line)
+				}
+			}
+			s.Require().Len(lines, 1, "one line for the refused validate")
+			s.Contains(lines[0], "level=WARN")
+			s.Contains(lines[0], " connector="+connection.ConnectorID+" ")
+			s.Contains(lines[0], " provider_status="+strconv.Itoa(status)+" ")
+			s.Contains(lines[0], `echoed [redacted] `, "the provider's own words")
+			s.NotContains(lines[0], strings.Repeat("x", maxStoredErrorBytes), "cut to 1 KiB")
+			s.False(strings.Contains(s.logged.String(), token), "no line holds the token")
+		})
+	}
+}
+
+// TestAValidateLogsNoTokenTheProviderEchoedJSONEscaped: a JSON body may echo the token escaped,
+// its / as \/ as PHP's json_encode writes it, which is not the token as it was sent. The line
+// holds neither, and the validate answers as it always has.
+func (s *ConnectionToolsSuite) TestAValidateLogsNoTokenTheProviderEchoedJSONEscaped() {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusBadRequest} {
+		s.Run(strconv.Itoa(status), func() {
+			start := "tok-" + s.utils.uuid()
+			token := start + "/ab+cd=="
+			id := s.refusedBy(status, token, func(authorization string) string {
+				escaped := strings.ReplaceAll(authorization, "/", `\/`)
+				return `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"echoed ` + escaped + `"}}`
+			})
+
+			validation := s.validate(id)
+
+			s.Equal(validationNeedsReauthorization, string(validation.Status))
+			s.Equal(codeCredentialRejected, validation.Code)
+			s.Contains(s.refusedLine(id), "echoed [redacted]", "the provider's own words")
+			// s.False on strings.Contains, not s.NotContains, so a failure never prints the token.
+			s.False(strings.Contains(s.logged.String(), start), "no line holds the token, escaped or not")
+		})
+	}
+}
+
+// TestARefusedValidatesBodyKeepsItsURLsToTheirHost: provider_body is the start of the body as a
+// log line has it (core.LoggedBody), so a URL in it, whose path or query may carry a token,
+// keeps only its scheme and host.
+func (s *ConnectionToolsSuite) TestARefusedValidatesBodyKeepsItsURLsToTheirHost() {
+	id := s.refusedBy(http.StatusUnauthorized, "tok-"+s.utils.uuid(), func(string) string {
+		return "Bad credentials, see https://docs.example/errors/e1?sig=docsig"
+	})
+
+	s.Equal(validationNeedsReauthorization, string(s.validate(id).Status))
+
+	line := s.refusedLine(id)
+	s.Contains(line, "see https://docs.example")
+	s.NotContains(line, "/errors/e1")
+	s.NotContains(line, "docsig")
+}
+
+// TestAnOAuthConnectionTheProviderRefusesLogsNoRefusal: only a static credential is refused on a
+// validate (refusedStatic); an OAuth grant the provider answers with a 4xx is not, so no line
+// says it was.
+func (s *ConnectionToolsSuite) TestAnOAuthConnectionTheProviderRefusesLogsNoRefusal() {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusBadRequest} {
+		s.Run(strconv.Itoa(status), func() {
+			refusing := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Bad credentials"}}`)
+			}))
+			s.T().Cleanup(refusing.Close)
+			id := s.connectionTo(s.connectorWith(oauth2code.Name, refusing.URL+"/mcp"))
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.importedGrant(s.token, "chat:write"), nil))
+
+			s.validate(id)
+
+			for line := range strings.Lines(s.logged.String()) {
+				s.False(strings.Contains(line, " connection="+id+" ") && strings.Contains(line, "refused by the provider"), line)
+			}
+		})
+	}
+}
+
+// TestAValidateTheProviderAnswersWithA429Or5xxLogsNoRefusal: a 429 says to wait and a 5xx says
+// nothing about the credential (refusedStatic), so the token is not refused and no line says it was.
+func (s *ConnectionToolsSuite) TestAValidateTheProviderAnswersWithA429Or5xxLogsNoRefusal() {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		s.Run(strconv.Itoa(status), func() {
+			id := s.connected(bearer.Name)
+			s.answerMCP(status)
+
+			s.Equal(validationFailed, string(s.validate(id).Status))
+
+			for line := range strings.Lines(s.logged.String()) {
+				s.False(strings.Contains(line, " connection="+id+" ") && strings.Contains(line, "refused by the provider"), line)
+			}
+		})
+	}
+}
+
+// TestAStaticTokenOnABrokenRevisionSaysToSaveItAgain: a later revision of a built-in marks the
+// one a bearer connection reads broken (AI-1002). No consent can move a token's connection, so
+// the validate says what does: saving the token again, with the code a rejected token has.
+func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionSaysToSaveItAgain() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save its credentials again "+
+		"with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision", validation.Error)
+}
+
+// TestSavingAStaticTokenAgainMovesItOffABrokenRevision: the same connection, given its token
+// again, reads the connector's latest revision and lists its tools (AI-1002). The write is a
+// new trust event, as a reconnect is, so the tools pinned for the old grant no longer hold.
+func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesItOffABrokenRevision() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	before := s.connectedAt(id)
+	_, err := s.store.PinConnectorTools(context.Background(), id, before, map[string]string{"echo": "pinned-on-revision-1"})
+	s.Require().NoError(err)
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), &saved))
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+	s.Equal(validationConnected, string(validation.Status))
+	s.Len(tools.Tools, 2, "both of the fake's tools")
+	after := s.connectedAt(id)
+	s.Require().NotNil(before)
+	s.Require().NotNil(after)
+	s.True(after.After(*before), "a new grant began")
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, after)
+	s.Require().NoError(err)
+	s.Empty(pins, "the pin taken on revision 1 is not one for the new grant")
+}
+
+// TestRotatingAStaticTokenOnTheLatestRevisionKeepsItsGrant is the control for AI-1002: a
+// token saved again while the connection already reads the latest revision keeps the
+// connection's connected_at, and with it the tools pinned for it, as on base c000cedc.
+func (s *ConnectionToolsSuite) TestRotatingAStaticTokenOnTheLatestRevisionKeepsItsGrant() {
+	id := s.connected(bearer.Name)
+	before := s.connectedAt(id)
+	_, err := s.store.PinConnectorTools(context.Background(), id, before, map[string]string{"echo": "pinned"})
+	s.Require().NoError(err)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), nil))
+
+	s.Equal(before, s.connectedAt(id))
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, s.connectedAt(id))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"echo": "pinned"}, pins)
+	s.Equal(1, s.get(id).DefinitionRevision)
+}
+
+// TestAnImportedGrantOnABrokenRevisionKeepsItsRevision is the OAuth control for AI-1002: an
+// oauth2_code connection whose grant the backend imports again stays on the revision it read,
+// as on base c000cedc. Only a consent moves an OAuth connection.
+func (s *ConnectionToolsSuite) TestAnImportedGrantOnABrokenRevisionKeepsItsRevision() {
+	connector := s.builtin(oauth2code.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.importedGrant(s.token, "chat:write"), nil))
+	before := s.connectedAt(id)
+	s.builtin(oauth2code.Name, 2, brokenFirst)
+
+	grant := s.importedGrant(s.token, "chat:write")
+	grant["expected_revision"] = s.get(id).Revision
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", grant, &saved))
+	validation := s.validate(id)
+
+	s.Equal(1, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionBroken), saved.DefinitionStatus)
+	s.Equal(before, s.connectedAt(id))
+	s.Equal(validationFailed, string(validation.Status))
+	s.Empty(validation.Code)
+}
+
+// TestSavingAStaticTokenAgainMovesAnOutdatedConnection: a bearer connection on a revision a
+// later one replaced, broken or not, reads the latest one once its token is saved again
+// (AI-1002), and the token is completed against that revision's manifest: its identity, which
+// revision 1 lacked, is the connection's account now.
+func (s *ConnectionToolsSuite) TestSavingAStaticTokenAgainMovesAnOutdatedConnection() {
+	const line = "inputs:\n  - name: line\n    pattern: \"[+][0-9]+\"\n    default: \"+12025551234\"\n"
+	connector := s.builtin(bearer.Name, 1, line)
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.Require().Empty(s.get(id).AccountID)
+	s.builtin(bearer.Name, 2, line+"identity: [line]\n")
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token), &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal("+12025551234", saved.AccountID, "the account revision 2's identity makes")
+}
+
+// TestSavingANoneConnectionAgainMovesAnOutdatedConnection: a none connection, which no consent
+// can move, reads the connector's latest revision once its empty credentials are saved again,
+// as a bearer one does, and stays connected.
+func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesAnOutdatedConnection() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	s.builtin(none.Name, 2, revisedAuthorizeParams)
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": s.get(id).Revision}, &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+}
+
+// TestSavingANoneConnectionAgainMovesItOffABrokenRevision: the same for a none connection whose
+// revision a later one marked broken. The move begins a new grant, as a bearer one's does.
+func (s *ConnectionToolsSuite) TestSavingANoneConnectionAgainMovesItOffABrokenRevision() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	before := s.connectedAt(id)
+	s.builtin(none.Name, 2, brokenFirst)
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionBroken), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		map[string]any{"expected_revision": s.get(id).Revision}, &saved))
+
+	s.Equal(2, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionCurrent), saved.DefinitionStatus)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+	after := s.connectedAt(id)
+	s.Require().NotNil(before)
+	s.Require().NotNil(after)
+	s.True(after.After(*before), "a new grant began")
+}
+
+// TestANoneConnectionOnABrokenRevisionSaysToSaveItAgain: a none connection takes no consent
+// either (begin refuses it), so the validate of one on a broken revision says to save its
+// credentials again, with the code a rejected token has, not failed with "reconnect it".
+func (s *ConnectionToolsSuite) TestANoneConnectionOnABrokenRevisionSaysToSaveItAgain() {
+	connector := s.builtin(none.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	s.builtin(none.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal("Revision 1 of "+connector+" is marked broken (reads the wrong path); save its credentials again "+
+		"with PUT /v1/agents/connections/{id}/credentials, which moves the connection to the latest revision", validation.Error)
+}
+
+// TestANoneConnectionThatNeedsAReconnectIsToldItsCredentialsWereRejected: a none connection the
+// resolver invalidated has no consent to run, so the validate gives the code a rejected token
+// has, as a bearer one does.
+func (s *ConnectionToolsSuite) TestANoneConnectionThatNeedsAReconnectIsToldItsCredentialsWereRejected() {
+	id := s.connection(none.Name)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", map[string]any{"expected_revision": 1}, nil))
+	ref := core.ConnectionRef{CustomerID: s.customerID(), ConnectionID: id}
+	sent, err := s.resolver.Resolve(context.Background(), ref, core.CredentialRequest{})
+	s.Require().NoError(err)
+	s.Require().NoError(s.resolver.Invalidate(context.Background(), ref, sent, core.Outcome{Kind: core.OutcomeScopeRequired}))
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+}
+
+// TestAClientCredentialsConnectionKeepsItsRevisionWhenSavedAgain is the control for the move:
+// only a token, a key or a none connection moves to the latest revision on a credentials save.
+// An oauth2_client_credentials connection saved again keeps the revision it reads.
+func (s *ConnectionToolsSuite) TestAClientCredentialsConnectionKeepsItsRevisionWhenSavedAgain() {
+	connector := s.builtin(oauth2cc.Name, 1, "")
+	id := s.connectionTo(connector)
+	body := func() map[string]any {
+		return map[string]any{"expected_revision": s.get(id).Revision, "values": map[string]string{
+			oauth2cc.SuppliedClientID: s.provider.ClientID, oauth2cc.SuppliedClientSecret: s.provider.ClientSecret}}
+	}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", body(), nil))
+	s.builtin(oauth2cc.Name, 2, revisedAuthorizeParams)
+	s.Require().Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), s.get(id).DefinitionStatus)
+
+	var saved Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", body(), &saved))
+
+	s.Equal(1, saved.DefinitionRevision)
+	s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), saved.DefinitionStatus)
+}
+
+// TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt: a later revision that drops the
+// connection's scheme, or declares a required input it was not created with, cannot be read
+// by it, and its inputs cannot change. Its token saved again keeps the revision it reads, as
+// on base c000cedc, rather than failing.
+func (s *ConnectionToolsSuite) TestAStaticTokenKeepsItsRevisionWhenTheLatestDoesNotTakeIt() {
+	for name, latest := range map[string]struct{ scheme, extra string }{
+		"another scheme":   {oauth2code.Name, ""},
+		"a required input": {bearer.Name, "inputs:\n  - name: region\n    enum: [us, eu]\n"},
+	} {
+		s.Run(name, func() {
+			connector := s.builtin(bearer.Name, 1, "")
+			id := s.connectionTo(connector)
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+			s.builtin(latest.scheme, 2, latest.extra)
+
+			var saved Connection
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+				s.bearerToken(s.get(id).Revision, s.token), &saved))
+
+			s.Equal(1, saved.DefinitionRevision)
+			s.Equal(ConnectionDefinitionStatus(store.DefinitionOutdated), saved.DefinitionStatus)
+			s.Equal(ConnectionStatus(store.ConnectionConnected), saved.Status)
+		})
+	}
+}
+
+// TestAStaticTokenOnABrokenRevisionTheLatestDoesNotTakeIsRefused: the connection's own
+// revision is marked broken and the latest one dropped its scheme, so no revision is left for
+// it. Saving its token again says so, as a 400, and leaves it where it was.
+func (s *ConnectionToolsSuite) TestAStaticTokenOnABrokenRevisionTheLatestDoesNotTakeIsRefused() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	s.builtin(oauth2code.Name, 2, brokenFirst)
+
+	status, message := s.serverClient.failure(http.MethodPut, "/v1/agents/connections/"+id+"/credentials",
+		s.bearerToken(s.get(id).Revision, s.token))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("revision 1 of "+connector+" is marked broken (reads the wrong path), and its latest revision 2 does "+
+		"not take this connection (manifest \""+connector+"\": scheme \"bearer\" is not one of [oauth2_code]); "+
+		"create a new connection", message)
+	s.Equal(1, s.get(id).DefinitionRevision)
+}
+
+// TestAPendingStaticConnectionOnABrokenRevisionValidatesAsPending: a bearer connection with no
+// token yet, on a revision marked broken since, still says it needs one. The broken-revision
+// answer is for a connected one (AI-1002); saving the first token moves this one anyway.
+func (s *ConnectionToolsSuite) TestAPendingStaticConnectionOnABrokenRevisionValidatesAsPending() {
+	connector := s.builtin(bearer.Name, 1, "")
+	id := s.connectionTo(connector)
+	s.builtin(bearer.Name, 2, brokenFirst)
+
+	validation := s.validate(id)
+
+	s.Equal(validationPending, string(validation.Status))
+	s.Empty(validation.Code)
+}
+
+// TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization: the MCP server refuses an
+// oauth2_code token with a bare 401 (resource_metadata, no error), as MCP servers do. The
+// transport refreshes, the refresh is refused with invalid_grant, and the validate reports
+// what the connection now needs instead of failed.
+func (s *ConnectionToolsSuite) TestABare401WhoseRefreshIsRefusedValidatesAsNeedsReauthorization() {
+	s.provider.Use(fakeprovider.ClientCredentials, fakeprovider.BareChallenge, fakeprovider.InvalidGrant)
+	s.T().Cleanup(func() { s.provider.Use(fakeprovider.ClientCredentials) })
+	id := s.connection(oauth2code.Name)
+	grant := s.importedGrant("not-a-token-the-fake-issued", "chat:write")
+	grant["values"].(map[string]string)[oauth2code.SuppliedRefreshToken] = "nor-a-refresh-token-it-issued"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", grant, nil))
+	refreshes := s.provider.Refreshes()
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Empty(validation.Code, "an OAuth grant keeps the answer it had before AI-990")
+	s.Equal("The provider rejected the grant; reconnect the account", validation.Error)
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(id).Status)
+	s.Equal(refreshes+1, s.provider.Refreshes(), "the bare 401 was renewed first")
+}
+
+// TestAGrantLackingAScopeAToolNeedsValidatesAsNeedsScopesAndNamesIt is T31's acceptance: a
+// Slack-shaped connection granted chat:write only, with a tool that needs channels:read.
+func (s *ConnectionToolsSuite) TestAGrantLackingAScopeAToolNeedsValidatesAsNeedsScopesAndNamesIt() {
+	id := s.scoped("chat:write")
+
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Equal([]string{"channels:read"}, validation.MissingScopes)
+	s.Contains(validation.Error, "channels:read")
+	s.Require().Len(tools.Tools, 2, "the tools are listed all the same")
+	s.Equal([]string{"chat:write"}, tools.Tools[0].NeedsScopes)
+	s.Equal([]string{"channels:read"}, tools.Tools[1].NeedsScopes)
+}
+
+// TestAToolNeedingAScopeTheConnectorNeverAsksForIsLeftOut (AI-1394): fail needs
+// channels:history, which scopes.list does not hold, so no consent grants it. It is not listed,
+// not checked against the grant, and naming it is refused like any tool not offered.
+func (s *ConnectionToolsSuite) TestAToolNeedingAScopeTheConnectorNeverAsksForIsLeftOut() {
+	id := s.scopedTo(`    tools:
+      - name: echo
+        needs_scopes: [chat:write]
+      - name: fail
+        needs_scopes: [channels:history]
+`, "chat:write")
+
+	validation := s.validate(id)
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"fail"}})
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.MissingScopes)
+	s.Require().Len(tools.Tools, 1)
+	s.Equal("echo", tools.Tools[0].Name)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `no tool named \"fail\"`)
+}
+
+// TestAGrantOfAScopeThatCoversTheOneAToolNeedsValidatesAsConnected: Drive's create_file takes
+// drive in place of drive.file (google_drive.yaml), so a grant moved from a plugin that asked
+// for drive needs no consent.
+func (s *ConnectionToolsSuite) TestAGrantOfAScopeThatCoversTheOneAToolNeedsValidatesAsConnected() {
+	id := s.driveShaped(driveFileCoveredByDrive, googleDrive)
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.Code)
+	s.Empty(validation.MissingScopes)
+}
+
+// TestAGrantOfANarrowerScopeStillLacksTheOneAToolNeeds: drive.readonly covers nothing
+// drive.file gives. The answer is base's (8e132bd3).
+func (s *ConnectionToolsSuite) TestAGrantOfANarrowerScopeStillLacksTheOneAToolNeeds() {
+	id := s.driveShaped(driveFileCoveredByDrive, googleDriveReadonly)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Equal([]string{googleDriveFile}, validation.MissingScopes)
+}
+
+// TestABroaderGrantLacksTheScopeAToolNeedsWhenNothingCoversIt is the control: with no
+// covered_by, a grant of drive lacks drive.file, as on base (8e132bd3).
+func (s *ConnectionToolsSuite) TestABroaderGrantLacksTheScopeAToolNeedsWhenNothingCoversIt() {
+	id := s.driveShaped("", googleDrive)
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Equal([]string{googleDriveFile}, validation.MissingScopes)
+}
+
+func (s *ConnectionToolsSuite) TestAGrantWithEveryScopeItsToolsNeedValidatesAsConnected() {
+	id := s.scoped("chat:write,channels:read")
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.MissingScopes)
+}
+
+func (s *ConnectionToolsSuite) TestOnlyTheToolsTheBodyNamesAreChecked() {
+	id := s.scoped("chat:write")
+
+	var validation ConnectionValidation
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"echo"}}, &validation))
+
+	s.Equal(validationConnected, string(validation.Status))
+}
+
+func (s *ConnectionToolsSuite) TestCheckingAToolTheConnectionDoesNotOfferIsRefused() {
+	id := s.scoped("chat:write")
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"delete_workspace"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), `no tool named \"delete_workspace\"`)
+}
+
+// TestAConnectionWithNoChangedToolValidatesAsOnBase is the control for AI-1304: a connection
+// with no pins, and one whose pins match what the provider lists, answer and record what base
+// cefe01e0 does. The expected body is that base's (probe: validate of a bearer connection to
+// the fake, 2026-10-15), with its connection id and time taken out.
+func (s *ConnectionToolsSuite) TestAConnectionWithNoChangedToolValidatesAsOnBase() {
+	unpinned := s.connected(bearer.Name)
+	pinned := s.connected(bearer.Name)
+	s.validate(pinned)
+	s.pin(pinned, s.listedDigests(pinned))
+
+	for _, id := range []string{unpinned, pinned} {
+		status, body := s.serverClient.call(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil)
+		s.Require().Equal(http.StatusOK, status)
+		var answer map[string]any
+		s.Require().NoError(json.Unmarshal(body, &answer))
+		s.Equal(id, answer["connection_id"])
+		s.NotEmpty(answer["checked_at"])
+		delete(answer, "connection_id")
+		delete(answer, "checked_at")
+		delete(answer, "duration")
+
+		s.Equal(map[string]any{"status": "connected",
+			"tools_digest": "32500f3fae086f0dc7a845b2474495444f39ba84bb098425255d4702422c6a84"}, answer, id)
+		s.Equal(&ConnectionLastValidation{Status: validationConnected, CheckedAt: s.get(id).LastValidation.CheckedAt},
+			s.get(id).LastValidation, id)
+	}
+}
+
+func (s *ConnectionToolsSuite) TestAToolListedAtAnotherSchemaThanItsPinValidatesAsNeedsReapproval() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"fail": "pinned-before-it-changed", "echo": "pinned-before-it-changed"})
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsReapproval, string(validation.Status))
+	s.Equal(codeToolSchemaChanged, validation.Code)
+	s.Equal([]string{"echo", "fail"}, validation.ChangedTools)
+	s.Contains(validation.Error, "echo, fail")
+	s.NotEmpty(validation.ToolsDigest, "the tools are listed all the same")
+	recorded := s.get(id).LastValidation
+	s.Require().NotNil(recorded)
+	s.Equal(validationNeedsReapproval, string(recorded.Status))
+	s.Equal(codeToolSchemaChanged, recorded.Code)
+	s.Equal(validation.Error, recorded.Error)
+}
+
+func (s *ConnectionToolsSuite) TestAValidateNeverPinsAChangedToolAgain() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"echo": "pinned-before-it-changed"})
+
+	s.validate(id)
+	again := s.validate(id)
+
+	pins, err := s.store.ConnectorToolPins(context.Background(), id, s.connectedAt(id))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"echo": "pinned-before-it-changed"}, pins)
+	s.Equal(validationNeedsReapproval, string(again.Status))
+	s.Equal([]string{"echo"}, again.ChangedTools)
+}
+
+// TestAPinnedToolTheProviderNoLongerListsIsNotAChange: approving it again cannot bring it back,
+// so it is not reported, and the session leaves it out as on base.
+func (s *ConnectionToolsSuite) TestAPinnedToolTheProviderNoLongerListsIsNotAChange() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"removed_by_the_provider": "pinned-when-it-was-listed"})
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.Code)
+	s.Empty(validation.ChangedTools)
+}
+
+// TestAConsentThatFinishesWhileTheToolsAreListedIsReadForTheNewGrant: the pin of the old grant
+// is at another digest, but a validate that reads the connection again after the list sees the
+// new grant, which has no pins, and answers connected.
+func (s *ConnectionToolsSuite) TestAConsentThatFinishesWhileTheToolsAreListedIsReadForTheNewGrant() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"echo": "pinned-for-the-old-grant"})
+	before := s.connectedAt(id)
+	listed := 0
+	s.afterList = func() {
+		listed++
+		_, err := s.store.DB().ExecContext(context.Background(),
+			"UPDATE connector_connections SET connected_at = ? WHERE id = ?", before.Add(time.Hour), id)
+		s.Require().NoError(err)
+	}
+	defer func() { s.afterList = nil }()
+
+	validation := s.validate(id)
+
+	s.Equal(1, listed)
+	s.Equal(before.Add(time.Hour).UTC(), s.connectedAt(id).UTC(), "the grant moved during the list")
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.ChangedTools)
+}
+
+// TestEveryPinIsCheckedNotOnlyTheToolsTheBodyNames: the body narrows the scope check, not the
+// drift report, since a session offers every tool of the connection.
+func (s *ConnectionToolsSuite) TestEveryPinIsCheckedNotOnlyTheToolsTheBodyNames() {
+	id := s.connected(bearer.Name)
+	s.pin(id, map[string]string{"fail": "pinned-before-it-changed"})
+
+	var validation ConnectionValidation
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate",
+		map[string]any{"tools": []string{"echo"}}, &validation))
+
+	s.Equal(validationNeedsReapproval, string(validation.Status))
+	s.Equal([]string{"fail"}, validation.ChangedTools)
+}
+
+func (s *ConnectionToolsSuite) TestAPinOfAnEarlierGrantIsNotAChange() {
+	id := s.connected(bearer.Name)
+	earlier := s.connectedAt(id).Add(-time.Hour)
+	_, err := s.store.PinConnectorTools(context.Background(), id, &earlier, map[string]string{"echo": "pinned-for-the-old-grant"})
+	s.Require().NoError(err)
+
+	validation := s.validate(id)
+
+	s.Equal(validationConnected, string(validation.Status))
+	s.Empty(validation.ChangedTools)
+}
+
+// TestAGrantLackingAScopeIsReportedBeforeAChangedTool: the consent needs_scopes asks for begins
+// a new grant, which approves the changed tool too.
+func (s *ConnectionToolsSuite) TestAGrantLackingAScopeIsReportedBeforeAChangedTool() {
+	id := s.scoped("chat:write")
+	s.pin(id, map[string]string{"echo": "pinned-before-it-changed"})
+
+	validation := s.validate(id)
+
+	s.Equal(validationNeedsScopes, string(validation.Status))
+	s.Equal(codeScopeRequired, validation.Code)
+	s.Empty(validation.ChangedTools)
+}
+
+// pin pins the connection's tools at digests for its current grant, as a session does.
+func (s *ConnectionToolsSuite) pin(id string, digests map[string]string) {
+	_, err := s.store.PinConnectorTools(context.Background(), id, s.connectedAt(id), digests)
+	s.Require().NoError(err)
+}
+
+// listedDigests is the schema digest of each tool the connection's last validate listed.
+func (s *ConnectionToolsSuite) listedDigests(id string) map[string]string {
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+	digests := map[string]string{}
+	for _, tool := range tools.Tools {
+		digests[tool.Name] = tool.SchemaDigest
+	}
+	s.Require().Len(digests, 2)
+	return digests
+}
+
+// scoped is an oauth2_code connection whose grant was imported with scope, to a connector
+// whose echo needs chat:write and fail channels:read.
+func (s *ConnectionToolsSuite) scoped(scope string) string {
+	return s.scopedTo(`    tools:
+      - name: echo
+        needs_scopes: [chat:write]
+      - name: fail
+        needs_scopes: [channels:read]
+`, scope)
+}
+
+// Google Drive's scopes, as google_drive.yaml names them.
+const (
+	googleDrive         = "https://www.googleapis.com/auth/drive"
+	googleDriveFile     = "https://www.googleapis.com/auth/drive.file"
+	googleDriveReadonly = "https://www.googleapis.com/auth/drive.readonly"
+	// driveFileCoveredByDrive is google_drive.yaml's scopes.covered_by.
+	driveFileCoveredByDrive = "  covered_by:\n    " + googleDriveFile + ": [" + googleDrive + "]\n"
+)
+
+// driveShaped is an oauth2_code connection to a connector shaped as google_drive.yaml is, with
+// coveredBy under its scopes, whose echo needs drive.file, holding granted. An imported grant
+// may hold only what scopes.list asks for, so granted is written to the row.
+func (s *ConnectionToolsSuite) driveShaped(coveredBy, granted string) string {
+	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	yaml := strings.Replace(s.manifest(id, 1, oauth2code.Name, "    tools:\n      - name: echo\n        needs_scopes: ["+googleDriveFile+"]\n"),
+		"  list: [chat:write, channels:read]\n", "  list: ["+googleDriveReadonly+", "+googleDriveFile+"]\n"+coveredBy, 1)
+	manifest, err := core.ParseManifest([]byte(yaml))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(id), &created))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		s.importedGrant(s.token, googleDriveReadonly), nil))
+	scopes, err := json.Marshal([]string{granted})
+	s.Require().NoError(err)
+	_, err = s.store.DB().ExecContext(context.Background(), "UPDATE connector_connections SET granted_scopes = ?::jsonb WHERE id = ?",
+		string(scopes), created.ID)
+	s.Require().NoError(err)
+	return created.ID
+}
+
+// scopedTo is an oauth2_code connection whose grant was imported with scope, to a connector
+// whose mcp source says tools.
+func (s *ConnectionToolsSuite) scopedTo(tools, scope string) string {
+	connector := s.connector(oauth2code.Name, tools)
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		s.importedGrant(s.token, scope), nil))
+	return created.ID
+}
+
+// connection is a pending app-owned connection to a new connector of the suite's app at the
+// fake, authenticating with scheme.
+func (s *ConnectionToolsSuite) connection(scheme string) string {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(s.connector(scheme, "")), &created))
+	return created.ID
+}
+
+// connected is a bearer connection given the fake's token, at revision 2.
+func (s *ConnectionToolsSuite) connected(scheme string) string {
+	id := s.connection(scheme)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, s.token), nil))
+	return id
+}
+
+// connector stores a connector of the suite's app whose endpoints are the fake's, taking
+// scheme; tools is more YAML under its mcp source.
+func (s *ConnectionToolsSuite) connector(scheme, tools string) string {
+	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest, err := core.ParseManifest([]byte(s.manifest(id, 1, scheme, tools)))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// manifest is a connector at the fake taking scheme, at revision; tools is more YAML under its
+// mcp source.
+func (s *ConnectionToolsSuite) manifest(id string, revision int, scheme, tools string) string {
+	return `
+id: ` + id + `
+revision: ` + strconv.Itoa(revision) + `
+name: Fake
+endpoints:
+  authorize: ` + s.provider.URL + fakeprovider.PathAuthorize + `
+  token: ` + s.provider.URL + fakeprovider.PathToken + `
+  mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
+schemes: [` + scheme + `]
+client:
+  registration: [operator]
+  env: FAKE
+scopes:
+  list: [chat:write, channels:read]
+  separator: ","
+sources:
+  - kind: mcp
+    endpoint: mcp
+` + tools
+}
+
+// revisedAuthorizeParams is the manifest YAML of a revision that changes what a connection reads
+// as little as a field can (the authorize URL its consent is sent to), so a connection before it
+// is outdated. Not description: only the catalog shows that.
+const revisedAuthorizeParams = "authorize_params:\n  prompt: consent\n"
+
+// brokenFirst is the manifest YAML a revision marks revision 1 broken with.
+const brokenFirst = "broken_revisions:\n  - revisions: [1]\n    reason: reads the wrong path\n"
+
+// builtin seeds a built-in connector at the fake taking scheme, at revision, with more manifest
+// YAML in extra, as a router start with that file does: only a built-in's later revision marks
+// an earlier one broken. Revision 1 names a new connector, a later one the last one made.
+func (s *ConnectionToolsSuite) builtin(scheme string, revision int, extra string) string {
+	if revision == 1 {
+		s.builtinID = "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{s.builtinID + ".yaml": {
+		Data: []byte(s.manifest(s.builtinID, revision, scheme, "") + extra)}}))
+	return s.builtinID
+}
+
+// connectionTo is a pending app-owned connection to connector.
+func (s *ConnectionToolsSuite) connectionTo(connector string) string {
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(connector), &created))
+	return created.ID
+}
+
+// connectedAt is when the connection's grant began, as stored.
+func (s *ConnectionToolsSuite) connectedAt(id string) *time.Time {
+	connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	return connection.ConnectedAt
+}
+
+// refusedBy is a bearer connection holding token whose provider answers every request with
+// status and the body body makes of the Authorization header it was sent.
+func (s *ConnectionToolsSuite) refusedBy(status int, token string, body func(authorization string) string) string {
+	refusing := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body(r.Header.Get("Authorization")))
+	}))
+	s.T().Cleanup(refusing.Close)
+	id := s.connectionTo(s.connectorWith(bearer.Name, refusing.URL+"/mcp"))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, token), nil))
+	return id
+}
+
+// refusedLine is the one "refused by the provider" line logged for connection id.
+func (s *ConnectionToolsSuite) refusedLine(id string) string {
+	var lines []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, " connection="+id+" ") && strings.Contains(line, "refused by the provider") {
+			lines = append(lines, line)
+		}
+	}
+	s.Require().Len(lines, 1, "one line for the refused validate")
+	return lines[0]
+}
+
+func (s *ConnectionToolsSuite) bearerToken(revision int, token string) map[string]any {
+	return map[string]any{"expected_revision": revision, "values": map[string]string{bearer.SuppliedToken: token}}
+}
+
+func (s *ConnectionToolsSuite) importedGrant(token, scope string) map[string]any {
+	return map[string]any{"expected_revision": 1, "values": map[string]string{
+		oauth2code.SuppliedAccessToken: token,
+		oauth2code.SuppliedExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		oauth2code.SuppliedScope:       scope,
+	}}
+}
+
+func (s *ConnectionToolsSuite) validate(id string) ConnectionValidation {
+	var validation ConnectionValidation
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/connections/"+id+"/validate", nil, &validation))
+	return validation
+}
+
+func (s *ConnectionToolsSuite) get(id string) Connection {
+	var connection Connection
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id, nil, &connection))
+	return connection
+}
+
+// issue is an access token from the fake's client credentials grant.
+func (s *ConnectionToolsSuite) issue() string {
+	return issuedToken(&s.RouterSuite, s.provider)
+}
+
+// issuedToken is an access token from provider's client credentials grant (RFC 6749 section
+// 4.4), which its MCP endpoint takes.
+func issuedToken(s *RouterSuite, provider *fakeprovider.Server) string {
+	form := url.Values{"grant_type": {"client_credentials"}}
+	request, err := http.NewRequest(http.MethodPost, provider.URL+fakeprovider.PathToken, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(provider.ClientID, provider.ClientSecret)
+	response, err := provider.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	var token struct {
+		AccessToken string `json:"access_token"`
+	}
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&token))
+	s.Require().NotEmpty(token.AccessToken)
+	return token.AccessToken
+}
+
+// loopbackClients is egress.NewClient for a suite whose providers listen on loopback: the same
+// redirect policy, over server's transport. Nil server is egress.NewClient itself.
+func loopbackClients(server *http.Client) core.NewClientFunc {
+	if server == nil {
+		return nil
+	}
+	policy := egress.NewClient(0, nil).CheckRedirect
+	return func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+		return &http.Client{Transport: wrap(server.Transport), Timeout: timeout, CheckRedirect: policy}
+	}
+}

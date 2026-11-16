@@ -1,0 +1,52 @@
+model_name: breeze-tts-2-streaming
+description: >
+  Breeze TTS 2 served over a WebSocket for realtime text-to-speech. Accepts text deltas
+  and emits binary PCM16 frames as they are generated, so playback can start before the
+  sentence is finished. Vocal events and natural-language voice direction are what this
+  model offers over the other self-hosted voice next door.
+python_version: py312
+model_metadata:
+  repo_id: BreezeBlue/Breeze-TTS-2
+resources:
+  # 3B params. Eager inference needs about 7.7 GiB and the fast path about 14.4 GiB, so a
+  # 24 GB card is the floor for the configuration below. The sub-40 ms time to first audio
+  # Breeze publish is measured on an H100, and that number is the reason to run this model
+  # at all, so an L4 would be a false economy rather than a saving.
+  accelerator: H100
+  use_gpu: true
+runtime:
+  transport:
+    kind: websocket
+  # One. The reference streaming API serves a single request at a time, so a second
+  # concurrent utterance would queue behind the first inside the engine where this server
+  # cannot see it. Scale with replicas, not with concurrency.
+  predict_concurrency: 1
+model_cache:
+  - repo_id: BreezeBlue/Breeze-TTS-2
+    revision: main
+    use_volume: true
+    volume_folder: breeze-tts-2
+    kind: hf
+build_commands:
+  # The inference code lives in its own repository rather than on PyPI, so it is cloned at
+  # build time and installed from there.
+  - git clone --depth 1 https://github.com/breezeblue-ai/breeze-tts /opt/breeze-tts
+  - pip install --no-cache-dir -r /opt/breeze-tts/requirements.txt
+requirements:
+  - httpx
+environment_variables:
+  # Where the local inference engine listens. Nothing outside the container reaches it.
+  ENGINE_PORT: "7860"
+  # How long to wait for the engine to load the weights before giving up. The fast path
+  # builds CUDA graphs at startup, which is most of this.
+  ENGINE_STARTUP_S: "900"
+  # Breeze TTS 2 generates at 24 kHz. The client's handshake is checked against this, so a
+  # change here fails loudly instead of quietly playing back at the wrong speed.
+  SAMPLE_RATE: "24000"
+  # Trade cold start for latency: CUDA graphs and compiled decode at every stage, which is
+  # what the published time to first audio is measured with.
+  ENGINE_FAST: "1"
+  # How hard the model follows an instruction. Breeze recommend 4 when there is one, and
+  # the default when there is not, so this only applies to a session that asked for a
+  # voice in words.
+  INSTRUCTION_CFG_SCALE: "4"

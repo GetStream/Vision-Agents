@@ -1,0 +1,1683 @@
+// Package openairealtime implements the sts.STS contract over the OpenAI Realtime API's
+// WebSocket, and over the two vendors that speak the same events: xAI's Voice Agent API and
+// Alibaba's Qwen realtime models.
+//
+// The three agree on everything that arrives: the caller's audio goes up in
+// input_audio_buffer.append frames, and speech, transcripts, tool calls and the end of a
+// reply come back under the same event names. Where they disagree is how a session is
+// configured, so the setup frame is spelled per vendor and the rest is shared.
+//
+// A reply is a response. The model opens one when its own turn detector decides the caller
+// has finished, streams audio and a transcript of it, and closes it with response.done,
+// which carries what it cost. A reply the caller talked over ends the same way with a
+// status saying so, and that status is the one thing that means barge-in here.
+package openairealtime
+
+import (
+	"cmp"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"maps"
+	"math"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// Dialect is how a vendor spells the session configuration. The events they send back are
+// the same; the frame that sets a session up is not.
+type Dialect string
+
+const (
+	// DialectOpenAI is the generally available Realtime API: the session names its type
+	// and nests the audio formats, the transcriber and the turn detector under audio.
+	DialectOpenAI Dialect = "openai"
+	// DialectXAI keeps the audio formats nested and everything else at the top level,
+	// which is the shape xAI documents as OpenAI-compatible.
+	DialectXAI Dialect = "xai"
+	// DialectQwen names its formats as words, pcm16 and pcm24, and its transcriber by a
+	// model of its own.
+	DialectQwen Dialect = "qwen"
+	// DialectQwenAudio is Qwen-Audio on the same socket as DialectQwen: one format, pcm,
+	// a transcriber it picks itself, tools nested under function the way Chat Completions
+	// nests them, and a semantic turn detector called smart_turn.
+	DialectQwenAudio Dialect = "qwen-audio"
+)
+
+// qwenAudioPrefix is what the model ids speaking DialectQwenAudio at the Qwen vendor
+// start with.
+const qwenAudioPrefix = "qwen-audio-"
+
+// Vendor is one endpoint that speaks this protocol, and what differs about it.
+type Vendor struct {
+	// Provider is the stable name used in routing config and stats.
+	Provider string
+	// URL is the socket, without the model, which goes on the query string.
+	URL string
+	// Model is what a session is opened on when the options name none.
+	Model string
+	// APIKeyEnvVar holds the credentials when Options does not.
+	APIKeyEnvVar string
+	// InputSampleRate is the rate the vendor wants fed. The caller's audio arrives at
+	// sts.InputSampleRate and is resampled up where these differ.
+	InputSampleRate int
+	// OutputSampleRate is the rate the model speaks at.
+	OutputSampleRate int
+	Dialect          Dialect
+}
+
+// The vendors this package reaches.
+var (
+	OpenAI = Vendor{
+		Provider:         "openai",
+		URL:              "wss://api.openai.com/v1/realtime",
+		Model:            "gpt-realtime-2.1",
+		APIKeyEnvVar:     "OPENAI_API_KEY",
+		InputSampleRate:  24_000,
+		OutputSampleRate: 24_000,
+		Dialect:          DialectOpenAI,
+	}
+	XAI = Vendor{
+		Provider:         "xai",
+		URL:              "wss://api.x.ai/v1/realtime",
+		Model:            "grok-voice-3.0",
+		APIKeyEnvVar:     "XAI_API_KEY",
+		InputSampleRate:  24_000,
+		OutputSampleRate: 24_000,
+		Dialect:          DialectXAI,
+	}
+	Qwen = Vendor{
+		Provider:         "qwen",
+		URL:              "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
+		Model:            "qwen3.5-omni-plus-realtime",
+		APIKeyEnvVar:     "DASHSCOPE_API_KEY",
+		InputSampleRate:  16_000,
+		OutputSampleRate: 24_000,
+		Dialect:          DialectQwen,
+	}
+)
+
+// qwenTranscriber is the transcription model Qwen's realtime sessions take, which is the
+// only one they document.
+const qwenTranscriber = "gummy-realtime-v1"
+
+// openaiTranscriber is the transcriber OpenAI sessions are given when nobody named one.
+// OpenAI refuses a transcription block with no model in it, where xAI takes the empty
+// block as yes.
+const openaiTranscriber = "gpt-4o-mini-transcribe"
+
+// Client event types.
+const (
+	eventSessionUpdate  = "session.update"
+	eventAudioAppend    = "input_audio_buffer.append"
+	eventImageAppend    = "input_image_buffer.append"
+	eventItemCreate     = "conversation.item.create"
+	eventItemTruncate   = "conversation.item.truncate"
+	eventResponseCreate = "response.create"
+	eventResponseCancel = "response.cancel"
+)
+
+// codeInvalidAPIKey is the code of the error frame OpenAI sends, right after accepting the
+// handshake, on a key it does not take.
+const codeInvalidAPIKey = "invalid_api_key"
+
+// Server event types. Two of them come in an older spelling as well, which Qwen still uses.
+const (
+	eventSessionCreated    = "session.created"
+	eventSessionUpdated    = "session.updated"
+	eventError             = "error"
+	eventSpeechStarted     = "input_audio_buffer.speech_started"
+	eventSpeechStopped     = "input_audio_buffer.speech_stopped"
+	eventCommitted         = "input_audio_buffer.committed"
+	eventInputDelta        = "conversation.item.input_audio_transcription.delta"
+	eventInputCompleted    = "conversation.item.input_audio_transcription.completed"
+	eventResponseCreated   = "response.created"
+	eventOutputItemAdded   = "response.output_item.added"
+	eventAudioDelta        = "response.output_audio.delta"
+	eventAudioDeltaOld     = "response.audio.delta"
+	eventTranscriptDelta   = "response.output_audio_transcript.delta"
+	eventTranscriptDone    = "response.output_audio_transcript.done"
+	eventTranscriptDeltaV1 = "response.audio_transcript.delta"
+	eventTranscriptDoneV1  = "response.audio_transcript.done"
+	eventArgumentsDone     = "response.function_call_arguments.done"
+	eventResponseDone      = "response.done"
+	eventRateLimits        = "rate_limits.updated"
+)
+
+// rateLimitNames are the limits rate_limits.updated reports, the only ones kept:
+// https://developers.openai.com/api/reference/resources/realtime/server-events (rate_limits.updated).
+var rateLimitNames = []string{"requests", "tokens"}
+
+// cancelNotActive is what the server says about a cancel that found nothing to cancel,
+// which is not news to anyone.
+const cancelNotActive = "response_cancel_not_active"
+
+// activeResponse is the server refusing a reply because another is still open. It refuses
+// the reply it opens on its own at the caller's stop the same way, when the caller's turn
+// ends during a reply it was told not to cut off (interrupt_response false). Only one
+// response may write to the conversation at a time:
+// https://developers.openai.com/api/reference/resources/realtime/client-events (response.create).
+const activeResponse = "conversation_already_has_active_response"
+
+// clientResponse is the event_id every response.create from here carries. The server echoes
+// it in an error about that request, so a refusal that names no event is one of the replies
+// the server opens on its own.
+const clientResponse = "client_response"
+
+// Options configures the provider. APIKey falls back to the vendor's environment variable.
+type Options struct {
+	Vendor Vendor
+	APIKey string
+	Model  string
+	URL    string
+	// Voice is the vendor's own name for one. Empty leaves the vendor's default.
+	Voice string
+	// Instructions is the system prompt the model converses under.
+	Instructions string
+	// Tools are what the model may call. Empty offers none.
+	Tools []llm.Tool
+	// TurnDetection is one of the options.Turn modes. Empty leaves the vendor default.
+	TurnDetection string
+	// SilenceMs and PrefixPaddingMs tune a silence timer.
+	SilenceMs       *int
+	PrefixPaddingMs *int
+	// Threshold is the silence timer's activation threshold, which only this family of
+	// vendors takes as a number.
+	Threshold *float64
+	// Eagerness is how quickly a semantic turn detector decides: low, medium, high or
+	// auto. OpenAI only.
+	Eagerness string
+	// InterruptResponse is whether the model cuts its own reply off when it hears the
+	// caller. Nil leaves the vendor default.
+	InterruptResponse *bool
+	// InputTranscript asks the model to write down what it heard. Qwen always does.
+	InputTranscript bool
+	// TranscriptionModel names the transcriber, on the vendors that let one be chosen.
+	TranscriptionModel string
+	// HandshakeTimeout bounds the connect and the configuration exchange.
+	HandshakeTimeout time.Duration
+	Logger           *slog.Logger
+}
+
+// clientEvent is a frame sent to the server. Type says which of the fields matter.
+type clientEvent struct {
+	Type     string           `json:"type"`
+	EventID  string           `json:"event_id,omitempty"`
+	Session  *session         `json:"session,omitempty"`
+	Audio    string           `json:"audio,omitempty"`
+	Image    string           `json:"image,omitempty"`
+	Item     *item            `json:"item,omitempty"`
+	Response *responseRequest `json:"response,omitempty"`
+	// ItemID, ContentIndex and AudioEndMs truncate an assistant item to what was heard.
+	ItemID       string `json:"item_id,omitempty"`
+	ContentIndex *int   `json:"content_index,omitempty"`
+	AudioEndMs   *int   `json:"audio_end_ms,omitempty"`
+}
+
+// session is the configuration, with every dialect's fields on it and omitempty deciding
+// which are sent.
+type session struct {
+	Type                    string         `json:"type,omitempty"`
+	OutputModalities        []string       `json:"output_modalities,omitempty"`
+	Modalities              []string       `json:"modalities,omitempty"`
+	Instructions            string         `json:"instructions,omitempty"`
+	Voice                   string         `json:"voice,omitempty"`
+	Audio                   *audioConfig   `json:"audio,omitempty"`
+	InputAudioFormat        string         `json:"input_audio_format,omitempty"`
+	OutputAudioFormat       string         `json:"output_audio_format,omitempty"`
+	InputAudioTranscription *transcription `json:"input_audio_transcription,omitempty"`
+	TurnDetection           *turnDetection `json:"turn_detection,omitempty"`
+	Tools                   []tool         `json:"tools,omitempty"`
+}
+
+type audioConfig struct {
+	Input  *audioInput  `json:"input,omitempty"`
+	Output *audioOutput `json:"output,omitempty"`
+}
+
+type audioInput struct {
+	Format        *audioFormat   `json:"format,omitempty"`
+	Transcription *transcription `json:"transcription,omitempty"`
+	TurnDetection *turnDetection `json:"turn_detection,omitempty"`
+}
+
+type audioOutput struct {
+	Format *audioFormat `json:"format,omitempty"`
+	Voice  string       `json:"voice,omitempty"`
+}
+
+type audioFormat struct {
+	Type string `json:"type"`
+	Rate int    `json:"rate,omitempty"`
+}
+
+type transcription struct {
+	Model string `json:"model,omitempty"`
+}
+
+type turnDetection struct {
+	Type              string   `json:"type"`
+	Threshold         *float64 `json:"threshold,omitempty"`
+	PrefixPaddingMs   *int     `json:"prefix_padding_ms,omitempty"`
+	SilenceDurationMs *int     `json:"silence_duration_ms,omitempty"`
+	Eagerness         string   `json:"eagerness,omitempty"`
+	CreateResponse    *bool    `json:"create_response,omitempty"`
+	InterruptResponse *bool    `json:"interrupt_response,omitempty"`
+}
+
+type tool struct {
+	Type        string         `json:"type"`
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Function carries the name, description and parameters instead, for Qwen-Audio.
+	Function *function `json:"function,omitempty"`
+}
+
+type function struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+// item is one conversation item the client adds: a typed turn, an image, or what a tool
+// produced.
+type item struct {
+	Type    string    `json:"type"`
+	Role    string    `json:"role,omitempty"`
+	Content []content `json:"content,omitempty"`
+	CallID  string    `json:"call_id,omitempty"`
+	Output  string    `json:"output,omitempty"`
+}
+
+type content struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
+}
+
+type responseRequest struct {
+	Instructions string `json:"instructions,omitempty"`
+	// ToolChoice "none" keeps a reply from calling anything.
+	ToolChoice string `json:"tool_choice,omitempty"`
+}
+
+// serverEvent is a frame from the server, with the fields every event type this package
+// reads might carry.
+type serverEvent struct {
+	Type       string      `json:"type"`
+	ResponseID string      `json:"response_id"`
+	ItemID     string      `json:"item_id"`
+	Delta      string      `json:"delta"`
+	Transcript string      `json:"transcript"`
+	CallID     string      `json:"call_id"`
+	Name       string      `json:"name"`
+	Arguments  string      `json:"arguments"`
+	Response   *response   `json:"response"`
+	Item       *serverItem `json:"item"`
+	Error      *apiError   `json:"error"`
+	// Usage is where xAI reports what a reply cost: on response.done beside the response,
+	// whose own usage it leaves empty.
+	Usage      *usage      `json:"usage"`
+	RateLimits []rateLimit `json:"rate_limits"`
+}
+
+type rateLimit struct {
+	Name      string   `json:"name"`
+	Remaining *float64 `json:"remaining"`
+}
+
+type response struct {
+	ID            string         `json:"id"`
+	Status        string         `json:"status"`
+	StatusDetails *statusDetails `json:"status_details"`
+	Usage         *usage         `json:"usage"`
+}
+
+type statusDetails struct {
+	Type   string    `json:"type"`
+	Reason string    `json:"reason"`
+	Error  *apiError `json:"error"`
+}
+
+// UnmarshalJSON reads the details as the object OpenAI sends or as the bare string xAI
+// sends in its place. A frame that failed to decode over this one field would be dropped
+// whole, and response.done is the frame that settles a reply.
+func (d *statusDetails) UnmarshalJSON(raw []byte) error {
+	if len(raw) > 0 && raw[0] == '"' {
+		var reason string
+		if err := json.Unmarshal(raw, &reason); err != nil {
+			return err
+		}
+		*d = statusDetails{Reason: reason}
+		return nil
+	}
+	type plain statusDetails
+	var decoded plain
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	*d = statusDetails(decoded)
+	return nil
+}
+
+type usage struct {
+	// Type is "tokens" on a transcription's usage, and "duration" for a transcriber billed
+	// by the second, which reports no tokens.
+	Type               string        `json:"type"`
+	InputTokens        int64         `json:"input_tokens"`
+	OutputTokens       int64         `json:"output_tokens"`
+	InputTokenDetails  *tokenDetails `json:"input_token_details"`
+	OutputTokenDetails *tokenDetails `json:"output_token_details"`
+	// Seconds is the audio a transcriber billed by the second heard, on a "duration" usage.
+	Seconds float64 `json:"seconds"`
+	// BillableAudioSeconds is xAI's running total of the audio it bills the session for,
+	// rounded to the second: the audio sent and received, or the wall clock on a line that
+	// streams all the time. Nil where the vendor keeps none.
+	BillableAudioSeconds *float64 `json:"billable_audio_seconds"`
+}
+
+type tokenDetails struct {
+	CachedTokens        int64          `json:"cached_tokens"`
+	CachedTokensDetails *modalityCount `json:"cached_tokens_details"`
+	TextTokens          int64          `json:"text_tokens"`
+	AudioTokens         int64          `json:"audio_tokens"`
+	ImageTokens         int64          `json:"image_tokens"`
+	ReasoningTokens     int64          `json:"reasoning_tokens"`
+}
+
+type modalityCount struct {
+	TextTokens  int64 `json:"text_tokens"`
+	AudioTokens int64 `json:"audio_tokens"`
+	ImageTokens int64 `json:"image_tokens"`
+}
+
+type serverItem struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+type apiError struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// EventID is the client event the error is about, empty when it is about none.
+	EventID string `json:"event_id"`
+}
+
+func (e *apiError) Error() string {
+	if e.Code != "" {
+		return e.Code + ": " + e.Message
+	}
+	return e.Message
+}
+
+// STS is one realtime session.
+type STS struct {
+	options      Options
+	keys         *keypool.Pool
+	dialect      Dialect
+	capabilities sts.Capabilities
+	logger       *slog.Logger
+	emitter      *sts.Emitter
+
+	conn *websocket.Conn
+	// key is the key conn was opened with, set before the read loop starts.
+	key string
+	// writeMu serialises writes: a websocket connection allows only one writer.
+	writeMu sync.Mutex
+
+	mu sync.Mutex
+	// participant is the speaker of the most recent audio, used to label what the model
+	// heard and who it heard start and stop.
+	participant sts.Participant
+	// heardAt is when the model decided the caller had finished, which is what the reply
+	// that follows is timed from. Zero once a reply has claimed it. A stop heard while a
+	// reply is open goes to that reply instead, and stoppedFor remembers which, so the
+	// commit after that stop is not taken for another.
+	heardAt    time.Time
+	stoppedFor *sts.Turn
+	// turn is the reply in flight, and generation counts them. named is whether the turn
+	// carries the vendor's response id, which its response.done can be matched by.
+	turn       *sts.Turn
+	generation int
+	named      bool
+	// superseded is the replies a newer one opened over before their response.done came, by
+	// response id. Each is settled by its own done, or estimated once none can come.
+	superseded map[string]*sts.Turn
+	// estimator fills in the usage of a reply settled with none reported.
+	estimator *sts.Estimator
+	// ended is closed when the read loop returns, and quiet, while Close waits, once no reply
+	// is left open.
+	ended chan struct{}
+	quiet chan struct{}
+	// itemID is the assistant item being spoken, which is what a truncate names.
+	itemID string
+	// speaking is whether the model's detector currently hears the caller, and heardSoFar
+	// the latest restatement of what they have said. xAI reports the transcript of a turn
+	// as it grows, each report restating it from the beginning, and only the one after
+	// speech stops is settled; OpenAI reports once, after the stop.
+	speaking   bool
+	heardSoFar string
+	// owed is a reply the server refused to open, for the caller's turn or for a request of
+	// ours, because another was still open. It is asked for once that one is done; a caller
+	// who speaks again cancels it, since the server answers their next stop on its own.
+	// asked is the last reply request of ours, owed as it was sent when it is refused.
+	owed    *clientEvent
+	asked   clientEvent
+	started bool
+	closed  bool
+	// billedSeconds is the last running total of billable audio xAI reported, which each
+	// reply reports the growth since.
+	billedSeconds float64
+}
+
+// New validates the settings and returns an unstarted provider.
+func New(settings Options) (*STS, error) {
+	if settings.Vendor.Provider == "" {
+		return nil, stack.Wrap(errors.New("openairealtime: a vendor is required"))
+	}
+	keys := keypool.FromEnv(settings.APIKey, settings.Vendor.APIKeyEnvVar).Pin()
+	if keys.Len() == 0 {
+		return nil, stack.Wrap(fmt.Errorf("%s: api key is required (set %s)", settings.Vendor.Provider, settings.Vendor.APIKeyEnvVar))
+	}
+	settings.APIKey = keys.Peek()
+	if settings.Model == "" {
+		settings.Model = settings.Vendor.Model
+	}
+	if settings.URL == "" {
+		settings.URL = settings.Vendor.URL
+	}
+	if !strings.HasPrefix(settings.URL, "ws://") && !strings.HasPrefix(settings.URL, "wss://") {
+		return nil, stack.Wrap(fmt.Errorf("%s: url must be ws:// or wss://, got %s", settings.Vendor.Provider, settings.URL))
+	}
+	if settings.Vendor.InputSampleRate <= 0 || settings.Vendor.OutputSampleRate <= 0 {
+		return nil, stack.Wrap(fmt.Errorf("%s: the vendor's sample rates are required", settings.Vendor.Provider))
+	}
+	capabilities := CapabilitiesFor(settings.Vendor, settings.Model)
+	switch settings.TurnDetection {
+	case "", options.TurnServerVAD:
+	case options.TurnSemantic:
+		if !capabilities.SemanticTurns {
+			return nil, stack.Wrap(fmt.Errorf("%s: %s has no semantic turn detector", settings.Vendor.Provider, settings.Model))
+		}
+	case options.TurnManual:
+		return nil, stack.Wrap(fmt.Errorf("%s: manual turns are not supported", settings.Vendor.Provider))
+	default:
+		return nil, stack.Wrap(fmt.Errorf("%s: unknown turn detection %q", settings.Vendor.Provider, settings.TurnDetection))
+	}
+	if len(settings.Tools) > 0 && !capabilities.Tools {
+		return nil, stack.Wrap(fmt.Errorf("%s: %s does not call tools", settings.Vendor.Provider, settings.Model))
+	}
+	if settings.HandshakeTimeout == 0 {
+		settings.HandshakeTimeout = 30 * time.Second
+	}
+	logger := settings.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	dialect := dialectOf(settings.Vendor, settings.Model)
+	return &STS{
+		options:      settings,
+		keys:         keys,
+		dialect:      dialect,
+		capabilities: capabilities,
+		logger:       logger.With("provider", settings.Vendor.Provider, "model", settings.Model),
+		emitter:      sts.NewEmitter(sts.EmitterBuffer),
+		superseded:   map[string]*sts.Turn{},
+		estimator:    estimatorFor(dialect),
+		ended:        make(chan struct{}),
+	}, nil
+}
+
+// estimatorFor estimates a dialect's replies cut off before their response.done. Until the
+// session's replies say otherwise, a second of audio is OpenAI's documented 20 output tokens
+// (one per 50 ms), xAI's recorded 50 (112 for 2.24 s, testdata/xai_response_done.json), and
+// for Qwen, which publishes no figure, OpenAI's. OpenAI and xAI split the output by modality.
+func estimatorFor(dialect Dialect) *sts.Estimator {
+	switch dialect {
+	case DialectOpenAI:
+		return sts.NewEstimator(20, true)
+	case DialectXAI:
+		return sts.NewEstimator(50, true)
+	default:
+		return sts.NewEstimator(20, false)
+	}
+}
+
+// closeGrace is how long Close waits for the response.done of a reply it cancelled, which
+// bills it with the vendor's own count.
+var closeGrace = time.Second
+
+// CapabilitiesFor is what a model at a vendor can be asked for. It is a table rather than
+// something learned from the session, because routing checks it before a session exists.
+func CapabilitiesFor(vendor Vendor, model string) sts.Capabilities {
+	switch dialectOf(vendor, model) {
+	case DialectOpenAI:
+		return sts.Capabilities{
+			InputModalities:        []string{options.ModalityImage},
+			Text:                   true,
+			Tools:                  true,
+			InputTranscript:        true,
+			OutputTranscript:       true,
+			SemanticTurns:          true,
+			Endpointing:            true,
+			InstructionsMidSession: true,
+			ToolsMidSession:        true,
+			Usage:                  true,
+			MaxDuration:            60 * time.Minute,
+		}
+	case DialectXAI:
+		return sts.Capabilities{
+			Text:                   true,
+			Tools:                  true,
+			InputTranscript:        true,
+			OutputTranscript:       true,
+			Endpointing:            true,
+			InstructionsMidSession: true,
+			ToolsMidSession:        true,
+			Usage:                  true,
+			BilledAudio:            true,
+		}
+	case DialectQwen:
+		// Qwen's realtime models take neither a typed turn nor a tool, and a session is
+		// configured once, before its first audio.
+		return sts.Capabilities{
+			InputModalities:  []string{options.ModalityImage},
+			InputTranscript:  true,
+			OutputTranscript: true,
+			Endpointing:      true,
+			Usage:            true,
+		}
+	case DialectQwenAudio:
+		// Qwen-Audio hears no images and reports no usage on response.done. Nothing says
+		// its instructions or tools can change once the session is open, so they cannot.
+		return sts.Capabilities{
+			Text:             true,
+			Tools:            true,
+			InputTranscript:  true,
+			OutputTranscript: true,
+			SemanticTurns:    true,
+			Endpointing:      true,
+		}
+	default:
+		return sts.Capabilities{}
+	}
+}
+
+// dialectOf is how a model at a vendor spells its session. Qwen serves two families on one
+// socket, and the model id says which.
+func dialectOf(vendor Vendor, model string) Dialect {
+	if vendor.Dialect == DialectQwen && strings.HasPrefix(model, qwenAudioPrefix) {
+		return DialectQwenAudio
+	}
+	return vendor.Dialect
+}
+
+// Start dials the socket, configures the session and waits for the server to accept the
+// configuration. It returns once the model is ready to hear the caller.
+func (s *STS) Start(ctx context.Context) error {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return stack.Wrap(fmt.Errorf("%s: already started", s.options.Vendor.Provider))
+	}
+	s.started = true
+	s.mu.Unlock()
+
+	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
+	conn, response, key, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+		return s.endpoint(), http.Header{"Authorization": []string{"Bearer " + key}}
+	})
+	if err != nil {
+		if response != nil {
+			return stack.Wrap(fmt.Errorf("%s: dial: %w (http %d)", s.options.Vendor.Provider, err, response.StatusCode))
+		}
+		return stack.Wrap(fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err))
+	}
+	s.conn, s.key = conn, key
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+
+	if err := s.handshake(); err != nil {
+		conn.Close()
+		return err
+	}
+
+	s.emitter.Send(sts.Connected{Provider: s.options.Vendor.Provider, Model: s.options.Model, At: time.Now()})
+	go s.readLoop()
+	return nil
+}
+
+// ProcessAudio streams one chunk of the caller's speech. The participant labels whatever
+// the model hears in it.
+func (s *STS) ProcessAudio(pcm sts.PcmData, participant sts.Participant) error {
+	if err := pcm.Validate(sts.InputSampleRate); err != nil {
+		return fmt.Errorf("%s: %w", s.options.Vendor.Provider, err)
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.participant = participant
+	s.mu.Unlock()
+
+	if pcm.SampleRate != s.options.Vendor.InputSampleRate {
+		pcm = audio.Resample(pcm, s.options.Vendor.InputSampleRate, 1)
+	}
+	return s.send(clientEvent{Type: eventAudioAppend, Audio: base64.StdEncoding.EncodeToString(pcm.Bytes())})
+}
+
+// SendText injects a typed turn and asks the model to answer it.
+func (s *STS) SendText(text string, participant sts.Participant) error {
+	if !s.capabilities.Text {
+		return stack.Wrap(sts.ErrNoText)
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.participant = participant
+	s.mu.Unlock()
+
+	if err := s.send(clientEvent{Type: eventItemCreate, Item: &item{
+		Type:    "message",
+		Role:    "user",
+		Content: []content{{Type: "input_text", Text: text}},
+	}}); err != nil {
+		return err
+	}
+	return s.ask(clientEvent{Type: eventResponseCreate})
+}
+
+// SendFrame offers the model a still image as context for its next reply.
+func (s *STS) SendFrame(frame llm.ImagePart) error {
+	if !s.capabilities.Accepts(options.ModalityImage) {
+		return sts.ErrNoImages
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	if len(frame.Data) == 0 {
+		return fmt.Errorf("%s: a frame has to carry its bytes", s.options.Vendor.Provider)
+	}
+
+	if s.dialect == DialectQwen {
+		return s.send(clientEvent{Type: eventImageAppend, Image: base64.StdEncoding.EncodeToString(frame.Data)})
+	}
+	return s.send(clientEvent{Type: eventItemCreate, Item: &item{
+		Type:    "message",
+		Role:    "user",
+		Content: []content{{Type: "input_image", ImageURL: frame.DataURI()}},
+	}})
+}
+
+// SetInstructions changes the system prompt for the replies that follow.
+func (s *STS) SetInstructions(text string) error {
+	if !s.capabilities.InstructionsMidSession {
+		return stack.Wrap(sts.ErrInstructionsFixed)
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	update := &session{Instructions: text}
+	if s.dialect == DialectOpenAI {
+		update.Type = "realtime"
+	}
+	return s.send(clientEvent{Type: eventSessionUpdate, Session: update})
+}
+
+// SetTools replaces what the model may call.
+func (s *STS) SetTools(tools []llm.Tool) error {
+	if !s.capabilities.Tools {
+		return sts.ErrNoTools
+	}
+	if !s.capabilities.ToolsMidSession {
+		return sts.ErrToolsFixed
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	update := &session{Tools: toolsOf(s.dialect, tools)}
+	if s.dialect == DialectOpenAI {
+		update.Type = "realtime"
+	}
+	return s.send(clientEvent{Type: eventSessionUpdate, Session: update})
+}
+
+// Answer returns a tool's result and asks the model to carry on, which this protocol does
+// not do on its own.
+func (s *STS) Answer(callID string, output string, err error) error {
+	if !s.capabilities.Tools {
+		return sts.ErrNoTools
+	}
+	if readyErr := s.ready(); readyErr != nil {
+		return readyErr
+	}
+	if err != nil {
+		output = "Error: " + err.Error()
+	}
+	if sendErr := s.send(clientEvent{Type: eventItemCreate, Item: &item{
+		Type:   "function_call_output",
+		CallID: callID,
+		Output: output,
+	}}); sendErr != nil {
+		return sendErr
+	}
+	return s.ask(clientEvent{Type: eventResponseCreate})
+}
+
+// Prompt asks the model to reply now, guided by the text.
+func (s *STS) Prompt(text string) error {
+	if !s.capabilities.Text {
+		return stack.Wrap(sts.ErrNoText)
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	// Qwen-Audio's response.create takes no instructions, so the guidance goes in as a
+	// system message ahead of the reply it asks for.
+	if s.dialect == DialectQwenAudio {
+		if err := s.send(clientEvent{Type: eventItemCreate, Item: &item{
+			Type:    "message",
+			Role:    "system",
+			Content: []content{{Type: "input_text", Text: text}},
+		}}); err != nil {
+			return err
+		}
+		return s.ask(clientEvent{Type: eventResponseCreate})
+	}
+	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: text}})
+}
+
+// UpdatesCalls reports whether the model can be asked to speak while a call is open with no
+// tools for that reply, which OpenAI's response.create documents.
+func (s *STS) UpdatesCalls() bool { return s.dialect == DialectOpenAI && s.capabilities.Tools }
+
+// UpdateCall asks the model to speak now about a call that is still open. A reply's
+// instructions replace the session's, so the agent's go with the guidance. The reply may call
+// nothing, and the call's function_call_output still goes in when its result comes.
+func (s *STS) UpdateCall(update sts.CallUpdate) error {
+	if !s.UpdatesCalls() {
+		return stack.Wrap(sts.ErrNoCallUpdates)
+	}
+	if err := s.ready(); err != nil {
+		return err
+	}
+	prompt := strings.TrimSpace(update.Instructions + "\n\n" + update.Guidance)
+	return s.ask(clientEvent{Type: eventResponseCreate, Response: &responseRequest{Instructions: prompt, ToolChoice: "none"}})
+}
+
+// Interrupt stops the reply in flight and tells the model how much of it was heard, so its
+// own record of the conversation ends where the listener's does.
+func (s *STS) Interrupt(playedMs int) error {
+	if err := s.ready(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	turn, itemID := s.turn, s.itemID
+	s.owed = nil
+	s.mu.Unlock()
+	if turn == nil {
+		return nil
+	}
+
+	if err := s.send(clientEvent{Type: eventResponseCancel}); err != nil {
+		return err
+	}
+	// Qwen-Audio has no truncate: a cancel keeps what was generated, heard or not.
+	if itemID == "" || s.dialect == DialectQwenAudio {
+		return nil
+	}
+	if playedMs <= 0 {
+		playedMs = turn.SentMs()
+	}
+	index := 0
+	return s.send(clientEvent{Type: eventItemTruncate, ItemID: itemID, ContentIndex: &index, AudioEndMs: &playedMs})
+}
+
+// Events returns what the model heard, said and asked for.
+func (s *STS) Events() <-chan sts.Event { return s.emitter.Events() }
+
+// Close ends the session. A reply still in flight is cancelled and given closeGrace for the
+// response.done that bills it; whatever is still open after that is settled as interrupted
+// on an estimate, so every reply is billed once.
+func (s *STS) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.owed = nil
+	conn, open, cancel := s.conn, s.turn != nil || len(s.superseded) > 0, s.turn != nil
+	if open && conn != nil {
+		s.quiet = make(chan struct{})
+	}
+	quiet := s.quiet
+	s.mu.Unlock()
+
+	if quiet != nil {
+		if cancel {
+			if err := s.send(clientEvent{Type: eventResponseCancel}); err != nil {
+				s.logger.Debug("could not cancel the reply in flight", "error", err)
+			}
+		}
+		grace := time.NewTimer(closeGrace)
+		select {
+		case <-quiet:
+		case <-s.ended:
+		case <-grace.C:
+		}
+		grace.Stop()
+	}
+	s.settleAll()
+	if conn != nil {
+		conn.Close()
+	}
+	s.emitter.Close()
+	return nil
+}
+
+// Provider implements sts.STS.
+func (s *STS) Provider() string { return s.options.Vendor.Provider }
+
+// Model implements sts.STS.
+func (s *STS) Model() string { return s.options.Model }
+
+// Voice is the voice asked for, or empty when the vendor picks it.
+func (s *STS) Voice() string { return s.options.Voice }
+
+// SampleRate is the rate the model speaks at.
+func (s *STS) SampleRate() int { return s.options.Vendor.OutputSampleRate }
+
+// Capabilities implements sts.STS.
+func (s *STS) Capabilities() sts.Capabilities { return s.capabilities }
+
+// TranscriptionModel is the transcriber OpenAI bills writing down the caller's turns to, apart
+// from the conversation, and empty where nothing is billed so: no transcript was asked for, or
+// the vendor is not OpenAI.
+func (s *STS) TranscriptionModel() string {
+	if s.dialect != DialectOpenAI {
+		return ""
+	}
+	if configured := s.transcription(); configured != nil {
+		return configured.Model
+	}
+	return ""
+}
+
+// Client exposes the underlying WebSocket so callers can use the protocol directly.
+func (s *STS) Client() *websocket.Conn { return s.conn }
+
+// endpoint is the socket with the model on its query string, which is where every vendor
+// here takes it.
+func (s *STS) endpoint() string {
+	separator := "?"
+	if strings.Contains(s.options.URL, "?") {
+		separator = "&"
+	}
+	return s.options.URL + separator + "model=" + url.QueryEscape(s.options.Model)
+}
+
+// ready reports whether the session can be sent anything.
+func (s *STS) ready() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return stack.Wrap(fmt.Errorf("%s: session closed", s.options.Vendor.Provider))
+	}
+	if !s.started || s.conn == nil {
+		return stack.Wrap(fmt.Errorf("%s: not started", s.options.Vendor.Provider))
+	}
+	return nil
+}
+
+// handshake waits for the server to open the session, configures it, and waits for the
+// server to say the configuration took. Audio sent before that would be heard by a session
+// configured some other way.
+func (s *STS) handshake() error {
+	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
+		return stack.Wrap(fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err))
+	}
+	defer s.conn.SetReadDeadline(time.Time{})
+
+	created, err := s.next()
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	if created.Type == eventError {
+		return stack.Wrap(fmt.Errorf("%s: session refused: %w", s.options.Vendor.Provider, created.Error))
+	}
+	if created.Type != eventSessionCreated {
+		return stack.Wrap(fmt.Errorf("%s: expected %s, got %s", s.options.Vendor.Provider, eventSessionCreated, created.Type))
+	}
+
+	if err := s.send(clientEvent{Type: eventSessionUpdate, Session: s.session()}); err != nil {
+		return stack.Wrap(fmt.Errorf("%s: send session: %w", s.options.Vendor.Provider, err))
+	}
+	for {
+		event, err := s.next()
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		switch event.Type {
+		case eventSessionUpdated:
+			return nil
+		case eventError:
+			return stack.Wrap(fmt.Errorf("%s: session rejected: %w", s.options.Vendor.Provider, event.Error))
+		}
+	}
+}
+
+// next reads one server frame during the handshake.
+func (s *STS) next() (serverEvent, error) {
+	_, raw, err := s.conn.ReadMessage()
+	if err != nil {
+		return serverEvent{}, stack.Wrap(fmt.Errorf("%s: read handshake: %w", s.options.Vendor.Provider, err))
+	}
+	var event serverEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return serverEvent{}, stack.Wrap(fmt.Errorf("%s: decode handshake: %w", s.options.Vendor.Provider, err))
+	}
+	if event.Type == eventError && event.Error == nil {
+		event.Error = &apiError{Message: strings.TrimSpace(string(raw))}
+	}
+	if event.Type == eventError && event.Error.Code == codeInvalidAPIKey {
+		s.keys.InvalidKey()
+	}
+	return event, nil
+}
+
+// session is the configuration frame, spelled the way this vendor wants it.
+func (s *STS) session() *session {
+	configured := &session{Instructions: s.options.Instructions, Tools: toolsOf(s.dialect, s.options.Tools)}
+	turns := s.turnDetection()
+	// xAI answers the caller on its own only when its detector is told to: a session
+	// that names no detector waits to be asked for every reply.
+	if s.dialect == DialectXAI {
+		if turns == nil {
+			turns = &turnDetection{Type: "server_vad"}
+		}
+		answers := true
+		turns.CreateResponse = &answers
+	}
+
+	switch s.dialect {
+	case DialectOpenAI:
+		configured.Type = "realtime"
+		configured.OutputModalities = []string{"audio"}
+		configured.Audio = &audioConfig{
+			Input: &audioInput{
+				Format:        &audioFormat{Type: "audio/pcm", Rate: s.options.Vendor.InputSampleRate},
+				Transcription: s.transcription(),
+				TurnDetection: turns,
+			},
+			Output: &audioOutput{
+				Format: &audioFormat{Type: "audio/pcm", Rate: s.options.Vendor.OutputSampleRate},
+				Voice:  s.options.Voice,
+			},
+		}
+	case DialectXAI:
+		configured.Modalities = []string{"text", "audio"}
+		configured.Voice = s.options.Voice
+		configured.Audio = &audioConfig{
+			Input:  &audioInput{Format: &audioFormat{Type: "audio/pcm", Rate: s.options.Vendor.InputSampleRate}},
+			Output: &audioOutput{Format: &audioFormat{Type: "audio/pcm", Rate: s.options.Vendor.OutputSampleRate}},
+		}
+		configured.InputAudioTranscription = s.transcription()
+		configured.TurnDetection = turns
+	case DialectQwen:
+		configured.Modalities = []string{"text", "audio"}
+		configured.Voice = s.options.Voice
+		configured.InputAudioFormat = "pcm16"
+		configured.OutputAudioFormat = "pcm24"
+		// Qwen's session always transcribes what it heard, and always with the one
+		// transcriber it has, so asking is not optional here.
+		configured.InputAudioTranscription = &transcription{Model: qwenTranscriber}
+		configured.TurnDetection = turns
+	case DialectQwenAudio:
+		// Qwen-Audio always transcribes, with a transcriber it does not let anyone name.
+		configured.Modalities = []string{"text", "audio"}
+		configured.Voice = s.options.Voice
+		configured.InputAudioFormat = "pcm"
+		configured.OutputAudioFormat = "pcm"
+		configured.TurnDetection = turns
+	}
+	return configured
+}
+
+// transcription asks the model to write down what it heard, or leaves the default when
+// nobody asked.
+func (s *STS) transcription() *transcription {
+	if !s.options.InputTranscript {
+		return nil
+	}
+	model := s.options.TranscriptionModel
+	if model == "" && s.dialect == DialectOpenAI {
+		model = openaiTranscriber
+	}
+	return &transcription{Model: model}
+}
+
+// turnDetection is the detector the session was asked for, or nil for the vendor's own.
+func (s *STS) turnDetection() *turnDetection {
+	switch s.options.TurnDetection {
+	case options.TurnSemantic:
+		if s.dialect == DialectQwenAudio {
+			return &turnDetection{Type: "smart_turn"}
+		}
+		return &turnDetection{
+			Type:              "semantic_vad",
+			Eagerness:         s.options.Eagerness,
+			InterruptResponse: s.options.InterruptResponse,
+		}
+	case options.TurnServerVAD:
+		return &turnDetection{
+			Type:              "server_vad",
+			Threshold:         s.options.Threshold,
+			PrefixPaddingMs:   s.options.PrefixPaddingMs,
+			SilenceDurationMs: s.options.SilenceMs,
+			InterruptResponse: s.options.InterruptResponse,
+		}
+	}
+	// Nothing was asked for by name. A threshold or a barge-in preference on its own
+	// still needs a detector to hang off, and a silence timer is every vendor's default.
+	if s.options.Threshold != nil || s.options.SilenceMs != nil || s.options.PrefixPaddingMs != nil || s.options.InterruptResponse != nil {
+		return &turnDetection{
+			Type:              "server_vad",
+			Threshold:         s.options.Threshold,
+			PrefixPaddingMs:   s.options.PrefixPaddingMs,
+			SilenceDurationMs: s.options.SilenceMs,
+			InterruptResponse: s.options.InterruptResponse,
+		}
+	}
+	return nil
+}
+
+// toolsOf is the model's shape for what it may call.
+func toolsOf(dialect Dialect, tools []llm.Tool) []tool {
+	if len(tools) == 0 {
+		return nil
+	}
+	shaped := make([]tool, 0, len(tools))
+	for _, offered := range tools {
+		if dialect == DialectQwenAudio {
+			shaped = append(shaped, tool{Type: "function", Function: &function{
+				Name:        offered.Name,
+				Description: offered.Description,
+				Parameters:  offered.Parameters,
+			}})
+			continue
+		}
+		shaped = append(shaped, tool{
+			Type:        "function",
+			Name:        offered.Name,
+			Description: offered.Description,
+			Parameters:  offered.Parameters,
+		})
+	}
+	return shaped
+}
+
+func (s *STS) send(event clientEvent) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		return stack.Wrap(fmt.Errorf("%s: write %s: %w", s.options.Vendor.Provider, event.Type, err))
+	}
+	return nil
+}
+
+// readLoop translates server frames into events until the connection ends.
+func (s *STS) readLoop() {
+	defer close(s.ended)
+	for {
+		_, raw, err := s.conn.ReadMessage()
+		if err != nil {
+			s.handleReadError(err)
+			return
+		}
+
+		var event serverEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			s.logger.Debug("undecodable frame", "error", err, "payload", string(raw))
+			continue
+		}
+		s.handleMessage(event)
+	}
+}
+
+// handleReadError settles what the connection was in the middle of. A reply cut off by a
+// dead socket is still a reply that was billed for.
+func (s *STS) handleReadError(err error) {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return
+	}
+
+	s.settleAll()
+	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		s.emitter.Send(sts.Disconnected{
+			Provider: s.options.Vendor.Provider,
+			Model:    s.options.Model,
+			Clean:    true,
+			At:       time.Now(),
+		})
+		return
+	}
+	s.emitter.Send(sts.Error{
+		Provider: s.options.Vendor.Provider,
+		Model:    s.options.Model,
+		Err:      err,
+		Context:  "read",
+		Fatal:    true,
+	})
+}
+
+func (s *STS) handleMessage(event serverEvent) {
+	switch event.Type {
+	case eventSpeechStarted:
+		s.mu.Lock()
+		s.speaking = true
+		s.owed = nil
+		s.mu.Unlock()
+		s.emitter.Send(sts.SpeechStarted{Participant: s.speaker(), At: time.Now()})
+
+	case eventSpeechStopped:
+		s.stoppedHearing()
+
+	case eventCommitted:
+		// A semantic turn detector commits without ever saying speech stopped, so the
+		// commit is the moment the caller started waiting. Under a silence timer the stop
+		// came first and this adds nothing.
+		s.mu.Lock()
+		waiting := !s.heardAt.IsZero() || (s.turn != nil && s.turn == s.stoppedFor)
+		s.mu.Unlock()
+		if !waiting {
+			s.stoppedHearing()
+		}
+
+	case eventInputDelta:
+		if event.Delta != "" {
+			s.emitter.Send(sts.InputTranscript{Participant: s.speaker(), Mode: stt.ModeDelta, Text: event.Delta})
+		}
+
+	case eventInputCompleted:
+		// The bill goes first: a caller who hangs up once they have the transcript closes
+		// the emitter, which drops every later send.
+		s.transcribed(event)
+		s.heardTranscript(strings.TrimSpace(event.Transcript))
+
+	case eventResponseCreated:
+		s.startTurn(event)
+
+	case eventOutputItemAdded:
+		if event.Item != nil && event.Item.Type == "message" {
+			s.mu.Lock()
+			s.itemID = event.Item.ID
+			s.mu.Unlock()
+		}
+
+	case eventAudioDelta, eventAudioDeltaOld:
+		s.speak(event)
+
+	case eventTranscriptDelta, eventTranscriptDeltaV1:
+		if turn := s.turnNamed(event.ResponseID); turn != nil {
+			turn.Said(event.Delta)
+		}
+		if event.Delta != "" {
+			s.emitter.Send(sts.OutputTranscript{ResponseID: s.responseID(event.ResponseID), Mode: stt.ModeDelta, Text: event.Delta})
+		}
+
+	case eventTranscriptDone, eventTranscriptDoneV1:
+		if text := strings.TrimSpace(event.Transcript); text != "" {
+			s.emitter.Send(sts.OutputTranscript{ResponseID: s.responseID(event.ResponseID), Mode: stt.ModeFinal, Text: text})
+		}
+
+	case eventArgumentsDone:
+		s.emitter.Send(sts.ToolCall{
+			ResponseID: s.responseID(event.ResponseID),
+			CallID:     event.CallID,
+			Name:       event.Name,
+			Arguments:  event.Arguments,
+		})
+
+	case eventResponseDone:
+		s.finishTurn(event)
+
+	case eventError:
+		s.fail(event)
+
+	case eventRateLimits:
+		for _, limit := range event.RateLimits {
+			if limit.Remaining != nil && slices.Contains(rateLimitNames, limit.Name) {
+				s.keys.Remaining(s.key, limit.Name, *limit.Remaining)
+			}
+		}
+
+	default:
+		if s.logger.Enabled(context.Background(), slog.LevelDebug) {
+			s.logger.Debug("unhandled frame", "type", event.Type)
+		}
+	}
+}
+
+// stoppedHearing marks the moment the caller finished, which the next reply is timed from.
+// A reply opened while the caller was still talking, as a Prompt can, takes the stop
+// instead: the server refuses another reply while it is open, so none that follows answers
+// this stop, and one that did would be timed from a wait long over.
+func (s *STS) stoppedHearing() {
+	now := time.Now()
+	s.mu.Lock()
+	s.speaking = false
+	if s.turn != nil {
+		s.turn.HeardAt(now)
+		s.stoppedFor = s.turn
+	} else {
+		s.heardAt = now
+	}
+	participant := s.participant
+	s.mu.Unlock()
+	s.emitter.Send(sts.SpeechStopped{Participant: participant, At: now})
+}
+
+// heardTranscript reports what the model wrote down of the caller. While they are still
+// talking it is a restatement that the next one supersedes; once they have stopped it is
+// the transcript the turn settles on.
+func (s *STS) heardTranscript(text string) {
+	if text == "" {
+		return
+	}
+	s.mu.Lock()
+	mode := stt.ModeFinal
+	if s.speaking {
+		mode = stt.ModeReplacement
+		s.heardSoFar = text
+	} else {
+		s.heardSoFar = ""
+	}
+	participant := s.participant
+	s.mu.Unlock()
+	s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: mode, Text: text})
+}
+
+// transcribed reports what writing down a caller turn cost, where OpenAI bills its transcriber
+// on top of the conversation: by the tokens it read and wrote, or by the seconds it heard for
+// a transcriber billed that way, such as whisper-1.
+func (s *STS) transcribed(event serverEvent) {
+	used := event.Usage
+	if s.dialect != DialectOpenAI || used == nil || event.ItemID == "" {
+		return
+	}
+	model := cmp.Or(s.TranscriptionModel(), openaiTranscriber)
+	if used.Type == "duration" {
+		if used.Seconds > 0 {
+			s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, AudioMs: int64(math.Round(used.Seconds * 1000))})
+		}
+		return
+	}
+	cost := sts.Usage{InputTokens: used.InputTokens, OutputTokens: used.OutputTokens, OutputTextTokens: used.OutputTokens}
+	if input := used.InputTokenDetails; input != nil {
+		cost.InputTextTokens, cost.InputAudioTokens = input.TextTokens, input.AudioTokens
+	} else {
+		cost.InputAudioTokens = used.InputTokens
+	}
+	if cost.InputTokens == 0 && cost.OutputTokens == 0 {
+		return
+	}
+	s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, Usage: cost})
+}
+
+// settleHeard settles a restatement nothing followed. The reply beginning to speak is the
+// latest moment the caller's turn can still be open, so what was heard by then is what
+// was said.
+func (s *STS) settleHeard() {
+	s.mu.Lock()
+	text := s.heardSoFar
+	s.heardSoFar = ""
+	participant := s.participant
+	s.mu.Unlock()
+	if text != "" {
+		s.emitter.Send(sts.InputTranscript{Participant: participant, Mode: stt.ModeFinal, Text: text})
+	}
+}
+
+// startTurn opens the bookkeeping for a reply. A reply that arrives while another is still
+// open supersedes it: the earlier one waits for its own response.done, which carries what it
+// cost, and one with no vendor id for a done to name is settled now, on an estimate.
+func (s *STS) startTurn(event serverEvent) {
+	id := ""
+	if event.Response != nil {
+		id = event.Response.ID
+	}
+
+	s.mu.Lock()
+	earlier := s.turn
+	if earlier != nil && s.named {
+		s.superseded[earlier.ID] = earlier
+		earlier = nil
+	}
+	s.generation++
+	turn := sts.NewTurn(id, s.generation, s.heardAt)
+	s.heardAt = time.Time{}
+	s.itemID = ""
+	s.turn, s.named = turn, id != ""
+	s.mu.Unlock()
+
+	if earlier != nil {
+		s.complete(earlier, true, sts.Usage{})
+	}
+	s.emitter.Send(sts.ResponseStarted{ResponseID: turn.ID, Generation: turn.Generation, At: time.Now()})
+}
+
+// speak forwards a piece of the reply's audio.
+func (s *STS) speak(event serverEvent) {
+	raw, err := base64.StdEncoding.DecodeString(event.Delta)
+	if err != nil {
+		s.logger.Debug("undecodable audio", "error", err)
+		return
+	}
+
+	s.mu.Lock()
+	if event.ItemID != "" {
+		s.itemID = event.ItemID
+	}
+	turn := s.turn
+	if turn == nil {
+		// Audio without a response.created before it: the server skipped the opening
+		// frame, which is not a reason to drop what the model said.
+		s.generation++
+		turn = sts.NewTurn(event.ResponseID, s.generation, s.heardAt)
+		s.heardAt = time.Time{}
+		s.turn, s.named = turn, event.ResponseID != ""
+		s.mu.Unlock()
+		s.emitter.Send(sts.ResponseStarted{ResponseID: turn.ID, Generation: turn.Generation, At: time.Now()})
+	} else {
+		s.mu.Unlock()
+	}
+
+	s.settleHeard()
+	pcm := audio.FromBytes(raw, s.options.Vendor.OutputSampleRate, 1)
+	s.emitter.Send(turn.Chunk(pcm))
+}
+
+// finishTurn settles the reply the server has closed, with what it cost and whether the
+// caller cut it off.
+func (s *STS) finishTurn(event serverEvent) {
+	var status, reason string
+	var cost sts.Usage
+	var failure *apiError
+	reported := event.Usage
+	if event.Response != nil {
+		status = event.Response.Status
+		if event.Response.Usage != nil && *event.Response.Usage != (usage{}) {
+			reported = event.Response.Usage
+		}
+		if event.Response.StatusDetails != nil {
+			reason = event.Response.StatusDetails.Reason
+			failure = event.Response.StatusDetails.Error
+		}
+	}
+	cost = usageOf(reported)
+	s.mu.Lock()
+	// A done for a reply a newer one superseded settles that reply. One for a reply this
+	// session does not know, or has settled, settles nothing: the reply open now is not the
+	// one it is about.
+	var earlier *sts.Turn
+	if event.Response != nil && event.Response.ID != "" {
+		earlier = s.superseded[event.Response.ID]
+		delete(s.superseded, event.Response.ID)
+	}
+	late := earlier != nil || s.turn != nil && event.Response != nil && event.Response.ID != "" && event.Response.ID != s.turn.ID
+	// The growth is billed by the reply it settles, so with none in flight, or for a reply
+	// settled already, it is left for the next one, which the vendor's next total includes.
+	if reported != nil && reported.BillableAudioSeconds != nil && s.turn != nil && !late {
+		grown := max(*reported.BillableAudioSeconds-s.billedSeconds, 0)
+		s.billedSeconds = max(*reported.BillableAudioSeconds, s.billedSeconds)
+		cost.BilledAudioMs, cost.AudioBilled = int64(math.Round(grown*1000)), true
+	}
+	s.mu.Unlock()
+
+	if status == "failed" {
+		err := error(failure)
+		if failure == nil {
+			err = errors.New("the response failed")
+		}
+		s.emitter.Send(sts.Error{
+			Provider:   s.options.Vendor.Provider,
+			Model:      s.options.Model,
+			ResponseID: s.responseID(event.Response.ID),
+			Err:        err,
+			Context:    "response",
+		})
+	}
+
+	interrupted := status == "cancelled" || reason == "turn_detected" || reason == "client_cancelled"
+	switch {
+	case earlier != nil:
+		// It was cut off by the reply that took its place, however its done describes it.
+		s.complete(earlier, true, cost)
+		s.calm()
+	case !late:
+		s.settleTurn(interrupted, cost)
+	}
+
+	s.mu.Lock()
+	owed, closed := s.owed, s.closed
+	s.owed = nil
+	s.mu.Unlock()
+	if owed != nil && !closed {
+		s.answer(*owed)
+	}
+}
+
+// settleTurn closes the reply in flight, if there is one, and reports it.
+func (s *STS) settleTurn(interrupted bool, cost sts.Usage) {
+	s.mu.Lock()
+	turn := s.turn
+	s.turn = nil
+	s.itemID = ""
+	s.mu.Unlock()
+	if turn != nil {
+		s.complete(turn, interrupted, cost)
+	}
+	s.calm()
+}
+
+// settleAll settles every reply still open, those superseded and then the one in flight, for
+// which no response.done is coming any more.
+func (s *STS) settleAll() {
+	s.mu.Lock()
+	earlier := slices.SortedFunc(maps.Values(s.superseded), func(a, b *sts.Turn) int {
+		return a.Generation - b.Generation
+	})
+	clear(s.superseded)
+	s.mu.Unlock()
+	for _, turn := range earlier {
+		s.complete(turn, true, sts.Usage{})
+	}
+	s.settleTurn(true, sts.Usage{})
+}
+
+// complete reports a reply settled. A vendor that counts its replies but said nothing for
+// this one, cut off before its response.done, has it estimated from what it streamed.
+func (s *STS) complete(turn *sts.Turn, interrupted bool, cost sts.Usage) {
+	if s.capabilities.Usage {
+		if cost.Counted() {
+			s.estimator.Reported(turn, cost)
+		} else {
+			estimate := s.estimator.Estimate(turn)
+			estimate.BilledAudioMs, estimate.AudioBilled = cost.BilledAudioMs, cost.AudioBilled
+			cost = estimate
+		}
+	}
+	s.emitter.Send(turn.Complete(s.options.Vendor.Provider, s.options.Model, interrupted, cost))
+}
+
+// calm lets a Close waiting for the open replies go on once none is left.
+func (s *STS) calm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.quiet != nil && s.turn == nil && len(s.superseded) == 0 {
+		close(s.quiet)
+		s.quiet = nil
+	}
+}
+
+// turnNamed is the open reply an event names, or the one in flight when it names none.
+func (s *STS) turnNamed(id string) *sts.Turn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if earlier, ok := s.superseded[id]; ok {
+		return earlier
+	}
+	return s.turn
+}
+
+// fail reports a server error. A cancel that found no reply to cancel is not one.
+func (s *STS) fail(event serverEvent) {
+	if event.Error == nil {
+		return
+	}
+	if event.Error.Code == cancelNotActive {
+		s.logger.Debug("nothing to cancel")
+		return
+	}
+	if event.Error.Code == activeResponse && s.owe(event.Error.EventID) {
+		return
+	}
+	s.emitter.Send(sts.Error{
+		Provider: s.options.Vendor.Provider,
+		Model:    s.options.Model,
+		Err:      event.Error,
+		Context:  "server",
+	})
+}
+
+// owe answers a reply the server refused to open: after the reply in flight, or now when
+// that reply is already done, because the refusal can arrive after its response.done (live,
+// gpt-realtime-2.1, 2026-10-20). A caller already speaking again is answered at their next
+// stop by the server itself, also when the reply is still open. A refusal of ours with no
+// reply open is not owed: it reports false, and the caller reports it as an error.
+func (s *STS) owe(eventID string) bool {
+	s.mu.Lock()
+	open, speaking := s.turn != nil, s.speaking
+	request := clientEvent{Type: eventResponseCreate}
+	if eventID == clientResponse {
+		if !open {
+			s.mu.Unlock()
+			return false
+		}
+		request = s.asked
+	}
+	if open && (eventID == clientResponse || (s.owed == nil && !speaking)) {
+		s.owed = &request
+	}
+	s.mu.Unlock()
+	if !open && !speaking {
+		s.answer(request)
+	}
+	return true
+}
+
+// ask sends a reply request of ours, remembered so a refusal of it is asked for again.
+func (s *STS) ask(event clientEvent) error {
+	event.EventID = clientResponse
+	s.mu.Lock()
+	s.asked = event
+	s.mu.Unlock()
+	return s.send(event)
+}
+
+// answer asks for the reply that is owed. A refusal of this one names the request, so it is
+// owed again only while another reply is open, and reported otherwise.
+func (s *STS) answer(request clientEvent) {
+	if err := s.ask(request); err != nil {
+		s.emitter.Send(sts.Error{
+			Provider: s.options.Vendor.Provider,
+			Model:    s.options.Model,
+			Err:      err,
+			Context:  "response",
+		})
+	}
+}
+
+// responseID is the id of the reply an event belongs to, which is the event's own when it
+// names one and the reply in flight otherwise.
+func (s *STS) responseID(named string) string {
+	if named != "" {
+		return named
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn == nil {
+		return ""
+	}
+	return s.turn.ID
+}
+
+// speaker is who the most recent audio came from.
+func (s *STS) speaker() sts.Participant {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.participant
+}
+
+// usageOf is what a reply cost in this package's words. OpenAI bills each modality at its
+// own rate, text far below audio, so the split is kept; the reasoning is inside the output
+// text.
+func usageOf(reported *usage) sts.Usage {
+	if reported == nil {
+		return sts.Usage{}
+	}
+	cost := sts.Usage{InputTokens: reported.InputTokens, OutputTokens: reported.OutputTokens}
+	if input := reported.InputTokenDetails; input != nil {
+		cost.CachedInputTokens = input.CachedTokens
+		cost.InputTextTokens = input.TextTokens
+		cost.InputAudioTokens = input.AudioTokens
+		cost.InputImageTokens = input.ImageTokens
+		if cached := input.CachedTokensDetails; cached != nil {
+			cost.CachedInputTextTokens = cached.TextTokens
+			cost.CachedInputAudioTokens = cached.AudioTokens
+			cost.CachedInputImageTokens = cached.ImageTokens
+		}
+	}
+	if output := reported.OutputTokenDetails; output != nil {
+		cost.OutputTextTokens = output.TextTokens
+		cost.OutputAudioTokens = output.AudioTokens
+		cost.ReasoningTokens = output.ReasoningTokens
+		// The split replaces the output total in the price, so whatever the details leave
+		// out is billed as text rather than not at all.
+		cost.OutputTextTokens += max(reported.OutputTokens-output.TextTokens-output.AudioTokens, 0)
+	}
+	return cost
+}

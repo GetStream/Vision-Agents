@@ -1,0 +1,411 @@
+package gemini
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// GeminiSocketSuite exercises the provider against a Live API that is answering, which is
+// where the handshake, the audio encoding and the wait for the tail of a call live.
+type GeminiSocketSuite struct {
+	suite.Suite
+}
+
+func TestGeminiSocketSuite(t *testing.T) {
+	suite.Run(t, new(GeminiSocketSuite))
+}
+
+// fakeLive is a Live API that accepts one session. It completes the setup exchange itself,
+// so a test starts from a connection that is ready for audio.
+type fakeLive struct {
+	server *httptest.Server
+	conns  chan *websocket.Conn
+	setups chan setup
+	url    chan string
+	done   chan struct{}
+}
+
+func newFakeLive() *fakeLive {
+	fake := &fakeLive{
+		conns:  make(chan *websocket.Conn, 1),
+		setups: make(chan setup, 1),
+		url:    make(chan string, 1),
+		done:   make(chan struct{}),
+	}
+
+	upgrader := websocket.Upgrader{}
+	fake.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fake.url <- r.URL.String()
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var frame clientMessage
+		if err := json.Unmarshal(raw, &frame); err != nil || frame.Setup == nil {
+			return
+		}
+		fake.setups <- *frame.Setup
+
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"setupComplete":{}}`)); err != nil {
+			return
+		}
+		fake.conns <- conn
+		<-fake.done
+	}))
+	return fake
+}
+
+func (f *fakeLive) endpoint() string {
+	return "ws://" + strings.TrimPrefix(f.server.URL, "http://")
+}
+
+func (f *fakeLive) close() {
+	close(f.done)
+	f.server.Close()
+}
+
+// connect returns a started provider and the server side of its connection.
+func (s *GeminiSocketSuite) connect(fake *fakeLive, options Options) (*STT, *websocket.Conn) {
+	options.URL = fake.endpoint()
+	if options.APIKey == "" {
+		options.APIKey = "test-key"
+	}
+	// The fake answers at once when it answers at all, so no test should pay the wait a
+	// real call allows for the tail.
+	if options.FlushTimeout == 0 {
+		options.FlushTimeout = 500 * time.Millisecond
+	}
+	provider, err := New(options)
+	s.Require().NoError(err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.T().Cleanup(cancel)
+	s.Require().NoError(provider.Start(ctx))
+
+	select {
+	case conn := <-fake.conns:
+		return provider, conn
+	case <-time.After(5 * time.Second):
+		s.FailNow("the provider never connected")
+		return nil, nil
+	}
+}
+
+// speak sends one chunk of audio.
+func (s *GeminiSocketSuite) speak(provider *STT, samples []int16) {
+	pcm := stt.PcmData{Samples: samples, SampleRate: stt.SampleRate, Channels: 1}
+	s.Require().NoError(provider.ProcessAudio(pcm, stt.Participant{ID: "alice", UserID: "alice"}))
+}
+
+// nextFrame reads the next message the provider sent upstream.
+func (s *GeminiSocketSuite) nextFrame(conn *websocket.Conn) clientMessage {
+	s.Require().NoError(conn.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	_, raw, err := conn.ReadMessage()
+	s.Require().NoError(err)
+
+	var frame clientMessage
+	s.Require().NoError(json.Unmarshal(raw, &frame))
+	return frame
+}
+
+// says is a frame carrying more of what the caller is saying, with an optional boundary.
+func says(text string, over bool) string {
+	frame, _ := json.Marshal(serverMessage{ServerContent: &serverContent{
+		InputTranscription: &transcription{Text: text},
+		TurnComplete:       over,
+	}})
+	return string(frame)
+}
+
+func (s *GeminiSocketSuite) TestTheSessionAsksForTranscriptionAndNoSpokenReply() {
+	fake := newFakeLive()
+	defer fake.close()
+	s.connect(fake, Options{})
+
+	opened := <-fake.setups
+	s.Equal("models/"+DefaultModel, opened.Model)
+	s.Equal([]string{"TEXT"}, opened.GenerationConfig.ResponseModalities,
+		"a spoken reply is neither wanted nor free")
+	s.Require().NotNil(opened.InputAudioTranscription,
+		"without this the session hears nothing back")
+	s.Empty(opened.InputAudioTranscription.Mode,
+		"nothing was asked for, so the server keeps its own default")
+}
+
+func (s *GeminiSocketSuite) TestTheKeyIsSentBecauseTheresNoHeaderForIt() {
+	fake := newFakeLive()
+	defer fake.close()
+	s.connect(fake, Options{APIKey: "sec ret"})
+
+	s.Contains(<-fake.url, "key=sec+ret")
+}
+
+func (s *GeminiSocketSuite) TestTheTranscriberIsToldTheVocabularyLanguagesAndMode() {
+	fake := newFakeLive()
+	defer fake.close()
+	s.connect(fake, Options{
+		Keyterms:      []string{"Vision Agents"},
+		LanguageHints: []string{"es-ES"},
+		Mode:          ModeSmart,
+	})
+
+	opened := <-fake.setups
+	s.Require().NotNil(opened.InputAudioTranscription)
+	s.Equal([]string{"Vision Agents"}, opened.InputAudioTranscription.CustomVocabulary)
+	s.Equal([]string{"es-ES"}, opened.InputAudioTranscription.LanguageCodes)
+	s.Equal("SMART", opened.InputAudioTranscription.Mode)
+}
+
+func (s *GeminiSocketSuite) TestAudioArrivesAsThePcmItWasGiven() {
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer func() { _ = provider.Close() }()
+
+	samples := []int16{1, -2, 3, -4}
+	s.speak(provider, samples)
+
+	frame := s.nextFrame(conn)
+	s.Require().NotNil(frame.RealtimeInput)
+	s.Require().NotNil(frame.RealtimeInput.Audio)
+	s.Equal("audio/pcm;rate=16000", frame.RealtimeInput.Audio.MimeType)
+
+	decoded, err := base64.StdEncoding.DecodeString(frame.RealtimeInput.Audio.Data)
+	s.Require().NoError(err)
+	want := stt.PcmData{Samples: samples, SampleRate: stt.SampleRate, Channels: 1}
+	s.Equal(want.Bytes(), decoded)
+}
+
+func (s *GeminiSocketSuite) TestClosingWaitsForTheTailOfTheLastTurnEvenAfterAnEarlierOne() {
+	// An earlier turn is not the last one. Treating it as the tail would have Close
+	// return before the words somebody just said were transcribed.
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+
+	// The server settles one turn during the call, then holds the next until it is told
+	// the audio has stopped.
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(says("hello", true))); err != nil {
+			return
+		}
+		for {
+			if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				return
+			}
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var frame clientMessage
+			if err := json.Unmarshal(raw, &frame); err != nil {
+				return
+			}
+			if frame.RealtimeInput != nil && frame.RealtimeInput.AudioStreamEnd {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(says("goodbye", true)))
+				return
+			}
+		}
+	}()
+
+	s.speak(provider, []int16{1, 2, 3})
+	// Let the earlier turn finish before closing, so the wait below is unambiguously for
+	// the tail rather than for a boundary that was already on its way.
+	s.Equal("hello", s.nextFinal(provider))
+
+	s.Require().NoError(provider.Close())
+	<-served
+
+	s.Equal("goodbye", s.nextFinal(provider),
+		"closing should wait for the words that had not been transcribed yet")
+}
+
+func (s *GeminiSocketSuite) TestClosingASettledCallDoesNotWaitOutTheTimeout() {
+	// Nothing is outstanding once a turn has been finalized, and no further boundary is
+	// coming. Waiting the full timeout here is five seconds of every hangup spent on a
+	// reply the server has no reason to send.
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{FlushTimeout: time.Minute})
+
+	// The server settles the turn and then says nothing more, whatever it is told.
+	go func() {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(says("hello", true)))
+	}()
+
+	s.speak(provider, []int16{1, 2, 3})
+	s.Equal("hello", s.nextFinal(provider))
+
+	closing := time.Now()
+	s.Require().NoError(provider.Close())
+	s.Less(time.Since(closing), 5*time.Second,
+		"closing a call whose last turn already settled should not wait for a boundary")
+}
+
+func (s *GeminiSocketSuite) TestClosingMidUtteranceWaitsLongerThanTheGrace() {
+	// A hypothesis the server has not finalized is the tail Close exists for, so it gets
+	// the full timeout rather than the grace a settled call gets.
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{FlushTimeout: 10 * time.Second})
+
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		// Heard, but not settled: the caller is still mid-sentence.
+		hypothesis, _ := json.Marshal(serverMessage{ServerContent: &serverContent{
+			InterimInputTranscription: &transcription{Text: "in a quiet"},
+		}})
+		if err := conn.WriteMessage(websocket.TextMessage, hypothesis); err != nil {
+			return
+		}
+		for {
+			if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				return
+			}
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var frame clientMessage
+			if err := json.Unmarshal(raw, &frame); err != nil {
+				return
+			}
+			if frame.RealtimeInput != nil && frame.RealtimeInput.AudioStreamEnd {
+				// Later than the grace a settled call is given, so a Close that used it
+				// would hang up on these words.
+				time.Sleep(flushGrace + 500*time.Millisecond)
+				_ = conn.WriteMessage(websocket.TextMessage,
+					[]byte(says("in a quiet village", true)))
+				return
+			}
+		}
+	}()
+
+	s.speak(provider, []int16{1, 2, 3})
+	s.Equal("in a quiet", s.nextHeard(provider), "the hypothesis should arrive first")
+
+	s.Require().NoError(provider.Close())
+	<-served
+
+	s.Equal("in a quiet village", s.nextFinal(provider),
+		"the words the server was still holding should not be cut off")
+}
+
+// nextHeard returns the text of the next transcript that has not settled.
+func (s *GeminiSocketSuite) nextHeard(provider *STT) string {
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, open := <-provider.Events():
+			if !open {
+				s.FailNow("the session ended before anything was heard")
+				return ""
+			}
+			if transcript, ok := event.(stt.Transcript); ok && !transcript.Final() {
+				return transcript.Text
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for a hypothesis")
+			return ""
+		}
+	}
+}
+
+// nextFinal returns the text of the next settled turn.
+func (s *GeminiSocketSuite) nextFinal(provider *STT) string {
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, open := <-provider.Events():
+			if !open {
+				s.FailNow("the session ended before the turn settled")
+				return ""
+			}
+			if transcript, ok := event.(stt.Transcript); ok && transcript.Final() {
+				return transcript.Text
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for a settled turn")
+			return ""
+		}
+	}
+}
+
+// invalidKeyText is how the Live API refused a made-up key on 2026-10-28: a close 1007 with
+// this reason, 50ms after the setup frame.
+const invalidKeyText = "API key not valid. Please pass a valid API key."
+
+// startRefused starts a provider on a key of its own against a Live API that reads the setup
+// frame and closes with code and reason, and returns how many invalid keys the pool counted
+// meanwhile and Start's error.
+func (s *GeminiSocketSuite) startRefused(code int, reason string) (float64, error) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+
+	before := keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key")
+	provider, err := New(Options{
+		URL:              "ws://" + strings.TrimPrefix(server.URL, "http://"),
+		APIKey:           "AIza-" + rand.Text(),
+		HandshakeTimeout: 5 * time.Second,
+	})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = provider.Start(ctx)
+	return keypooltest.Refused(s.T(), apiKeyEnvVar, "invalid_key") - before, err
+}
+
+func (s *GeminiSocketSuite) TestAKeyRefusedByACloseAfterSetupIsCountedAsInvalid() {
+	counted, err := s.startRefused(websocket.CloseInvalidFramePayloadData, invalidKeyText)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), invalidKeyText)
+	s.Equal(1.0, counted)
+}
+
+func (s *GeminiSocketSuite) TestAnotherReasonOnTheSameCloseCodeIsNotAnInvalidKey() {
+	counted, err := s.startRefused(websocket.CloseInvalidFramePayloadData, "Request contains an invalid argument.")
+
+	s.Require().Error(err)
+	s.Zero(counted)
+}
+
+func (s *GeminiSocketSuite) TestTheKeyTextOnAnotherCloseCodeIsNotAnInvalidKey() {
+	counted, err := s.startRefused(websocket.ClosePolicyViolation, invalidKeyText)
+
+	s.Require().Error(err)
+	s.Zero(counted)
+}

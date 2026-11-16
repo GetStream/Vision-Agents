@@ -1,0 +1,385 @@
+package session
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/stretchr/testify/suite"
+)
+
+type ReviewSuite struct {
+	suite.Suite
+}
+
+func TestReviewSuite(t *testing.T) {
+	suite.Run(t, new(ReviewSuite))
+}
+
+// reviewerOver is a reviewer whose model answers only when the test says, logging as text
+// into logs. The tests review on "en-low-latency", an alias stubConfig routes to the stub.
+func (s *ReviewSuite) reviewerOver(logs *bytes.Buffer) (*reviewer, *gatedLLM) {
+	model := newGatedLLM()
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return model, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return newReviewer(router, nil, slog.New(slog.NewTextHandler(logs, nil))), model
+}
+
+// asked waits for the review to reach the model, which is where it is held.
+func (s *ReviewSuite) asked(model *gatedLLM, logs *bytes.Buffer) {
+	select {
+	case <-model.entered:
+	case <-time.After(settleFor):
+		s.FailNow("the review never asked the model", logs.String())
+	}
+}
+
+// promptedLLM keeps the instructions each review was given. It answers with prose, so the
+// review stops at reading the answer and never reaches the store, which these tests lack.
+type promptedLLM struct {
+	mu   sync.Mutex
+	told []string
+}
+
+func (p *promptedLLM) Start(context.Context) error { return nil }
+
+func (p *promptedLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	p.mu.Lock()
+	p.told = append(p.told, params.Instructions)
+	p.mu.Unlock()
+	script := llmtest.New(llm.StreamOptions{ResponseID: params.ID, Provider: p.Provider(), Model: p.Model()})
+	script.OutputText("It went fine.")
+	script.Done()
+	return script.Stream(), nil
+}
+
+func (p *promptedLLM) Provider() string               { return "stub" }
+func (p *promptedLLM) Model() string                  { return "stub-llm" }
+func (p *promptedLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (p *promptedLLM) Close() error                   { return nil }
+
+// toldWith is the instructions the reviewer's model is given for a call whose agent's
+// config holds guide.
+func (s *ReviewSuite) toldWith(guide string) string {
+	model := &promptedLLM{}
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return model, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	reviews := newReviewer(router, nil, slog.New(slog.DiscardHandler))
+
+	reviews.Review(store.Call{ID: "call-prompted", CustomerID: "customer-reviewed"}, routing.Attribution{}, "", "en-low-latency", guide, []spoken{{text: "hello?"}})
+	reviews.running.Wait()
+	reviews.Close()
+
+	s.Require().Len(model.told, 1, "the review asked the model once")
+	return model.told[0]
+}
+
+// basePrompt is reviewInstructions as it stood before a config could set the guide
+// (internal/session/review.go at adc9d6015), copied rather than read from the code under
+// test, so an agent with no guide of its own is reviewed exactly as before.
+const basePrompt = `You are reviewing a recorded call between an automated voice agent and a caller.
+
+Summarise what the caller wanted and what happened, in two or three sentences, written for
+someone who did not hear the call. Then score how well the agent handled it from 1 to 5:
+
+5 - the caller got what they came for, quickly and without repeating themselves.
+4 - the caller was helped, with some friction.
+3 - the caller was neither helped nor harmed: passed on, or told to call back.
+2 - the agent misunderstood, stalled, or made the caller work for it.
+1 - the agent was wrong, unhelpful, or left the caller worse off.
+
+Judge the handling, not the outcome. An answer the caller did not want, given clearly and
+early, is a good call. Note anything worth acting on: something the agent did not know,
+a question it kept getting wrong, a place it should have handed over sooner.
+
+Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`
+
+func (s *ReviewSuite) TestACallWhoseAgentHasNoGuideIsReviewedAsBefore() {
+	s.Equal(basePrompt, s.toldWith(""))
+}
+
+func (s *ReviewSuite) TestAGuideOfOnlyWhitespaceIsNoGuide() {
+	s.Equal(basePrompt, s.toldWith(" \n\t "))
+}
+
+// The guide replaces the default one, and the reviewer is still told how to answer, since
+// nothing else can be read back.
+func (s *ReviewSuite) TestAnAgentsGuideReplacesTheDefaultAndKeepsTheAnswersFormat() {
+	told := s.toldWith("Score how well the agent sold the upgrade.\n")
+
+	s.Equal("Score how well the agent sold the upgrade.\n\n"+
+		`Answer with JSON only: {"summary": "...", "score": 3, "notes": "..."}`, told)
+}
+
+func (s *ReviewSuite) TestAReviewAShutdownAbandonsIsAWarningNotAnError() {
+	var logs bytes.Buffer
+	reviews, model := s.reviewerOver(&logs)
+
+	reviews.Review(store.Call{ID: "call-cut-short", CustomerID: "customer-reviewed"}, routing.Attribution{}, "", "en-low-latency", "", []spoken{{text: "hello?"}})
+	s.asked(model, &logs)
+	reviews.Close()
+
+	s.Contains(logs.String(), "level=WARN")
+	s.Contains(logs.String(), "call=call-cut-short")
+	s.NotContains(logs.String(), "level=ERROR")
+}
+
+func (s *ReviewSuite) TestAReviewThatFailsWhileTheReviewerIsOpenIsAnError() {
+	// The model answers with prose rather than the JSON the review asks for, so the review
+	// fails of its own accord rather than because anything closed it.
+	var logs bytes.Buffer
+	reviews, model := s.reviewerOver(&logs)
+
+	reviews.Review(store.Call{ID: "call-unreadable", CustomerID: "customer-reviewed"}, routing.Attribution{}, "", "en-low-latency", "", []spoken{{text: "hello?"}})
+	s.asked(model, &logs)
+	model.answers(1)
+	reviews.running.Wait()
+	reviews.Close()
+
+	s.Contains(logs.String(), "level=ERROR")
+	s.Contains(logs.String(), "call=call-unreadable")
+	s.Contains(logs.String(), "decode review")
+	s.NotContains(logs.String(), "level=WARN")
+}
+
+// refusingLLM refuses every request with err, the way a provider answers a failed request.
+type refusingLLM struct{ err error }
+
+func (r refusingLLM) Start(context.Context) error { return nil }
+func (r refusingLLM) Create(context.Context, llm.ResponseParams) (*llm.Stream, error) {
+	return nil, r.err
+}
+func (r refusingLLM) Provider() string               { return "stub" }
+func (r refusingLLM) Model() string                  { return "stub-llm" }
+func (r refusingLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (r refusingLLM) Close() error                   { return nil }
+
+// A provider that echoes the request's headers in its error puts the key it was sent into the
+// review's failure; the error line keeps the provider's reason and not the key.
+func (s *ReviewSuite) TestAReviewFailureLineKeepsTheProvidersReasonAndNotTheKeyItEchoed() {
+	key := rand.Text()
+	refused := refusingLLM{err: errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n" +
+		"request headers: Authorization: Bearer sk-test-" + key)}
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return refused, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	var logs bytes.Buffer
+	reviews := newReviewer(router, nil, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{ReplaceAttr: store.RedactLogAttr})))
+
+	reviews.Review(store.Call{ID: "call-refused", CustomerID: "customer-reviewed"}, routing.Attribution{}, "", "en-low-latency", "", []spoken{{text: "hello?"}})
+	reviews.running.Wait()
+	reviews.Close()
+
+	s.Contains(logs.String(), `msg="could not review the call" call=call-refused`)
+	s.Contains(logs.String(), `502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]`)
+	s.NotContains(logs.String(), key)
+}
+
+// A review that outlives reviewTimeout fails with the reviewer still open, so it stays an
+// error: only a Close may turn a failure into a warning. The bubble's clock runs the 90 s
+// out at once.
+func (s *ReviewSuite) TestAReviewThatRunsOutOfTimeIsAnError() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		var logs bytes.Buffer
+		reviews, model := s.reviewerOver(&logs)
+
+		reviews.Review(store.Call{ID: "call-too-slow", CustomerID: "customer-reviewed"}, routing.Attribution{}, "", "en-low-latency", "", []spoken{{text: "hello?"}})
+		<-model.entered
+		time.Sleep(reviewTimeout)
+		reviews.running.Wait()
+		reviews.Close()
+		reviews.llm.Close()
+
+		s.Contains(logs.String(), "level=ERROR")
+		s.Contains(logs.String(), "call=call-too-slow")
+		s.Contains(logs.String(), "deadline exceeded")
+		s.NotContains(logs.String(), "level=WARN")
+	})
+}
+
+func (s *ReviewSuite) TestTheCallIsQuotedWithBothSidesNamed() {
+	written := conversation([]spoken{
+		{text: "are you open on Sundays?"},
+		{agent: true, text: "we are, from ten."},
+	})
+
+	s.Contains(written, "Caller: are you open on Sundays?")
+	s.Contains(written, "Agent: we are, from ten.")
+}
+
+func (s *ReviewSuite) TestALongCallIsReviewedFromItsBeginning() {
+	// What a call was about is said at the start of it, so the part that is dropped is
+	// the end rather than the beginning.
+	var said []spoken
+	said = append(said, spoken{text: "I want to change my flight"})
+	for range reviewLimit + 50 {
+		said = append(said, spoken{agent: true, text: "one moment."})
+	}
+
+	written := conversation(said)
+
+	s.Contains(written, "I want to change my flight")
+	s.Equal(reviewLimit, strings.Count(written, "\n")-2, "more of the call was sent than fits")
+}
+
+func (s *ReviewSuite) TestAJudgementIsReadOutOfWhatTheModelWrote() {
+	verdict, err := parseJudgement(
+		"```json\n{\"summary\":\"they wanted a refund\",\"score\":4,\"notes\":\"knew the policy\"}\n```")
+
+	s.Require().NoError(err)
+	s.Equal("they wanted a refund", verdict.Summary)
+	s.Equal(4, verdict.Score)
+	s.Equal("knew the policy", verdict.Notes)
+}
+
+func (s *ReviewSuite) TestAReviewThatSaidNothingIsNotOne() {
+	// An empty summary written onto the row would read as a call nobody could describe
+	// rather than as a review that failed.
+	_, err := parseJudgement(`{"summary":"","score":5}`)
+
+	s.Require().Error(err)
+}
+
+func (s *ReviewSuite) TestAnAnswerThatIsNotJsonIsRefused() {
+	_, err := parseJudgement("I think the call went quite well.")
+
+	s.Require().Error(err)
+}
+
+// thoughtOver is a call short enough that any answer the reviewer does not write whole is
+// down to its token cap, not to the call.
+var thoughtOver = []spoken{
+	{text: "can I move my booking to Friday?"},
+	{agent: true, text: "Done, it is on Friday at ten."},
+}
+
+// reviewAnswer is a whole review, as long as the guide asks for.
+const reviewAnswer = `{"summary": "The caller wanted to move a booking to Friday. The agent moved it to ten on Friday ` +
+	`and confirmed the new time.", "score": 5, "notes": "Nothing to act on: the agent did what was asked at once."}`
+
+// judgedBy is what a reviewer whose model is thinker made of thoughtOver.
+func (s *ReviewSuite) judgedBy(thinker *llmtest.Thinker) (judgement, error) {
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return thinker, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	reviews := newReviewer(router, nil, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(reviews.Close)
+	return reviews.judge(context.Background(), store.Call{ID: "call-thought-over", CustomerID: "customer-reviewed"},
+		"", "en-low-latency", "", thoughtOver)
+}
+
+// screenedBy is a router to provider whose prompt injection screen refuses input quoting
+// injected, as the live screen refuses a review or a title that quotes a refused turn.
+func screenedBy(s *suite.Suite, config routing.ModalityConfig, provider llmrouter.Provider) *llmrouter.Router {
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return provider, nil })
+	screen := func(_ context.Context, _ routing.Owner, input []llm.Message) <-chan error {
+		verdict := make(chan error, 1)
+		for _, message := range input {
+			if strings.Contains(message.Content, injected) {
+				verdict <- screenRefusal
+			}
+		}
+		close(verdict)
+		return verdict
+	}
+	router, err := llmrouter.New(llmrouter.Options{Config: config, Registry: reasoning, Screen: screen, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+func (s *ReviewSuite) TestACallWithARefusedTurnIsReviewedWithItWithheld() {
+	reviews := newReviewer(screenedBy(&s.Suite, stubConfig(), &llmtest.Thinker{Answer: reviewAnswer}), nil, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(reviews.Close)
+	call := store.Call{ID: "call-refused", CustomerID: "customer-reviewed"}
+
+	// The refused line quoted as it was said is refused again, which is the review failing.
+	_, err := reviews.judge(context.Background(), call, "", "en-low-latency", "",
+		[]spoken{{text: injected}, {agent: true, text: "It ships on Friday."}})
+	s.Require().ErrorIs(err, policy.ErrPromptInjection)
+
+	verdict, err := reviews.judge(context.Background(), call, "", "en-low-latency", "", refusedCall())
+
+	s.Require().NoError(err)
+	s.Equal(5, verdict.Score)
+}
+
+// Claude Opus 5.5 thought for up to 456 tokens before writing a review on staging, all of
+// it out of the same cap as the review.
+func (s *ReviewSuite) TestAModelThatThinksBeforeItReviewsStillWritesTheWholeReview() {
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: 456, Answer: reviewAnswer})
+
+	s.Require().NoError(err)
+	s.Equal(5, verdict.Score)
+	s.Contains(verdict.Summary, "move a booking to Friday")
+	s.Contains(verdict.Notes, "Nothing to act on")
+}
+
+// The most Claude Opus 5.5 was seen thinking on one turn on staging.
+func (s *ReviewSuite) TestAModelThatThinksAtLengthStillWritesTheWholeReview() {
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: 1300, Answer: reviewAnswer})
+
+	s.Require().NoError(err)
+	s.Contains(verdict.Notes, "Nothing to act on")
+}
+
+func (s *ReviewSuite) TestAReviewTheCapCutOffSaysSo() {
+	// The cap ends the answer 20 tokens short of its closing brace.
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom - len(reviewAnswer) + 20, Answer: reviewAnswer})
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "decode review")
+	// 4,500 tokens were written, the last 20 of them short of the answer's end; the rest was thinking.
+	s.Contains(err.Error(), fmt.Sprintf("the review stopped early (max_output_tokens) after 4500 output tokens, %d of them thinking",
+		4500-len(reviewAnswer)+20))
+}
+
+// A review that is whole but is not JSON was not cut off, so the cap is not what to blame.
+func (s *ReviewSuite) TestAnAnswerThatIsNotJSONKeepsItsOwnError() {
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: 100, Answer: "The caller moved a booking."})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "decode review")
+	s.NotContains(err.Error(), "stopped early")
+}
+
+func (s *ReviewSuite) TestAReviewWhoseThinkingTookTheWholeCapSaysSo() {
+	_, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom + 100, Answer: reviewAnswer})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "stopped early (max_output_tokens)")
+}
+
+func (s *ReviewSuite) TestAWholeReviewIsReadEvenWhenTheCapCutWhatFollowedIt() {
+	// The cap ends the answer in the blank lines after the review, so the review is whole.
+	trailed := reviewAnswer + strings.Repeat("\n", 40)
+	verdict, err := s.judgedBy(&llmtest.Thinker{Thinks: reviewTokens + llm.ThinkingRoom - len(reviewAnswer) - 20, Answer: trailed})
+
+	s.Require().NoError(err)
+	s.Equal(5, verdict.Score)
+}

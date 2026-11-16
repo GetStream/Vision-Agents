@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import Any, TypeVar
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+from typing_extensions import Self
+
+from ..types import UNSET, Unset
+
+T = TypeVar("T", bound="ModelCallTiming")
+
+
+@_attrs_define
+class ModelCallTiming:
+    """
+    Attributes:
+        model (str):
+        provider (str):
+        started_at (datetime.datetime):
+        success (bool):
+        duration_ms (float | Unset): Request to completed response or failed create.
+        error_code (str | Unset): Why the request did not run to its end, absent when success is true. cancelled is a
+            request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged
+            request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had
+            said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app
+            keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt
+            injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any
+            other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's
+            own key.
+        error_message (str | Unset): What the failure said, absent when success is true: for a provider that answered
+            with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it
+            are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded
+            before the router kept it.
+        input_tokens (int | Unset):
+        operation_id (str | Unset): Response ID for this operation; retries can share an ID.
+        output_tokens (int | Unset):
+        purpose (str | Unset): reply, flow or subagent.
+        ttft_ms (float | Unset): Request to first token.
+    """
+
+    model: str
+    provider: str
+    started_at: datetime.datetime
+    success: bool
+    duration_ms: float | Unset = UNSET
+    error_code: str | Unset = UNSET
+    error_message: str | Unset = UNSET
+    input_tokens: int | Unset = UNSET
+    operation_id: str | Unset = UNSET
+    output_tokens: int | Unset = UNSET
+    purpose: str | Unset = UNSET
+    ttft_ms: float | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        model = self.model
+
+        provider = self.provider
+
+        started_at = self.started_at.isoformat()
+
+        success = self.success
+
+        duration_ms = self.duration_ms
+
+        error_code = self.error_code
+
+        error_message = self.error_message
+
+        input_tokens = self.input_tokens
+
+        operation_id = self.operation_id
+
+        output_tokens = self.output_tokens
+
+        purpose = self.purpose
+
+        ttft_ms = self.ttft_ms
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "model": model,
+                "provider": provider,
+                "started_at": started_at,
+                "success": success,
+            }
+        )
+        if duration_ms is not UNSET:
+            field_dict["duration_ms"] = duration_ms
+        if error_code is not UNSET:
+            field_dict["error_code"] = error_code
+        if error_message is not UNSET:
+            field_dict["error_message"] = error_message
+        if input_tokens is not UNSET:
+            field_dict["input_tokens"] = input_tokens
+        if operation_id is not UNSET:
+            field_dict["operation_id"] = operation_id
+        if output_tokens is not UNSET:
+            field_dict["output_tokens"] = output_tokens
+        if purpose is not UNSET:
+            field_dict["purpose"] = purpose
+        if ttft_ms is not UNSET:
+            field_dict["ttft_ms"] = ttft_ms
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        d = dict(src_dict)
+        model = d.pop("model")
+
+        provider = d.pop("provider")
+
+        started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
+
+        success = d.pop("success")
+
+        duration_ms = d.pop("duration_ms", UNSET)
+
+        error_code = d.pop("error_code", UNSET)
+
+        error_message = d.pop("error_message", UNSET)
+
+        input_tokens = d.pop("input_tokens", UNSET)
+
+        operation_id = d.pop("operation_id", UNSET)
+
+        output_tokens = d.pop("output_tokens", UNSET)
+
+        purpose = d.pop("purpose", UNSET)
+
+        ttft_ms = d.pop("ttft_ms", UNSET)
+
+        model_call_timing = cls(
+            model=model,
+            provider=provider,
+            started_at=started_at,
+            success=success,
+            duration_ms=duration_ms,
+            error_code=error_code,
+            error_message=error_message,
+            input_tokens=input_tokens,
+            operation_id=operation_id,
+            output_tokens=output_tokens,
+            purpose=purpose,
+            ttft_ms=ttft_ms,
+        )
+
+        model_call_timing.additional_properties = d
+        return model_call_timing
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

@@ -1,0 +1,362 @@
+//go:build integration
+
+package harness
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"log/slog"
+	"net/netip"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
+)
+
+// messagesPerDay is the user's allowance, far more than any test spends.
+const messagesPerDay = 100
+
+// userSet is a quota source where the customer set every user's own quota.
+type userSet struct{}
+
+func (userSet) Quota(_ context.Context, _, userID string, _ quota.Limits) quota.Quota {
+	return quota.Quota{Messages: quota.Limit{PerDay: messagesPerDay, By: quota.Setter{Level: quota.LevelUser, ID: userID}}}
+}
+
+// userSetOrDefault is userSet for a named user, and the deployment's default for a caller
+// known by its address alone, which is the only limit an address answers for.
+type userSetOrDefault struct{}
+
+func (userSetOrDefault) Quota(ctx context.Context, customerID, userID string, defaults quota.Limits) quota.Quota {
+	if userID == "" {
+		return quota.Default(quota.Limits{MessagesPerDay: messagesPerDay})
+	}
+	return userSet{}.Quota(ctx, customerID, userID, defaults)
+}
+
+// HarnessChargeSuite covers whose day delegated work is counted on. It counts in a real
+// Redis, and what it reads back is the user's day as the limiter keeps it.
+type HarnessChargeSuite struct {
+	suite.Suite
+	ctx   context.Context
+	redis rueidis.Client
+
+	user    routing.Caller
+	limiter *quota.Limiter
+	fast    *stubLLM
+	slow    *stubLLM
+	// asked holds the subagent's answer back until the turn that asked for it has ended.
+	asked   chan struct{}
+	harness *Harness
+	events  *collector
+}
+
+func TestHarnessChargeSuite(t *testing.T) {
+	suite.Run(t, new(HarnessChargeSuite))
+}
+
+func (s *HarnessChargeSuite) SetupSuite() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR must be set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.redis = client
+	s.ctx = context.Background()
+}
+
+func (s *HarnessChargeSuite) TearDownSuite() {
+	if s.redis != nil {
+		s.redis.Close()
+	}
+}
+
+func (s *HarnessChargeSuite) SetupTest() {
+	// A fresh user per test, so no test reads another's day.
+	s.user = routing.Caller{UserID: "user-" + rand.Text()}
+	limiter, err := quota.New(s.redis, quota.Limits{MessagesPerDay: messagesPerDay}, nil, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+}
+
+// build returns a harness whose conversation and subagent are both opened for owner, as
+// the agent opens them for the session's owner.
+func (s *HarnessChargeSuite) build(owner routing.Caller) {
+	s.fast, s.slow = newStubLLM(), newStubLLM()
+	s.fast.automatic = "Let me check."
+	s.slow.automatic = "It is 12.63."
+	s.asked = make(chan struct{})
+	s.slow.holdCreate = s.asked
+	harness, err := New(Options{
+		Model:    s.session(s.fast, owner),
+		Subagent: s.session(s.slow, owner),
+		Skills:   testSkills(),
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.harness = harness
+	s.events = collect(harness)
+	s.T().Cleanup(func() { <-s.events.done })
+	s.T().Cleanup(func() { _ = harness.Close() })
+}
+
+// session starts a session over a stub provider, counted on the limiter under test.
+func (s *HarnessChargeSuite) session(provider *stubLLM, owner routing.Caller) *llmrouter.Session {
+	registry := llmrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return provider, nil })
+	router, err := llmrouter.New(llmrouter.Options{
+		Config: stubConfig(), Registry: registry, Quota: s.limiter, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	session, err := router.Start(s.ctx, llmrouter.Request{CustomerID: "acme", Caller: owner, Target: "en-low-latency"})
+	s.Require().NoError(err)
+	return session
+}
+
+// reply answers a turn asked on ctx and passes what the model wrote through the filter,
+// as the agent does. The turn's ctx ends with its reply, as the agent's does.
+func (s *HarnessChargeSuite) reply(ctx context.Context, turnID, written string) {
+	s.replyAfter(ctx, turnID, written, func() {})
+}
+
+// replyAfter is reply with await run between the end of the answer and the filter, for a
+// test that needs the answer counted before the work it delegates is asked.
+func (s *HarnessChargeSuite) replyAfter(ctx context.Context, turnID, written string, await func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := s.harness.Respond(ctx, Turn{
+		ID: turnID, Instructions: "be brief",
+		History: []llm.Message{{Role: llm.User, Content: "what is 15% of 84.20"}},
+	})
+	s.Require().NoError(err)
+	for stream.Next() {
+	}
+	await()
+	s.harness.Filter(turnID, written)
+}
+
+// settled lets the subagent answer, waits for one task to settle, and returns how it did.
+func (s *HarnessChargeSuite) settled() Result {
+	close(s.asked)
+	s.Require().Eventually(func() bool { return len(settledIn(s.events.seen())) == 1 },
+		settleFor, 10*time.Millisecond, "the delegated work never settled")
+	return settledIn(s.events.seen())[0].Result
+}
+
+// day is how many answers are counted on the user's day: what the limiter, asked about
+// one more, says is gone of it.
+func (s *HarnessChargeSuite) day() int64 {
+	status, err := s.limiter.Allow(s.ctx, "acme", s.user)
+	s.Require().NoError(err)
+	return messagesPerDay - status.Remaining
+}
+
+// counted waits for asker's day to show want answers. An answer is counted once its debit
+// reaches Redis, and the limiter stops waiting for one first when this process stalls.
+func (s *HarnessChargeSuite) counted(asker routing.Caller, want int64, msgAndArgs ...any) {
+	s.EventuallyWithT(func(c *assert.CollectT) {
+		status, err := s.limiter.Allow(s.ctx, "acme", asker)
+		require.NoError(c, err)
+		assert.EqualValues(c, want, messagesPerDay-status.Remaining, msgAndArgs...)
+	}, settleFor, 10*time.Millisecond)
+}
+
+func (s *HarnessChargeSuite) TestWorkAScheduledTurnDelegatesIsNotCountedOnTheUsersDay() {
+	s.build(s.user)
+
+	s.reply(routing.WithScheduledTurn(s.ctx), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	result := s.settled()
+	s.Equal(Done, result.State, "the work outlives the turn that asked for it")
+	s.Equal("It is 12.63.", result.Text)
+	s.Zero(s.day(), "neither the scheduled turn nor the work it delegated is the user's spend")
+}
+
+func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesIsCountedOnTheirDay() {
+	s.build(s.user)
+
+	s.reply(s.ctx, "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.counted(s.user, 2, "the reply and the work it delegated are both the user's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsCountedOnTheirDay() {
+	// The backend opened both sessions; the user typed the turn. The reply is the user's,
+	// and so is the work it delegated, with the user's own token as the session's doc says.
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.counted(s.user, 2, "the reply and the work it delegated are both the user's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsRefusedOnceTheirDayIsSpent() {
+	limiter, err := quota.New(s.redis, quota.Limits{MessagesPerDay: 1}, nil, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	// The limiter stops waiting for a debit after two seconds, so under a stall the reply's
+	// may still be on its way when the work asks for its own turn.
+	s.replyAfter(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`, func() {
+		s.Require().Eventually(func() bool {
+			_, err := limiter.Allow(s.ctx, "acme", s.user)
+			return errors.Is(err, quota.ErrExhausted)
+		}, settleFor, 10*time.Millisecond, "the reply's debit never reached the user's day")
+	})
+
+	result := s.settled()
+	s.Equal(Failed, result.State)
+	s.Require().Error(result.Err)
+	s.Contains(result.Err.Error(), "daily limit", "the reply spent the user's one message")
+}
+
+func (s *HarnessChargeSuite) TestWorkAUserHandsOverInASessionABackendOpenedIsCountedOnTheirDay() {
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+	turn, cancel := context.WithCancel(routing.WithCaller(s.ctx, s.user))
+
+	_, err := s.harness.Delegate(turn, "think", "15% of 84.20", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return len(s.slow.requests()) == 1 },
+		settleFor, time.Millisecond, "the subagent was never asked")
+	cancel()
+
+	s.Equal(Done, s.settled().State, "the work outlives the turn that handed it over")
+	s.counted(s.user, 1, "the work a user's turn handed over is the user's spend")
+}
+
+func (s *HarnessChargeSuite) TestWorkAScheduledTurnDelegatesInASessionABackendOpenedIsNotCountedOnTheUsersDay() {
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	s.reply(routing.WithScheduledTurn(routing.WithCaller(s.ctx, s.user)), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.Zero(s.day(), "a scheduled turn is the customer's, whoever the turn names")
+}
+
+func (s *HarnessChargeSuite) TestAConversationAUserTurnCompactsInASessionABackendOpenedIsCountedOnTheirDay() {
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", "")
+
+	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.Require().True(started)
+	close(s.asked)
+
+	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		settleFor, 10*time.Millisecond, "the conversation was never compacted")
+	s.counted(s.user, 2, "the reply and the summary it set off are both the user's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAHeardTurnDelegatesInASessionABackendOpenedIsCountedOnTheOwner() {
+	// A heard turn names no sender, so it and its work are counted on whoever opened the
+	// session. The customer set the user's own quota, which holds the owner too.
+	limiter, err := quota.New(s.redis, quota.Limits{}, userSet{}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+	owner := routing.Caller{UserID: s.user.UserID, ServerSide: true}
+	s.build(owner)
+
+	s.reply(s.ctx, "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.counted(owner, 2, "the reply and the work it delegated are both the owner's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAndTheirAddress() {
+	// The limiter counts a verified user on the customer's bucket for the user, and any
+	// caller with an address on the address bucket. A sender carried without its Verified
+	// mark or its address is counted in other buckets, and one of the two shows less.
+	limiter, err := quota.New(s.redis, quota.Limits{}, userSetOrDefault{}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	s.limiter = limiter
+	// An address of its own, as the user has: the address bucket outlives the test.
+	var raw [16]byte
+	_, err = rand.Read(raw[:])
+	s.Require().NoError(err)
+	address := netip.AddrFrom16(raw).String()
+	sender := routing.Caller{UserID: s.user.UserID, Verified: true, IP: address}
+	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
+
+	s.reply(routing.WithCaller(s.ctx, sender), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	for name, asker := range map[string]routing.Caller{
+		"as the user":    {UserID: s.user.UserID, Verified: true},
+		"at the address": {IP: address},
+	} {
+		s.counted(asker, 2, "the reply and the work it delegated are both counted %s", name)
+	}
+}
+
+func (s *HarnessChargeSuite) TestWorkTheUsersOwnTurnDelegatesAfterAScheduledTurnIsCountedOnTheirDay() {
+	// What a turn is counted as is the turn's own: the mark of the scheduled turn before it
+	// is not kept.
+	s.build(s.user)
+
+	s.reply(routing.WithScheduledTurn(s.ctx), "turn-1", "")
+	s.reply(s.ctx, "turn-2", `<ask skill="think">15% of 84.20</ask>`)
+
+	s.Equal(Done, s.settled().State)
+	s.counted(s.user, 2, "the user's own reply and the work it delegated are both the user's")
+}
+
+func (s *HarnessChargeSuite) TestWorkAScheduledTurnHandsOverIsNotCountedOnTheUsersDay() {
+	s.build(s.user)
+	turn, cancel := context.WithCancel(routing.WithScheduledTurn(s.ctx))
+
+	_, err := s.harness.Delegate(turn, "think", "15% of 84.20", "turn-1", nil, nil)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return len(s.slow.requests()) == 1 },
+		settleFor, time.Millisecond, "the subagent was never asked")
+	cancel()
+
+	s.Never(func() bool { return len(settledIn(s.events.seen())) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
+		"the work ended with the turn that handed it over")
+	s.Equal(Done, s.settled().State, "the work outlives the turn that handed it over")
+	s.Zero(s.day(), "the work a scheduled turn handed over is not the user's spend")
+}
+
+func (s *HarnessChargeSuite) TestAConversationAScheduledTurnCompactsIsNotCountedOnTheUsersDay() {
+	s.build(s.user)
+	s.reply(routing.WithScheduledTurn(s.ctx), "turn-1", "")
+
+	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.Require().True(started)
+	close(s.asked)
+
+	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		settleFor, 10*time.Millisecond, "the conversation was never compacted")
+	s.Zero(s.day(), "the summary a scheduled turn set off is not the user's spend")
+}
+
+func (s *HarnessChargeSuite) TestAConversationTheUsersOwnTurnCompactsIsCountedOnTheirDay() {
+	s.build(s.user)
+	s.reply(s.ctx, "turn-1", "")
+
+	started, err := s.harness.MaybeCompact(longHistory(), compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.Require().True(started)
+	close(s.asked)
+
+	s.Require().Eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		settleFor, 10*time.Millisecond, "the conversation was never compacted")
+	s.counted(s.user, 2, "the reply and the summary it set off are both the user's")
+}

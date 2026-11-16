@@ -61,7 +61,7 @@ myplugin = { path = "plugins/myplugin", develop = true }
 
 [tool.uv.workspace]
 members = [
-    "agents-core",
+    "sdks/python",
     "plugins/myplugin",
     # ... other plugins
 ]

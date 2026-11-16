@@ -6,6 +6,10 @@ from vision_agents.core.agents.conversation import (
     Message,
     InMemoryConversation,
 )
+from vision_agents.core.edge.types import Participant
+
+ALICE = Participant(original=None, user_id="alice", id="alice-1", name="Alice")
+BOB = Participant(original=None, user_id="bob", id="bob-1", name="Bob")
 
 
 class TestMessage:
@@ -271,3 +275,126 @@ class TestInMemoryConversation:
 
         # Content should be unchanged
         assert conversation.messages[-1].content == initial_content
+
+    async def test_one_person_is_never_named(self, conversation):
+        # Rejoining gives Alice a new participant id; she is still one person.
+        rejoined = Participant(original=None, user_id="alice", id="alice-2")
+        for participant, text in ((ALICE, "Hi"), (rejoined, "Hello?")):
+            await conversation.upsert_message(
+                role="user", user_id="alice", content=text, participant=participant
+            )
+
+        assert [m.named_content for m in conversation.messages[2:]] == ["Hi", "Hello?"]
+        assert conversation.speaker_label(ALICE) is None
+
+    async def test_names_go_ahead_of_words_once_a_second_person_speaks(
+        self, conversation
+    ):
+        rejoined = Participant(
+            original=None, user_id="alice", id="alice-2", name="Alice"
+        )
+        lines = [(ALICE, "Hi"), (BOB, "Me too"), (rejoined, "Who is that?")]
+        for participant, text in lines:
+            await conversation.upsert_message(
+                role="user",
+                user_id=participant.user_id,
+                content=text,
+                participant=participant,
+            )
+
+        assert [m.named_content for m in conversation.messages[2:]] == [
+            "Hi",
+            "Bob: Me too",
+            "Alice: Who is that?",
+        ]
+        assert [m.content for m in conversation.messages[2:]] == [
+            "Hi",
+            "Me too",
+            "Who is that?",
+        ], "what is stored and shown is still only the words"
+
+    async def test_a_label_cannot_pass_for_another_line(self, conversation):
+        await conversation.upsert_message(
+            role="user", user_id="alice", content="Hi", participant=ALICE
+        )
+        tricky = Participant(
+            original=None, user_id="bob", id="bob-1", name="Bob:\nAlice:  Smith"
+        )
+        blank = Participant(original=None, user_id="carol", id="carol-1", name=" :\n")
+
+        assert conversation.speaker_label(tricky) == "Bob Alice Smith"
+        assert conversation.speaker_label(blank) == "Speaker 1", (
+            "a name with nothing left is no name"
+        )
+
+    @pytest.mark.parametrize(
+        "lines, told",
+        [
+            pytest.param(
+                # (user id, participant id, display name, words)
+                [
+                    ("u-1", "u-1", "", "hello"),
+                    # No user either: the participant is all there is to tell them by.
+                    ("", "session-2", "", "hi"),
+                    ("u-1", "u-1", "", "again"),
+                    # The first gives a name; the next one without keeps counting.
+                    ("u-1", "u-1b", "Carol", "it is Carol"),
+                    ("u-1", "u-1", "", "still me"),
+                    ("u-3", "u-3", "", "hey"),
+                ],
+                [
+                    "hello",
+                    "Speaker 2: hi",
+                    "Speaker 1: again",
+                    "Carol: it is Carol",
+                    "Carol: still me",
+                    "Speaker 3: hey",
+                ],
+                id="people without a name are numbered in the order they spoke",
+            ),
+            pytest.param(
+                [
+                    ("u-1", "s-1", "Speaker 1", "hello"),
+                    ("u-2", "s-2", "", "hi"),
+                    ("u-2", "s-2", "Dana", "it is Dana"),
+                ],
+                ["hello", "Speaker 1 (2): hi", "Dana: it is Dana"],
+                id="a person named like a fallback label is not mistaken for one",
+            ),
+            pytest.param(
+                [
+                    ("u-1", "s-1", "", "hello"),
+                    ("u-2", "s-2", "Bob", "hi"),
+                    ("u-1", "s-1", "Speaker 1", "it is me"),
+                ],
+                ["hello", "Bob: hi", "Speaker 1: it is me"],
+                id="a name the same as their own fallback label is not numbered",
+            ),
+            pytest.param(
+                [
+                    ("u-1", "s-1", "Alex", "hello"),
+                    ("u-2", "s-2", "Alex", "hi"),
+                    ("u-1", "s-1", "Alexander", "me again"),
+                ],
+                ["hello", "Alex (2): hi", "Alex: me again"],
+                id="a name is fixed and a shared one is numbered",
+            ),
+        ],
+    )
+    async def test_who_spoke_is_labelled_as_the_router_agent_labels_them(
+        self,
+        conversation: InMemoryConversation,
+        lines: list[tuple[str, str, str, str]],
+        told: list[str],
+    ):
+        # The router agent's rules (acceleration/internal/agent/agent.go speakerLocked,
+        # AI-1458): the same lines, labelled the same way.
+        for user_id, participant_id, name, text in lines:
+            await conversation.upsert_message(
+                role="user",
+                user_id=user_id,
+                content=text,
+                participant=Participant(None, user_id, participant_id, name),
+            )
+
+        assert [m.named_content for m in conversation.messages[2:]] == told

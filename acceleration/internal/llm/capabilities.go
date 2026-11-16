@@ -1,0 +1,141 @@
+package llm
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// Capabilities is what one model accepts.
+//
+// Reasoning levels are the reason this exists. They differ per model and do not map onto
+// each other -- one model's minimal is another's none, and only the newest take max -- so
+// rather than invent a common scale that would be wrong everywhere, each model declares
+// the words it answers to and a request naming anything else is refused.
+type Capabilities struct {
+	// ReasoningEfforts are the efforts this model accepts. Empty means it does not
+	// reason, and a request asking it to is refused.
+	ReasoningEfforts []string
+	// DefaultEffort is what the provider uses when a request names none.
+	DefaultEffort string
+	// StreamsReasoning reports whether the model emits ReasoningTextDelta events before
+	// its answer. A caller on the live path uses it to decide whether to wait for the
+	// first OutputTextDelta or to show thinking in the meantime.
+	StreamsReasoning bool
+	// Verbosities are the text verbosity levels this model accepts. Empty means it takes
+	// none and the field is dropped.
+	Verbosities []string
+	// ToolChoices are the tool choices this model honours. Empty means it honours them all.
+	// A provider that would quietly answer required as auto lists only what it keeps, so
+	// a request that depends on the rest is refused rather than weakened.
+	ToolChoices []string
+	// Store reports whether the provider keeps a response for a later one to continue
+	// from, which is what makes PreviousResponseID mean anything.
+	Store bool
+	// Conversations reports whether the provider holds conversations of its own.
+	Conversations bool
+	// PromptCacheKey reports whether the provider buckets its cache by a key the caller
+	// chooses.
+	PromptCacheKey bool
+	// CacheTTLs are the cache lifetimes the provider accepts. Empty means it caches on
+	// its own terms or not at all, and a requested TTL is dropped.
+	CacheTTLs []time.Duration
+	// InputModalities are the input kinds this model accepts besides text, e.g. "image".
+	// Empty means text-only, and input carrying anything else is refused.
+	InputModalities []string
+	// JSONSchema reports whether the model holds its answer to a strict JSON Schema.
+	// Without it a schema is dropped and the answer is asked for as a JSON object, which
+	// is what every JSON caller had before schemas and what it still checks for itself.
+	JSONSchema bool
+}
+
+// Validate reports whether a request asks for something this model does not do.
+//
+// It is checked before the request goes out rather than after it comes back, because a
+// provider's own answer to an unknown reasoning effort is a 400 halfway through a phone
+// call.
+func (c Capabilities) Validate(params ResponseParams) error {
+	if effort := params.Reasoning.Effort; effort != "" {
+		if len(c.ReasoningEfforts) == 0 {
+			return stack.Wrap(fmt.Errorf("llm: this model does not reason, so it takes no reasoning effort, and %q was asked for", effort))
+		}
+		if !slices.Contains(c.ReasoningEfforts, effort) {
+			return stack.Wrap(fmt.Errorf("llm: reasoning effort %q is not one of %s",
+				effort, strings.Join(c.ReasoningEfforts, ", ")))
+		}
+	}
+	if verbosity := params.Text.Verbosity; verbosity != "" && len(c.Verbosities) > 0 {
+		if !slices.Contains(c.Verbosities, verbosity) {
+			return stack.Wrap(fmt.Errorf("llm: text verbosity %q is not one of %s",
+				verbosity, strings.Join(c.Verbosities, ", ")))
+		}
+	}
+	if choice := params.ToolChoice; choice != "" && len(c.ToolChoices) > 0 && !slices.Contains(c.ToolChoices, choice) {
+		return stack.Wrap(fmt.Errorf("llm: tool choice %q is not one of %s",
+			choice, strings.Join(c.ToolChoices, ", ")))
+	}
+	if params.Conversation != "" && params.PreviousResponseID != "" {
+		return stack.Wrap(fmt.Errorf("llm: a response continues from a conversation or from a previous response, not both"))
+	}
+	// A provider that keeps nothing would answer from only the messages sent with the request.
+	if params.PreviousResponseID != "" && !c.Store {
+		return stack.Wrap(fmt.Errorf("llm: this model keeps no response to continue from, so send the whole conversation"))
+	}
+	if params.Conversation != "" && !c.Conversations {
+		return stack.Wrap(fmt.Errorf("llm: this model holds no conversation, so send the whole conversation"))
+	}
+	for _, message := range params.Input {
+		if message.Content != "" && len(message.Parts) > 0 {
+			return stack.Wrap(fmt.Errorf("llm: content and parts are mutually exclusive"))
+		}
+		if message.HasImage() && message.Role != User && message.Role != ToolResult {
+			return stack.Wrap(fmt.Errorf("llm: images are supported only in user and tool messages"))
+		}
+		for _, part := range message.Parts {
+			if part.Image != nil {
+				if part.Text != "" {
+					return stack.Wrap(fmt.Errorf("llm: a part cannot contain both text and image"))
+				}
+				if err := part.Image.Validate(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if params.HasImage() && !c.Accepts(ModalityImage) {
+		return stack.Wrap(fmt.Errorf("llm: this model does not accept %s input", ModalityImage))
+	}
+	return nil
+}
+
+// Schema is the schema to send with a request, or nil when it asked for none or this model
+// takes none.
+func (c Capabilities) Schema(text TextParams) *JSONSchema {
+	if text.Format != FormatJSONSchema || !c.JSONSchema {
+		return nil
+	}
+	return text.Schema
+}
+
+// Accepts reports whether this model takes that input kind. Text is implicit.
+func (c Capabilities) Accepts(modality string) bool {
+	if modality == "" || modality == "text" {
+		return true
+	}
+	return slices.Contains(c.InputModalities, modality)
+}
+
+// Effort is the reasoning effort to send, which is the request's when it named one and the
+// model's own default otherwise. It is empty for a model that does not reason.
+func (c Capabilities) Effort(params ResponseParams) string {
+	if len(c.ReasoningEfforts) == 0 {
+		return ""
+	}
+	if params.Reasoning.Effort != "" {
+		return params.Reasoning.Effort
+	}
+	return c.DefaultEffort
+}

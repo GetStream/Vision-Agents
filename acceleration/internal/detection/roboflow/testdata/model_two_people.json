@@ -1,0 +1,1 @@
+{"inference_id":"bffaface","time":0.012,"image":{"width":800,"height":400},"predictions":[{"x":200.0,"y":200.0,"width":100.0,"height":200.0,"confidence":0.9,"class":"person","class_id":0},{"x":600.0,"y":100.0,"width":400.0,"height":200.0,"confidence":0.3,"class":"car","class_id":2}]}

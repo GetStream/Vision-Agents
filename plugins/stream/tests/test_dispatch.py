@@ -1,0 +1,1398 @@
+import asyncio
+import json
+import logging
+from typing import Any, AsyncIterator, Optional
+
+import pytest
+from aiohttp import WSCloseCode, WSMsgType, web
+from aiohttp.test_utils import TestServer
+from vision_agents.core import Agent
+from vision_agents.core.llm import ImageContent
+from vision_agents.core.messaging import InboundMessage
+from vision_agents.core.telephony import InboundCall
+from vision_agents.plugins import stream
+
+SETTLE = 2.0
+
+
+class Router:
+    """A stand-in for the acceleration router, serving the dispatch socket.
+
+    A real server rather than a stub, so what the worker sends is what a router would
+    receive and the frames it reads are frames off a socket.
+    """
+
+    def __init__(self):
+        self.url = ""
+        # query is what the worker said about itself on the way in: capacity, active and
+        # handles.
+        self.query: dict[str, str] = {}
+        # responses is one entry per response created on a session, with the headers it
+        # came with.
+        self.responses: list[tuple[str, dict[str, Any], dict[str, str]]] = []
+        self.reports: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # received is every frame the worker sent, in order, whoever has read it.
+        self.received: list[dict[str, Any]] = []
+        # sessions is one entry per session created, which is how many conversations the
+        # worker started rather than carried on.
+        self.sessions: list[dict[str, Any]] = []
+        # connections is how many dispatch sockets were opened, and drops is how each of
+        # the next ones ends right after saying it is ready: "cut" without a close frame,
+        # the way a router pod being replaced ends it, or "going_away" with one.
+        self.connections = 0
+        self.drops: list[str] = []
+        self._socket: Optional[web.WebSocketResponse] = None
+        self._connected = asyncio.Event()
+        self._closing = False
+
+    def app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/v1/dispatch", self._dispatch)
+        app.router.add_get("/v1/agents/configs", self._configs)
+        app.router.add_post("/v1/agents/sessions", self._create)
+        app.router.add_get("/v1/agents/sessions/{id}/events", self._session_events)
+        app.router.add_post("/v1/agents/sessions/{id}/responses", self._respond)
+        app.router.add_post("/v1/agents/sessions/{id}/stop", self._close)
+        return app
+
+    async def hand_over(self, frame: dict[str, Any]) -> None:
+        """Push one frame to the worker."""
+        await asyncio.wait_for(self._connected.wait(), SETTLE)
+        assert self._socket is not None
+        await self._socket.send_json(frame)
+
+    async def told(self) -> dict[str, Any]:
+        """The next thing the worker said."""
+        return await asyncio.wait_for(self.reports.get(), SETTLE)
+
+    async def told_of_type(self, kind: str) -> dict[str, Any]:
+        """The next thing the worker said of one type, skipping the rest.
+
+        Load is reported on a timer, so a test waiting for an acceptance should not have to
+        care whether one landed first.
+        """
+
+        async def read() -> dict[str, Any]:
+            while True:
+                frame = await self.reports.get()
+                if frame.get("type") == kind:
+                    return frame
+
+        return await asyncio.wait_for(read(), SETTLE)
+
+    async def hang_up(self) -> None:
+        """Close the socket, as a router shutting down would."""
+        await asyncio.wait_for(self._connected.wait(), SETTLE)
+        assert self._socket is not None
+        self._closing = True
+        await self._socket.close()
+
+    async def _configs(self, _: web.Request) -> web.Response:
+        return web.json_response(
+            data=[
+                {
+                    "id": "config-7",
+                    "name": "chat_desk",
+                    "mode": "text",
+                    "region": "us",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+    async def _create(self, request: web.Request) -> web.Response:
+        wanted = await request.json()
+        self.sessions.append(wanted)
+        return web.json_response(
+            status=201,
+            data={
+                "id": f"session-{len(self.sessions)}",
+                "call_id": "",
+                "call_type": "agent",
+                "user_id": wanted.get("user_id", ""),
+                "agent_id": wanted.get("agent_id", ""),
+                "text": True,
+                "modality": "text",
+                "state": "live",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    async def _close(self, _: web.Request) -> web.Response:
+        return web.Response(status=204)
+
+    async def _respond(self, request: web.Request) -> web.Response:
+        session_id = request.match_info["id"]
+        self.responses.append((session_id, await request.json(), dict(request.headers)))
+        return web.json_response(
+            status=202,
+            data={
+                "id": "response-1",
+                "session_id": session_id,
+                "status": "running",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    async def _session_events(self, request: web.Request) -> web.WebSocketResponse:
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        async for _ in socket:
+            pass
+        return socket
+
+    async def _dispatch(self, request: web.Request) -> web.WebSocketResponse:
+        self.query = dict(request.query)
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        self._socket = socket
+        self.connections += 1
+        await socket.send_json({"type": "ready", "worker_id": "worker-7"})
+        if self.drops:
+            drop = self.drops.pop(0)
+            if drop == "cut":
+                assert request.transport is not None
+                request.transport.close()
+            else:
+                await socket.close(code=WSCloseCode.GOING_AWAY)
+            return socket
+        self._connected.set()
+
+        async for message in socket:
+            if message.type != WSMsgType.TEXT:
+                continue
+            frame = json.loads(message.data)
+            self.received.append(frame)
+            await self.reports.put(frame)
+            # Answering a ping is what lets the worker measure its own round trip.
+            if frame.get("type") == "ping" and not self._closing:
+                await socket.send_json({"type": "pong", "at": frame.get("at")})
+        return socket
+
+
+CALL = {
+    "type": "call",
+    "work_id": "work-1",
+    "call_id": "phone-+15125551234",
+    "call_type": "default",
+    "session_id": "session-1",
+    "called_number": "+15125551234",
+    "caller_number": "+15550001111",
+    "custom": {"line": "support"},
+    "at": "2026-08-27T12:00:00Z",
+}
+
+MESSAGE = {
+    "type": "message",
+    "work_id": "work-2",
+    "channel_type": "agent",
+    "channel_id": "call-1",
+    "agent_id": "call-1",
+    "config_id": "chat_desk",
+    "text": "is my invoice reissuable?",
+    "message_id": "message-1",
+    "user_id": "sam",
+    "user_name": "Sam",
+    "at": "2026-09-08T12:00:00Z",
+}
+
+
+class TestDispatch:
+    @pytest.fixture
+    async def router(self) -> AsyncIterator[Router]:
+        fake = Router()
+        server = TestServer(fake.app())
+        await server.start_server()
+        fake.url = str(server.make_url("")).rstrip("/")
+        yield fake
+        await server.close()
+
+    @pytest.fixture
+    def answered(self) -> asyncio.Queue:
+        """The calls a handler was given."""
+        return asyncio.Queue()
+
+    @pytest.fixture
+    def dispatch(self, router: Router, answered: asyncio.Queue) -> stream.Dispatch:
+        worker = stream.Dispatch(
+            url=router.url, customer_id="acme", capacity=3, report_every=0.05
+        )
+
+        @worker.wait_for_call()
+        async def handle(call: InboundCall) -> None:
+            await answered.put(call)
+
+        return worker
+
+    @pytest.fixture
+    async def waiting(
+        self, dispatch: stream.Dispatch
+    ) -> AsyncIterator[stream.Dispatch]:
+        """A worker connected and waiting for calls, torn down afterwards."""
+        running = asyncio.create_task(dispatch.run())
+        yield dispatch
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+
+    async def test_a_worker_says_what_it_can_hold_and_what_it_answers(
+        self, router: Router, waiting: stream.Dispatch
+    ):
+        # The router passes over a full worker rather than queueing behind it, and hands
+        # nothing to a worker that has no handler for it, so both are on the handshake.
+        await asyncio.wait_for(router._connected.wait(), SETTLE)
+
+        assert router.query == {"capacity": "3", "active": "0", "handles": "call"}
+
+    async def test_a_worker_answering_both_says_so(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            pass
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await asyncio.wait_for(router._connected.wait(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert router.query["handles"] == "call,message"
+
+    async def test_a_worker_learns_what_the_router_calls_it(
+        self, router: Router, waiting: stream.Dispatch
+    ):
+        await asyncio.wait_for(router._connected.wait(), SETTLE)
+
+        async def named() -> None:
+            while not waiting.worker_id:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(named(), SETTLE)
+        assert waiting.worker_id == "worker-7"
+
+    async def test_an_arriving_call_reaches_the_handler(
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
+    ):
+        await router.hand_over(CALL)
+
+        call = await asyncio.wait_for(answered.get(), SETTLE)
+
+        assert call.call_id == "phone-+15125551234"
+        assert call.call_type == "default"
+        assert call.session_id == "session-1"
+        assert call.called_number == "+15125551234"
+        assert call.caller_number == "+15550001111"
+        assert call.custom == {"line": "support"}
+        assert call.at is not None
+        assert call.at.year == 2026
+
+    async def test_a_call_that_was_handled_is_reported_done(
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
+    ):
+        # The router counts the call against this worker until it hears back.
+        await router.hand_over(CALL)
+        await asyncio.wait_for(answered.get(), SETTLE)
+
+        done = await router.told_of_type("done")
+
+        assert done == {"type": "done", "work_id": "work-1"}
+
+    async def test_a_handler_that_failed_is_reported_done_with_the_reason(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # The caller heard a ringing phone that nothing answered, and that is not visible
+        # from the router otherwise.
+        @dispatch.wait_for_call()
+        async def explode(call: InboundCall) -> None:
+            raise RuntimeError("no model configured")
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(CALL)
+            done = await router.told_of_type("done")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert done["work_id"] == "work-1"
+        assert done["error"] == "no model configured"
+
+    async def test_a_message_handler_that_failed_is_reported_done_with_the_reason(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # A failure the router never hears about is a worker that holds one message less
+        # for as long as it stays connected.
+        @dispatch.wait_for_message()
+        async def explode(message: InboundMessage) -> None:
+            raise RuntimeError("the model timed out")
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            done = await router.told_of_type("done")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert done == {
+            "type": "done",
+            "work_id": "work-2",
+            "error": "the model timed out",
+        }
+
+    async def test_a_failed_call_does_not_stop_the_next_one(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        seen: list[str] = []
+
+        @dispatch.wait_for_call()
+        async def sometimes(call: InboundCall) -> None:
+            seen.append(call.call_id)
+            if call.call_id == "call-1":
+                raise RuntimeError("that one went wrong")
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over({**CALL, "call_id": "call-1"})
+            await router.told_of_type("done")
+            await router.hand_over({**CALL, "call_id": "call-2"})
+            await router.told_of_type("done")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert seen == ["call-1", "call-2"]
+
+    async def test_two_calls_are_handled_at_once(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # Reading the socket is also what delivers the next call, so answering one caller
+        # in line would leave the next listening to a ringing phone.
+        both = asyncio.Event()
+        started = 0
+
+        @dispatch.wait_for_call()
+        async def slowly(call: InboundCall) -> None:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both.set()
+            await both.wait()
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over({**CALL, "call_id": "call-1"})
+            await router.hand_over({**CALL, "call_id": "call-2"})
+            await asyncio.wait_for(both.wait(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert started == 2
+
+    async def test_a_worker_reports_what_it_is_doing(
+        self, router: Router, waiting: stream.Dispatch
+    ):
+        load = await router.told_of_type("load")
+
+        assert load["active_agents"] == 0
+        assert load["cpu_percent"] >= 0.0
+        assert load["memory_percent"] >= 0.0
+        assert "latency_ms" in load
+
+    async def test_a_report_counts_the_calls_being_handled(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        holding = asyncio.Event()
+
+        @dispatch.wait_for_call()
+        async def hold(call: InboundCall) -> None:
+            await holding.wait()
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(CALL)
+
+            async def busy() -> dict[str, Any]:
+                while True:
+                    load = await router.told_of_type("load")
+                    if load["active_agents"] > 0:
+                        return load
+
+            load = await asyncio.wait_for(busy(), SETTLE)
+        finally:
+            holding.set()
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert load["active_agents"] == 1
+
+    async def test_a_worker_times_its_own_round_trip(
+        self, router: Router, waiting: stream.Dispatch
+    ):
+        # Measured from this side because this is the side the call's audio has to cross.
+        await router.told_of_type("ping")
+
+        async def measured() -> None:
+            while waiting._latency_ms <= 0.0:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(measured(), SETTLE)
+        assert waiting._latency_ms > 0.0
+
+    async def test_running_without_a_handler_is_refused(self, router: Router):
+        # A call would otherwise be taken out of the router's rotation and dropped.
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        with pytest.raises(RuntimeError, match="wait_for_call"):
+            await worker.run()
+
+    async def test_the_refusal_says_a_message_handler_would_also_do(
+        self, router: Router
+    ):
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        with pytest.raises(RuntimeError, match="wait_for_message"):
+            await worker.run()
+
+    async def test_a_worker_that_can_hold_no_calls_is_refused(self, router: Router):
+        with pytest.raises(ValueError, match="cannot answer"):
+            stream.Dispatch(url=router.url, customer_id="acme", capacity=0)
+
+    async def test_the_router_closing_ends_the_wait(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        running = asyncio.create_task(dispatch.run())
+        await asyncio.wait_for(router._connected.wait(), SETTLE)
+
+        await router.hang_up()
+
+        await asyncio.wait_for(running, SETTLE)
+
+    async def test_a_call_still_being_answered_is_waited_for(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # Dropping it would hang up on whoever is talking.
+        finished = asyncio.Event()
+        release = asyncio.Event()
+
+        @dispatch.wait_for_call()
+        async def hold(call: InboundCall) -> None:
+            await release.wait()
+            finished.set()
+
+        running = asyncio.create_task(dispatch.run())
+        await router.hand_over(CALL)
+
+        async def answering() -> None:
+            while dispatch.active == 0:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(answering(), SETTLE)
+        await router.hang_up()
+        await asyncio.sleep(0.05)
+        assert not running.done(), "the wait should not end while a call is still going"
+
+        release.set()
+        await asyncio.wait_for(running, SETTLE)
+        assert finished.is_set()
+
+    async def test_a_call_with_no_custom_data_or_time_is_still_answered(
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
+    ):
+        await router.hand_over({"type": "call", "call_id": "phone-+15125551234"})
+
+        call = await asyncio.wait_for(answered.get(), SETTLE)
+
+        assert call.custom == {}
+        assert call.at is None
+        assert call.call_type == "default", (
+            "a call with no type named is the default one"
+        )
+
+    async def test_a_frame_the_worker_does_not_understand_is_ignored(
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
+    ):
+        await router.hand_over({"type": "something-new"})
+        await router.hand_over(CALL)
+
+        call = await asyncio.wait_for(answered.get(), SETTLE)
+
+        assert call.call_id == "phone-+15125551234"
+
+    async def test_an_arriving_message_reaches_the_message_handler(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.channel_id == "call-1"
+        assert message.channel_type == "agent"
+        assert message.config_id == "chat_desk"
+        assert message.text == "is my invoice reissuable?"
+        assert message.message_id == "message-1"
+        assert message.user_id == "sam"
+        assert message.user_name == "Sam"
+        assert message.at is not None
+        assert message.at.year == 2026
+
+    async def test_what_the_channel_was_created_with_reaches_the_handler(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # It is the only way a worker learns what a conversation is for. The router has no
+        # opinion about an organization or a locale and should not need one.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(
+                {
+                    **MESSAGE,
+                    "custom": {
+                        "organization_id": "1234",
+                        "locale": "en-GB",
+                        # Stream takes arbitrary JSON here and a worker reads strings, so
+                        # anything else is dropped rather than rendered into one.
+                        "seats": 12,
+                    },
+                }
+            )
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.custom == {"organization_id": "1234", "locale": "en-GB"}
+
+    async def test_a_message_carrying_nothing_custom_still_reads_as_empty(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # A handler should be able to read the field without checking whether the router
+        # bothered to send it.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.custom == {}
+
+    async def test_the_channel_a_message_arrived_on_is_the_agent_to_answer_as(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # Passing this to a new session is what puts the answer back in the conversation
+        # the question was asked in.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.agent_id == "call-1"
+
+    async def test_a_message_with_no_handler_is_answered_done_with_an_error(
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
+    ):
+        # The room it took is held at the router until something says it is free.
+        await router.hand_over(MESSAGE)
+        done = await router.told_of_type("done")
+        await router.hand_over(CALL)
+
+        call = await asyncio.wait_for(answered.get(), SETTLE)
+
+        assert done == {
+            "type": "done",
+            "work_id": "work-2",
+            "error": "this worker answers no messages",
+        }
+        assert call.call_id == "phone-+15125551234"
+
+    async def test_a_call_with_no_handler_is_answered_done_with_an_error(
+        self, router: Router
+    ):
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        @worker.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            pass
+
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over(CALL)
+            done = await router.told_of_type("done")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert done == {
+            "type": "done",
+            "work_id": "work-1",
+            "error": "this worker answers no calls",
+        }
+
+    async def test_a_message_written_to_a_session_names_it_and_its_request(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(
+                {
+                    "type": "message",
+                    "work_id": "work-3",
+                    "session_id": "session-9",
+                    "request_id": "request-4",
+                    "text": "where is my order?",
+                    "user_id": "sam",
+                }
+            )
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.session_id == "session-9"
+        assert message.request_id == "request-4"
+        assert message.channel_id == ""
+        assert message.text == "where is my order?"
+
+    @pytest.mark.parametrize(
+        "sent, read",
+        [
+            (
+                [
+                    {"url": "https://cdn.example.com/a.jpg", "mime_type": "image/png"},
+                    {"url": "https://cdn.example.com/b.jpg"},
+                ],
+                [
+                    ("https://cdn.example.com/a.jpg", "image/png"),
+                    ("https://cdn.example.com/b.jpg", "image/jpeg"),
+                ],
+            ),
+            (None, []),
+            ([], []),
+            ({"url": "https://cdn.example.com/a.jpg"}, []),
+            ("https://cdn.example.com/a.jpg", []),
+            (["https://cdn.example.com/a.jpg"], []),
+            ([{}, {"mime_type": "image/png"}, {"url": ""}, {"url": 7}], []),
+            (
+                [
+                    {"url": "ftp://cdn.example.com/a.jpg"},
+                    {"url": "https://user:secret@cdn.example.com/a.jpg"},
+                    {"url": "https://cdn.example.com/kept.jpg", "mime_type": 3},
+                    {"url": "https://cdn.example.com/also.jpg", "mime_type": ""},
+                ],
+                [
+                    ("https://cdn.example.com/kept.jpg", "image/jpeg"),
+                    ("https://cdn.example.com/also.jpg", "image/jpeg"),
+                ],
+            ),
+        ],
+        ids=[
+            "two photos",
+            "null",
+            "empty",
+            "an object, not a list",
+            "a string, not a list",
+            "an entry that is not an object",
+            "entries with no url",
+            "urls the model cannot fetch, beside one it can",
+        ],
+    )
+    async def test_the_photos_sent_with_a_message_reach_the_handler(
+        self,
+        router: Router,
+        dispatch: stream.Dispatch,
+        sent: object,
+        read: list[tuple[str, str]],
+    ):
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over({**MESSAGE, "images": sent})
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert [(image.url, image.mime) for image in message.images] == read
+        assert message.text == "is my invoice reissuable?"
+
+    async def test_a_refused_photo_url_is_never_logged(
+        self,
+        router: Router,
+        dispatch: stream.Dispatch,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        secret = "s3cret-token"
+        refused = [
+            {"url": f"https://user:{secret}@cdn.example.com/a.jpg"},
+            {"url": f"data:image/png;base64,{secret}"},
+            {"url": f"ftp://cdn.example.com/{secret}.jpg"},
+        ]
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            with caplog.at_level(logging.DEBUG):
+                await router.hand_over({**MESSAGE, "images": refused})
+                message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.images == []
+        assert "cannot be fetched" in caplog.text
+        assert secret not in caplog.text
+
+    def test_a_message_built_by_position_keeps_its_older_fields_in_place(self):
+        message = InboundMessage(
+            "chan",
+            "agent",
+            "cfg",
+            {},
+            "hi",
+            "msg-1",
+            "user-1",
+            "Ana",
+            None,
+            "s-1",
+            "r-1",
+        )
+
+        assert (message.message_id, message.user_id, message.user_name) == (
+            "msg-1",
+            "user-1",
+            "Ana",
+        )
+        assert (message.session_id, message.request_id) == ("s-1", "r-1")
+        assert message.images == []
+
+    async def test_a_message_sent_without_photos_has_none(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # A frame from a router that never sends photos reads the same as before.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.images == []
+
+    @pytest.mark.parametrize("text", ["", "what is this?"])
+    async def test_answering_a_message_with_photos_shows_them_under_its_request(
+        self, router: Router, text: str
+    ):
+        # The router takes a request id beside images, so the answer still lands on the
+        # message it answers.
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        await worker.answer(
+            InboundMessage(
+                channel_id="",
+                session_id="session-9",
+                request_id="request-4",
+                text=text,
+                images=[
+                    ImageContent(url="https://cdn.example.com/a.jpg", mime="image/png"),
+                    ImageContent(url="https://cdn.example.com/b.jpg"),
+                ],
+                user_id="sam",
+            )
+        )
+
+        [(session_id, body, headers)] = router.responses
+        assert session_id == "session-9"
+        assert body == {
+            "text": text,
+            "images": [
+                {"url": "https://cdn.example.com/a.jpg"},
+                {"url": "https://cdn.example.com/b.jpg"},
+            ],
+            "request_id": "request-4",
+        }
+        assert headers["X-Stream-User-Id"] == "sam"
+
+    async def test_answering_a_session_message_asks_the_model_for_its_author(
+        self, router: Router
+    ):
+        # The worker's own credential acting for whoever wrote, so the response goes to
+        # the model rather than back to a worker, and it lands on the request.
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        await worker.answer(
+            InboundMessage(
+                channel_id="",
+                session_id="session-9",
+                request_id="request-4",
+                text="where is my order?",
+                user_id="sam",
+            )
+        )
+
+        [(session_id, body, headers)] = router.responses
+        assert session_id == "session-9"
+        assert body == {"text": "where is my order?", "request_id": "request-4"}
+        assert headers["X-Stream-User-Id"] == "sam"
+        assert headers["X-Customer-Id"] == "acme"
+
+    async def test_answering_keeps_the_server_credential(
+        self, router: Router, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("STREAM_ACCELERATION_CUSTOMER_ID", raising=False)
+        monkeypatch.delenv("STREAM_ACCELERATION_AUTHENTICATE", raising=False)
+        monkeypatch.setenv("STREAM_API_KEY", "key")
+        monkeypatch.setenv("STREAM_API_SECRET", "secret")
+        worker = stream.Dispatch(url=router.url)
+
+        await worker.answer(
+            InboundMessage(
+                channel_id="", session_id="session-9", text="hi", user_id="sam"
+            )
+        )
+
+        [(_, body, headers)] = router.responses
+        assert body["text"] == "hi"
+        assert len(body["request_id"]) == 36, (
+            "a message sent without one is named afresh"
+        )
+        assert headers["Stream-Auth-Type"] == "server"
+        assert headers["X-Stream-User-Id"] == "sam"
+
+    async def test_answering_a_message_no_session_holds_is_refused(
+        self, router: Router
+    ):
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        with pytest.raises(ValueError, match="get_or_create_agent"):
+            await worker.answer(InboundMessage(channel_id="call-1", text="hi"))
+
+        assert router.responses == []
+
+    async def test_an_agent_is_not_started_for_a_session_message(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # A session is already holding that conversation; a second agent would answer as
+        # though the first exchange never happened.
+        with pytest.raises(ValueError, match="answer"):
+            await dispatch.get_or_create_agent(
+                InboundMessage(channel_id="", session_id="session-9"),
+                lambda: Agent(config="chat_desk"),
+            )
+
+        assert router.sessions == []
+
+    async def test_a_worker_that_only_hosts_tools_answers_no_kind_of_work(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "investigate_sdk",
+                "arguments": '{"sdk": "android"}',
+            }
+        )
+        await router.told_of_type("tool_result")
+
+        assert router.query == {"capacity": "4", "active": "0", "handles": ""}
+
+    async def test_a_hosted_tool_call_is_not_reported_done(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        # Capacity is about agents, and answering a tool call for one is not running
+        # another.
+        await router.hand_over(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "investigate_sdk",
+                "arguments": '{"sdk": "android"}',
+            }
+        )
+        await router.told_of_type("tool_result")
+        await router.told_of_type("load")
+
+        assert [frame for frame in router.received if frame["type"] == "done"] == []
+
+    async def test_a_message_handler_that_failed_does_not_stop_the_next_one(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        seen: list[str] = []
+        both = asyncio.Event()
+
+        @dispatch.wait_for_message()
+        async def sometimes(message: InboundMessage) -> None:
+            seen.append(message.text)
+            if len(seen) == 2:
+                both.set()
+            if message.text == "first":
+                raise RuntimeError("that one went wrong")
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over({**MESSAGE, "text": "first"})
+            await router.hand_over({**MESSAGE, "text": "second"})
+            await asyncio.wait_for(both.wait(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert seen == ["first", "second"]
+
+    async def test_a_worker_can_wait_for_messages_without_answering_calls(
+        self, router: Router
+    ):
+        # An agent that only answers in writing has no reason to be handed a phone call.
+        worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
+        written: asyncio.Queue = asyncio.Queue()
+
+        @worker.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.text == "is my invoice reissuable?"
+
+    @pytest.fixture
+    def acceleration(self, router: Router, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The environment an agent built from a stored config reads."""
+        monkeypatch.setenv("STREAM_ACCELERATION_URL", router.url)
+        monkeypatch.setenv("STREAM_ACCELERATION_CUSTOMER_ID", "acme")
+        monkeypatch.setenv("STREAM_API_KEY", "key")
+        monkeypatch.setenv("STREAM_API_SECRET", "secret")
+
+    async def answering(
+        self, router: Router, dispatch: stream.Dispatch, *channels: str
+    ) -> list[Agent]:
+        """The agent each of those channels was answered by, in order."""
+        answered: asyncio.Queue[Agent] = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await answered.put(
+                await dispatch.get_or_create_agent(
+                    message, lambda: Agent(config="chat_desk")
+                )
+            )
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            agents = []
+            for channel in channels:
+                await router.hand_over({**MESSAGE, "channel_id": channel})
+                agents.append(await asyncio.wait_for(answered.get(), SETTLE))
+            return agents
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    async def test_an_agent_answers_in_the_channel_the_message_was_written_in(
+        self, router: Router, dispatch: stream.Dispatch, acceleration: None
+    ):
+        # The channel is the agent id, which is what puts the answer back in the
+        # conversation the question was asked in.
+        await self.answering(router, dispatch, "call-1")
+
+        assert len(router.sessions) == 1
+        assert router.sessions[0]["agent_id"] == "call-1"
+        assert router.sessions[0].get("start_voice", False) is False
+        assert router.sessions[0]["config_id"] == "config-7"
+
+    async def test_a_second_message_on_a_channel_goes_to_the_agent_that_answered_the_first(
+        self, router: Router, dispatch: stream.Dispatch, acceleration: None
+    ):
+        # Starting a second agent would answer as though the first exchange never happened.
+        first, second = await self.answering(router, dispatch, "call-1", "call-1")
+
+        assert first is second
+        assert len(router.sessions) == 1
+
+    async def test_another_channel_is_another_conversation(
+        self, router: Router, dispatch: stream.Dispatch, acceleration: None
+    ):
+        first, second = await self.answering(router, dispatch, "call-1", "call-2")
+
+        assert first is not second
+        assert [created["agent_id"] for created in router.sessions] == [
+            "call-1",
+            "call-2",
+        ]
+
+    async def test_a_message_still_being_answered_is_waited_for(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        finished = asyncio.Event()
+        release = asyncio.Event()
+
+        @dispatch.wait_for_message()
+        async def hold(message: InboundMessage) -> None:
+            await release.wait()
+            finished.set()
+
+        running = asyncio.create_task(dispatch.run())
+        await router.hand_over(MESSAGE)
+
+        async def answering() -> None:
+            while dispatch.active == 0:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(answering(), SETTLE)
+        await router.hang_up()
+        await asyncio.sleep(0.05)
+        assert not running.done(), "the wait should not end mid-answer"
+
+        release.set()
+        await asyncio.wait_for(running, SETTLE)
+        assert finished.is_set()
+
+    @pytest.fixture
+    def support(self, router: Router) -> stream.Agent:
+        agent = stream.Client(url=router.url, customer_id="acme").agent(
+            "stream-support"
+        )
+
+        @agent.register(description="Read SDK source")
+        async def investigate_sdk(sdk: str) -> str:
+            if sdk == "broken":
+                raise RuntimeError("the checkout is missing")
+            return f"read {sdk}"
+
+        return agent
+
+    @pytest.fixture
+    async def hosting(
+        self, router: Router, support: stream.Agent
+    ) -> AsyncIterator[stream.Dispatch]:
+        """A worker that only hosts tools, connected and torn down afterwards."""
+        worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
+        worker.host(support, tool_timeout=60)
+        running = asyncio.create_task(worker.run())
+        yield worker
+        running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+
+    async def test_a_hosted_function_is_declared_to_the_router(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        declared = await router.told_of_type("host_tools")
+
+        assert declared["agent_id"] == "stream-support"
+        assert declared["timeout_ms"] == 60000
+        assert [tool["name"] for tool in declared["tools"]] == ["investigate_sdk"]
+        assert declared["tools"][0]["description"] == "Read SDK source"
+        assert "sdk" in declared["tools"][0]["parameters"]["properties"]
+
+    async def test_a_hosted_function_is_answered_over_the_dispatch_socket(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "session_id": "s",
+                "name": "investigate_sdk",
+                "arguments": '{"sdk": "android"}',
+            }
+        )
+
+        answered = await router.told_of_type("tool_result")
+
+        assert answered == {
+            "type": "tool_result",
+            "tool_call_id": "call-1",
+            "id": "call-1",
+            "output": "read android",
+        }
+
+    async def test_a_hosted_function_that_failed_says_why(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "investigate_sdk",
+                "arguments": '{"sdk": "broken"}',
+            }
+        )
+
+        answered = await router.told_of_type("tool_result")
+
+        assert answered["id"] == "call-1"
+        assert answered["error"] == "the checkout is missing"
+        assert "output" not in answered
+
+    async def test_a_tool_this_worker_does_not_host_is_answered_with_an_error(
+        self, router: Router, hosting: stream.Dispatch
+    ):
+        await router.hand_over(
+            {"type": "tool_call", "id": "call-1", "name": "deploy", "arguments": "{}"}
+        )
+
+        answered = await router.told_of_type("tool_result")
+
+        assert answered == {
+            "type": "tool_result",
+            "tool_call_id": "call-1",
+            "id": "call-1",
+            "error": "this worker does not run deploy",
+        }
+
+    async def test_a_hosted_functions_policies_are_declared_to_the_router(
+        self, router: Router
+    ):
+        agent = stream.Client(url=router.url, customer_id="acme").agent("travel")
+
+        @agent.register(
+            description="Book a flight",
+            interruptible=True,
+            timeout=90,
+            needs_approval="Book flight {flight_id}?",
+        )
+        async def book_flight(flight_id: str) -> str:
+            return "booked"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            declared = await router.told_of_type("host_tools")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        tool = declared["tools"][0]
+        assert tool["interruptible"] is True
+        assert tool["timeout_ms"] == 90000
+        assert tool["approval"] == {"title": "Book flight {flight_id}?"}
+
+    async def test_a_hosted_call_the_router_cancels_stops(self, router: Router):
+        agent = stream.Client(url=router.url, customer_id="acme").agent("support")
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        @agent.register(description="Investigate for a long time")
+        async def investigate() -> str:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+                return "found it"
+            finally:
+                stopped.set()
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            call = {"type": "tool_call", "id": "call-1", "name": "investigate"}
+            await router.hand_over({**call, "session_id": "s1"})
+            await asyncio.wait_for(started.wait(), SETTLE)
+            await router.hand_over(
+                {"type": "tool_cancel", "id": "call-1", "session_id": "s2"}
+            )
+            await asyncio.sleep(0.05)
+            assert not stopped.is_set(), "another session's call of the same id"
+            await router.hand_over(
+                {"type": "tool_cancel", "id": "call-1", "session_id": "s1"}
+            )
+            await asyncio.wait_for(stopped.wait(), SETTLE)
+            await asyncio.sleep(0.05)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert not [
+            frame for frame in router.received if frame["type"] == "tool_result"
+        ]
+
+    async def test_a_hosted_function_reads_its_call_and_says_how_it_is_going(
+        self, router: Router
+    ):
+        agent = stream.Client(url=router.url, customer_id="acme").agent("support")
+        seen: list[stream.ToolCallContext] = []
+
+        @agent.register(description="Investigate")
+        async def investigate(tool_call_context: stream.ToolCallContext) -> str:
+            seen.append(tool_call_context)
+            await tool_call_context.update("reading the logs")
+            return "found it"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over(
+                {
+                    "type": "tool_call",
+                    "id": "call-1",
+                    "session_id": "s1",
+                    "turn_id": "turn-3",
+                    "name": "investigate",
+                    "user": {"id": "sam"},
+                }
+            )
+            update = await router.told_of_type("tool_update")
+            result = await router.told_of_type("tool_result")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert update == {
+            "type": "tool_update",
+            "tool_call_id": "call-1",
+            "text": "reading the logs",
+            "verbatim": False,
+        }
+        assert result["output"] == "found it"
+        assert (seen[0].id, seen[0].session_id, seen[0].turn_id) == (
+            "call-1",
+            "s1",
+            "turn-3",
+        )
+        assert seen[0].user.id == "sam"
+
+    async def test_a_running_hosted_tool_does_not_hold_up_the_next(
+        self, router: Router
+    ):
+        # The socket a call arrived on is also what delivers the next one.
+        agent = stream.Client(url=router.url, customer_id="acme").agent(
+            "stream-support"
+        )
+        release = asyncio.Event()
+
+        @agent.register(description="Wait until released")
+        async def slow() -> str:
+            await release.wait()
+            return "slow"
+
+        @agent.register(description="Release the slow one")
+        async def fast() -> str:
+            release.set()
+            return "fast"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
+        worker.host(agent)
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over({"type": "tool_call", "id": "1", "name": "slow"})
+
+            async def busy() -> dict[str, Any]:
+                while True:
+                    load = await router.told_of_type("load")
+                    if load["active_agents"] > 0:
+                        return load
+
+            load = await asyncio.wait_for(busy(), SETTLE)
+            await router.hand_over({"type": "tool_call", "id": "2", "name": "fast"})
+            first = await router.told_of_type("tool_result")
+            second = await router.told_of_type("tool_result")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert load["active_agents"] == 1
+        assert [first["output"], second["output"]] == ["fast", "slow"]
+
+    async def test_a_worker_the_router_drops_reconnects_and_hosts_again(
+        self, router: Router, support: stream.Agent
+    ):
+        # A worker that stopped at either drop would leave every session naming the agent
+        # without its tools.
+        router.drops = ["cut", "going_away"]
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker._first_retry = 0.01
+        worker.host(support)
+        running = asyncio.create_task(worker.run())
+        try:
+            await asyncio.wait_for(router._connected.wait(), SETTLE)
+            declared = await router.told_of_type("host_tools")
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert router.connections == 3
+        assert declared["agent_id"] == "stream-support"
+        assert declared["timeout_ms"] == 0
+
+    async def test_a_worker_whose_tools_are_refused_stops_waiting(
+        self, router: Router, support: stream.Agent
+    ):
+        # A worker nobody will call should say so rather than sit connected looking healthy.
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(support)
+        running = asyncio.create_task(worker.run())
+
+        await router.hand_over(
+            {
+                "type": "hosting_refused",
+                "agent_id": "stream-support",
+                "reason": "hosting no tools is not hosting",
+            }
+        )
+
+        with pytest.raises(stream.RouterError, match="stream-support.*not hosting"):
+            await asyncio.wait_for(running, SETTLE)

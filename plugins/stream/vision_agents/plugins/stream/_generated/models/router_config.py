@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+from typing_extensions import Self
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.llm_options import LlmOptions
+    from ..models.search_options import SearchOptions
+    from ..models.sts_options import StsOptions
+    from ..models.stt_options import SttOptions
+    from ..models.tts_options import TtsOptions
+
+
+T = TypeVar("T", bound="RouterConfig")
+
+
+@_attrs_define
+class RouterConfig:
+    """
+    Attributes:
+        created_at (datetime.datetime):
+        id (str):
+        name (str):
+        updated_at (datetime.datetime):
+        llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
+            speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model
+            answers under belongs to the agent asking, not to the config that decides where the asking goes.
+        search (SearchOptions | Unset): How this config finds out today's answers.
+        sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
+            transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
+            term, and a request naming a term is routed to a model that declared it or refused, never served by one that
+            ignores it.
+        stt (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
+            something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
+            write subtitles from. A provider that cannot express a term refuses the request rather than dropping it
+            silently.
+        tts (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
+            rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
+            says it cannot.
+    """
+
+    created_at: datetime.datetime
+    id: str
+    name: str
+    updated_at: datetime.datetime
+    llm: LlmOptions | Unset = UNSET
+    search: SearchOptions | Unset = UNSET
+    sts: StsOptions | Unset = UNSET
+    stt: SttOptions | Unset = UNSET
+    tts: TtsOptions | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        created_at = self.created_at.isoformat()
+
+        id = self.id
+
+        name = self.name
+
+        updated_at = self.updated_at.isoformat()
+
+        llm: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.llm, Unset):
+            llm = self.llm.to_dict()
+
+        search: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.search, Unset):
+            search = self.search.to_dict()
+
+        sts: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sts, Unset):
+            sts = self.sts.to_dict()
+
+        stt: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.stt, Unset):
+            stt = self.stt.to_dict()
+
+        tts: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tts, Unset):
+            tts = self.tts.to_dict()
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "created_at": created_at,
+                "id": id,
+                "name": name,
+                "updated_at": updated_at,
+            }
+        )
+        if llm is not UNSET:
+            field_dict["llm"] = llm
+        if search is not UNSET:
+            field_dict["search"] = search
+        if sts is not UNSET:
+            field_dict["sts"] = sts
+        if stt is not UNSET:
+            field_dict["stt"] = stt
+        if tts is not UNSET:
+            field_dict["tts"] = tts
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.llm_options import LlmOptions
+        from ..models.search_options import SearchOptions
+        from ..models.sts_options import StsOptions
+        from ..models.stt_options import SttOptions
+        from ..models.tts_options import TtsOptions
+
+        d = dict(src_dict)
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        id = d.pop("id")
+
+        name = d.pop("name")
+
+        updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _llm = d.pop("llm", UNSET)
+        llm: LlmOptions | Unset
+        if isinstance(_llm, Unset):
+            llm = UNSET
+        else:
+            llm = LlmOptions.from_dict(_llm)
+
+        _search = d.pop("search", UNSET)
+        search: SearchOptions | Unset
+        if isinstance(_search, Unset):
+            search = UNSET
+        else:
+            search = SearchOptions.from_dict(_search)
+
+        _sts = d.pop("sts", UNSET)
+        sts: StsOptions | Unset
+        if isinstance(_sts, Unset):
+            sts = UNSET
+        else:
+            sts = StsOptions.from_dict(_sts)
+
+        _stt = d.pop("stt", UNSET)
+        stt: SttOptions | Unset
+        if isinstance(_stt, Unset):
+            stt = UNSET
+        else:
+            stt = SttOptions.from_dict(_stt)
+
+        _tts = d.pop("tts", UNSET)
+        tts: TtsOptions | Unset
+        if isinstance(_tts, Unset):
+            tts = UNSET
+        else:
+            tts = TtsOptions.from_dict(_tts)
+
+        router_config = cls(
+            created_at=created_at,
+            id=id,
+            name=name,
+            updated_at=updated_at,
+            llm=llm,
+            search=search,
+            sts=sts,
+            stt=stt,
+            tts=tts,
+        )
+
+        router_config.additional_properties = d
+        return router_config
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

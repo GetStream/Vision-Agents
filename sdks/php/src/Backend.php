@@ -1,0 +1,375 @@
+<?php
+
+declare(strict_types=1);
+
+namespace GetStream\VisionAgents;
+
+use GetStream\VisionAgents\Exception\ConfigurationException;
+
+/**
+ * Where the router is and who is calling it.
+ *
+ * Three ways to say who that is, and which one a deployment takes is a property of the
+ * deployment rather than a choice: a customer id for a router with nothing in front of it, a
+ * key and secret for a process the customer runs, and a key and a token for somebody acting
+ * as one end user.
+ *
+ * Immutable: `asUser` returns a new one, because a process usually holds both its own
+ * credential and one per user, and switching the user on a shared one would make which user a
+ * request was for depend on when it happened to run.
+ */
+final readonly class Backend
+{
+    /** Stream's hosted router, which is where a client goes when nothing says otherwise. */
+    public const string DEFAULT_URL = 'https://accelerate-us-east4.gcp.stream-io-api.com';
+    public const string URL_ENV = 'STREAM_ACCELERATION_URL';
+    /** Holds this SDK to the hosted router in one region, such as us-east4. */
+    public const string REGION_ENV = 'STREAM_ACCELERATION_REGION';
+    public const string CUSTOMER_ENV = 'STREAM_ACCELERATION_CUSTOMER_ID';
+    public const string API_KEY_ENV = 'STREAM_API_KEY';
+    public const string API_SECRET_ENV = 'STREAM_API_SECRET';
+    public const string AUTHENTICATE_ENV = 'STREAM_ACCELERATION_AUTHENTICATE';
+
+    /** Short, because a token is minted per request. */
+    private const int TOKEN_VALIDITY_SECONDS = 3600;
+
+    /**
+     * The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+     * which regions are served is the hosted router's to say, so offering another needs no
+     * release of this SDK.
+     */
+    private const string REGION = '/\A[a-z]+-[a-z]+[0-9]+\z/';
+
+    public string $url;
+    public string $customerId;
+    public string $apiKey;
+    public string $userId;
+    /** The end user this backend speaks for while keeping its own server credential. */
+    public string $onBehalfOf;
+    public bool $authenticate;
+    /** The customer's team the work is counted against, its spend limits included. */
+    public ?string $team;
+    /** @var list<string> the customer's own groupings the work is counted against, sorted, each once */
+    public array $usageCategories;
+    private string $apiSecret;
+    private string $token;
+
+    /**
+     * Every argument falls back to the environment, so a process deployed next to a router
+     * needs none of them.
+     *
+     * @param ?string $url the router's base URL; `$region`, then `STREAM_ACCELERATION_URL`, then
+     *     `STREAM_ACCELERATION_REGION`, then Stream's hosted router, so only a self-hosted or
+     *     local router needs it
+     * @param ?string $customerId who the work is billed to, for a router that trusts the header
+     * @param ?string $apiKey the public half of a Stream credential; `STREAM_API_KEY`
+     * @param ?string $apiSecret the secret that makes this a backend; `STREAM_API_SECRET`
+     * @param string $token a token minted for `$userId` to hold, in place of the secret
+     * @param string $userId the end user this is acting for, if it is acting for one
+     * @param ?bool $authenticate whether the router sits behind Stream's authenticating proxy,
+     *     which wants the credential spelled `api_key` and `stream-auth-type: jwt`. On for the
+     *     hosted router, in any region; anywhere else `STREAM_ACCELERATION_AUTHENTICATE`
+     * @param string $onBehalfOf the end user a server-side caller speaks for, keeping its own credential
+     * @param ?string $region holds this to the hosted router in one region, such as us-east4;
+     *     it cannot be passed together with `$url`
+     * @param ?string $team the customer's team the work is counted against, such as `finance`:
+     *     1 to 59 characters of A-Z, a-z, 0-9, _ . and -
+     * @param array<string> $usageCategories the customer's own groupings the work is counted
+     *     against, such as `project:onboarding`: at most 10 together with the team, each 1 to 64
+     *     characters of A-Z, a-z, 0-9, _ . : and -, and none starting `team:`
+     *
+     * The team and the categories are signed into every token minted here, and sent in
+     * `X-Stream-Usage-Categories` to a router with no proxy in front of it. A token handed in
+     * carries whatever it was signed with, so neither can be passed beside one.
+     */
+    public function __construct(
+        ?string $url = null,
+        ?string $customerId = null,
+        ?string $apiKey = null,
+        ?string $apiSecret = null,
+        string $token = '',
+        string $userId = '',
+        ?bool $authenticate = null,
+        string $onBehalfOf = '',
+        ?string $region = null,
+        ?string $team = null,
+        array $usageCategories = [],
+    ) {
+        $this->team = $team === '' ? null : $team;
+        $this->usageCategories = UsageCategories::checked($this->team, $usageCategories);
+        if ($token !== '' && ($this->team !== null || $this->usageCategories !== [])) {
+            throw new ConfigurationException('a token handed in carries the team and usage categories it was signed with; mint it with userToken(..., team: ..., usageCategories: ...)');
+        }
+        $this->url = rtrim(self::locate($url, $region), '/');
+        $this->customerId = $customerId ?? self::env(self::CUSTOMER_ENV) ?? '';
+        // Naming a customer is choosing how a router with nothing in front of it is reached,
+        // and a key that happens to be in the environment does not overrule the choice.
+        $this->apiKey = $apiKey ?? ($customerId !== null ? '' : (self::env(self::API_KEY_ENV) ?? ''));
+        // A token handed in is the caller's answer to who they are, so an ambient secret does
+        // not turn it back into a backend.
+        $this->apiSecret = $apiSecret ?? ($token !== '' || $this->apiKey === '' ? '' : (self::env(self::API_SECRET_ENV) ?? ''));
+        $this->token = $token;
+        $this->userId = $userId;
+        $this->onBehalfOf = $onBehalfOf;
+        $this->authenticate = $authenticate
+            ?? (self::flag(self::env(self::AUTHENTICATE_ENV)) || self::hosted($this->url));
+
+        if ($this->authenticate && $this->apiKey === '') {
+            throw new ConfigurationException('a router behind the proxy is reached with a credential; pass apiKey, or ' . self::API_KEY_ENV);
+        }
+    }
+
+    /**
+     * Whether this speaks for a process the customer runs rather than for a device.
+     *
+     * Only a server-side caller reaches the operations the spec does not mark client
+     * accessible, which is everything about how an agent is configured.
+     */
+    public function serverSide(): bool
+    {
+        return $this->apiSecret !== '' || ($this->apiKey === '' && $this->customerId !== '');
+    }
+
+    /**
+     * The same router, acting for one end user and holding the token that proves it.
+     *
+     * A token is the whole credential, so the result is no longer a backend.
+     */
+    public function asUser(string $userId, string $token): self
+    {
+        if ($userId === '') {
+            throw new ConfigurationException('a user needs an id');
+        }
+        if ($token === '') {
+            throw new ConfigurationException("there is no token for {$userId} to hold");
+        }
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, '', $token, $userId, $this->authenticate);
+    }
+
+    /**
+     * The same backend, saying which of its users it is acting for, so the sessions it opens
+     * belong to that user and their own device can reach them afterwards.
+     */
+    public function actingFor(string $userId): self
+    {
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $userId, $this->authenticate, team: $this->team, usageCategories: $this->usageCategories);
+    }
+
+    /**
+     * The same backend, still speaking with its own server credential, saying which end user it
+     * acts for. Unlike `actingFor`, nothing is signed for that user in any mode, so what it
+     * writes is the server's: the router answers it with the model rather than handing it to a
+     * dispatch worker.
+     */
+    public function onBehalfOf(string $userId): self
+    {
+        if (!$this->serverSide()) {
+            throw new ConfigurationException('only a server-side backend can act on behalf of a user');
+        }
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $this->userId, $this->authenticate, $userId, team: $this->team, usageCategories: $this->usageCategories);
+    }
+
+    /**
+     * A token for one end user to hold, naming their team and usage categories.
+     *
+     * The claims are fixed when it is signed, so a device holding it cannot move its own work
+     * to another team or category. Needs the secret.
+     *
+     * @param array<string> $usageCategories
+     */
+    public function userToken(string $userId, ?string $team = null, array $usageCategories = [], int $validitySeconds = self::TOKEN_VALIDITY_SECONDS): string
+    {
+        if ($this->apiSecret === '') {
+            throw new ConfigurationException('a user token is signed with the app\'s secret, which only a backend holds');
+        }
+        if ($userId === '') {
+            throw new ConfigurationException('a user token needs the user\'s id');
+        }
+        if ($validitySeconds <= 0) {
+            throw new ConfigurationException('a user token has to be valid for some seconds');
+        }
+        $team = $team === '' ? null : $team;
+        return self::sign(['user_id' => $userId, ...UsageCategories::claims($team, UsageCategories::checked($team, $usageCategories))], $this->apiSecret, $validitySeconds);
+    }
+
+    /**
+     * What every request and every socket handshake carries.
+     *
+     * Minted per call, so a worker idle longer than a token lasts does not wake up holding an
+     * expired one.
+     *
+     * @return array<string, string>
+     */
+    public function headers(): array
+    {
+        if ($this->apiKey === '') {
+            if ($this->customerId === '') {
+                throw new ConfigurationException(
+                    'who is calling is not set; pass customerId or ' . self::CUSTOMER_ENV
+                    . ' for a router that trusts one, or apiKey with apiSecret or a token',
+                );
+            }
+            return ['X-Customer-Id' => $this->customerId, ...$this->userHeader(), ...$this->categoryHeader()];
+        }
+        if ($this->apiSecret === '' && $this->token === '') {
+            throw new ConfigurationException('apiKey needs the secret it belongs to, or a token minted with it');
+        }
+
+        if ($this->authenticate) {
+            // `jwt` whoever the token is for: the proxy works out the caller from the token it
+            // verified, and refuses a request that claims to be `server`.
+            return [
+                'api_key' => $this->apiKey,
+                'stream-auth-type' => 'jwt',
+                'Authorization' => 'Bearer ' . $this->proxyToken(),
+                ...($this->onBehalfOf !== '' ? ['X-Stream-User-Id' => $this->onBehalfOf] : []),
+            ];
+        }
+
+        $headers = ['X-Api-Key' => $this->apiKey];
+        if ($this->apiSecret !== '') {
+            $headers['Authorization'] = 'Bearer ' . self::sign(['server' => true, ...$this->categoryClaims()], $this->apiSecret);
+            $headers['Stream-Auth-Type'] = 'server';
+            return [...$headers, ...$this->userHeader(), ...$this->categoryHeader()];
+        }
+        $headers['Authorization'] = 'Bearer ' . $this->token;
+        $headers['Stream-Auth-Type'] = 'jwt';
+        return $headers;
+    }
+
+    /**
+     * The WebSocket URL for a path. The credentials are in the headers, not here: a server
+     * can send headers on a handshake, which the query string only exists to work around.
+     *
+     * @param array<string, string> $query
+     */
+    public function socketUrl(string $path, array $query = []): string
+    {
+        $url = preg_replace('#^http#', 'ws', $this->url) . $path;
+        return $query === [] ? $url : $url . '?' . http_build_query($query);
+    }
+
+    /**
+     * Signs a Stream token, HS256.
+     *
+     * @param array<string, mixed> $claims
+     */
+    public static function sign(array $claims, string $secret, int $validitySeconds = self::TOKEN_VALIDITY_SECONDS): string
+    {
+        if ($secret === '') {
+            throw new ConfigurationException('a token cannot be signed without a secret');
+        }
+        $issued = time();
+        $payload = ['iat' => $issued, 'exp' => $issued + $validitySeconds, ...$claims];
+        $signing = self::base64url(Json::encode(['alg' => 'HS256', 'typ' => 'JWT'])) . '.' . self::base64url(Json::encode($payload));
+        return $signing . '.' . self::base64url(hash_hmac('sha256', $signing, $secret, true));
+    }
+
+    /**
+     * The hosted router held to one region: requests to it are served there and nowhere else,
+     * even when that region is full or down.
+     */
+    public static function regionUrl(string $name): string
+    {
+        if (preg_match(self::REGION, $name) !== 1) {
+            throw new ConfigurationException(var_export($name, true) . ' is not a region, such as us-east4');
+        }
+        return "https://accelerate-{$name}.gcp.stream-io-api.com";
+    }
+
+    /**
+     * An environment variable, from wherever this runtime put it.
+     */
+    public static function env(string $name): ?string
+    {
+        $value = $_ENV[$name] ?? $_SERVER[$name] ?? getenv($name);
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * The proxy has no header to read a backend's choice of user from, so with a user named
+     * the token has to be that user's.
+     */
+    private function proxyToken(): string
+    {
+        if ($this->token !== '') {
+            return $this->token;
+        }
+        return $this->userId !== '' && $this->onBehalfOf === ''
+            ? self::sign(['user_id' => $this->userId, ...$this->categoryClaims()], $this->apiSecret)
+            : self::sign(['server' => true, ...$this->categoryClaims()], $this->apiSecret);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function userHeader(): array
+    {
+        $user = $this->onBehalfOf !== '' ? $this->onBehalfOf : $this->userId;
+        return $user === '' ? [] : ['X-Stream-User-Id' => $user];
+    }
+
+    /**
+     * @return array<string, string|list<string>>
+     */
+    private function categoryClaims(): array
+    {
+        return UsageCategories::claims($this->team, $this->usageCategories);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function categoryHeader(): array
+    {
+        return UsageCategories::header($this->team, $this->usageCategories);
+    }
+
+    /**
+     * A URL or a region passed in beats either in the environment, and a URL beats a region
+     * wherever both are found, except passed in together, where neither can be said to win.
+     */
+    private static function locate(?string $url, ?string $region): string
+    {
+        if ($url !== null && $region !== null) {
+            throw new ConfigurationException('pass a url or a region, not both');
+        }
+        if ($url !== null) {
+            return $url;
+        }
+        if ($region !== null) {
+            return self::regionUrl($region);
+        }
+        $url = self::env(self::URL_ENV);
+        if ($url !== null) {
+            return $url;
+        }
+        $region = self::env(self::REGION_ENV);
+        return $region !== null ? self::regionUrl($region) : self::DEFAULT_URL;
+    }
+
+    /**
+     * Whether `$url` is the hosted router in some region, which is always behind the
+     * proxy.
+     */
+    private static function hosted(string $url): bool
+    {
+        $prefix = 'https://accelerate-';
+        $suffix = '.gcp.stream-io-api.com';
+        if (!str_starts_with($url, $prefix) || !str_ends_with($url, $suffix)) {
+            return false;
+        }
+        $name = substr($url, strlen($prefix), -strlen($suffix));
+        return preg_match(self::REGION, $name) === 1;
+    }
+
+    private static function base64url(string $bytes): string
+    {
+        return rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    }
+
+    private static function flag(?string $value): bool
+    {
+        return $value === '1' || strtolower((string) $value) === 'true';
+    }
+}

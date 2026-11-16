@@ -14,4 +14,4 @@ dependencies = [
 [tool.uv.sources]
 "vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
 "vision-agents-plugins-aws" = {path = "..", editable=true}
-"vision-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents" = {path = "../../../sdks/python", editable=true}

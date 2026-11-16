@@ -102,8 +102,8 @@ class OpenAILLM(LLM):
         tools = self.get_available_functions()
         if tools:
             base_kwargs["tools"] = convert_tools_to_openai_format(tools)
-        if self._instructions:
-            base_kwargs["instructions"] = self._instructions
+        if self.instructions:
+            base_kwargs["instructions"] = self.instructions
 
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None

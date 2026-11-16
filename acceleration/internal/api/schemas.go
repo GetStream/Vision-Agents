@@ -1,0 +1,1545 @@
+package api
+
+import (
+	"encoding/json"
+	"reflect"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+)
+
+// AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
+type AgentDispatch struct {
+	IncomingCall *DispatchSetting `json:"incoming_call,omitempty" doc:"A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config."`
+	Text         *DispatchSetting `json:"text,omitempty" doc:"An end user's message is handed to a dispatch worker, with the session it was written to, instead of being answered by the model. The worker answers by creating a response on that session with a server-side credential, passing the message's request_id when it has one; that is the only text the model answers."`
+}
+
+func (*AgentDispatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled."
+	return schema
+}
+
+// AgentLog is the AgentLog schema.
+type AgentLog struct {
+	AgentId    string                  `json:"agent_id"`
+	ConfigId   string                  `json:"config_id"`
+	Cursor     *string                 `json:"cursor,omitempty"`
+	Details    *map[string]interface{} `json:"details,omitempty"`
+	EventType  string                  `json:"event_type"`
+	Id         string                  `json:"id"`
+	IngestedAt time.Time               `json:"ingested_at"`
+	Message    string                  `json:"message"`
+	OccurredAt time.Time               `json:"occurred_at"`
+	SessionId  string                  `json:"session_id"`
+	Severity   AgentLogSeverity        `json:"severity" enum:"info,warn,error"`
+	Source     AgentLogSource          `json:"source" enum:"user,agent,tool,system"`
+	UserId     *string                 `json:"user_id,omitempty"`
+}
+
+// AgentLogSeverity is the AgentLogSeverity schema.
+type AgentLogSeverity string
+
+// Defines values for AgentLogSeverity.
+const (
+	AgentLogSeverityError AgentLogSeverity = "error"
+	AgentLogSeverityInfo  AgentLogSeverity = "info"
+	AgentLogSeverityWarn  AgentLogSeverity = "warn"
+)
+
+// Valid indicates whether the value is a known member of the AgentLogSeverity enum.
+func (e AgentLogSeverity) Valid() bool {
+	switch e {
+	case AgentLogSeverityError:
+		return true
+	case AgentLogSeverityInfo:
+		return true
+	case AgentLogSeverityWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentLogSource is the AgentLogSource schema.
+type AgentLogSource string
+
+// Defines values for AgentLogSource.
+const (
+	Agent  AgentLogSource = "agent"
+	System AgentLogSource = "system"
+	Tool   AgentLogSource = "tool"
+	User   AgentLogSource = "user"
+)
+
+// Valid indicates whether the value is a known member of the AgentLogSource enum.
+func (e AgentLogSource) Valid() bool {
+	switch e {
+	case Agent:
+		return true
+	case System:
+		return true
+	case Tool:
+		return true
+	case User:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentMode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
+type AgentMode string
+
+// Defines values for AgentMode.
+const (
+	AgentModeText  AgentMode = "text"
+	AgentModeVoice AgentMode = "voice"
+)
+
+// Valid indicates whether the value is a known member of the AgentMode enum.
+func (e AgentMode) Valid() bool {
+	switch e {
+	case AgentModeText:
+		return true
+	case AgentModeVoice:
+		return true
+	default:
+		return false
+	}
+}
+
+// Call is the Call schema.
+type Call struct {
+	AgentId      string             `json:"agent_id" doc:"Which agent ran it, and where its transcript is kept."`
+	CallId       string             `json:"call_id"`
+	CampaignId   *string            `json:"campaign_id,omitempty"`
+	ConfigId     *string            `json:"config_id,omitempty"`
+	ContactId    *string            `json:"contact_id,omitempty"`
+	Direction    CallDirection      `json:"direction" enum:"inbound,outbound"`
+	EndedAt      *time.Time         `json:"ended_at,omitempty" doc:"Absent while the call is still running."`
+	FromNumber   *string            `json:"from_number,omitempty"`
+	Id           string             `json:"id" doc:"The session that ran the call, which is what it is held by."`
+	Instructions *string            `json:"instructions,omitempty" doc:"What the agent was told to be on this call."`
+	Llm          *string            `json:"llm,omitempty" doc:"The target that held the conversation."`
+	LlmUsed      *string            `json:"llm_used,omitempty" doc:"The provider/model that held the conversation."`
+	Mode         *SessionMode       `json:"mode,omitempty"`
+	ReviewNotes  *string            `json:"review_notes,omitempty"`
+	ReviewScore  *int               `json:"review_score,omitempty" doc:"How well the agent handled it, from 1 to 5."`
+	Skills       *[]string          `json:"skills,omitempty" doc:"What the fast model could hand to the subagent. The instructions behind each name are in the skill registry."`
+	StartedAt    time.Time          `json:"started_at"`
+	Sts          *string            `json:"sts,omitempty" doc:"The speech-to-speech target, for a native call, on the same terms as stt."`
+	StsUsed      *string            `json:"sts_used,omitempty" doc:"The provider/model that held a native call, on the same terms as stt_used."`
+	Stt          *string            `json:"stt,omitempty" doc:"The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows."`
+	SttUsed      *string            `json:"stt_used,omitempty" doc:"The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over."`
+	Subagent     *string            `json:"subagent,omitempty" doc:"The target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. A text call names its llm, which runs its skills too."`
+	SubagentUsed *string            `json:"subagent_used,omitempty" doc:"The provider/model delegated work ran on. Empty when nothing was handed over, or when the subagent was never reached."`
+	Summary      *string            `json:"summary,omitempty" doc:"What a model made of the call, written once it was over."`
+	Tags         *map[string]string `json:"tags,omitempty"`
+	ToNumber     *string            `json:"to_number,omitempty"`
+	Tts          *string            `json:"tts,omitempty" doc:"The voice target, on the same terms as stt."`
+	TtsUsed      *string            `json:"tts_used,omitempty" doc:"The provider/model that spoke, on the same terms as stt_used."`
+	Usage        *CallUsage         `json:"usage,omitempty"`
+	UserId       *string            `json:"user_id,omitempty" doc:"Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name."`
+	Voice        *string            `json:"voice,omitempty" doc:"The voice the call asked for, in the provider's own terms. Empty means the provider's default."`
+	VoiceUsed    *string            `json:"voice_used,omitempty" doc:"The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running."`
+}
+
+func (*Call) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["review_score"].Format = ""
+	return schema
+}
+
+// CallEvent is the CallEvent schema.
+type CallEvent struct {
+	At          time.Time    `json:"at"`
+	Kind        DecisionKind `json:"kind"`
+	LatencyMs   *float64     `json:"latency_ms,omitempty" doc:"What the flow controller took to rule, or what the subagent took to answer. Zero where nothing was asked."`
+	Participant *string      `json:"participant,omitempty" doc:"Who it concerned."`
+	Reason      string       `json:"reason" doc:"Why the conversation chose it, in words."`
+	Said        *string      `json:"said,omitempty" doc:"What was heard, what the agent decided to say, or what the subagent came back with."`
+	TurnId      *string      `json:"turn_id,omitempty" doc:"The exchange it was about, which lines it up against that turn's timings."`
+}
+
+// ClassifyQuestion is the ClassifyQuestion schema.
+type ClassifyQuestion struct {
+	Instructions string               `json:"instructions" example:"Is the customer asking for a refund?"`
+	Levels       *[]string            `json:"levels,omitempty" doc:"A score's levels, in order, each describing a concrete situation."`
+	No           *string              `json:"no,omitempty" doc:"What no means for a noul, where the instructions do not say it."`
+	Options      *map[string]string   `json:"options,omitempty" doc:"A choice's options, each with a description of what it covers or an empty string where the name says it. Include one for \"none of these\" whenever the options may not cover an input."`
+	Type         ClassifyQuestionType `json:"type"`
+	Yes          *string              `json:"yes,omitempty" doc:"What yes means for a noul, where the instructions do not say it."`
+}
+
+// ClassifyQuestionType noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
+type ClassifyQuestionType string
+
+// Defines values for ClassifyQuestionType.
+const (
+	Choice ClassifyQuestionType = "choice"
+	Noul   ClassifyQuestionType = "noul"
+	Score  ClassifyQuestionType = "score"
+)
+
+// Valid indicates whether the value is a known member of the ClassifyQuestionType enum.
+func (e ClassifyQuestionType) Valid() bool {
+	switch e {
+	case Choice:
+		return true
+	case Noul:
+		return true
+	case Score:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ClassifyQuestionType) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ClassifyQuestionType", "noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.", "noul", "choice", "score")
+}
+
+// CommandReceipt is the CommandReceipt schema.
+type CommandReceipt struct {
+	AssistantMessageId string `json:"assistant_message_id"`
+	RequestId          string `json:"request_id"`
+	Duplicate          bool   `json:"duplicate" doc:"True when this command already exists and no new inference was started."`
+	State              string `json:"state" doc:"Latest locally recorded response state; an interrupted command is never automatically rerun."`
+	UserMessageId      string `json:"user_message_id"`
+}
+
+// ContentPart is the ContentPart schema.
+type ContentPart struct {
+	union json.RawMessage
+}
+
+// AsTextContentPart returns the union data inside the ContentPart as a TextContentPart
+func (t ContentPart) AsTextContentPart() (TextContentPart, error) {
+	var body TextContentPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTextContentPart overwrites any union data inside the ContentPart as the provided TextContentPart
+func (t *ContentPart) FromTextContentPart(v TextContentPart) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// AsImageContentPart returns the union data inside the ContentPart as a ImageContentPart
+func (t ContentPart) AsImageContentPart() (ImageContentPart, error) {
+	var body ImageContentPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromImageContentPart overwrites any union data inside the ContentPart as the provided ImageContentPart
+func (t *ContentPart) FromImageContentPart(v ImageContentPart) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+func (t ContentPart) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ContentPart) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// CreateSessionRequest is the CreateSessionRequest schema.
+type CreateSessionRequest struct {
+	Agent             *string                    `json:"agent,omitempty" doc:"The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: \"docs\" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree."`
+	AgentId           *string                    `json:"agent_id,omitempty" doc:"Keys transcripts and statistics. Empty means the call id."`
+	Backchannel       *bool                      `json:"backchannel,omitempty" doc:"Murmur while a participant is still talking, the way a person does." default:"false"`
+	Call              *SessionCall               `json:"call,omitempty" doc:"An existing Stream call for the agent to join, such as the default call the people are already on, in place of agent:<session id>. Left out, the agent joins agent:<session id>, which joining creates. It needs start_voice, because a session held in writing is on no call, and it cannot be given with phone. The session has to act in the customer's own Stream app: app tenancy with an app of its own, or the deployment's own customer. A session acting in a Stream app shared with other customers (deployment tenancy, or app tenancy falling back to the deployment's app) is refused with a 403, since a call there could be another customer's. The call has to be in the Stream app the session acts in: a call another session runs in another app is refused. The router does not ask Stream whether the call exists, and joining one that does not creates it. The call runs on its own type's audio settings: the built-in agent type turns DTX and noise cancellation off so turn detection hears every word, and the default type has DTX on and noise cancellation on. Voice stopped and started again goes back to this call. Every session on one named call has the call id as its agent_id when none is given, so they share statistics and the agent's Stream Chat user; each keeps its own conversation channel. Server-side only: a device sending it is refused with a 403."`
+	ConnectorBindings *[]SessionConnectorBinding `json:"connector_bindings,omitempty" maxItems:"64" doc:"The connection to use for each of the agent config's connector bindings chosen per session (connection.type session), by its alias. Each must be the verified caller's own connection to the binding's connector: an end user's, or the one a backend names with X-Stream-User-Id, never an anonymous caller's or a guest's. A binding with a fixed connection cannot be given one here, and an alias the config does not declare is refused. A session binding given none here uses the caller's own connection to its connector when exactly one of theirs is connected. Otherwise, with none connected or more than one, a required binding fails the session; an optional one is left out and reported with a connector_unavailable event (no_selection). A fork chooses the same connections again, against the config as it is then and the caller asking for the fork."`
+	ConfigId          *string                    `json:"config_id,omitempty" doc:"An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call."`
+	ContextTruncated  *bool                      `json:"context_truncated,omitempty" doc:"Older history was omitted from the model context."`
+	Custom            *map[string]interface{}    `json:"custom,omitempty" doc:"Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing."`
+	Description       *string                    `json:"description,omitempty" doc:"A longer note about the conversation, searched alongside the title."`
+	Greeting          *Greeting                  `json:"greeting,omitempty" doc:"What the agent opens the call with, over what the config says."`
+	History           *[]HistoryMessage          `json:"history,omitempty" doc:"The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth." maxItems:"100"`
+	Id                *string                    `json:"id,omitempty" doc:"The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7."`
+	// LegacyConversationId is the Stream Chat CID a session resumed before v0.6.35, which
+	// clients built against an older SDK (the getstream.io Ask panel among them) still send.
+	LegacyConversationId *string            `json:"conversation_id,omitempty" hidden:"true"`
+	Incognito            *bool              `json:"incognito,omitempty" doc:"Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from." default:"false"`
+	Instructions         *string            `json:"instructions,omitempty" doc:"What the agent is told to be for this session alone, in place of its config's instructions: a role given at call time, such as the brief of a customer somebody practises on, without a stored config per brief. Empty or left out, the config's instructions stand. There is no limit but the request body's, as a config's instructions have none. They are held only by the running session: a session carried on in writing after it ended in another process, a fork of a session no longer running and a fork naming a config run on the config's instructions again. Server-side only: a device sending them is refused with a 403, because what the agent is told decides who it is, and a device could make it impersonate a different agent."`
+	Keyterms             *[]string          `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
+	Languages            *[]string          `json:"languages,omitempty" doc:"Language hints, which narrow the candidates in every modality."`
+	Llm                  *string            `json:"llm,omitempty" doc:"A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured."`
+	MaxTokens            *int               `json:"max_tokens,omitempty"`
+	MaxToolRounds        *int               `json:"max_tool_rounds,omitempty" doc:"The reply to a tool result, counted since the user last spoke, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for a written conversation that chains many lookups."`
+	Memory               *SessionMemory     `json:"memory,omitempty"`
+	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
+	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
+	FloorControl         *FloorControl      `json:"floor_control,omitempty" doc:"The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide."`
+	EndOfTurn            any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
+	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
+	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
+	Phone                *SessionPhone      `json:"phone,omitempty"`
+	ProjectId            *string            `json:"project_id,omitempty" doc:"What the conversation belongs to. Also recorded as the \"project\" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins."`
+	ReturnUrl            *string            `json:"return_url,omitempty" doc:"The app's own page a login or step-up the chat asks for goes back to, as createAuthorization's return_url: the launch page takes the handoff only from a page of its origin, and the browser comes back to it with connection_id and status added to its query. The same rules as createAuthorization's return_url apply, and a URL they refuse is answered with a 400 invalid_request naming the rule (an error frame on the session socket). Absent or empty, those consents go back to the dashboard. It is kept with the session, so a chat carried on after it ended and a fork go back to it too. An end user's device may send it: a consent the chat asks for is only ever for the caller's own connection, shown to the caller alone, and bound to the first browser that hands it off, so the URL only decides where the caller's own consent lands."`
+	Search               *string            `json:"search,omitempty" doc:"Omit it and the config decides, or search-fast when there is no config."`
+	StartVoice           *bool              `json:"start_voice,omitempty" doc:"Start voice as the session opens, as startSessionVoice does: the agent joins the call named in call, else agent:<session id>, which joining creates, and returns once it is there. Left out, the conversation is held in writing until voice is started." default:"false"`
+	Sts                  *string            `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
+	Stt                  *string            `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	Tags                 *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins."`
+	Team                 *string            `json:"team,omitempty" minLength:"1" maxLength:"59" doc:"The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for."`
+	Timezone             *string            `json:"timezone,omitempty" doc:"The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone."`
+	Title                *string            `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
+	ToolTimeoutMs        *int               `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long."`
+	Tools                *[]SessionTool     `json:"tools,omitempty"`
+	Tts                  *string            `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	UserId               *string            `json:"user_id,omitempty" doc:"The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id." default:"vision-agent"`
+	UserName             *string            `json:"user_name,omitempty" default:"Vision Agent"`
+	Video                *SessionVideo      `json:"video,omitempty"`
+	Voice                *string            `json:"voice,omitempty" doc:"The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
+}
+
+func (*CreateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_tokens"].Format = ""
+	schema.Properties["max_tool_rounds"].Format = ""
+	schema.Properties["tool_timeout_ms"].Format = ""
+	return schema
+}
+
+// SessionConnectorBinding is the connection a session uses for one of its config's connector
+// bindings. The alias pattern is AgentConnectorBinding's, so a name no binding could have is
+// refused before the session looks for it. 64 is the most bindings a config holds
+// (AgentConnectorBinding), so the most a session can choose for.
+type SessionConnectorBinding struct {
+	Name         string `json:"name" pattern:"^[a-z]([a-z0-9_-]{0,61}[a-z0-9-])?$" doc:"The binding's alias in the agent config."`
+	ConnectionId string `json:"connection_id" minLength:"1" doc:"The caller's own connection to the binding's connector."`
+}
+
+func (*SessionConnectorBinding) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The connection a session uses for one of its agent config's connector bindings " +
+		"chosen per session. Only a reference: the credential stays sealed on the connection."
+	schema.AdditionalProperties = false
+	return schema
+}
+
+// DataChangeOp is the DataChangeOp schema.
+type DataChangeOp string
+
+// Defines values for DataChangeOp.
+const (
+	Delete DataChangeOp = "delete"
+	Insert DataChangeOp = "insert"
+	Update DataChangeOp = "update"
+)
+
+// Valid indicates whether the value is a known member of the DataChangeOp enum.
+func (e DataChangeOp) Valid() bool {
+	switch e {
+	case Delete:
+		return true
+	case Insert:
+		return true
+	case Update:
+		return true
+	default:
+		return false
+	}
+}
+
+// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+type DataPolicy struct {
+	AllowTraining *bool   `json:"allow_training,omitempty" doc:"False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no."`
+	Retention     *string `json:"retention,omitempty" doc:"The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing." example:"none"`
+	Region        *string `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where this call's work is done: us or eu for now. Only a model instance running in that region serves the request, and with none there it is refused (400), never served in another region. Omitted, the work is done in us. An agent's work is done in the agent's own region (agent.yaml's region), and a request naming another one for it is refused, naming both. A policy has no region."`
+}
+
+func (*DataPolicy) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not."
+	return schema
+}
+
+// DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
+type DispatchSetting string
+
+// Defines values for DispatchSetting.
+const (
+	Disabled DispatchSetting = "disabled"
+	Enabled  DispatchSetting = "enabled"
+)
+
+// Valid indicates whether the value is a known member of the DispatchSetting enum.
+func (e DispatchSetting) Valid() bool {
+	switch e {
+	case Disabled:
+		return true
+	case Enabled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+type Harness string
+
+// Defines values for Harness.
+const (
+	Default Harness = "default"
+)
+
+// Valid indicates whether the value is a known member of the Harness enum.
+func (e Harness) Valid() bool {
+	switch e {
+	case Default:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentRole is what an agent config is for in the app around it, beyond answering people.
+type AgentRole string
+
+// Defines values for AgentRole.
+const (
+	AgentRoleAgentModerator AgentRole = "agent_moderator"
+)
+
+// Valid indicates whether the value is a known member of the AgentRole enum.
+func (e AgentRole) Valid() bool {
+	switch e {
+	case AgentRoleAgentModerator:
+		return true
+	default:
+		return false
+	}
+}
+
+// EpisodeCardsMode is what an agent config does with episode cards: write none, write them
+// and their summaries while no session reads them, or write them and read them.
+type EpisodeCardsMode string
+
+// Defines values for EpisodeCardsMode.
+const (
+	EpisodeCardsOff    EpisodeCardsMode = "off"
+	EpisodeCardsRecord EpisodeCardsMode = "record"
+	EpisodeCardsOn     EpisodeCardsMode = "on"
+)
+
+// HistoryMessage is one message of a conversation the caller kept itself. Its name, text
+// and created_at are what a TranscriptMessage calls them; a transcript line is not reused
+// whole because its speaker and created_at are required, and a caller's thread may know
+// neither.
+//
+// The 256 and 60000 here and the 100 on CreateSessionRequest.history are
+// conversation.MaxAuthorName, MaxHistoryRunes and MaxHistoryMessages, which a tag cannot
+// name; session.Spec.Normalize refuses past the constants whatever the tags say.
+type HistoryMessage struct {
+	CreatedAt *time.Time  `json:"created_at,omitempty" doc:"When it was said. The model is shown it beside a person's message, so it can tell an hour ago from just now."`
+	Name      *string     `json:"name,omitempty" doc:"Who said it, when several people share the thread. The model is shown it as a label, never as who is asking now." maxLength:"256"`
+	Role      HistoryRole `json:"role"`
+	Text      string      `json:"text" minLength:"1" maxLength:"60000"`
+}
+
+// HistoryRole user is what a person said, assistant what the agent answered.
+type HistoryRole string
+
+// Defines values for HistoryRole.
+const (
+	HistoryRoleAssistant HistoryRole = "assistant"
+	HistoryRoleUser      HistoryRole = "user"
+)
+
+func (HistoryRole) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "HistoryRole", "user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.", "user", "assistant")
+	// AgentLogSource has user too, and oapi-codegen prefixes every constant of two enums
+	// sharing a value, which would rename the Go SDK's User, Agent, System and Tool. Naming
+	// these keeps them, as ConnectionOwnerType does.
+	registry.Map()["HistoryRole"].Extensions = map[string]any{
+		"x-enum-varnames": []string{"HistoryRoleUser", "HistoryRoleAssistant"},
+	}
+	return ref
+}
+
+// ImageContentPart is the ImageContentPart schema.
+type ImageContentPart struct {
+	ImageUrl ImageSource          `json:"image_url"`
+	Type     ImageContentPartType `json:"type" enum:"image_url"`
+}
+
+// ImageContentPartType is the ImageContentPartType schema.
+type ImageContentPartType string
+
+// Defines values for ImageContentPartType.
+const (
+	ImageUrl ImageContentPartType = "image_url"
+)
+
+// Valid indicates whether the value is a known member of the ImageContentPartType enum.
+func (e ImageContentPartType) Valid() bool {
+	switch e {
+	case ImageUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// ImageGenerationStatus Whether the pictures were drawn. A failed generation says why in error_code and error.
+type ImageGenerationStatus string
+
+// Defines values for ImageGenerationStatus.
+const (
+	ImageGenerationStatusCompleted ImageGenerationStatus = "completed"
+	ImageGenerationStatusFailed    ImageGenerationStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the ImageGenerationStatus enum.
+func (e ImageGenerationStatus) Valid() bool {
+	switch e {
+	case ImageGenerationStatusCompleted:
+		return true
+	case ImageGenerationStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ImageGenerationStatus) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ImageGenerationStatus", "Whether the pictures were drawn. A failed generation says why in error_code and error.", "completed", "failed")
+}
+
+// ImageOptions Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused.
+type ImageOptions struct {
+	AspectRatio    *string                   `json:"aspect_ratio,omitempty" doc:"The shape, for the models that are asked for one rather than a size." pattern:"^[0-9]+:[0-9]+$" example:"1:1"`
+	N              *int                      `json:"n,omitempty" doc:"How many pictures to draw." minimum:"1" maximum:"4" default:"1"`
+	NegativePrompt *string                   `json:"negative_prompt,omitempty" doc:"What to keep out of the picture."`
+	OutputFormat   *ImageOptionsOutputFormat `json:"output_format,omitempty" doc:"The encoding, on a model that can be asked for one." enum:"png,jpeg"`
+	Providers      *[]string                 `json:"providers,omitempty" doc:"A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands."`
+	Seed           *int64                    `json:"seed,omitempty" doc:"Draws the same picture again from the same prompt, on a model that reads one." minimum:"0"`
+	Size           *string                   `json:"size,omitempty" doc:"Width by height in pixels, for the models that take a size." pattern:"^[0-9]+x[0-9]+$" example:"1024x1024"`
+	Target         *string                   `json:"target,omitempty" doc:"A provider/model or a capability shortcut. Defaults to image-fast." example:"image-fast"`
+}
+
+func (*ImageOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["n"].Format = ""
+	schema.Description = "Where to draw and what the picture should be. A size, shape, seed, negative prompt or format narrows the candidates to the models that declared it, so it is either honoured or the request is refused."
+	return schema
+}
+
+// ImageOptionsOutputFormat is the ImageOptionsOutputFormat schema.
+type ImageOptionsOutputFormat string
+
+// Defines values for ImageOptionsOutputFormat.
+const (
+	Jpeg ImageOptionsOutputFormat = "jpeg"
+	Png  ImageOptionsOutputFormat = "png"
+)
+
+// Valid indicates whether the value is a known member of the ImageOptionsOutputFormat enum.
+func (e ImageOptionsOutputFormat) Valid() bool {
+	switch e {
+	case Jpeg:
+		return true
+	case Png:
+		return true
+	default:
+		return false
+	}
+}
+
+// ImageSource is the ImageSource schema.
+type ImageSource struct {
+	Detail *ImageSourceDetail `json:"detail,omitempty" enum:"auto,low,high"`
+	Url    string             `json:"url" doc:"Absolute HTTP(S) URL or base64 image data URI."`
+}
+
+// AudioSource is a voice note sent with a question.
+type AudioSource struct {
+	Url string `json:"url" doc:"Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address."`
+}
+
+// ImageSourceDetail is the ImageSourceDetail schema.
+type ImageSourceDetail string
+
+// Defines values for ImageSourceDetail.
+const (
+	ImageSourceDetailAuto ImageSourceDetail = "auto"
+	ImageSourceDetailHigh ImageSourceDetail = "high"
+	ImageSourceDetailLow  ImageSourceDetail = "low"
+)
+
+// Valid indicates whether the value is a known member of the ImageSourceDetail enum.
+func (e ImageSourceDetail) Valid() bool {
+	switch e {
+	case ImageSourceDetailAuto:
+		return true
+	case ImageSourceDetailHigh:
+		return true
+	case ImageSourceDetailLow:
+		return true
+	default:
+		return false
+	}
+}
+
+// KnowledgeDocument is the KnowledgeDocument schema.
+type KnowledgeDocument struct {
+	Source string `json:"source" maxLength:"256" doc:"Where the document came from, as a reader would recognise it. Passage ids are keyed by it, so posting the same source again replaces what it wrote before." example:"pricing.md"`
+	Text   string `json:"text" doc:"The document, whole. It is cut into passages here."`
+}
+
+// KnowledgePassage is the KnowledgePassage schema.
+type KnowledgePassage struct {
+	Id     string `json:"id"`
+	Source string `json:"source" doc:"The heading or file the passage sits under."`
+	Text   string `json:"text"`
+}
+
+// LlmOptions How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes.
+type LlmOptions struct {
+	Format          *LlmOptionsFormat          `json:"format,omitempty" doc:"Whether the answer is prose or a JSON object." enum:"text,json_object"`
+	MaxOutputTokens *int                       `json:"max_output_tokens,omitempty"`
+	Metadata        *map[string]string         `json:"metadata,omitempty" doc:"Passed to the provider untouched, for the providers that store it."`
+	PromptCacheKey  *string                    `json:"prompt_cache_key,omitempty" doc:"What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full."`
+	Providers       *[]string                  `json:"providers,omitempty" doc:"A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A response that fails is answered by the next entry that will have it."`
+	ReasoningEffort *LlmOptionsReasoningEffort `json:"reasoning_effort,omitempty" doc:"How long the model may think before answering, on the models that think." enum:"minimal,low,medium,high"`
+	Store           *bool                      `json:"store,omitempty" doc:"Keep the response on the provider so a later one can continue from it."`
+	Target          *string                    `json:"target,omitempty" doc:"A provider/model or a capability shortcut." example:"llm-fast"`
+	Temperature     *float32                   `json:"temperature,omitempty"`
+	ToolChoice      *string                    `json:"tool_choice,omitempty" doc:"auto, none, required, or the name of a tool the model must call. Which tools exist is per-request, since they change with the turn."`
+	Verbosity       *LlmOptionsVerbosity       `json:"verbosity,omitempty" enum:"low,medium,high"`
+}
+
+func (*LlmOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_output_tokens"].Format = ""
+	schema.Description = "How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes."
+	return schema
+}
+
+// MessageContent is the MessageContent schema.
+type MessageContent struct {
+	union json.RawMessage
+}
+
+// AsMessageContent0 returns the union data inside the MessageContent as a MessageContent0
+func (t MessageContent) AsMessageContent0() (MessageContent0, error) {
+	var body MessageContent0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageContent0 overwrites any union data inside the MessageContent as the provided MessageContent0
+func (t *MessageContent) FromMessageContent0(v MessageContent0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// AsMessageContent1 returns the union data inside the MessageContent as a MessageContent1
+func (t MessageContent) AsMessageContent1() (MessageContent1, error) {
+	var body MessageContent1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageContent1 overwrites any union data inside the MessageContent as the provided MessageContent1
+func (t *MessageContent) FromMessageContent1(v MessageContent1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+func (t MessageContent) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *MessageContent) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// MessageContent0 is the MessageContent0 schema.
+type MessageContent0 = string
+
+// MessageContent1 is the MessageContent1 schema.
+type MessageContent1 = []ContentPart
+
+// Modality What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+type Modality string
+
+// Defines values for Modality.
+const (
+	DecisionModel Modality = "decision_model"
+	Detection     Modality = "detection"
+	Image         Modality = "image"
+	Knowledge     Modality = "knowledge"
+	Llm           Modality = "llm"
+	Memory        Modality = "memory"
+	Ocr           Modality = "ocr"
+	Phone         Modality = "phone"
+	Search        Modality = "search"
+	Sts           Modality = "sts"
+	Stt           Modality = "stt"
+	Tts           Modality = "tts"
+)
+
+// Valid indicates whether the value is a known member of the Modality enum.
+func (e Modality) Valid() bool {
+	switch e {
+	case DecisionModel:
+		return true
+	case Detection:
+		return true
+	case Image:
+		return true
+	case Knowledge:
+		return true
+	case Llm:
+		return true
+	case Memory:
+		return true
+	case Ocr:
+		return true
+	case Phone:
+		return true
+	case Search:
+		return true
+	case Sts:
+		return true
+	case Stt:
+		return true
+	case Tts:
+		return true
+	default:
+		return false
+	}
+}
+
+func (Modality) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "Modality", "What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "decision_model", "image", "detection", "ocr", "memory", "knowledge", "phone")
+}
+
+// Provider is the Provider schema.
+type Provider struct {
+	Benchmark   *ProviderBenchmark `json:"benchmark,omitempty"`
+	Description *string            `json:"description,omitempty" doc:"What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none."`
+	Health      ProviderHealth     `json:"health"`
+	Languages   []string           `json:"languages" nullable:"false"`
+	Model       string             `json:"model" example:"eleven_flash_v2_5"`
+	Price       *ProviderPrice     `json:"price,omitempty"`
+	Provider    string             `json:"provider" example:"elevenlabs"`
+	Realtime    bool               `json:"realtime"`
+	Region      string             `json:"region" example:"us" doc:"Where this instance of the model runs its work: us or eu for now. A model the deployment runs in more than one region is listed once per region, and a request is served by the instance in the region its data policy names (us when none does). Health is the model's, shared by its instances."`
+	Supports    []string           `json:"supports,omitempty" nullable:"false" example:"[\"keyterms\",\"diarize\"]" doc:"The options this model can be asked for, as the terms a request's options turn on: keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes none."`
+	Tier        Tier               `json:"tier"`
+	UsageShare  *float64           `json:"usage_share,omitempty" doc:"This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics."`
+}
+
+// RecordingSource Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
+type RecordingSource struct {
+	Audio *[]byte `json:"audio,omitempty" doc:"The file itself, base64. For clips - a long recording belongs behind a URL." format:"byte"`
+	Url   *string `json:"url,omitempty" doc:"A fetchable audio or video file."`
+}
+
+func (*RecordingSource) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first."
+	return schema
+}
+
+// Route is the Route schema.
+type Route struct {
+	Candidates  []Candidate `json:"candidates" doc:"The models the shortcut resolves to right now, best first." nullable:"false"`
+	Description string      `json:"description"`
+	Id          string      `json:"id" doc:"The shortcut, which is what a config or request names as its target." example:"llm-fast"`
+	Title       string      `json:"title" example:"Fast conversational"`
+}
+
+// RouterConfig is the RouterConfig schema.
+type RouterConfig struct {
+	CreatedAt time.Time      `json:"created_at"`
+	Id        string         `json:"id"`
+	Llm       *LlmOptions    `json:"llm,omitempty"`
+	Name      string         `json:"name"`
+	Search    *SearchOptions `json:"search,omitempty"`
+	Sts       *StsOptions    `json:"sts,omitempty"`
+	Stt       *SttOptions    `json:"stt,omitempty"`
+	Tts       *TtsOptions    `json:"tts,omitempty"`
+	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
+type Sandbox string
+
+// Defines values for Sandbox.
+const (
+	Daytona Sandbox = "daytona"
+)
+
+// Valid indicates whether the value is a known member of the Sandbox enum.
+func (e Sandbox) Valid() bool {
+	switch e {
+	case Daytona:
+		return true
+	default:
+		return false
+	}
+}
+
+// SandboxOptions How the sandbox is built and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox and a 30 second run.
+type SandboxOptions struct {
+	AllowedDomains   *[]string `json:"allowed_domains,omitempty" doc:"Domains code in the sandbox may reach, such as api.example.com. Set, nothing else is reachable, even with network on. Not with network_allow_list." maxItems:"64"`
+	Cpu              *int      `json:"cpu,omitempty" doc:"CPUs for the sandbox. Zero is the provider's default." minimum:"0" maximum:"16"`
+	DiskGb           *int      `json:"disk_gb,omitempty" doc:"Disk for the sandbox, in GiB. Zero is the provider's default." minimum:"0" maximum:"100"`
+	Image            *string   `json:"image,omitempty" doc:"The container image to build on, which must have Python, such as python:3.13-slim-bookworm. Empty with anything else set is a slim Python 3.13 image." maxLength:"256"`
+	MemoryGb         *int      `json:"memory_gb,omitempty" doc:"Memory for the sandbox, in GiB. Zero is the provider's default." minimum:"0" maximum:"64"`
+	Network          *bool     `json:"network,omitempty" doc:"Whether code in the sandbox may reach the internet. Off by default, and then every outbound connection is blocked unless allowed_domains or network_allow_list names where it may go."`
+	NetworkAllowList *[]string `json:"network_allow_list,omitempty" doc:"CIDR ranges code in the sandbox may reach, such as 10.0.0.0/8. Set, nothing else is reachable, even with network on. Not with allowed_domains." maxItems:"64"`
+	Setup            *[]string `json:"setup,omitempty" doc:"Shell commands run once on top of the image when it is built, such as installing packages. The provider keeps the built image, so only the first sandbox from a given setup waits for it." maxItems:"32"`
+	TimeoutMs        *int      `json:"timeout_ms,omitempty" doc:"How long one run of code may take, at most 30 minutes. Zero is 30 seconds. A run is still bounded by the deadline of the skill it was written for." minimum:"0" maximum:"1800000"`
+}
+
+func (*SandboxOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How the sandbox is built, what it may reach and how long code may run in it. Only meaningful with a sandbox. Omit it for the provider's own Python sandbox, no network and a 30 second run."
+	schema.AdditionalProperties = false
+	schema.Properties["setup"].Items.MaxLength = itemLimit(2048)
+	schema.Properties["allowed_domains"].Items.MaxLength = itemLimit(253)
+	schema.Properties["network_allow_list"].Items.MaxLength = itemLimit(43)
+	return schema
+}
+
+// Session is the Session schema.
+type Session struct {
+	Agent            *string                 `json:"agent,omitempty" doc:"The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against."`
+	AgentId          string                  `json:"agent_id"`
+	CallId           string                  `json:"call_id" doc:"The call the agent is on while voice is started: the session's id unless a call was named. Empty while the conversation is held in writing."`
+	CallOutcome      *SessionCallOutcome     `json:"call_outcome,omitempty" doc:"How the call the router placed for this session ended. Read by a backend only."`
+	CallType         string                  `json:"call_type"`
+	ClosedAt         *time.Time              `json:"closed_at,omitempty" doc:"When the session ended. Absent while it is still running."`
+	ConfigId         *string                 `json:"config_id,omitempty" doc:"The agent config the session ran under, empty for one that spelled itself out."`
+	ContextTruncated *bool                   `json:"context_truncated,omitempty" doc:"Older history was omitted from the model context."`
+	ConversationId   *string                 `json:"conversation_id,omitempty" doc:"The Stream Chat channel the conversation is kept in, typed and spoken. Absent for an incognito session."`
+	CreatedAt        time.Time               `json:"created_at"`
+	Custom           *map[string]interface{} `json:"custom,omitempty"`
+	Description      *string                 `json:"description,omitempty"`
+	EndFault         *SessionEndFault        `json:"end_fault,omitempty" readOnly:"true" doc:"Whose doing end_reason was. Absent while the session is running."`
+	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept."`
+	EndStage         *SessionEndStage        `json:"end_stage,omitempty" readOnly:"true" doc:"How far the session had got when it ended. Absent while it is running."`
+	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
+	Id               string                  `json:"id"`
+	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
+	Instructions     *string                 `json:"instructions,omitempty" doc:"What the agent was told, the session's own or its config's. Read by a backend only: a device is never given it."`
+	LastResponseAt   *time.Time              `json:"last_response_at,omitempty" doc:"When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent."`
+	Llm              *string                 `json:"llm,omitempty" doc:"The provider and model answering, once routing has picked one."`
+	Modality         SessionModality         `json:"modality"`
+	Mode             *SessionMode            `json:"mode,omitempty"`
+	ModelOverwrites  *ModelOverwrites        `json:"model_overwrites,omitempty"`
+	PinnedAt         *time.Time              `json:"pinned_at,omitempty" doc:"When the session was pinned. Absent for one that is not pinned."`
+	ProjectId        *string                 `json:"project_id,omitempty"`
+	ReviewNotes      *string                 `json:"review_notes,omitempty" doc:"Why the review scored the conversation as it did. Read by a backend only."`
+	ReviewScore      *int                    `json:"review_score,omitempty" doc:"How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only."`
+	State            SessionState            `json:"state"`
+	Sts              *string                 `json:"sts,omitempty" doc:"The provider and model holding a native conversation, once routing has picked one."`
+	Stt              *string                 `json:"stt,omitempty" doc:"The provider and model transcribing, once somebody has been heard."`
+	Subagent         *string                 `json:"subagent,omitempty" doc:"The provider and model delegated work runs on."`
+	Summary          *string                 `json:"summary,omitempty" doc:"What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only."`
+	Team             *string                 `json:"team,omitempty" doc:"The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none."`
+	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
+	Title            *string                 `json:"title,omitempty"`
+	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`
+	UserId           string                  `json:"user_id" doc:"The name the agent joined the call as. It is not the owner of the session."`
+	Usage            *CallUsage              `json:"usage,omitempty" doc:"What the conversation spent over every model it called, typed and spoken, once it has ended. Read by a backend only."`
+	Video            *SessionVideo           `json:"video,omitempty"`
+	Voice            *string                 `json:"voice,omitempty" doc:"The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none."`
+}
+
+// SessionMemory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
+type SessionMemory struct {
+	AppId  *string            `json:"app_id,omitempty" doc:"Separates two deployments sharing one memory account."`
+	Filter *map[string]string `json:"filter,omitempty" doc:"The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it."`
+	UserId *string            `json:"user_id,omitempty" doc:"Who the memories belong to. Empty means the customer. An end user's device may only name its own user id, and an anonymous caller none; a backend may name any of its users."`
+}
+
+func (*SessionMemory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it."
+	return schema
+}
+
+// SessionModality How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
+type SessionModality string
+
+// Defines values for SessionModality.
+const (
+	SessionModalityText  SessionModality = "text"
+	SessionModalityVideo SessionModality = "video"
+	SessionModalityVoice SessionModality = "voice"
+)
+
+// Valid indicates whether the value is a known member of the SessionModality enum.
+func (e SessionModality) Valid() bool {
+	switch e {
+	case SessionModalityText:
+		return true
+	case SessionModalityVideo:
+		return true
+	case SessionModalityVoice:
+		return true
+	default:
+		return false
+	}
+}
+
+func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionModality", "How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.", "text", "voice", "video")
+}
+
+// SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+type SessionMode string
+
+// Defines values for SessionMode.
+const (
+	SessionModeCascade SessionMode = "cascade"
+	SessionModeNative  SessionMode = "native"
+	SessionModeText    SessionMode = "text"
+)
+
+// Valid indicates whether the value is a known member of the SessionMode enum.
+func (e SessionMode) Valid() bool {
+	switch e {
+	case SessionModeCascade:
+		return true
+	case SessionModeNative:
+		return true
+	case SessionModeText:
+		return true
+	default:
+		return false
+	}
+}
+
+func (SessionMode) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionMode", "How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.", "cascade", "native", "text")
+}
+
+// SessionCall is an existing Stream call for the agent to join.
+type SessionCall struct {
+	Type string `json:"type" minLength:"1" doc:"The call type, such as default."`
+	Id   string `json:"id" minLength:"1" doc:"The call id."`
+}
+
+func (*SessionCall) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "An existing Stream call for the agent to join, by its type and id."
+	return schema
+}
+
+// SessionPhone The number the session acts from, which is what turns transferring on.
+type SessionPhone struct {
+	Number       string            `json:"number" doc:"One of the customer's own numbers, written as +15551234567."`
+	Vendor       *string           `json:"vendor,omitempty" doc:"Who carries an outbound leg."`
+	VendorCallId *string           `json:"vendor_call_id,omitempty" doc:"The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at."`
+	Voicemail    *SessionVoicemail `json:"voicemail,omitempty" doc:"What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it."`
+}
+
+// SessionVoicemail is what the agent does when an answering machine picks up.
+type SessionVoicemail struct {
+	Action  VoicemailAction `json:"action"`
+	Message *string         `json:"message,omitempty" maxLength:"1000" doc:"Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up."`
+}
+
+func (*SessionVoicemail) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the agent does when an answering machine picks up."
+	return schema
+}
+
+// VoicemailAction is what the agent does on reaching an answering machine.
+type VoicemailAction string
+
+const (
+	VoicemailActionHangUp       VoicemailAction = "hang_up"
+	VoicemailActionLeaveMessage VoicemailAction = "leave_message"
+)
+
+func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "VoicemailAction", "hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"hang_up", "leave_message")
+}
+
+// CampaignVoicemailAction is what a campaign's agent does on reaching an answering machine.
+type CampaignVoicemailAction string
+
+const (
+	CampaignVoicemailActionOff          CampaignVoicemailAction = "off"
+	CampaignVoicemailActionHangUp       CampaignVoicemailAction = "hang_up"
+	CampaignVoicemailActionLeaveMessage CampaignVoicemailAction = "leave_message"
+)
+
+func (CampaignVoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CampaignVoicemailAction", "off: the agent talks to a machine as to a person. The default.\n"+
+		"hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"off", "hang_up", "leave_message")
+}
+
+func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The number the session acts from, which is what turns transferring on."
+	return schema
+}
+
+// SessionCallOutcome is how the call the router placed for a session ended.
+type SessionCallOutcome struct {
+	Outcome         *CallOutcome `json:"outcome,omitempty" doc:"How the call ended. Absent while it is ringing or under way."`
+	AnsweredAt      *time.Time   `json:"answered_at,omitempty" doc:"When the person picked up: their phone joined the call."`
+	DurationSeconds *int         `json:"duration_seconds,omitempty" doc:"How long they talked, from answered_at to when their phone left, rounded to the nearest second. Absent until it has."`
+}
+
+func (*SessionCallOutcome) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "How the call the router placed for a session ended."
+	return schema
+}
+
+// CallOutcome is how a placed call ended.
+type CallOutcome string
+
+const (
+	CallOutcomeCompleted CallOutcome = "completed"
+	CallOutcomeBusy      CallOutcome = "busy"
+	CallOutcomeNoAnswer  CallOutcome = "no_answer"
+	CallOutcomeFailed    CallOutcome = "failed"
+	CallOutcomeCanceled  CallOutcome = "canceled"
+	CallOutcomeUnknown   CallOutcome = "unknown"
+)
+
+func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CallOutcome", "How a placed call ended.\n"+
+		"completed: the person answered and the call ended.\n"+
+		"busy: the line was busy or the person declined.\n"+
+		"no_answer: it rang and nobody answered.\n"+
+		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
+		"canceled: the vendor says the call was hung up before an answer.\n"+
+		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
+		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
+}
+
+// SessionRespondCommand is the SessionRespondCommand schema.
+type SessionRespondCommand struct {
+	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Images    *[]ImageSource            `json:"images,omitempty"`
+	Text      string                    `json:"text"`
+	Type      SessionRespondCommandType `json:"type" enum:"respond"`
+}
+
+// SessionRespondCommandType is the SessionRespondCommandType schema.
+type SessionRespondCommandType string
+
+// Defines values for SessionRespondCommandType.
+const (
+	Respond SessionRespondCommandType = "respond"
+)
+
+// Valid indicates whether the value is a known member of the SessionRespondCommandType enum.
+func (e SessionRespondCommandType) Valid() bool {
+	switch e {
+	case Respond:
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionSettingsRequestThinking is the SessionSettingsRequestThinking schema.
+type SessionSettingsRequestThinking string
+
+// Defines values for SessionSettingsRequestThinking.
+const (
+	SessionSettingsRequestThinkingHigh    SessionSettingsRequestThinking = "high"
+	SessionSettingsRequestThinkingLow     SessionSettingsRequestThinking = "low"
+	SessionSettingsRequestThinkingMedium  SessionSettingsRequestThinking = "medium"
+	SessionSettingsRequestThinkingMinimal SessionSettingsRequestThinking = "minimal"
+	SessionSettingsRequestThinkingNone    SessionSettingsRequestThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the SessionSettingsRequestThinking enum.
+func (e SessionSettingsRequestThinking) Valid() bool {
+	switch e {
+	case SessionSettingsRequestThinkingHigh:
+		return true
+	case SessionSettingsRequestThinkingLow:
+		return true
+	case SessionSettingsRequestThinkingMedium:
+		return true
+	case SessionSettingsRequestThinkingMinimal:
+		return true
+	case SessionSettingsRequestThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionSettingsRequestVerbosity is the SessionSettingsRequestVerbosity schema.
+type SessionSettingsRequestVerbosity string
+
+// Defines values for SessionSettingsRequestVerbosity.
+const (
+	SessionSettingsRequestVerbosityHigh   SessionSettingsRequestVerbosity = "high"
+	SessionSettingsRequestVerbosityLow    SessionSettingsRequestVerbosity = "low"
+	SessionSettingsRequestVerbosityMedium SessionSettingsRequestVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the SessionSettingsRequestVerbosity enum.
+func (e SessionSettingsRequestVerbosity) Valid() bool {
+	switch e {
+	case SessionSettingsRequestVerbosityHigh:
+		return true
+	case SessionSettingsRequestVerbosityLow:
+		return true
+	case SessionSettingsRequestVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionState Whether the agent is still in the call.
+type SessionState string
+
+// Defines values for SessionState.
+const (
+	Ended SessionState = "ended"
+	Live  SessionState = "live"
+)
+
+// Valid indicates whether the value is a known member of the SessionState enum.
+func (e SessionState) Valid() bool {
+	switch e {
+	case Ended:
+		return true
+	case Live:
+		return true
+	default:
+		return false
+	}
+}
+
+func (SessionState) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionState", "Whether the agent is still in the call.", "live", "ended")
+}
+
+// SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
+type SessionTool struct {
+	Approval     *SessionToolApproval `json:"approval,omitempty"`
+	Description  string               `json:"description" doc:"What the model is told the tool does, which is the whole of how it decides when to reach for one."`
+	DisplayTitle *string              `json:"display_title,omitempty" doc:"What a call is doing, in words for the people in the conversation, such as \"Checking your location\". Shown on the reply's ai_tool_call attachment." maxLength:"80"`
+	Executor     *SessionToolExecutor `json:"executor,omitempty" doc:"Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server." enum:"server,client"`
+	// Interruptible and TimeoutMs are the tool's own, beside the session's.
+	Interruptible *bool                   `json:"interruptible,omitempty" doc:"Whether the caller interrupting the agent cancels a call in flight: the events socket is sent tool_cancel for it, and the model answers the new turn without it. Off, the default, the call goes on and its result is told when it comes."`
+	Name          string                  `json:"name"`
+	Parameters    *map[string]interface{} `json:"parameters,omitempty" doc:"A JSON Schema object describing the arguments."`
+	TimeoutMs     *int                    `json:"timeout_ms,omitempty" doc:"How long one call may take before the model is told it failed and tool_cancel is sent, in place of the session's tool_timeout_ms. Zero or omitted takes the session's." minimum:"0" maximum:"1800000"`
+}
+
+func (*SessionTool) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["executor"].Extensions = map[string]any{"x-enum-varnames": []any{"SessionToolExecutorServer", "SessionToolExecutorClient"}}
+	schema.Description = "One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket."
+	return schema
+}
+
+// SessionToolExecutor is the SessionToolExecutor schema.
+type SessionToolExecutor string
+
+// Defines values for SessionToolExecutor.
+const (
+	SessionToolExecutorClient SessionToolExecutor = "client"
+	SessionToolExecutorServer SessionToolExecutor = "server"
+)
+
+// Valid indicates whether the value is a known member of the SessionToolExecutor enum.
+func (e SessionToolExecutor) Valid() bool {
+	switch e {
+	case SessionToolExecutorClient:
+		return true
+	case SessionToolExecutorServer:
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionToolApproval Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent.
+type SessionToolApproval struct {
+	AllowTitle     *string `json:"allow_title,omitempty" doc:"The label of the button that allows the call." maxLength:"40"`
+	DeclineTitle   *string `json:"decline_title,omitempty" doc:"The label of the button that declines it." maxLength:"40"`
+	Message        *string `json:"message,omitempty" doc:"What allowing it shares or does, such as \"Only your city is shared.\"" maxLength:"240"`
+	ReasonArgument *string `json:"reason_argument,omitempty" doc:"The argument, a string, in which the model says why it wants this call. Its text (at most 160 characters) is shown as the approval's reason, so it is visible to every channel member even for a server tool." maxLength:"64"`
+	Title          string  `json:"title" doc:"The question, such as \"Share your location?\"." maxLength:"80"`
+}
+
+func (*SessionToolApproval) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "Says a person must allow each call before it runs. In a persistent conversation the call's ai_tool_call attachment opens as awaiting_approval, addressed to the person whose command it answers (and, for a client tool, their install), and carries this question for their client to ask. The caller collects the answer and reports it over the events socket with tool_approval: allowed, the call goes on as it would have (awaiting_client for a client tool, running otherwise); declined, it is cancelled. The caller still answers the call with tool_result either way. Every channel member can read the question. On a voice call the router asks instead: it does not send the call, answers the model at once with the title, each {argument} in it filled in from the call, and offers the model confirm_tool_call. A cascade says the question as written; a speech-to-speech model is told to ask it in those words. Only a yes within 15 seconds of the question finishing sends the call, under its own id and with approved true, and the tool's timeout starts then. A no, or silence, declines it, and the call is never sent."
+	return schema
+}
+
+// GreetingMode is how a greeting is said.
+type GreetingMode string
+
+const (
+	GreetingModeExact     GreetingMode = "exact"
+	GreetingModeVariation GreetingMode = "variation"
+)
+
+func (GreetingMode) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "GreetingMode", "exact says the text word for word. variation has the model say "+
+		"its own variation of it on every call, so callers do not hear the same opening each time. A "+
+		"speech-to-speech model cannot say exact words, so it always says its own rendering of the text.",
+		string(GreetingModeExact), string(GreetingModeVariation))
+	registry.Map()["GreetingMode"].Default = string(GreetingModeExact)
+	return ref
+}
+
+// Greeting is the Greeting schema.
+type Greeting struct {
+	Mode *GreetingMode `json:"mode,omitempty"`
+	Text string        `json:"text" doc:"What the agent says on joining. Empty means the agent waits to be spoken to."`
+}
+
+func (*Greeting) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the agent says as it joins, before anyone speaks."
+	return schema
+}
+
+// SessionVideo is the SessionVideo schema.
+type SessionVideo struct {
+	MaxFrames *int    `json:"max_frames,omitempty" doc:"Number of recent frames captured for a visual task. Default one." minimum:"1" maximum:"8"`
+	Source    *string `json:"source,omitempty" doc:"Track or processor source. Omitted requires one unambiguous available source."`
+}
+
+func (*SessionVideo) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_frames"].Format = ""
+	return schema
+}
+
+// Simulation is the Simulation schema.
+type Simulation struct {
+	Assertion    string             `json:"assertion"`
+	CallerStt    *string            `json:"caller_stt,omitempty"`
+	CallerTarget *string            `json:"caller_target,omitempty"`
+	CallerTts    *string            `json:"caller_tts,omitempty"`
+	CallerVoice  *string            `json:"caller_voice,omitempty"`
+	ConfigId     string             `json:"config_id"`
+	CreatedAt    time.Time          `json:"created_at"`
+	Id           string             `json:"id"`
+	JudgeTarget  *string            `json:"judge_target,omitempty"`
+	MaxTurns     int                `json:"max_turns"`
+	Mode         SimulationMode     `json:"mode" enum:"text,audio"`
+	Name         string             `json:"name"`
+	Scenario     string             `json:"scenario"`
+	Tags         *map[string]string `json:"tags,omitempty"`
+	UpdatedAt    *time.Time         `json:"updated_at,omitempty"`
+	Variations   int                `json:"variations"`
+}
+
+func (*Simulation) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_turns"].Format = ""
+	schema.Properties["variations"].Format = ""
+	return schema
+}
+
+// SimulationRequest is the SimulationRequest schema.
+type SimulationRequest struct {
+	Assertion    string                 `json:"assertion" doc:"What has to be true at the end for the run to have passed."`
+	CallerStt    *string                `json:"caller_stt,omitempty" doc:"How the caller hears the agent. Audio simulations only."`
+	CallerTarget *string                `json:"caller_target,omitempty" doc:"The model that plays the caller. Empty takes llm-scenario-runner, the deployment's fast-tier default."`
+	CallerTts    *string                `json:"caller_tts,omitempty" doc:"How the caller speaks. Audio simulations only."`
+	CallerVoice  *string                `json:"caller_voice,omitempty" doc:"The voice the caller speaks in. Audio simulations only."`
+	ConfigId     string                 `json:"config_id" doc:"The agent being tested."`
+	JudgeTarget  *string                `json:"judge_target,omitempty" doc:"The model that rules on the conversations, named the way any other routing target is. Empty takes llm-judge, the deployment's quality-tier default, since nobody is waiting for it."`
+	MaxTurns     *int                   `json:"max_turns,omitempty" doc:"How many times the caller may speak, up to two hundred. It is what stops a caller that never decides it is finished. Twelve when left out."`
+	Mode         *SimulationRequestMode `json:"mode,omitempty" doc:"Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out." enum:"text,audio"`
+	Name         string                 `json:"name"`
+	Scenario     string                 `json:"scenario" doc:"What to ask, in your own words and over as many turns as it takes. This is a brief for the caller rather than a script, so it may describe things that depend on what the agent says back."`
+	Tags         *map[string]string     `json:"tags,omitempty"`
+	Variations   *int                   `json:"variations,omitempty" doc:"How many ways of asking the same thing one run tries, up to ten. The scenario as written is always the first of them, and one is what left out means."`
+}
+
+func (*SimulationRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_turns"].Format = ""
+	schema.Properties["variations"].Format = ""
+	return schema
+}
+
+// Skill is the Skill schema.
+type Skill struct {
+	CaptureVideo *bool     `json:"capture_video,omitempty" doc:"Capture task-scoped visual evidence before reasoning."`
+	ConfigId     string    `json:"config_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	DeadlineMs   *int64    `json:"deadline_ms,omitempty"`
+	Description  string    `json:"description"`
+	FilePaths    *[]string `json:"file_paths,omitempty" doc:"The files the skill came with, by path relative to its folder."`
+	Id           string    `json:"id"`
+	Instructions string    `json:"instructions"`
+	Name         string    `json:"name"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// SkillRequest is the SkillRequest schema.
+type SkillRequest struct {
+	CaptureVideo *bool              `json:"capture_video,omitempty" doc:"Capture task-scoped visual evidence before reasoning."`
+	ConfigId     string             `json:"config_id" doc:"The agent config this skill belongs to. A skill is not shared: two agents that both need one have one each, so editing either leaves the other alone."`
+	DeadlineMs   *int64             `json:"deadline_ms,omitempty" doc:"How long the work may run before it is abandoned. Zero is the default."`
+	Description  string             `json:"description" doc:"The one line the fast model sees."`
+	Files        *map[string]string `json:"files,omitempty" doc:"The rest of the skill's folder beside SKILL.md, each file's text by its path relative to the folder, such as reference/forms.md or scripts/fill.py. The model reads them one at a time when it needs them. A file that is not .md, .mdx or .txt is a script, run in the sandbox, so a skill with one belongs only to an agent with a sandbox. At most 64 files and 1 MB in all."`
+	Instructions string             `json:"instructions" doc:"The full prompt, which only the subagent sees."`
+	Name         string             `json:"name" doc:"How the config names it, which is unique among that config's own skills."`
+}
+
+// Speech is the Speech schema.
+type Speech struct {
+	Audio           *[]byte         `json:"audio,omitempty" doc:"The audio itself, base64, when it was not stored behind a URL." format:"byte"`
+	AudioDurationMs *int64          `json:"audio_duration_ms,omitempty"`
+	Characters      *int64          `json:"characters,omitempty" doc:"How much text was spoken, which is what it was billed on."`
+	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	Error           *string         `json:"error,omitempty"`
+	Format          *string         `json:"format,omitempty" doc:"What the audio is encoded as, which is what was asked for." example:"mp3_44100_128"`
+	Id              string          `json:"id"`
+	Model           *string         `json:"model,omitempty"`
+	Provider        *string         `json:"provider,omitempty"`
+	Status          RecordingStatus `json:"status"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	Url             *string         `json:"url,omitempty" doc:"Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead."`
+	Voice           *string         `json:"voice,omitempty" doc:"The voice it was spoken in, as the provider knows it, which is the provider's default when none was asked for. Absent when the provider cannot say."`
+}
+
+// StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+type StsOptions struct {
+	DataPolicy        *DataPolicy              `json:"data_policy,omitempty"`
+	Images            *bool                    `json:"images,omitempty" doc:"The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model."`
+	InputTranscript   *bool                    `json:"input_transcript,omitempty" doc:"Ask the model to write down what it heard."`
+	Instructions      *string                  `json:"instructions,omitempty" doc:"The system prompt the model converses under, sent when the session opens. A stored router config naming one is refused: what is said belongs to the agent holding the conversation, not to the config that decides where it goes."`
+	InterruptResponse *bool                    `json:"interrupt_response,omitempty" doc:"Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself."`
+	Languages         *[]string                `json:"languages,omitempty"`
+	OutputTranscript  *bool                    `json:"output_transcript,omitempty" doc:"Ask the model to write down what it said."`
+	Overwrites        *map[string]interface{}  `json:"overwrites,omitempty" doc:"Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {\"openai\": {\"eagerness\": \"high\"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped." example:"{\"openai\": {\"eagerness\": \"high\"}}"`
+	PrefixPaddingMs   *int                     `json:"prefix_padding_ms,omitempty" doc:"How much audio before the detected speech is kept, for a silence timer."`
+	Providers         *[]string                `json:"providers,omitempty" doc:"A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands."`
+	SilenceMs         *int                     `json:"silence_ms,omitempty" doc:"How long a pause ends the turn, for a silence timer."`
+	Target            *string                  `json:"target,omitempty" doc:"A provider/model or a capability shortcut." example:"sts-fast"`
+	Text              *bool                    `json:"text,omitempty" doc:"The session will inject typed turns."`
+	Tools             *bool                    `json:"tools,omitempty" doc:"The session will hand the model functions to call."`
+	TurnDetection     *StsOptionsTurnDetection `json:"turn_detection,omitempty" doc:"What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term." enum:"server_vad,semantic,none"`
+	Voice             *string                  `json:"voice,omitempty" doc:"The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up." example:"marin"`
+}
+
+func (*StsOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["prefix_padding_ms"].Format = ""
+	schema.Properties["silence_ms"].Format = ""
+	schema.Description = "How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it."
+	return schema
+}
+
+// SttOptions How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
+type SttOptions struct {
+	Channels        *int                    `json:"channels,omitempty" doc:"Transcribe a multichannel recording per channel rather than mixed down." minimum:"1"`
+	DataPolicy      *DataPolicy             `json:"data_policy,omitempty"`
+	DetectLanguage  *bool                   `json:"detect_language,omitempty" doc:"Let the provider identify the language instead of being told it."`
+	Diarize         *bool                   `json:"diarize,omitempty" doc:"Label each stretch of speech with who said it."`
+	EagerEndOfTurn  *bool                   `json:"eager_end_of_turn,omitempty" doc:"Send a transcript as soon as the model guesses the turn may be over, before it is sure, so a reply can start early. Live only. A model without an eager end of turn transcribes as normal rather than being refused. On by default for en-low-latency and multilingual-low-latency."`
+	Endpointing     *Endpointing            `json:"endpointing,omitempty"`
+	Entities        *bool                   `json:"entities,omitempty" doc:"Extract named entities from the recording. Recording only."`
+	Events          *bool                   `json:"events,omitempty" doc:"Tag non-speech audio events such as laughter or music."`
+	Format          *bool                   `json:"format,omitempty" doc:"Punctuation, capitalisation and smart formatting of numbers and dates."`
+	Interim         *bool                   `json:"interim,omitempty" doc:"Emit partial transcripts as they firm up, not only final ones. Live only."`
+	Keyterms        *[]string               `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary refuse them."`
+	Languages       *[]string               `json:"languages,omitempty" doc:"ISO codes candidates must cover. Empty with detect_language lets the provider decide."`
+	MaxSpeakers     *int                    `json:"max_speakers,omitempty" doc:"A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses." minimum:"1" maximum:"32"`
+	Mode            *TranscriptionMode      `json:"mode,omitempty"`
+	Output          *TranscriptFormat       `json:"output,omitempty"`
+	Overwrites      *map[string]interface{} `json:"overwrites,omitempty" doc:"Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {\"deepgram\": {\"eot_threshold\": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped." example:"{\"deepgram\": {\"eot_threshold\": 0.6}}"`
+	ProfanityFilter *bool                   `json:"profanity_filter,omitempty" doc:"Mask offensive words rather than writing them down. Only some providers can be told to, so a request for it is routed to one of them or refused."`
+	Providers       *[]string               `json:"providers,omitempty" doc:"A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it."`
+	Redact          *bool                   `json:"redact,omitempty" doc:"Remove personally identifying information from the transcript."`
+	SampleRate      *int                    `json:"sample_rate,omitempty" doc:"Rate of the PCM sent on the socket. Zero means 16 kHz. Live only." example:"16000"`
+	SilenceMs       *int                    `json:"silence_ms,omitempty" doc:"How long a pause ends a turn, for silence endpointing. Live only." example:"300"`
+	Summary         *bool                   `json:"summary,omitempty" doc:"Summarise the recording, where the provider offers audio intelligence. Recording only."`
+	Target          *string                 `json:"target,omitempty" doc:"A provider/model or a capability shortcut such as en-low-latency for the live path or en-recorded for a recording." example:"en-low-latency"`
+	UtteranceEndMs  *int                    `json:"utterance_end_ms,omitempty" doc:"How long after the last word an utterance is declared over. Live only."`
+	Words           *bool                   `json:"words,omitempty" doc:"Word-level timestamps. Recording only."`
+}
+
+func (*SttOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["channels"].Format = ""
+	schema.Properties["max_speakers"].Format = ""
+	schema.Properties["sample_rate"].Format = ""
+	schema.Properties["silence_ms"].Format = ""
+	schema.Properties["utterance_end_ms"].Format = ""
+	schema.Description = "How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently."
+	return schema
+}
+
+// TextContentPart is the TextContentPart schema.
+type TextContentPart struct {
+	Text string              `json:"text"`
+	Type TextContentPartType `json:"type" enum:"text"`
+}
+
+// TextContentPartType is the TextContentPartType schema.
+type TextContentPartType string
+
+// Defines values for TextContentPartType.
+const (
+	TextContentPartTypeText TextContentPartType = "text"
+)
+
+// Valid indicates whether the value is a known member of the TextContentPartType enum.
+func (e TextContentPartType) Valid() bool {
+	switch e {
+	case TextContentPartTypeText:
+		return true
+	default:
+		return false
+	}
+}
+
+// ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
+type ToolApprovalCommand struct {
+	Allowed    bool                    `json:"allowed"`
+	RequestId  string                  `json:"request_id"`
+	Summary    *string                 `json:"summary,omitempty" doc:"Shown on the declined call, such as \"Location not shared\"." maxLength:"120"`
+	ToolCallId string                  `json:"tool_call_id"`
+	TurnId     *string                 `json:"turn_id,omitempty" doc:"The turn of the call. Required, except for a connector call whose binding sets require_approval."`
+	Type       ToolApprovalCommandType `json:"type" enum:"tool_approval"`
+}
+
+func (*ToolApprovalCommand) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out."
+	return schema
+}
+
+// ToolApprovalCommandType is the ToolApprovalCommandType schema.
+type ToolApprovalCommandType string
+
+// Defines values for ToolApprovalCommandType.
+const (
+	ToolApproval ToolApprovalCommandType = "tool_approval"
+)
+
+// Valid indicates whether the value is a known member of the ToolApprovalCommandType enum.
+func (e ToolApprovalCommandType) Valid() bool {
+	switch e {
+	case ToolApproval:
+		return true
+	default:
+		return false
+	}
+}
+
+// ToolResultCommand is the ToolResultCommand schema.
+type ToolResultCommand struct {
+	RequestId  *string               `json:"request_id,omitempty"`
+	Error      *string               `json:"error,omitempty"`
+	Output     *MessageContent       `json:"output,omitempty"`
+	ToolCallId string                `json:"tool_call_id"`
+	TurnId     *string               `json:"turn_id,omitempty"`
+	Type       ToolResultCommandType `json:"type" enum:"tool_result"`
+}
+
+// ToolResultCommandType is the ToolResultCommandType schema.
+type ToolResultCommandType string
+
+// Defines values for ToolResultCommandType.
+const (
+	ToolResultCommandTypeToolResult ToolResultCommandType = "tool_result"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultCommandType enum.
+func (e ToolResultCommandType) Valid() bool {
+	switch e {
+	case ToolResultCommandTypeToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// TtsOptions How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
+type TtsOptions struct {
+	ChunkSchedule  *[]int                  `json:"chunk_schedule,omitempty" doc:"Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only."`
+	DataPolicy     *DataPolicy             `json:"data_policy,omitempty"`
+	Emotion        *string                 `json:"emotion,omitempty" doc:"Affect to speak with, for the providers that take one."`
+	Format         *string                 `json:"format,omitempty" doc:"Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for telephony." example:"pcm_16000"`
+	Languages      *[]string               `json:"languages,omitempty"`
+	Overwrites     *map[string]interface{} `json:"overwrites,omitempty" doc:"Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {\"elevenlabs\": {\"voice_id\": \"21m00Tcm4TlvDq8ikWAM\"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another." example:"{\"elevenlabs\": {\"voice_id\": \"21m00Tcm4TlvDq8ikWAM\"}}"`
+	Pronunciations *map[string]string      `json:"pronunciations,omitempty" doc:"How to say words the voice gets wrong, keyed by the word."`
+	Providers      *[]string               `json:"providers,omitempty" doc:"A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back."`
+	Similarity     *float32                `json:"similarity,omitempty" doc:"How closely a cloned voice tracks its reference."`
+	Speed          *float32                `json:"speed,omitempty" doc:"Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so one asked for a speed outside its own refuses." example:"1"`
+	Stability      *float32                `json:"stability,omitempty" doc:"How much the voice may vary between chunks. Higher is flatter and more consistent."`
+	Style          *string                 `json:"style,omitempty" doc:"Delivery style, for the providers that name styles rather than emotions."`
+	Target         *string                 `json:"target,omitempty" doc:"A provider/model or a capability shortcut." example:"en-low-latency"`
+	Voice          *string                 `json:"voice,omitempty" doc:"A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused." example:"custom:receptionist"`
+	Volume         *float32                `json:"volume,omitempty" doc:"Loudness, 1 being the voice's own."`
+}
+
+func (*TtsOptions) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["chunk_schedule"].Items.Format = ""
+	schema.Description = "How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot."
+	return schema
+}
+
+// VideoSource is the VideoSource schema.
+type VideoSource struct {
+	MaxFrames *int   `json:"max_frames,omitempty" doc:"How many frames to sample, evenly spaced across the clip. Default 8." minimum:"1" maximum:"32"`
+	Url       string `json:"url" doc:"Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address."`
+}
+
+func (*VideoSource) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["max_frames"].Format = ""
+	return schema
+}
+
+// Voice is the Voice schema.
+type Voice struct {
+	Bindings    *[]VoiceBinding `json:"bindings,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	Description *string         `json:"description,omitempty"`
+	Id          string          `json:"id"`
+	Name        string          `json:"name"`
+	Samples     *[]VoiceSample  `json:"samples,omitempty"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// CommandID is the CommandID schema.
+type CommandID = string
+
+// Cursor is the Cursor schema.
+type Cursor = string
+
+// ResourceID is the ResourceID schema.
+type ResourceID = string
+
+// SessionID is the SessionID schema.
+type SessionID = string
+
+// SessionLimit is the SessionLimit schema.
+type SessionLimit = int
+
+func (ContentPart) Schema(registry huma.Registry) *huma.Schema {
+	registry.Map()["ContentPart"] = &huma.Schema{OneOf: []*huma.Schema{
+		registry.Schema(reflect.TypeFor[TextContentPart](), true, ""),
+		registry.Schema(reflect.TypeFor[ImageContentPart](), true, ""),
+	}}
+	return &huma.Schema{Ref: "#/components/schemas/ContentPart"}
+}
+
+func (MessageContent) Schema(registry huma.Registry) *huma.Schema {
+	registry.Map()["MessageContent"] = &huma.Schema{OneOf: []*huma.Schema{
+		{Type: huma.TypeString},
+		{Type: huma.TypeArray, Items: registry.Schema(reflect.TypeFor[ContentPart](), true, "")},
+	}}
+	return &huma.Schema{Ref: "#/components/schemas/MessageContent"}
+}

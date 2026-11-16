@@ -1,0 +1,2168 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// stubTelephony is a phone line with no phone network in it: it records what it was asked
+// to do, and fails when the test wants to see what a failed transfer does to the
+// conversation.
+type stubTelephony struct {
+	mu           sync.Mutex
+	transferred  []string
+	tried        []string
+	pressed      []string
+	placed       bool
+	transferErr  error
+	sendDigitErr error
+}
+
+func (t *stubTelephony) Transfer(_ context.Context, to string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tried = append(t.tried, to)
+	if t.transferErr != nil {
+		return t.transferErr
+	}
+	t.transferred = append(t.transferred, to)
+	return nil
+}
+
+func (t *stubTelephony) SendDigits(_ context.Context, digits string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sendDigitErr != nil {
+		return t.sendDigitErr
+	}
+	t.pressed = append(t.pressed, digits)
+	return nil
+}
+
+func (t *stubTelephony) Placed() bool { return t.placed }
+
+func (t *stubTelephony) handedOver() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.transferred...)
+}
+
+// attempted is every transfer asked for, including the ones that failed.
+func (t *stubTelephony) attempted() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.tried...)
+}
+
+func (t *stubTelephony) keypad() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.pressed...)
+}
+
+// onACall gives the agent a phone line and the tools that act on it.
+func (s *AgentSuite) onACall() {
+	s.line = &stubTelephony{placed: true}
+	tools, err := harness.DefaultTools()
+	s.Require().NoError(err)
+	s.tools = tools
+}
+
+// stubToolRunner stands in for whoever owns the tools this package does not, which in
+// production is a caller on the other end of a socket.
+type stubToolRunner struct {
+	result string
+	err    error
+	run    func(context.Context, llm.ToolCall) ([]llm.ContentPart, error)
+
+	mu   sync.Mutex
+	runs []llm.ToolCall
+}
+
+type appointment struct {
+	date string
+	time string
+}
+
+type appointmentBook struct {
+	mu          sync.Mutex
+	appointment appointment
+	wasRejected bool
+}
+
+func newAppointmentBook() *appointmentBook {
+	return &appointmentBook{appointment: appointment{date: "Monday", time: "9am"}}
+}
+
+func (b *appointmentBook) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	var arguments struct {
+		AppointmentID string `json:"visit_id"`
+		Date          string `json:"new_day"`
+		Time          string `json:"new_slot"`
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+		b.wasRejected = true
+		return nil, fmt.Errorf("appointment arguments are not JSON: %w", err)
+	}
+	if arguments.AppointmentID != "v7" || arguments.Date == "" || arguments.Time == "" {
+		b.wasRejected = true
+		return nil, errors.New("appointment id, date, and time are required")
+	}
+	b.appointment.date, b.appointment.time = arguments.Date, arguments.Time
+	return llm.TextParts("Visit v7 is now Wednesday afternoon."), nil
+}
+
+func (b *appointmentBook) state() (appointment, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.appointment, b.wasRejected
+}
+
+func moveVisitTool() harness.Tool {
+	return harness.Tool{
+		Name:        "move_visit",
+		Description: "move an existing appointment",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"visit_id": map[string]any{"type": "string"},
+				"new_day":  map[string]any{"type": "string"},
+				"new_slot": map[string]any{"type": "string"},
+			},
+			"required": []any{"visit_id", "new_day", "new_slot"},
+		},
+	}
+}
+
+func (s *AgentSuite) TestAProseAskForAMultiFieldToolRecoversAndReschedules() {
+	s.recoversAnAppointmentFromProse(true)
+}
+
+func (s *AgentSuite) TestABodyOnlyCallForAMultiFieldToolRecoversAndReschedules() {
+	s.recoversAnAppointmentFromProse(false)
+}
+
+func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
+	book := newAppointmentBook()
+	s.runner = &stubToolRunner{run: book.Run}
+	s.tools = harness.Tools{Tools: []harness.Tool{moveVisitTool()}}
+	s.join(false)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	callerText := "Please move visit v7 from Monday at 9am to Wednesday afternoon."
+	s.says(participant, callerText)
+
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) > 0 && s.model.script(requests[0].ID) != nil
+	}, "the model was never asked about the appointment")
+	firstRequest := s.model.requests()[0]
+	firstScript := s.model.script(firstRequest.ID)
+	firstScript.OutputText("One moment, checking that appointment. ")
+	if asAsk {
+		firstScript.OutputText(`<ask skill="move_visit">Move the Monday 9am visit to Wednesday afternoon.</ask>`)
+	} else {
+		firstScript.OutputText(`<call tool="move_visit">Move the Monday 9am visit to Wednesday afternoon.</call>`)
+	}
+	firstScript.Done()
+
+	// The old behavior reaches the external runner with only the first required field.
+	// The fixed path instead wakes the model with a corrective note in this turn.
+	s.eventually(func() bool {
+		_, rejected := book.state()
+		if rejected {
+			return true
+		}
+		requests := s.model.requests()
+		return len(requests) > 1 && strings.Contains(shown(requests[1]), "move_visit") &&
+			s.model.script(requests[1].ID) != nil
+	}, "neither a malformed call nor a corrective response was observed")
+	state, rejected := book.state()
+	s.Require().False(rejected, "a malformed prose body reached the appointment service")
+	s.Equal(appointment{date: "Monday", time: "9am"}, state,
+		"the appointment must stay unchanged until the corrected call runs")
+
+	requests := s.model.requests()
+	s.Require().GreaterOrEqual(len(requests), 2)
+	correction := requests[1]
+	s.Contains(shown(correction), "move_visit")
+	s.Contains(shown(correction), "visit_id")
+	s.Contains(shown(correction), "new_day")
+	s.Contains(shown(correction), "new_slot")
+	s.Contains(shown(correction), "not run")
+	s.Contains(harness.WithoutNotes(correction.Input), llm.Message{Role: llm.User, Content: callerText})
+	s.Require().Len(correction.Tools, 1)
+	s.Equal("move_visit", correction.Tools[0].Name)
+	s.Equal([]any{"visit_id", "new_day", "new_slot"}, correction.Tools[0].Parameters["required"])
+	correctedScript := s.model.script(correction.ID)
+	s.Require().NotNil(correctedScript)
+	correctedScript.ToolCalls(llm.ToolCall{
+		ID:        "reschedule-correct",
+		Name:      "move_visit",
+		Arguments: `{"visit_id":"v7","new_day":"Wednesday","new_slot":"afternoon"}`,
+	})
+	correctedScript.Done()
+
+	s.eventually(func() bool {
+		state, _ := book.state()
+		return state == (appointment{date: "Wednesday", time: "afternoon"})
+	}, "the corrected native call did not update the appointment")
+	run := s.awaitToolRan()
+	s.NoError(run.Err)
+	s.Equal("move_visit", run.Tool)
+	s.JSONEq(`{"visit_id":"v7","new_day":"Wednesday","new_slot":"afternoon"}`, run.Arguments)
+	s.Contains(run.Result, "now Wednesday afternoon")
+
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) > 2 && s.model.script(requests[2].ID) != nil
+	}, "the tool result did not trigger a final response")
+	requests = s.model.requests()
+	final := requests[2]
+	s.Equal(1, countOfMessages(harness.WithoutNotes(final.Input), llm.User), "the successful reply should need no second caller turn")
+	s.True(slices.ContainsFunc(harness.WithoutNotes(final.Input), func(message llm.Message) bool {
+		return message.Role == llm.ToolResult && message.ToolCallID == "reschedule-correct" &&
+			strings.Contains(message.Content, "now Wednesday afternoon")
+	}), "the final response must receive the actual tool result")
+	audioBeforeFinal := len(s.edge.heard())
+	finalScript := s.model.script(final.ID)
+	finalScript.OutputText("Your appointment is now set for Wednesday afternoon.")
+	finalScript.Done()
+	s.eventually(func() bool { return s.spokenText("Wednesday afternoon") },
+		"the caller never heard the appointment update")
+	s.eventually(func() bool {
+		return len(s.edge.heard()) > audioBeforeFinal && slices.ContainsFunc(s.reported(), func(event Event) bool {
+			spoke, ok := event.(Spoke)
+			return ok && spoke.TurnID == final.ID
+		})
+	}, "the successful answer produced no audio")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the agent stayed busy after the final answer")
+	_, rejected = book.state()
+	s.False(rejected, "the appointment service received malformed arguments")
+	s.Zero(countOf[Error](s.reported()), "the appointment handoff should not report an error")
+}
+
+func countOfMessages(messages []llm.Message, role llm.Role) int {
+	var count int
+	for _, message := range messages {
+		if message.Role == role {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	r.mu.Lock()
+	r.runs = append(r.runs, call)
+	err, result, run := r.err, r.result, r.run
+	r.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if run != nil {
+		return run(ctx, call)
+	}
+	return llm.TextParts(result), nil
+}
+
+func (r *stubToolRunner) asked() []llm.ToolCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]llm.ToolCall(nil), r.runs...)
+}
+
+// ownsTools gives the agent a caller with tools of its own, the way a remote session does.
+func (s *AgentSuite) ownsTools(result string) {
+	s.runner = &stubToolRunner{result: result}
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "lookup_order",
+		Description: "find an order by its number",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"order": map[string]any{"type": "string"}},
+		},
+	}}}
+}
+
+// asksFor makes the next reply call a tool, alongside whatever it says.
+func (s *AgentSuite) asksFor(name, arguments string) {
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: name, Arguments: arguments}}
+}
+
+// transferredIn returns the transfers reported to the caller of Events.
+func transferredIn(events []Event) []Transferred {
+	var handed []Transferred
+	for _, event := range events {
+		if typed, ok := event.(Transferred); ok {
+			handed = append(handed, typed)
+		}
+	}
+	return handed
+}
+
+func toolsRanIn(events []Event) []ToolRan {
+	var ran []ToolRan
+	for _, event := range events {
+		if typed, ok := event.(ToolRan); ok {
+			ran = append(ran, typed)
+		}
+	}
+	return ran
+}
+
+func (s *AgentSuite) TestAToolsPictureReachesTheVisionSkillWithItsCallAnswered() {
+	// A provider refuses a conversation that replays a call without its result, and the
+	// vision task is handed the conversation while the call that took the picture is still
+	// open in it.
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.runner = &stubToolRunner{run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		return []llm.ContentPart{{Text: "the room"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}}, nil
+	}}
+	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
+	s.join(true)
+	s.model.reply = []string{"Let me look."}
+	s.asksFor("photograph_room", "{}")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is in the room")
+
+	s.eventually(func() bool { return len(s.subagent.requests()) > 0 }, "the vision task was never asked")
+	asked := s.subagent.requests()[0]
+	s.True(asked.HasImage(), "the vision task was not shown the picture")
+	answered := map[string]bool{}
+	for _, message := range harness.WithoutNotes(asked.Input) {
+		if message.Role == llm.ToolResult {
+			answered[message.ToolCallID] = true
+		}
+	}
+	for _, message := range harness.WithoutNotes(asked.Input) {
+		for _, call := range message.ToolCalls {
+			s.True(answered[call.ID], "the vision task was handed %s with no result", call.ID)
+		}
+	}
+}
+
+func (s *AgentSuite) TestAToolsPictureInATurnAScheduledTaskFiredIsLookedAtAsScheduled() {
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.runner = &stubToolRunner{run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		return []llm.ContentPart{{Text: "the room"}, {Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}}, nil
+	}}
+	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
+	s.join(true)
+	s.model.reply = []string{"Let me look."}
+	s.model.callsOn = 2
+	s.asksFor("photograph_room", "{}")
+	// Somebody has spoken, so the turn is offered the tool: with nobody heard yet a reply is
+	// offered none, and a call it returns is dropped.
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	s.Empty(s.subagent.requests())
+
+	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in the room", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the vision task was never asked")
+	s.Equal([]bool{true}, s.subagent.askedScheduled(), "looking at the tool's picture is the customer's spend")
+}
+
+func (s *AgentSuite) TestToolsAreOnlyOfferedWhenThereIsACallToActOn() {
+	// A model told it may transfer, in a call with nowhere to transfer to, promises the
+	// caller a person who never arrives.
+	tools, err := harness.DefaultTools()
+	s.Require().NoError(err)
+	s.tools = tools
+	s.join(false)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "put me through to someone")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	s.Nil(s.model.requests()[0].Tools, "without telephony there is nothing to offer")
+}
+
+func (s *AgentSuite) TestTheModelIsOfferedTheToolsItCanRun() {
+	s.onACall()
+	s.join(false)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	offered := s.model.requests()[0].Tools
+	s.Require().NotEmpty(offered)
+
+	names := make([]string, 0, len(offered))
+	for _, tool := range offered {
+		names = append(names, tool.Name)
+	}
+	s.Contains(names, "transfer")
+	s.Contains(names, "press")
+}
+
+func (s *AgentSuite) TestAColdTransferBringsTheHumanOnAndTheAgentLeaves() {
+	s.onACall()
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through now."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to speak to a person")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550001111", s.line.handedOver()[0])
+
+	s.eventually(func() bool { return len(transferredIn(s.reported())) == 1 },
+		"the handover was never reported")
+	s.Empty(transferredIn(s.reported())[0].Summary, "a cold transfer introduces nobody")
+
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
+	// The summary is spoken on the call rather than privately, so it only means anything
+	// once there is somebody new to hear it.
+	s.onACall()
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to speak to a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+
+	s.never(func() bool { return s.spokenText("Alice needs a refund") },
+		"the summary was said to an empty seat")
+
+	// The human answering is the agent hearing a voice it has not heard before.
+	s.speak(stt.Participant{ID: "human"})
+
+	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
+		"the human was never introduced to the caller")
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+// offerDestinations replaces the transfer tool with one that names who can be reached.
+func (s *AgentSuite) offerDestinations(destinations ...Destination) {
+	s.destinations = destinations
+}
+
+func (s *AgentSuite) offeredTool(name string) (llm.Tool, bool) {
+	for _, tool := range s.agent.ToolDefinitions() {
+		if tool.Name == name {
+			return tool, true
+		}
+	}
+	return llm.Tool{}, false
+}
+
+func (s *AgentSuite) TestAnAgentThatWasCalledIsNotOfferedTheKeypad() {
+	s.onACall()
+	s.line.placed = false
+	s.join(false)
+
+	_, transfers := s.offeredTool("transfer")
+	_, presses := s.offeredTool("press")
+	s.True(transfers)
+	s.False(presses, "a call nobody placed has no leg to press digits on")
+}
+
+func (s *AgentSuite) TestATransferToADestinationDialsItsNumber() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
+		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+	)
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to buy")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal([]string{"+15550001111"}, s.line.handedOver())
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+	s.Equal("+15550001111", transferredIn(s.reported())[0].To, "the operator's event lost the number")
+}
+
+func (s *AgentSuite) TestADestinationNameIgnoresCaseAndSpaces() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":" sales "}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "sales please")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "a name differing in case and spaces was refused")
+	s.Equal([]string{"+15550001111"}, s.line.handedOver())
+}
+
+func (s *AgentSuite) TestAnUnknownDestinationDialsNothingAndNamesTheValidOnes() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111"},
+		Destination{Name: "Support", Number: "+15550002222"},
+	)
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Billing"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "billing please")
+
+	ran := s.awaitToolRan()
+	s.Contains(ran.Result, "Sales")
+	s.Contains(ran.Result, "Support")
+	s.NotContains(ran.Result, "+1555")
+	s.Empty(s.line.attempted())
+	s.never(s.left, "the agent left a call it never transferred")
+}
+
+func (s *AgentSuite) TestWithDestinationsANumberIsNeverDialled() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550009999."
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"to":"+15550009999"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "put me through")
+
+	s.awaitToolRan()
+	s.Empty(s.line.attempted(), "a number the model supplied was dialled though destinations are set")
+	s.never(s.left, "the agent left a call it never transferred")
+}
+
+func (s *AgentSuite) TestAFailedTransferToADestinationDoesNotTellTheModelTheNumber() {
+	s.onACall()
+	s.line.transferErr = errors.New("+15550001111 refused")
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "sales please")
+
+	ran := s.awaitToolRan()
+	s.Contains(ran.Result, "Sales")
+	s.NotContains(ran.Result, "555000")
+}
+
+func (s *AgentSuite) TestAColdDestinationDropsTheSummary() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "I want a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+	s.False(s.spokenText("Alice needs a refund"), "a cold destination was told the summary")
+	s.Empty(transferredIn(s.reported())[0].Summary)
+}
+
+func (s *AgentSuite) TestAWarmDestinationIntroducesTheCaller() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111", Warm: true})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "I want a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.never(func() bool { return s.spokenText("Alice needs a refund") },
+		"the summary was said to an empty seat")
+
+	s.speak(stt.Participant{ID: "human"})
+
+	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
+		"the human was never introduced to the caller")
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+func (s *AgentSuite) TestTheModelIsOfferedDestinationsNotNumbers() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
+		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+		Destination{Name: "Billing", Number: "+15550003333"},
+	)
+	s.join(false)
+
+	tool, ok := s.offeredTool("transfer")
+	s.Require().True(ok)
+	properties := tool.Parameters["properties"].(map[string]any)
+	s.NotContains(properties, "to")
+	s.NotContains(properties, "summary", "only cold destinations, so nothing to introduce")
+	destination := properties["destination"].(map[string]any)
+	s.ElementsMatch([]string{"Sales", "Support", "Billing"}, destination["enum"])
+	encoded, err := json.Marshal(tool)
+	s.Require().NoError(err)
+	s.NotContains(string(encoded), "555000")
+	s.Contains(tool.Description, "- Sales: buying")
+	s.Contains(tool.Description, "- Support: broken")
+	s.Contains(tool.Description, "- Billing")
+	s.NotContains(tool.Description, "Billing:")
+
+	s.Contains(DestinationTransfer([]Destination{{Name: "Sales", Number: "+15550001111", Warm: true}}).
+		Parameters["properties"], "summary")
+}
+
+func (s *AgentSuite) TestATransferToANumberOnlyTheCallerSaidIsRefused() {
+	for _, said := range []string{
+		"+44 20 7946 0958",
+		"four four two zero seven nine four six zero nine five eight",
+		"44-20-7946-0958",
+	} {
+		s.Run(said, func() {
+			s.onACall()
+			s.join(false)
+			s.model.reply = []string{"Putting you through."}
+			s.asksFor("transfer", `{"to":"+442079460958"}`)
+			participant := stt.Participant{ID: "alice"}
+			s.speak(participant)
+
+			s.says(participant, "Please transfer me to "+said)
+
+			ran := s.awaitToolRan()
+			s.Contains(ran.Result, "not a number to transfer to")
+			s.Empty(s.line.attempted(), "a number the caller read out was dialled")
+			s.never(s.left, "the agent left a call it never transferred")
+		})
+	}
+}
+
+func (s *AgentSuite) TestATransferToANumberInTheInstructionsStillGoesThrough() {
+	s.onACall()
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to speak to a person")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550001111", s.line.handedOver()[0])
+}
+
+func (s *AgentSuite) TestATransferToANumberFromAToolResultStillGoesThrough() {
+	s.onACall()
+	s.runner = &stubToolRunner{result: "call +15550003333"}
+	s.tools.Tools = append(s.tools.Tools, harness.Tool{
+		Name:        "find_agent_line",
+		Description: "the number of the person on duty",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+	})
+	s.join(false)
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-8", Name: "find_agent_line", Arguments: "{}"},
+	})
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the lookup never settled")
+
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-9", Name: "transfer", Arguments: `{"to":"+15550003333"}`},
+	})
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550003333", s.line.handedOver()[0])
+}
+
+func (s *AgentSuite) TestPressStillTakesDigitsTheCallerSaid() {
+	s.onACall()
+	s.join(false)
+	s.model.reply = nil
+	s.asksFor("press", `{"digits":"441"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "my extension is 4 4 1")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.Equal("441", s.line.keypad()[0])
+}
+
+func (s *AgentSuite) TestPressingAMenuOptionDoesNotEndTheCall() {
+	s.onACall()
+	s.join(false)
+	s.model.reply = nil
+	s.asksFor("press", `{"digits":"1"}`)
+	menu := stt.Participant{ID: "menu"}
+	s.speak(menu)
+
+	s.says(menu, "For sales, press one")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.Equal("1", s.line.keypad()[0])
+
+	s.Empty(transferredIn(s.reported()), "pressing a menu option hands nobody over")
+	s.never(s.left, "the agent left a call it had only pressed a button on")
+}
+
+func (s *AgentSuite) TestATransferThatFailsIsToldToTheModelRatherThanEndingTheCall() {
+	// A caller promised a person, on a transfer that did not happen, is owed an apology
+	// rather than a silent call.
+	s.onACall()
+	s.line.transferErr = errors.New("the trunk is down")
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through."}
+	s.model.then = []string{"Sorry, I could not put you through."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want a person")
+
+	ran := s.awaitToolRan()
+	s.Require().Error(ran.Err)
+	s.Contains(ran.Result, "did not work", "the model has to be told so it can say so")
+
+	s.never(s.left, "the agent left a call it never transferred")
+	s.Contains(s.history(), llm.Message{
+		Role:       llm.ToolResult,
+		Content:    ran.Result,
+		ToolCallID: "call-1",
+	})
+	s.eventually(func() bool {
+		return s.spokenText("could not put you through")
+	}, "the caller was left in silence by a transfer that never happened")
+}
+
+func (s *AgentSuite) TestAToolThatKeepsFailingIsNotAnsweredForever() {
+	// The apology for a failed tool is a turn like any other, so a model that answers it
+	// by trying the tool again would have the agent talking to itself until the money
+	// ran out.
+	s.onACall()
+	s.line.transferErr = errors.New("the trunk is down")
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through."}
+	s.model.keepCalling = true
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want a person")
+
+	// The apology is allowed to reach for the tool once more, in case the model has
+	// thought better of the number it used. What it cannot do is keep going.
+	s.eventually(func() bool { return len(s.line.attempted()) == 2 },
+		"the model never answered the failure at all")
+	s.never(func() bool {
+		return len(s.line.attempted()) > 2
+	}, "a failing transfer was retried without the caller saying anything")
+}
+
+func (s *AgentSuite) TestATurnThatCalledAToolIsRememberedWithTheCallOnIt() {
+	// The provider matches the result against the call it answers, so the turn cannot be
+	// recorded as plain speech.
+	s.onACall()
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("press", `{"digits":"4"}`)
+	menu := stt.Participant{ID: "menu"}
+	s.speak(menu)
+
+	s.says(menu, "For accounts, press four")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.eventually(func() bool {
+		for _, message := range s.history() {
+			if message.Role == llm.ToolResult && message.ToolCallID == "call-1" {
+				return true
+			}
+		}
+		return false
+	}, "the result never reached the conversation")
+
+	history := s.history()
+	var assistant llm.Message
+	for _, message := range history {
+		if message.Role == llm.Assistant {
+			assistant = message
+		}
+	}
+	s.Require().Len(assistant.ToolCalls, 1)
+	s.Equal("press", assistant.ToolCalls[0].Name)
+}
+
+func (s *AgentSuite) TestAToolTheAgentCannotRunIsRefusedRatherThanIgnored() {
+	// The harness drops names it never offered, so what reaches here is a tool that was
+	// offered and is not implemented, which the model still has to be told about.
+	s.onACall()
+	s.join(false)
+
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-9", Name: "hang_up", Arguments: "{}"},
+	})
+
+	ran := s.awaitToolRan()
+	s.Require().Error(ran.Err)
+	s.Contains(ran.Result, "did not work")
+}
+
+func (s *AgentSuite) TestTransferringWithoutANumberIsRefused() {
+	s.onACall()
+	s.join(false)
+
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-9", Name: "transfer", Arguments: `{"summary":"they want a person"}`},
+	})
+
+	s.ErrorContains(s.awaitToolRan().Err, "number to transfer to")
+	s.Empty(s.line.handedOver(), "there was nobody to dial")
+}
+
+func (s *AgentSuite) TestPressingSomethingUnreadableIsRefused() {
+	s.onACall()
+	s.join(false)
+
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-9", Name: "press", Arguments: "press one please"},
+	})
+
+	s.ErrorContains(s.awaitToolRan().Err, "could not read")
+	s.Empty(s.line.keypad())
+}
+
+func (s *AgentSuite) TestACallersOwnToolsAreOfferedWithoutTelephony() {
+	// The gate is per tool rather than per call: a transfer needs a phone line, and a
+	// caller's own function needs only somebody to run it.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	offered := s.model.requests()[0].Tools
+	s.Require().Len(offered, 1)
+	s.Equal("lookup_order", offered[0].Name)
+}
+
+func (s *AgentSuite) TestACallersOwnToolIsRunByThemAndItsAnswerReachesTheConversation() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the caller was never asked")
+	s.Equal(`{"order":"12"}`, s.runner.asked()[0].Arguments)
+
+	ran := s.awaitToolRan()
+	s.Require().NoError(ran.Err)
+	s.Equal("order 12 ships tomorrow", ran.Result)
+	s.Contains(s.history(), llm.Message{
+		Role:       llm.ToolResult,
+		Content:    "order 12 ships tomorrow",
+		ToolCallID: "call-1",
+	})
+	s.never(s.left, "answering a question is not a reason to hang up")
+}
+
+func (s *AgentSuite) TestWhatAToolFoundOutIsSpokenRatherThanWaitedOn() {
+	// A tool result is not something the caller can hear. Somebody asked a question, and
+	// leaving the answer sitting in the history until they speak again is silence where
+	// they expected to be told.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool {
+		return s.spokenText("ships tomorrow")
+	}, "the caller was left in silence by a tool that worked")
+}
+
+func (s *AgentSuite) TestAVoiceModelIsToldToSumUpWhatAToolFoundRatherThanReadItOut() {
+	s.ownsTools("1. Felice a Testaccio https://example.com/felice\n2. Roscioli https://example.com/roscioli")
+	s.join(false)
+	s.model.reply = []string{"Let me look."}
+	s.model.then = []string{"Felice a Testaccio is the one."}
+	s.asksFor("lookup_order", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where should I go for cacio e pepe")
+
+	s.eventually(func() bool { return s.spokenText("Felice a Testaccio is the one") }, "the result was never said")
+	s.model.mu.Lock()
+	input := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
+	s.model.mu.Unlock()
+	read := input[slices.IndexFunc(input, func(m llm.Message) bool { return m.Role == llm.ToolResult })]
+	s.True(strings.HasSuffix(read.Content, spokenResult))
+	kept := s.history()[slices.IndexFunc(s.history(), func(m llm.Message) bool { return m.Role == llm.ToolResult })]
+	s.NotContains(kept.Content, spokenResult, "the conversation keeps what the tool said")
+}
+
+func (s *AgentSuite) TestAWrittenConversationIsGivenWhatAToolFoundAsItIs() {
+	s.ownsTools("1. Felice a Testaccio https://example.com/felice")
+	s.joinText()
+	s.model.reply = []string{"It returns the list."}
+	call := llm.ToolCall{ID: "places", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where should I go"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: "places-turn", Call: call})
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the result was never answered")
+	s.model.mu.Lock()
+	input := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
+	s.model.mu.Unlock()
+	s.Equal("1. Felice a Testaccio https://example.com/felice", input[len(input)-1].Content)
+}
+
+func (s *AgentSuite) TestTextToolFollowUpStillProducesAFinalAnswer() {
+	s.ownsTools("The source returns the ChatContext value.")
+	s.joinText()
+	s.model.reply = []string{"It returns the ChatContext value."}
+	call := llm.ToolCall{ID: "research-after-docs", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "What does useChatContext return?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.mu.Unlock()
+	// A tool requested while answering an earlier tool uses the tool turn prefix.
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "after-docs", Call: call})
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "source research left the text session silent")
+	response, _ := firstOf[Responded](s.reported())
+	s.Equal("It returns the ChatContext value.", response.Text)
+	s.False(response.PendingWork)
+}
+
+func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() {
+	// The fast models do not reliably say anything before they call a tool, and the
+	// caller cannot hear one running. Without this they ask a question and get silence,
+	// which on a phone is indistinguishable from having been cut off.
+	s.ownsTools("")
+	s.join(false)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.model.composes = []string{"Pulling up order twelve now."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("Pulling up order twelve now.") },
+		"the caller was left in silence while the tool ran")
+	composed := s.model.composeRequests()
+	s.Require().Len(composed, 1)
+	s.Equal(fmt.Sprintf(composeNote, holdPurpose), harness.WithoutNotes(composed[0].Input)[len(harness.WithoutNotes(composed[0].Input))-1].Content,
+		"the model writes the line for what the caller asked, not a stock phrase")
+	s.Empty(unanswered(harness.WithoutNotes(composed[0].Input)[:len(harness.WithoutNotes(composed[0].Input))-1]),
+		"a provider refuses a request replaying the running call without a result")
+
+	release()
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") },
+		"the answer never followed the promise to check")
+	s.Empty(unanswered(s.history()), "the line said while the call ran came between it and its result")
+	s.True(slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+		return m.Content == "Pulling up order twelve now."
+	}), "what the caller heard while they waited is not in the history")
+}
+
+func (s *AgentSuite) TestALineWrittenForAWaitThatEndedIsNotSaid() {
+	// The tool came back while the model was still writing what to say over it: the
+	// answer is what the caller hears, and a hold line after it would promise a wait that
+	// is already over.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	written := make(chan struct{})
+	s.model.holdCompose = written
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.model.composes = []string{"Pulling up order twelve now."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the answer never came")
+	s.Require().Len(s.model.composeRequests(), 1)
+	close(written)
+	s.eventually(func() bool { return !s.agent.floor().Composing }, "the line was never settled")
+	s.False(s.spokenText("Pulling up order twelve now."), "the agent promised a wait after it ended")
+}
+
+func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenAFiller() {
+	// A model that already said what it was doing does not need it said again, and
+	// "Let me check. One moment." is a worse answer than either half.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	s.Empty(s.model.composeRequests(), "the agent stacked a line of its own on top of the model's words")
+}
+
+func (s *AgentSuite) TestAToolsPreSpeechIsSaidInsteadOfTheAgentsOwnFiller() {
+	// A connector binding's policy names what to say while its tool runs; the agent says
+	// it where it would have picked a phrase itself, and tool_started carries it.
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(tool string) ToolPolicy {
+		if tool == "lookup_order" {
+			return ToolPolicy{PreSpeech: "Let me pull up your order."}
+		}
+		return ToolPolicy{}
+	}
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("Let me pull up your order.") },
+		"the binding's phrase was not said while its tool ran")
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the answer never followed")
+	s.Empty(s.model.composeRequests(), "the agent asked the model for a line of its own as well")
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "the tool never started")
+	started, _ := firstOf[ToolStarted](s.reported())
+	s.Equal("Let me pull up your order.", started.PreSpeech)
+}
+
+func (s *AgentSuite) TestAToolWithoutPreSpeechGetsALineTheModelWrites() {
+	// A tool its binding names no phrase for, or a session with no bindings at all, is
+	// TestAToolReachedForWithoutAWordStillTellsTheCallerToWait.
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{} }
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 },
+		"the model was not asked for a line to fill the wait")
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "the tool never started")
+	started, _ := firstOf[ToolStarted](s.reported())
+	s.Empty(started.PreSpeech)
+}
+
+func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenPreSpeechEither() {
+	// pre_speech takes the filler's place, so it follows the filler's rule: a model that
+	// already said what it was doing is not given more words on top.
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{PreSpeech: "Let me pull up your order."} }
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	s.False(s.spokenText("Let me pull up your order."), "the agent stacked pre_speech on top of its own words")
+}
+
+func (s *AgentSuite) TestTheHoldPhraseOpeningTheSentenceBeforeACallIsTheOnlyOneInTheWait() {
+	// The sentence the use policy asks for before a call opens with the hold phrase and reads
+	// the details back in one go. That phrase is the wait's own: the agent adds neither its
+	// own filler nor the binding's pre_speech, which would come after the read-back, and the
+	// answer to the result adds none, so the caller hears one hold phrase, and it starts the
+	// wait rather than ending it.
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{PreSpeech: "Let me pull up your order."} }
+	s.join(false)
+	s.model.reply = []string{"One moment, I have order twelve for Quillon."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	spoken := s.voice.spoken()
+	s.Require().NotEmpty(spoken)
+	s.Equal("One moment, I have order twelve for Quillon.", spoken[0].Text,
+		"the hold phrase and the read-back are one utterance, the first the caller hears")
+	holds, texts := 0, make([]string, 0, len(spoken))
+	for _, request := range spoken {
+		texts = append(texts, request.Text)
+		for _, phrase := range []string{"One moment", "Let me pull up your order."} {
+			if strings.Contains(request.Text, phrase) {
+				holds++
+				break
+			}
+		}
+	}
+	s.Equal(1, holds, "one hold phrase to a wait: %q", texts)
+	s.Empty(s.model.composeRequests(), "the agent wrote a hold line of its own on top")
+}
+
+func (s *AgentSuite) TestPreSpeechIsTheFirstCallsThatNamesOne() {
+	// Two calls in one reply: the first names no phrase, the second does, so the second's
+	// is said rather than the agent's own.
+	s.ownsTools("done")
+	s.tools.Tools = append(s.tools.Tools, harness.Tool{Name: "track_parcel", Description: "track a parcel"})
+	s.toolPolicy = func(tool string) ToolPolicy {
+		if tool == "track_parcel" {
+			return ToolPolicy{PreSpeech: "Let me track your parcel."}
+		}
+		return ToolPolicy{}
+	}
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
+		{ID: "call-2", Name: "track_parcel", Arguments: `{}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("Let me track your parcel.") },
+		"the second call's phrase was not said")
+	s.Empty(s.model.composeRequests(), "the agent asked for a line of its own instead")
+}
+
+// holdingTool answers only when released, whatever its context says, the way the
+// dispatcher runs a call of an on_interrupt: wait binding.
+type holdingTool struct {
+	began   chan struct{}
+	release chan struct{}
+}
+
+func (r *holdingTool) Run(_ context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
+	close(r.began)
+	<-r.release
+	return llm.TextParts("order 12 ships tomorrow"), nil
+}
+
+// unanswered names the first tool call in messages whose results do not all come right
+// after it, or a result that answers no call right before it: what a provider refuses.
+// Empty when there is none.
+func unanswered(messages []llm.Message) string {
+	for i := 0; i < len(messages); i++ {
+		if messages[i].Role == llm.ToolResult {
+			return "a result answering no call before it: " + messages[i].ToolCallID
+		}
+		calls := messages[i].ToolCalls
+		if messages[i].Role != llm.Assistant || len(calls) == 0 {
+			continue
+		}
+		var asked, answered []string
+		for _, call := range calls {
+			asked = append(asked, call.ID)
+		}
+		for i+1 < len(messages) && messages[i+1].Role == llm.ToolResult {
+			i++
+			answered = append(answered, messages[i].ToolCallID)
+		}
+		slices.Sort(asked)
+		slices.Sort(answered)
+		if !slices.Equal(asked, answered) {
+			return fmt.Sprintf("calls %v answered by %v", asked, answered)
+		}
+	}
+	return ""
+}
+
+func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTurn() {
+	// The call goes on after the interruption, so it is answered at once with a note that
+	// its result will follow; the next turn is not held, and the result comes as a message
+	// of its own once it is in.
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Fifteen."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start")
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+	},
+		"the interrupted call was not answered")
+	s.True(slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+		return strings.Contains(m.Content, `<drop skill="lookup_order"/>`)
+	}), "the answer names the tool the model would drop")
+	s.flow.then = nil
+	s.says(participant, "what is seven plus eight")
+	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
+
+	s.model.mu.Lock()
+	next := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
+	s.model.mu.Unlock()
+	s.Empty(unanswered(next), "the next turn replayed a call without its result")
+	s.Equal(llm.User, next[len(next)-1].Role)
+
+	release()
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the call never answered")
+	lateMessage := func(m llm.Message) bool { return strings.Contains(m.Content, "order 12 ships tomorrow") }
+	s.eventually(func() bool { return slices.ContainsFunc(s.history(), lateMessage) },
+		"the late result never reached the conversation")
+	history := s.history()
+	late := history[slices.IndexFunc(history, lateMessage)]
+	s.Empty(unanswered(history), "the late result broke the conversation")
+	s.Equal(llm.User, late.Role)
+	s.True(late.Typed, "a tool's result, on the caller's side, is no caller's speech")
+	s.Equal(fmt.Sprintf(lateResult, "lookup_order", "call-1")+"\norder 12 ships tomorrow", late.Content)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 3 },
+		"the late result was left for the caller to ask about")
+}
+
+func (s *AgentSuite) TestAWaitToolNobodyInterruptedIsAnsweredOnceAsBefore() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	results := slices.DeleteFunc(s.history(), func(m llm.Message) bool { return m.Role != llm.ToolResult })
+	s.Equal([]llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "order 12 ships tomorrow"}}, results)
+}
+
+// heldCalls answers each call only when its own release channel is closed, whatever its
+// context says, the way the dispatcher runs a call of an on_interrupt: wait binding. It
+// answers every call once the test is over, so a test that failed before releasing one does
+// not hold the agent's Close.
+type heldCalls struct {
+	began   map[string]chan struct{}
+	release map[string]chan struct{}
+	over    <-chan struct{}
+}
+
+func (s *AgentSuite) heldCalls(ids ...string) *heldCalls {
+	r := &heldCalls{began: map[string]chan struct{}{}, release: map[string]chan struct{}{}, over: s.over}
+	for _, id := range ids {
+		r.began[id] = make(chan struct{})
+		r.release[id] = make(chan struct{})
+	}
+	return r
+}
+
+func (r *heldCalls) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	close(r.began[call.ID])
+	select {
+	case <-r.release[call.ID]:
+	case <-r.over:
+	}
+	return llm.TextParts(call.ID + " result"), nil
+}
+
+// interruptsWaitCallsThenCalls starts a turn asking for first, interrupts it once they all
+// run, then starts the next turn, which asks for next, and returns once next runs.
+func (s *AgentSuite) interruptsWaitCallsThenCalls(runner *heldCalls, first []llm.ToolCall, next llm.ToolCall) {
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Done."}
+	s.model.calls = first
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	for _, call := range first {
+		s.began(runner, call.ID)
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		answered := 0
+		for _, m := range s.history() {
+			if strings.HasPrefix(m.Content, stillRunning) {
+				answered++
+			}
+		}
+		return answered == len(first)
+	}, "the interrupted calls were not answered")
+	s.flow.then = nil
+	s.model.mu.Lock()
+	s.model.calls = []llm.ToolCall{next}
+	s.model.keepCalling = true
+	s.model.mu.Unlock()
+	s.says(participant, "and my other order")
+	s.began(runner, next.ID)
+	s.model.mu.Lock()
+	s.model.keepCalling = false
+	s.model.mu.Unlock()
+}
+
+// began waits for the call id to start running.
+func (s *AgentSuite) began(runner *heldCalls, id string) {
+	select {
+	case <-runner.began[id]:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start: " + id)
+	}
+}
+
+// lateResultsIn is the content of every lateResult message in messages, in order.
+func lateResultsIn(messages []llm.Message) []string {
+	var late []string
+	for _, m := range messages {
+		if m.Role == llm.User && strings.HasPrefix(m.Content, "The lookup_order call (") {
+			late = append(late, m.Content)
+		}
+	}
+	return late
+}
+
+func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
+	// The late result is the caller's message, so it must not come between the next
+	// turn's call and that call's result: a provider refuses the call then.
+	runner := s.heldCalls("call-1", "call-2")
+	s.interruptsWaitCallsThenCalls(runner,
+		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
+		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
+
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
+	s.Empty(lateResultsIn(s.history()), "the late result came while the next call was still running")
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool {
+		s.model.mu.Lock()
+		defer s.model.mu.Unlock()
+		return len(s.model.asked) == 3
+	}, "the second call's result was never sent")
+
+	s.model.mu.Lock()
+	asked := append([]llm.ResponseParams(nil), s.model.asked...)
+	s.model.mu.Unlock()
+	for i, request := range asked {
+		s.Empty(unanswered(harness.WithoutNotes(request.Input)), "request %d replayed a call without its result", i)
+	}
+	last := harness.WithoutNotes(asked[2].Input)
+	s.Equal(llm.ToolResult, last[len(last)-2].Role)
+	s.Equal("call-2", last[len(last)-2].ToolCallID)
+	// Typed: no caller said it (llm.Message.Typed), which no provider reads.
+	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true},
+		last[len(last)-1])
+}
+
+func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
+	// The next turn's call is interrupted and answered, which closes the open call: the
+	// late result that already came must go into the history then, not wait for a result
+	// that is already there.
+	runner := s.heldCalls("call-1", "call-2")
+	s.interruptsWaitCallsThenCalls(runner,
+		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
+		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
+
+	participant := stt.Participant{ID: "alice"}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "stop that too")
+	s.eventually(func() bool {
+		answered := 0
+		for _, m := range s.history() {
+			if strings.HasPrefix(m.Content, stillRunning) {
+				answered++
+			}
+		}
+		return answered == 2
+	}, "the second call was not answered")
+	s.flow.then = nil
+	s.model.mu.Lock()
+	s.model.then = []string{"Fifteen."}
+	s.model.mu.Unlock()
+	s.says(participant, "what is seven plus eight")
+	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the third turn never spoke")
+
+	s.model.mu.Lock()
+	last := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
+	s.model.mu.Unlock()
+	s.Equal([]string{fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"}, lateResultsIn(last))
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "the second call never answered")
+}
+
+func (s *AgentSuite) TestALateResultWaitsForEveryCallOfTheNextTurn() {
+	// The next turn asks for two calls and one is answered: the history still ends in an
+	// open call, so the late result waits for the other.
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	runner := s.heldCalls("call-1", "call-2", "call-3")
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Checking."}
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	s.began(runner, "call-1")
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		for _, m := range s.history() {
+			if strings.HasPrefix(m.Content, stillRunning) {
+				return true
+			}
+		}
+		return false
+	}, "the call was not answered")
+	s.flow.then = nil
+	s.model.mu.Lock()
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
+		{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
+	}
+	s.model.keepCalling = true
+	s.model.mu.Unlock()
+	s.says(participant, "and my other two orders")
+	s.began(runner, "call-2")
+	s.began(runner, "call-3")
+	s.model.mu.Lock()
+	s.model.keepCalling = false
+	s.model.mu.Unlock()
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
+	s.Empty(lateResultsIn(s.history()), "the late result came while call-3 was still running")
+
+	close(runner.release["call-3"])
+	s.eventually(func() bool { return len(lateResultsIn(s.history())) == 1 }, "the late result was never added")
+	s.Empty(unanswered(s.history()))
+}
+
+func (s *AgentSuite) TestLateResultsHeldBackComeInTheOrderTheyCame() {
+	runner := s.heldCalls("call-1", "call-2", "call-3", "call-4")
+	s.interruptsWaitCallsThenCalls(runner,
+		[]llm.ToolCall{
+			{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
+			{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
+			{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
+		},
+		llm.ToolCall{ID: "call-4", Name: "lookup_order", Arguments: `{"order":"15"}`})
+
+	close(runner.release["call-2"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
+	close(runner.release["call-1"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
+	close(runner.release["call-4"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 3 }, "call-4 never answered")
+	close(runner.release["call-3"])
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 4 }, "call-3 never answered")
+
+	late := func(id string) string { return fmt.Sprintf(lateResult, "lookup_order", id) + "\n" + id + " result" }
+	s.Equal([]string{late("call-2"), late("call-1"), late("call-3")}, lateResultsIn(s.history()))
+	s.Empty(unanswered(s.history()))
+}
+
+func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
+	// The digits are the whole point of the tool and the menu is what answers next, so
+	// talking over it would be talking to nobody.
+	s.onACall()
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.model.then = []string{"I pressed four for you."}
+	s.asksFor("press", `{"digits":"4"}`)
+	menu := stt.Participant{ID: "menu"}
+	s.speak(menu)
+
+	s.says(menu, "For accounts, press four")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.never(func() bool { return s.spokenText("pressed four") },
+		"the agent talked over the menu it had just pressed at")
+}
+
+func (s *AgentSuite) TestPressingAMenuOptionSilentlyIsNotGivenAFillerEither() {
+	// Filling the pause is for a caller who asked a question. A menu did not ask one and
+	// is not listening, so a wordless press has to stay wordless.
+	s.onACall()
+	s.join(false)
+	s.model.reply = []string{}
+	s.asksFor("press", `{"digits":"4"}`)
+	menu := stt.Participant{ID: "menu"}
+	s.speak(menu)
+
+	s.says(menu, "For accounts, press four")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.never(func() bool { return s.spokenText("moment") || s.spokenText("check") },
+		"the agent talked over the menu it had just pressed at")
+}
+
+func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
+	// The two that act on the call are this process's to run, so a caller cannot quietly
+	// take over what happens when the model says it is transferring somebody.
+	s.onACall()
+	s.runner = &stubToolRunner{result: "not mine to answer"}
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want a person")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Empty(s.runner.asked(), "the caller was asked to run a transfer")
+}
+
+func (s *AgentSuite) TestACallersToolThatFailsIsToldToTheModel() {
+	s.ownsTools("")
+	s.runner.err = errors.New("the orders service is down")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Sorry, I cannot look that up right now."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	ran := s.awaitToolRan()
+	s.Require().Error(ran.Err)
+	s.Contains(ran.Result, "did not work")
+	s.NotContains(ran.Result, "try again", "a failure is told to the caller, not answered with other calls")
+	s.eventually(func() bool {
+		return s.spokenText("cannot look that up")
+	}, "the caller was left in silence by a tool that failed")
+}
+
+// awaitToolRan waits for one tool to have settled and returns what it reported, since the
+// collector sees the event on its own goroutine.
+func (s *AgentSuite) awaitToolRan() ToolRan {
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 },
+		"the tool never settled")
+	return toolsRanIn(s.reported())[0]
+}
+
+// left reports whether the agent is out of the call, which is what it says on the way out.
+func (s *AgentSuite) left() bool { return countOf[Left](s.reported()) > 0 }
+
+func (s *AgentSuite) TestANegativeAssertionWaitsForItsLastCheck() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		checks := new(AgentSuite)
+		checks.SetT(t)
+		finished := make(chan struct{})
+		var once sync.Once
+		checks.never(func() bool {
+			once.Do(func() {
+				time.Sleep(time.Second) // Longer than the assertion window, on the fake clock.
+				close(finished)
+			})
+			return false
+		}, "the condition stays false")
+
+		select {
+		case <-finished:
+		default:
+			t.Error("the assertion returned while its condition was still using test fixtures")
+			<-finished
+		}
+	})
+}
+
+// never asserts that something stays untrue for long enough to believe it.
+func (s *AgentSuite) never(condition func() bool, message string) {
+	// Keep callbacks in this test so they cannot read the next test's fixtures.
+	deadline := time.NewTimer(500 * time.Millisecond)
+	defer deadline.Stop()
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-deadline.C:
+			return
+		case <-tick.C:
+			s.Require().False(condition(), message)
+		}
+	}
+}
+
+// spokenText reports whether the voice was asked to say something containing the text.
+func (s *AgentSuite) spokenText(text string) bool {
+	for _, request := range s.voice.spoken() {
+		if strings.Contains(request.Text, text) {
+			return true
+		}
+	}
+	return false
+}
+
+// history is the conversation the agent would send on the next turn.
+func (s *AgentSuite) history() []llm.Message {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return append([]llm.Message(nil), s.agent.history...)
+}
+
+type cancellationTool struct {
+	began   chan struct{}
+	stopped chan struct{}
+}
+
+func (r *cancellationTool) Run(ctx context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
+	close(r.began)
+	<-ctx.Done()
+	close(r.stopped)
+	return nil, ctx.Err()
+}
+
+func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
+	s.ownsTools("")
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.joinText()
+	s.agent.options.ToolRunner = runner
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.agent.runTool(harness.ToolRequested{TurnID: "active-research", Call: llm.ToolCall{ID: "research", Name: "lookup_order", Arguments: `{}`}})
+	}()
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start")
+	}
+	s.agent.Interrupt()
+	select {
+	case <-runner.stopped:
+	case <-time.After(settleFor):
+		s.FailNow("tool context was not cancelled")
+	}
+	select {
+	case <-done:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not finish")
+	}
+	s.Zero(countOf[Responded](s.reported()), "cancelled research must not produce an unsolicited follow-up")
+}
+
+func (s *AgentSuite) TestASpokenInterruptionLeavesAToolRunningUntilTheModelDropsIt() {
+	s.ownsTools("")
+	s.join(true)
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{`<drop skill="lookup_order"/>Okay, I have stopped that.`}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start")
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "hello?")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+	}, "the interrupted call was not answered")
+	select {
+	case <-runner.stopped:
+		s.FailNow("talking over the agent cancelled what the caller had asked for")
+	default:
+	}
+
+	s.flow.then = nil
+	s.says(participant, "never mind, cancel that lookup")
+	select {
+	case <-runner.stopped:
+	case <-time.After(settleFor):
+		s.FailNow("the model dropped the tool and it kept running")
+	}
+	s.eventually(func() bool { return s.spokenText("stopped that") }, "the withdrawal was not answered")
+	s.never(func() bool { return countOf[Responded](s.reported()) > 2 },
+		"a dropped tool still earned a reply of its own")
+}
+
+func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() {
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Cancels: true} }
+	s.join(true)
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start")
+	}
+
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "hello?")
+
+	select {
+	case <-runner.stopped:
+	case <-time.After(settleFor):
+		s.FailNow("the binding asked for its call to be cancelled and it kept running")
+	}
+	s.False(slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) }),
+		"a cancelled call was answered as still running")
+}
+
+func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
+	s.ownsTools("")
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start")
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "hello? are you there?")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+	}, "the interrupted call was not answered")
+
+	release()
+
+	// The controller keeps ruling that "hello? are you there?" is unfinished, so the result
+	// is not said over those words: it goes with the reply to them once patience runs out.
+	s.Require().Eventually(func() bool { return s.spokenText("ships tomorrow") },
+		defaultPatience+settleFor, 5*time.Millisecond,
+		"the result came back after the interruption and was never said")
+}
+
+func (s *AgentSuite) TestAChainOfToolsIsFollowedToItsAnswerOnACall() {
+	// A tool asked for while answering another is how a lookup reaches the lookup it
+	// needed, and a voice caller is owed the answer at the end of the chain too.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Sure."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "chained", Name: "lookup_order", Arguments: `{}`}}},
+	}
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "first-round", Call: llm.ToolCall{ID: "chained", Name: "lookup_order", Arguments: `{}`}})
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the second tool in the chain left the caller in silence")
+}
+
+func (s *AgentSuite) TestAToolChainedOnAResultIsNotGivenAFillerOfItsOwn() {
+	// The caller was told to wait when the first tool was called. A filler for every link
+	// of a chain queues behind the one before, and the answer waits behind all of them.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	call := llm.ToolCall{ID: "first", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "first-round", Call: call})
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the chain was never answered")
+	s.Len(s.voice.spoken(), 1, "a link of the chain was given a filler")
+	s.Empty(s.model.composeRequests(), "a link of the chain was given a line of its own")
+}
+
+func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
+	// A model that answers every result by reaching for another tool would keep the
+	// caller on "one moment" forever. The reply at the cap is offered no tool, so it
+	// answers from what it has; a result left unspoken would be the answer lost.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow."}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "chained", Name: "lookup_order", Arguments: `{}`}}},
+	}
+	s.agent.toolRounds = maxToolRounds - 1
+	s.agent.mu.Unlock()
+
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "late-round", Call: llm.ToolCall{ID: "chained", Name: "lookup_order", Arguments: `{}`}})
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the result at the cap was never spoken")
+	s.Require().Len(s.model.requests(), 1)
+	capped := s.model.requests()[0]
+	s.Equal("none", capped.ToolChoice, "the capped reply has nothing to reach for")
+	s.Contains(shown(capped), "No more tools this turn")
+}
+
+func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow."}
+	call := llm.ToolCall{ID: "chained", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.toolRounds = maxToolRounds - 1
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+
+	// The result arrives while another reply still owns the floor.
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "late-round", Call: call})
+	s.Empty(s.model.requests())
+	s.agent.mu.Lock()
+	s.agent.generating = false
+	s.agent.mu.Unlock()
+	s.Require().NoError(s.agent.follow())
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the deferred result was never spoken")
+	s.Require().Len(s.model.requests(), 1)
+	capped := s.model.requests()[0]
+	s.Equal("none", capped.ToolChoice, "deferring a reply must not bypass the tool limit")
+	s.Contains(shown(capped), "No more tools this turn")
+}
+
+func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow morning."}
+	call := llm.ToolCall{ID: "lookup", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+	s.agent.runTool(harness.ToolRequested{TurnID: "lookup-turn", Call: call})
+
+	s.Require().NoError(s.agent.SimpleResponse(context.Background(), "What time tomorrow?"))
+
+	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the new question was never answered")
+	input := harness.WithoutNotes(s.model.requests()[0].Input)
+	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
+	s.Equal("What time tomorrow?", input[len(input)-1].Content)
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 1 }, "a result already included in the answer was spoken again")
+}
+
+func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt() {
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"It ships tomorrow morning."}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "where is my order"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "lookup", Name: "lookup_order", Arguments: `{}`}}},
+		{Role: llm.ToolResult, ToolCallID: "lookup", Content: "order 12 ships tomorrow"},
+	}
+	s.agent.toolReply = true
+	s.agent.mu.Unlock()
+	ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
+
+	s.agent.speculate(s.agent.harness, ready, false, false)
+	s.Require().True(s.agent.adoptSpeculation(ready, ""))
+
+	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
+	input := harness.WithoutNotes(s.model.requests()[0].Input)
+	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
+	s.Equal("What time tomorrow?", input[len(input)-1].Content)
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
+}
+
+// stubEnder is the call's hang-up with no call behind it: it counts the times it was asked.
+// during runs while the request is in flight; a request whose context is cancelled by then
+// fails, as an aborted HTTP request does.
+type stubEnder struct {
+	mu     sync.Mutex
+	ended  int
+	during func()
+}
+
+func (e *stubEnder) EndCall(ctx context.Context) error {
+	if e.during != nil {
+		e.during()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ended++
+	return nil
+}
+
+func (e *stubEnder) ends() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.ended
+}
+
+func (s *AgentSuite) TestEndCallIsNotOfferedWithoutAnEnder() {
+	// A model told it may hang up, on a call nothing can hang up, says goodbye and stays.
+	s.onACall()
+	s.join(false)
+
+	_, offered := s.offeredTool("end_call")
+	s.False(offered)
+}
+
+func (s *AgentSuite) TestAWrittenConversationIsNeverOfferedEndCall() {
+	// A chat has no call to end, whatever it was handed.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.joinText()
+
+	_, offered := s.offeredTool("end_call")
+	s.False(offered)
+}
+
+func (s *AgentSuite) TestEndCallDescriptionCarriesTheCondition() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.endCallWhen = "The caller said bye."
+	s.join(false)
+
+	tool, offered := s.offeredTool("end_call")
+	s.Require().True(offered)
+	s.Contains(tool.Description, "Call it when: The caller said bye.")
+	s.NotContains(tool.Description, defaultEndCallWhen, "the config's condition replaces the default")
+}
+
+func (s *AgentSuite) TestEndCallWithoutAConditionIsGivenTheDefault() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(false)
+
+	tool, offered := s.offeredTool("end_call")
+	s.Require().True(offered)
+	s.Contains(tool.Description, "Call it when: "+defaultEndCallWhen)
+}
+
+func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
+	// Hanging up the moment the model asks drops the goodbye still on its way out, and the
+	// caller hears the line go dead mid-sentence.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(false)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "that's all, thanks")
+	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended while the goodbye was going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return s.ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+	s.Equal(1, s.ender.ends())
+}
+
+func (s *AgentSuite) TestACallerSpeakingOnceTheGoodbyeWasHeardStillEndsTheCall() {
+	// A "bye" landing while the hang-up request is in flight would abort it: the call either
+	// stays up, or ends at Stream while the session never learns the agent hung up.
+	s.onACall()
+	s.ender = &stubEnder{during: func() { s.agent.stopTools() }}
+	s.join(false)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "that's all, thanks")
+
+	s.eventually(func() bool { return s.ender.ends() == 1 }, "the hang-up was aborted by the caller's bye")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+}
+
+func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsTold() {
+	// The model is told plainly that the call is still open, rather than that hanging up
+	// failed, so it answers the caller and can end the call again later.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "that's all, thanks")
+	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+	s.replyWentOut()
+	// The goodbye is said as the model writes it, and the call to end_call comes after it in
+	// the same reply: words over the goodbye before the call is taken up cut a reply that
+	// never asked to hang up.
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "end_call never began")
+
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "oh wait, one more thing")
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return m.Role == llm.ToolResult && m.Content == endCallCancelled
+		})
+	}, "the model was never told the call is still open")
+	s.edge.holdSpeech(false)
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
+}
+
+// Talking over the goodbye cancels the hang-up and then drops the goodbye, which leaves the
+// agent as quiet as a goodbye heard to its end. A hang-up that looks only once both are
+// done, as one on a busy machine does, still keeps the call: the test above, under load,
+// hung up on the caller this way.
+func (s *AgentSuite) TestAGoodbyeCutOffBeforeTheHangUpLooksKeepsTheCall() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	s.Require().False(s.agent.Busy() || s.agent.speechPending(), "the goodbye was dropped and the agent is quiet")
+	cut, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	result, left, err := s.agent.endCall(cut)
+
+	s.Require().NoError(err)
+	s.Equal(endCallCancelled, result, "the model is told the call is still open")
+	s.False(left)
+	s.Zero(s.ender.ends(), "the call ended on a caller who cut the goodbye off")
+}
+
+// The caller can talk over the goodbye before its end_call has begun to run, the call
+// cancelled before the tool's goroutine reaches it: the model is told the call is still
+// open, as it is when they talk over the goodbye while the hang-up waits, not that ending it
+// failed. Under load the test two above was told "That did not work: context canceled".
+func (s *AgentSuite) TestAnEndCallCancelledBeforeItRanTellsTheModelTheCallIsOpen() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	cut, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	parts, left, err := s.agent.callTool(cut, llm.ToolCall{ID: "call-1", Name: toolEndCall, Arguments: `{}`})
+
+	s.Require().NoError(err)
+	s.Equal(endCallCancelled, llm.TextOf(parts), "the model is told the call is still open")
+	s.False(left)
+	s.Zero(s.ender.ends(), "the call ended on a caller who talked over the goodbye")
+}

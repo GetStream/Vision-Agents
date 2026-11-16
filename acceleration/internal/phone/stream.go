@@ -1,0 +1,350 @@
+package phone
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strings"
+
+	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// defaultCallType is the Stream call type a phone call joins.
+const defaultCallType = "agent"
+
+// callCreator is the Stream user a call made by the router is created by: a call needs one,
+// and the router has no user of its own.
+const callCreator = "phone-router"
+
+// callerTemplate names the participant a SIP caller becomes, so per-participant
+// transcription has something stable to key on. Stream renders handlebars templates
+// against the SIP invite, and the caller's number is the only thing about them that is
+// known before they say a word.
+const callerTemplate = "sip-{{caller_number}}"
+
+// callerPrefix is callerTemplate up to the number.
+const callerPrefix = "sip-"
+
+// CallerNumber reads the calling number off the id of the participant callerTemplate named,
+// and false for any other participant. It is the cut the call hook always made: "sip-" is
+// the caller with an empty number.
+func CallerNumber(participantID string) (string, bool) {
+	return strings.CutPrefix(participantID, callerPrefix)
+}
+
+// StreamOptions configures the Stream side of a phone number.
+type StreamOptions struct {
+	APIKey    string
+	APISecret string
+}
+
+// Stream creates the SIP trunks and routing rules that connect a vendor's numbers to a
+// call.
+//
+// Stream's SIP is inbound only: a trunk is somewhere a vendor sends calls, not somewhere
+// calls are placed from. Both directions therefore end at a trunk, with outbound calls
+// originated at the vendor and bridged into the same one.
+type Stream struct {
+	client *getstream.Stream
+}
+
+// NewStream validates the credentials and returns a Stream.
+func NewStream(options StreamOptions) (*Stream, error) {
+	if options.APIKey == "" || options.APISecret == "" {
+		return nil, errors.New("phone: a stream api key and secret are required")
+	}
+
+	client, err := getstream.NewClient(options.APIKey, options.APISecret)
+	if err != nil {
+		return nil, err
+	}
+	return &Stream{client: client}, nil
+}
+
+// NewStreamFromClient makes lines with a client the caller already holds for an app.
+func NewStreamFromClient(client *getstream.Stream) *Stream { return &Stream{client: client} }
+
+// Trunk describes the trunk to create.
+type Trunk struct {
+	// Name is what the trunk is called in the dashboard.
+	Name string
+	// Numbers are the numbers the vendor will present on calls to this trunk.
+	Numbers []string
+	// Password authenticates the vendor. Empty on a trunk without AllowedIPs gets a random
+	// one, returned in the bridge: Stream makes none of its own, and a trunk with neither
+	// lets every caller in unchallenged.
+	Password string
+	// AllowedIPs are the vendor's signalling addresses, as IPs or CIDR blocks, for a vendor
+	// that cannot send a password.
+	//
+	// Stream refuses a call from any other address outright, and still challenges a listed
+	// one if the trunk has a password, so a trunk with addresses gets no password. Leaving
+	// them empty accepts every address.
+	AllowedIPs []string
+}
+
+// CreateTrunk creates an inbound trunk and returns the bridge the vendor should send
+// calls to. The bridge is returned so the caller has the trunk's address and credentials
+// without another request.
+func (s *Stream) CreateTrunk(ctx context.Context, trunk Trunk) (string, Bridge, error) {
+	if trunk.Name == "" {
+		return "", Bridge{}, stack.Wrap(errors.New("phone: a trunk needs a name"))
+	}
+	if len(trunk.Numbers) == 0 {
+		return "", Bridge{}, stack.Wrap(errors.New("phone: a trunk needs at least one number"))
+	}
+
+	request := &getstream.CreateSIPTrunkRequest{
+		Name:       trunk.Name,
+		Numbers:    trunk.Numbers,
+		AllowedIps: trunk.AllowedIPs,
+	}
+	password := trunk.Password
+	if password == "" && len(trunk.AllowedIPs) == 0 {
+		password = rand.Text()
+	}
+	if password != "" {
+		request.Password = &password
+	}
+
+	response, err := s.client.Video().CreateSIPTrunk(ctx, request)
+	if err != nil {
+		return "", Bridge{}, stack.Wrap(fmt.Errorf("phone: create sip trunk: %w", err))
+	}
+	created := response.Data.SipTrunk
+	if created == nil {
+		return "", Bridge{}, stack.Wrap(errors.New("phone: stream created no trunk"))
+	}
+
+	return created.ID, Bridge{
+		URI:      sipURI(created.Uri),
+		Username: created.Username,
+		Password: created.Password,
+	}, nil
+}
+
+// Route is how calls arriving on a trunk are turned into a call.
+type Route struct {
+	// Name is what the rule is called in the dashboard.
+	Name string
+	// TrunkIDs are the trunks the rule applies to.
+	TrunkIDs []string
+	// CalledNumbers are the numbers this rule answers for.
+	CalledNumbers []string
+	// CallID is the call every matching caller joins. Leaving it empty gives each caller
+	// their own call, named after the number they rang, which is what a support line
+	// wants; setting it puts everyone in one call, which is what a conference wants.
+	CallID string
+	// CallType is the Stream call type. Empty means "default".
+	CallType string
+	// Custom is put on the call itself, where whoever is in it can read it. It is the only
+	// place Stream takes arbitrary data about a call, the routing rule's own configuration
+	// holding just the id and the type.
+	Custom map[string]string
+}
+
+// CreateRoute points a trunk's calls at a Stream call.
+//
+// The call id may be a handlebars template, which is how one rule serves every number on
+// a trunk without a rule per number.
+func (s *Stream) CreateRoute(ctx context.Context, route Route) (string, error) {
+	if route.Name == "" {
+		return "", stack.Wrap(errors.New("phone: a routing rule needs a name"))
+	}
+	if len(route.TrunkIDs) == 0 {
+		return "", stack.Wrap(errors.New("phone: a routing rule needs a trunk"))
+	}
+	if len(route.CalledNumbers) == 0 {
+		return "", stack.Wrap(errors.New("phone: a routing rule needs the numbers it answers for"))
+	}
+
+	response, err := s.client.Video().CreateSIPInboundRoutingRule(ctx, routeRequest(route))
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("phone: create sip routing rule: %w", err))
+	}
+	return response.Data.ID, nil
+}
+
+// UpdateRoute replaces a routing rule with the route, which is described whole: Stream
+// takes every field again.
+func (s *Stream) UpdateRoute(ctx context.Context, id string, route Route) error {
+	request := routeRequest(route)
+	_, err := s.client.Video().UpdateSIPInboundRoutingRule(ctx, id, &getstream.UpdateSIPInboundRoutingRuleRequest{
+		Name:                 request.Name,
+		TrunkIds:             request.TrunkIds,
+		CalledNumbers:        request.CalledNumbers,
+		CallerConfigs:        request.CallerConfigs,
+		DirectRoutingConfigs: request.DirectRoutingConfigs,
+		CallConfigs:          request.CallConfigs,
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("phone: update sip routing rule: %w", err))
+	}
+	return nil
+}
+
+// UpdateTrunk replaces a trunk's name, numbers and addresses, which Stream takes whole on
+// every update. The password changes only when one is given.
+func (s *Stream) UpdateTrunk(ctx context.Context, id string, trunk Trunk) error {
+	request := &getstream.UpdateSIPTrunkRequest{
+		Name:       trunk.Name,
+		Numbers:    trunk.Numbers,
+		AllowedIps: trunk.AllowedIPs,
+	}
+	if trunk.Password != "" {
+		request.Password = &trunk.Password
+	}
+	if _, err := s.client.Video().UpdateSIPTrunk(ctx, id, request); err != nil {
+		return stack.Wrap(fmt.Errorf("phone: update sip trunk: %w", err))
+	}
+	return nil
+}
+
+// CreateCall creates a call ahead of anyone joining, with custom data on it, and answers the
+// custom the call has: a call that is already there is only loaded and keeps its own.
+func (s *Stream) CreateCall(ctx context.Context, callType, callID string, custom map[string]string) (map[string]any, error) {
+	data := make(map[string]any, len(custom))
+	for key, value := range custom {
+		data[key] = value
+	}
+	creator := callCreator
+	response, err := s.client.Video().GetOrCreateCall(ctx, callType, callID, &getstream.GetOrCreateCallRequest{
+		Data: &getstream.CallRequest{CreatedByID: &creator, Custom: data},
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("phone: create call: %w", err))
+	}
+	return response.Data.Call.Custom, nil
+}
+
+// PutCustom puts custom data on a call that is already there. Stream merges it into the
+// call's own, so a key the call has and this leaves out, such as the number, is kept.
+func (s *Stream) PutCustom(ctx context.Context, callType, callID string, custom map[string]string) error {
+	data := make(map[string]any, len(custom))
+	for key, value := range custom {
+		data[key] = value
+	}
+	_, err := s.client.Video().UpdateCall(ctx, callType, callID, &getstream.UpdateCallRequest{Custom: data})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("phone: put custom on the call: %w", err))
+	}
+	return nil
+}
+
+func routeRequest(route Route) *getstream.CreateSIPInboundRoutingRuleRequest {
+	callType := route.CallType
+	if callType == "" {
+		callType = defaultCallType
+	}
+	callID := route.CallID
+	if callID == "" {
+		callID = "phone-{{called_number}}"
+	}
+
+	request := &getstream.CreateSIPInboundRoutingRuleRequest{
+		Name:          route.Name,
+		TrunkIds:      route.TrunkIDs,
+		CalledNumbers: route.CalledNumbers,
+		// The caller becomes a participant, and their id has to be stable for the length
+		// of the call because per-participant transcription is keyed on it.
+		CallerConfigs: getstream.SIPCallerConfigsRequest{ID: callerTemplate},
+		DirectRoutingConfigs: &getstream.SIPDirectRoutingRuleCallConfigsRequest{
+			CallID:   callID,
+			CallType: callType,
+		},
+	}
+	if len(route.Custom) > 0 {
+		custom := make(map[string]any, len(route.Custom))
+		for key, value := range route.Custom {
+			custom[key] = value
+		}
+		request.CallConfigs = &getstream.SIPCallConfigsRequest{CustomData: custom}
+	}
+	return request
+}
+
+// DeleteTrunk removes a SIP trunk. An empty id is a no-op, so a caller rolling back a
+// half-finished attach need not check whether a trunk was created before asking.
+func (s *Stream) DeleteTrunk(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	if _, err := s.client.Video().DeleteSIPTrunk(ctx, id, nil); err != nil && !notFound(err) {
+		return stack.Wrap(fmt.Errorf("phone: delete sip trunk: %w", err))
+	}
+	return nil
+}
+
+// DeleteRoute removes an inbound routing rule. An empty id is a no-op, for the same
+// reason as DeleteTrunk.
+func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	if _, err := s.client.Video().DeleteSIPInboundRoutingRule(ctx, id, nil); err != nil && !notFound(err) {
+		return stack.Wrap(fmt.Errorf("phone: delete sip routing rule: %w", err))
+	}
+	return nil
+}
+
+// answering is what the app has at Stream for a number: the ids of the rules that answer
+// for it and of the trunks that list it, and whether it holds the trunk with the id trunkID.
+// Stream lists both whole, with no page.
+func (s *Stream) answering(ctx context.Context, e164, trunkID string) (rules, trunks []string, holds bool, err error) {
+	listedRules, err := s.client.Video().ListSIPInboundRoutingRule(ctx, &getstream.ListSIPInboundRoutingRuleRequest{})
+	if err != nil {
+		return nil, nil, false, stack.Wrap(fmt.Errorf("phone: list sip routing rules: %w", err))
+	}
+	for _, rule := range listedRules.Data.SipInboundRoutingRules {
+		if slices.Contains(rule.CalledNumbers, e164) {
+			rules = append(rules, rule.ID)
+		}
+	}
+	listedTrunks, err := s.client.Video().ListSIPTrunks(ctx, &getstream.ListSIPTrunksRequest{})
+	if err != nil {
+		return nil, nil, false, stack.Wrap(fmt.Errorf("phone: list sip trunks: %w", err))
+	}
+	for _, trunk := range listedTrunks.Data.SipTrunks {
+		if slices.Contains(trunk.Numbers, e164) {
+			trunks = append(trunks, trunk.ID)
+		}
+		holds = holds || trunk.ID == trunkID
+	}
+	return rules, trunks, holds, nil
+}
+
+// notFound is Stream saying what was to be deleted or updated is not there: removed by hand
+// at Stream, or by an earlier attempt that failed after Stream took it. A delete wanted that.
+func notFound(err error) bool {
+	var refused *getstream.StreamError
+	return errors.As(err, &refused) && refused.StatusCode == http.StatusNotFound
+}
+
+// Client exposes the Stream client, so a caller can reach the parts of the SIP API this
+// does not wrap without building a second client.
+func (s *Stream) Client() *getstream.Stream { return s.client }
+
+// EndCall ends a call for everybody on it, a caller who came in over SIP included.
+func (s *Stream) EndCall(ctx context.Context, callType, callID string) error {
+	if _, err := s.client.Video().EndCall(ctx, callType, callID, &getstream.EndCallRequest{}); err != nil {
+		return stack.Wrap(fmt.Errorf("phone: end call %s:%s: %w", callType, callID, err))
+	}
+	return nil
+}
+
+// sipURI makes sure the trunk address is a SIP uri, since Stream reports the host without
+// the scheme and a vendor needs the whole thing.
+func sipURI(uri string) string {
+	if uri == "" {
+		return ""
+	}
+	if strings.HasPrefix(uri, "sip:") || strings.HasPrefix(uri, "sips:") {
+		return uri
+	}
+	return "sip:" + uri
+}

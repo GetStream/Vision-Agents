@@ -1,0 +1,158 @@
+[
+  {
+    "name": "place_card",
+    "description": "One place of a plan, with its photo and a short summary, which the phone loads from Wikipedia, so it needs no image URL. Use one per sight, beach, monastery, village or day trip.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The place's exact English Wikipedia article title, such as \"Church of St. John at Kaneo\""
+        },
+        "note": {
+          "type": "string",
+          "description": "One short line about it for this plan, such as \"Best at sunset\" or \"2 hours\""
+        }
+      },
+      "required": ["title"],
+      "x-order": ["title", "note"]
+    },
+    "events": [
+      {
+        "name": "ask_about",
+        "description": "Tapping the card asks you about the place."
+      }
+    ]
+  },
+  {
+    "name": "trip_map",
+    "description": "A map of a plan with a pin for each place, drawn on the phone. Use one near the top of every trip plan.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "places": {
+          "type": "array",
+          "description": "Every place of the plan, with its coordinates",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "latitude": { "type": "number" },
+              "longitude": { "type": "number" }
+            },
+            "required": ["name", "latitude", "longitude"],
+            "x-order": ["name", "latitude", "longitude"]
+          }
+        }
+      },
+      "required": ["places"],
+      "x-order": ["places"]
+    },
+    "events": [
+      {
+        "name": "select_place",
+        "description": "Tapping a pin asks you about that place."
+      }
+    ]
+  },
+  {
+    "name": "calendar_check",
+    "description": "The person's own calendar for the days of a plan, read on the phone. You never see it: use it whenever a plan has dates, so they can see what the trip would clash with.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "string", "format": "date", "description": "The first day, as YYYY-MM-DD" },
+        "end": { "type": "string", "format": "date", "description": "The last day, as YYYY-MM-DD" }
+      },
+      "required": ["start", "end"],
+      "x-order": ["start", "end"]
+    },
+    "events": []
+  },
+  {
+    "name": "restaurant_card",
+    "description": "Venue summary card showing restaurant name, cuisine, star rating, and optional price tier.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Restaurant name, such as \"Kaneo Cliffside Kitchen\""
+        },
+        "cuisine": {
+          "type": "string",
+          "description": "Cuisine and distance summary, such as \"Macedonian Grill · 1.2 km\""
+        },
+        "rating": {
+          "type": "number",
+          "description": "Star rating from 0 to 5, such as 4.9"
+        },
+        "price_tier": {
+          "type": "string",
+          "enum": ["$", "$$", "$$$", "$$$$"],
+          "description": "Optional price tier"
+        }
+      },
+      "required": ["name", "cuisine", "rating"],
+      "x-order": ["name", "cuisine", "rating", "price_tier"]
+    },
+    "events": [
+      {
+        "name": "inspect_venue",
+        "description": "Tapping the restaurant card asks for its menu and highlights."
+      }
+    ]
+  },
+  {
+    "name": "availability_gauge",
+    "description": "Live radial occupancy and wait-time gauge for a restaurant or booking venue.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "occupancy_pct": {
+          "type": "number",
+          "description": "Current occupancy percentage from 0 to 100"
+        },
+        "wait_label": {
+          "type": "string",
+          "description": "Estimated wait time label, such as \"12 min wait\""
+        }
+      },
+      "required": ["occupancy_pct", "wait_label"],
+      "x-order": ["occupancy_pct", "wait_label"]
+    },
+    "events": []
+  },
+  {
+    "name": "seat_selector",
+    "description": "Interactive floorplan zone and table selector for choosing a specific dining area.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "array",
+          "description": "Available and occupied tables by zone and seat count",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "zone": { "type": "string" },
+              "seats": { "type": "number" },
+              "available": { "type": "boolean" }
+            },
+            "required": ["id", "zone", "seats", "available"],
+            "x-order": ["id", "zone", "seats", "available"]
+          }
+        }
+      },
+      "required": ["tables"],
+      "x-order": ["tables"]
+    },
+    "events": [
+      {
+        "name": "select_table",
+        "description": "Tapping an available table requests that table zone."
+      }
+    ]
+  }
+]

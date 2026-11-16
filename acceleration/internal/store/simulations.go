@@ -1,0 +1,456 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// defaultMaxTurns is how long a conversation a simulation that did not say runs for. A
+// scenario with three things to ask needs more turns than three, because the agent asks
+// questions back.
+const defaultMaxTurns = 12
+
+// maxTurns and maxVariations bound what a customer may ask for, since every turn is a
+// model call and every variation is a whole conversation.
+const (
+	maxTurns      = 200
+	maxVariations = 10
+)
+
+// defaultRunLimit is how many runs are listed when nobody said.
+const defaultRunLimit = 50
+
+// CreateSimulation stores a simulation and fills in its id and timestamps.
+func (s *Store) CreateSimulation(ctx context.Context, simulation *Simulation) error {
+	if err := checkSimulation(simulation); err != nil {
+		return err
+	}
+
+	simulation.ID = newID()
+	now := time.Now().UTC()
+	simulation.CreatedAt = now
+	simulation.UpdatedAt = now
+	simulation.DeletedAt = nil
+	normalizeSimulation(simulation)
+
+	if _, err := s.db.NewInsert().Model(simulation).Exec(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: create simulation: %w", err))
+	}
+	return nil
+}
+
+// UpdateSimulation replaces what a simulation asks. The runs it already has are left
+// alone: they carry their own copy of what they tested.
+func (s *Store) UpdateSimulation(ctx context.Context, simulation *Simulation) error {
+	if simulation.ID == "" {
+		return stack.Wrap(errors.New("store: a simulation id is required"))
+	}
+	if err := checkSimulation(simulation); err != nil {
+		return err
+	}
+
+	simulation.UpdatedAt = time.Now().UTC()
+	normalizeSimulation(simulation)
+
+	result, err := s.db.NewUpdate().Model(simulation).
+		Column("name", "mode", "config_id", "scenario", "assertion", "variations",
+			"judge_target", "caller_target", "caller_tts", "caller_stt", "caller_voice",
+			"max_turns", "tags", "updated_at").
+		Where("id = ?", simulation.ID).
+		Where("customer_id = ?", simulation.CustomerID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: update simulation: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: update simulation: %w", err))
+	}
+	if affected == 0 {
+		return unknownSimulation(simulation.ID)
+	}
+	return nil
+}
+
+// DeleteSimulation marks a simulation as gone. The row stays, because the runs that named
+// it are still worth reading.
+func (s *Store) DeleteSimulation(ctx context.Context, customerID, id string) error {
+	if customerID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer and a simulation id are required"))
+	}
+
+	result, err := s.db.NewUpdate().Model((*Simulation)(nil)).
+		Set("deleted_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete simulation: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete simulation: %w", err))
+	}
+	if affected == 0 {
+		return unknownSimulation(id)
+	}
+	return nil
+}
+
+// Simulation returns one simulation a customer holds.
+func (s *Store) Simulation(ctx context.Context, customerID, id string) (Simulation, error) {
+	if customerID == "" || id == "" {
+		return Simulation{}, stack.Wrap(errors.New("store: a customer and a simulation id are required"))
+	}
+
+	var simulation Simulation
+	err := s.db.NewSelect().Model(&simulation).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Simulation{}, unknownSimulation(id)
+	}
+	if err != nil {
+		return Simulation{}, stack.Wrap(fmt.Errorf("store: simulation: %w", err))
+	}
+	return simulation, nil
+}
+
+// CustomerSimulations returns a customer's simulations, newest first.
+func (s *Store) CustomerSimulations(ctx context.Context, customerID string) ([]Simulation, error) {
+	if customerID == "" {
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+
+	var simulations []Simulation
+	err := s.db.NewSelect().Model(&simulations).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Order("created_at DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: customer simulations: %w", err))
+	}
+	return simulations, nil
+}
+
+// StartSimulationRun writes a run and all of its conversations at once, so a run that has
+// only just begun already shows how many ways it is going to ask. It is held until
+// heldUntil, and RenewSimulationRuns keeps it held after that.
+func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, cases []SimulationCase, heldUntil time.Time) error {
+	if run.CustomerID == "" || run.SimulationID == "" {
+		return stack.Wrap(errors.New("store: a customer and a simulation id are required"))
+	}
+	if len(cases) == 0 {
+		return stack.Wrap(errors.New("store: a run needs at least one conversation to have"))
+	}
+
+	run.ID = newID()
+	run.State = SimulationRunning
+	run.Cases = len(cases)
+	run.Passed = 0
+	run.Failed = 0
+	run.StartedAt = time.Now().UTC()
+	run.FinishedAt = nil
+	held := heldUntil.UTC()
+	run.HeldUntil = &held
+	run.StopRequested = false
+
+	for i := range cases {
+		cases[i].ID = newID()
+		cases[i].RunID = run.ID
+		cases[i].State = SimulationPending
+		cases[i].StartedAt = run.StartedAt
+		if cases[i].Transcript == nil {
+			cases[i].Transcript = []SimulationLine{}
+		}
+	}
+
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewInsert().Model(run).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewInsert().Model(&cases).Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: start simulation run: %w", err))
+	}
+	return nil
+}
+
+// StartSimulationCase records which session is holding a conversation, which is what makes
+// a run in progress watchable.
+func (s *Store) StartSimulationCase(ctx context.Context, id, callID string) error {
+	if id == "" {
+		return errors.New("store: a case id is required")
+	}
+
+	_, err := s.db.NewUpdate().Model((*SimulationCase)(nil)).
+		Set("state = ?", SimulationRunning).
+		Set("call_id = ?", callID).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: start simulation case: %w", err)
+	}
+	return nil
+}
+
+// FinishSimulationCase records how one conversation went and what the judge made of it.
+func (s *Store) FinishSimulationCase(ctx context.Context, kase SimulationCase) error {
+	if kase.ID == "" {
+		return errors.New("store: a case id is required")
+	}
+	if kase.Transcript == nil {
+		kase.Transcript = []SimulationLine{}
+	}
+	// The error is the agent's when it stopped answering, which can be a provider's text.
+	kase.Error = SafeLogText(kase.Error)
+	kase.Transcript = redactedTranscript(kase.Transcript)
+
+	now := time.Now().UTC()
+	kase.FinishedAt = &now
+
+	_, err := s.db.NewUpdate().Model(&kase).
+		Column("state", "call_id", "transcript", "turns", "passed", "verdict", "score",
+			"ended", "error", "finished_at").
+		Where("id = ?", kase.ID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: finish simulation case: %w", err)
+	}
+	return nil
+}
+
+// redactedTranscript is a copy of transcript with each tool's result put through SafeLogText,
+// as a session's items are: a result can be a provider's text echoing the key it was sent. It
+// is a copy, because the caller's transcript is what the judge read.
+func redactedTranscript(transcript []SimulationLine) []SimulationLine {
+	out := make([]SimulationLine, len(transcript))
+	for i, line := range transcript {
+		out[i] = line
+		if len(line.Tools) == 0 {
+			continue
+		}
+		out[i].Tools = make([]SimulationTool, len(line.Tools))
+		for j, tool := range line.Tools {
+			tool.Result = SafeLogText(tool.Result)
+			out[i].Tools[j] = tool
+		}
+	}
+	return out
+}
+
+// FinishSimulationRun records how a run ended and what its conversations came to.
+func (s *Store) FinishSimulationRun(ctx context.Context, run SimulationRun) error {
+	if run.ID == "" {
+		return errors.New("store: a run id is required")
+	}
+
+	now := time.Now().UTC()
+	run.FinishedAt = &now
+
+	_, err := s.db.NewUpdate().Model(&run).
+		Column("state", "passed", "failed", "error", "finished_at").
+		Where("id = ?", run.ID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: finish simulation run: %w", err)
+	}
+	return nil
+}
+
+// SimulationRun returns one run a customer holds.
+func (s *Store) SimulationRun(ctx context.Context, customerID, id string) (SimulationRun, error) {
+	if customerID == "" || id == "" {
+		return SimulationRun{}, stack.Wrap(errors.New("store: a customer and a run id are required"))
+	}
+
+	var run SimulationRun
+	err := s.db.NewSelect().Model(&run).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SimulationRun{}, unknownSimulationRun(id)
+	}
+	if err != nil {
+		return SimulationRun{}, stack.Wrap(fmt.Errorf("store: simulation run: %w", err))
+	}
+	return run, nil
+}
+
+// SimulationRuns lists runs, newest first. It answers both what one simulation has come to
+// and what every simulation has come to lately, which is the same question asked twice.
+func (s *Store) SimulationRuns(ctx context.Context, filter SimulationRunFilter) ([]SimulationRun, error) {
+	if filter.CustomerID == "" {
+		return nil, stack.Wrap(errors.New("store: customer id is required"))
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultRunLimit
+	}
+
+	var runs []SimulationRun
+	query := s.db.NewSelect().Model(&runs).
+		Where("customer_id = ?", filter.CustomerID)
+	if filter.SimulationID != "" {
+		query = query.Where("simulation_id = ?", filter.SimulationID)
+	}
+	if filter.State != "" {
+		query = query.Where("state = ?", filter.State)
+	}
+
+	if err := query.Order("started_at DESC").Limit(limit).Scan(ctx); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: simulation runs: %w", err))
+	}
+	return runs, nil
+}
+
+// SimulationCases returns a run's conversations, in the order they were asked.
+func (s *Store) SimulationCases(ctx context.Context, runID string) ([]SimulationCase, error) {
+	if runID == "" {
+		return nil, stack.Wrap(errors.New("store: a run id is required"))
+	}
+
+	var cases []SimulationCase
+	err := s.db.NewSelect().Model(&cases).
+		Where("run_id = ?", runID).
+		Order("variation ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: simulation cases: %w", err))
+	}
+	return cases, nil
+}
+
+// RenewSimulationRuns holds the runs a router is having until a later time, and returns the
+// ones among them it should stop: asked to from anywhere, or no longer running.
+func (s *Store) RenewSimulationRuns(ctx context.Context, ids []string, until time.Time) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var renewed []string
+	err := s.db.NewUpdate().Model((*SimulationRun)(nil)).
+		Set("held_until = ?", until.UTC()).
+		Where("id IN (?)", bun.In(ids)).
+		Where("state = ?", SimulationRunning).
+		Where("NOT stop_requested").
+		Returning("id").
+		Scan(ctx, &renewed)
+	if err != nil {
+		return nil, fmt.Errorf("store: renew simulation runs: %w", err)
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+		return slices.Contains(renewed, id)
+	}), nil
+}
+
+// StopSimulationRun asks whichever router is holding a run to stop it.
+func (s *Store) StopSimulationRun(ctx context.Context, customerID, id string) error {
+	_, err := s.db.NewUpdate().Model((*SimulationRun)(nil)).
+		Set("stop_requested = true").
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("state = ?", SimulationRunning).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: stop simulation run: %w", err)
+	}
+	return nil
+}
+
+// AbandonSimulationRuns marks as errored the runs whose router stopped renewing them by
+// now. Nothing else will finish them: the conversations were held in that router, and it is
+// gone. A run another router is still renewing is left alone, however old it is.
+func (s *Store) AbandonSimulationRuns(ctx context.Context, now time.Time) error {
+	now = now.UTC()
+
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewUpdate().Model((*SimulationCase)(nil)).
+			Set("state = ?", SimulationCancelled).
+			Set("finished_at = ?", now).
+			Where("state IN (?)", bun.In([]string{SimulationPending, SimulationRunning})).
+			Where("run_id IN (SELECT id FROM simulation_runs WHERE state = ? AND (held_until IS NULL OR held_until < ?))",
+				SimulationRunning, now).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.NewUpdate().Model((*SimulationRun)(nil)).
+			Set("state = ?", SimulationErrored).
+			Set("error = ?", "the router having this run stopped while it was still going").
+			Set("finished_at = ?", now).
+			Where("state = ?", SimulationRunning).
+			Where("held_until IS NULL OR held_until < ?", now).
+			Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("store: abandon simulation runs: %w", err)
+	}
+	return nil
+}
+
+// checkSimulation refuses a simulation that could not be run, so the complaint arrives when
+// it is written rather than once per conversation at whatever hour it was started.
+func checkSimulation(simulation *Simulation) error {
+	switch {
+	case simulation.CustomerID == "":
+		return stack.Wrap(errors.New("store: customer id is required"))
+	case simulation.Name == "":
+		return stack.Wrap(errors.New("store: a simulation needs a name"))
+	case simulation.ConfigID == "":
+		return stack.Wrap(errors.New("store: a simulation needs an agent to run against"))
+	case simulation.Scenario == "":
+		return stack.Wrap(errors.New("store: a simulation needs something to ask"))
+	case simulation.Assertion == "":
+		return stack.Wrap(errors.New("store: a simulation needs something to check"))
+	case simulation.Mode != SimulationText && simulation.Mode != SimulationAudio:
+		return stack.Wrap(fmt.Errorf("store: a simulation is %s or %s", SimulationText, SimulationAudio))
+	case simulation.Variations > maxVariations:
+		return stack.Wrap(fmt.Errorf("store: a simulation may try at most %d ways of asking", maxVariations))
+	case simulation.MaxTurns > maxTurns:
+		return stack.Wrap(fmt.Errorf("store: a conversation may run at most %d turns", maxTurns))
+	}
+	return nil
+}
+
+// normalizeSimulation fills in what was left out, so nothing downstream has to decide what
+// an empty column meant.
+func normalizeSimulation(simulation *Simulation) {
+	if simulation.Variations <= 0 {
+		simulation.Variations = 1
+	}
+	if simulation.MaxTurns <= 0 {
+		simulation.MaxTurns = defaultMaxTurns
+	}
+	if simulation.Tags == nil {
+		simulation.Tags = map[string]string{}
+	}
+}
+
+func unknownSimulation(id string) error {
+	return stack.Wrap(fmt.Errorf("store: there is no simulation %s", id))
+}
+
+func unknownSimulationRun(id string) error {
+	return stack.Wrap(fmt.Errorf("store: there is no simulation run %s", id))
+}

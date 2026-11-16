@@ -1,0 +1,256 @@
+package api
+
+import (
+	"context"
+	"math/rand/v2"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+)
+
+// forwardTimeout bounds one request carried to the node that can answer it. Generous,
+// because what is carried is an ordinary API call and the node answering it applies
+// whatever timeout that call already had; short enough that a node which has stopped
+// answering does not hold a caller indefinitely.
+const forwardTimeout = 30 * time.Second
+
+// unreachableNode is what a caller is told when the session exists but the node running
+// it does not answer, which is a different thing from a session that is not there.
+const unreachableNode = "the node running this session could not be reached"
+
+// onOwningNode carries a request about a session to the node running it, and an answer to a
+// call held for a person's approval in a conversation (answerToolApproval) to the node running
+// the session that holds it.
+//
+// A session lives in one process's memory and a load balancer has no reason to prefer
+// that process, so without this a request lands on a node that cannot answer it and is
+// told the session does not exist.
+//
+// Outermost of this server's own middlewares, so a request that belongs elsewhere is not
+// authenticated, logged or counted against a quota twice: the node that answers does all
+// three, and this one only hands it over.
+func (s *Server) onOwningNode(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		address, elsewhere := s.owningNode(r)
+		if !elsewhere {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("Upgrade") != "" {
+			s.proxySocket(w, r, address)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), forwardTimeout)
+		defer cancel()
+		if err := s.forwarder.Forward(ctx, address, w, r); err != nil {
+			s.logger.Error("could not reach the node running a session",
+				"node", address, "path", loggedPath(s.mux, r), "error", err)
+			writeError(w, unavailable(unreachableNode))
+		}
+	})
+}
+
+// owningNode is where to send a request this node cannot answer, and false when this node
+// is the one to answer it.
+func (s *Server) owningNode(r *http.Request) (string, bool) {
+	if s.directory == nil || s.forwarder == nil {
+		return "", false
+	}
+	// A request a peer handed over is answered here. Two nodes each believing the other
+	// holds the session would otherwise pass it back and forth.
+	if r.Header.Get(node.ForwardedHeader) != "" {
+		return "", false
+	}
+	address, ok := s.nodeFor(r)
+	if !ok {
+		return "", false
+	}
+	// Nothing says it is running: the session ended, or never existed, and what reads the
+	// row is as able to answer here as anywhere.
+	if address == "" || address == s.directory.Address() {
+		return "", false
+	}
+	// A socket cannot be carried over a call that answers once, and within a shard does not
+	// need to be: the relay reaches a session's events wherever the socket lands. The relay
+	// is the shard's own, so a socket for a session another shard runs is proxied there.
+	if r.Header.Get("Upgrade") != "" {
+		other, err := s.directory.InAnotherShard(r.Context(), address)
+		if err != nil {
+			s.logger.Warn("could not find out which shard a node is in", "node", address, "error", err)
+			return "", false
+		}
+		return address, other
+	}
+	return address, true
+}
+
+// nodeFor is the node the directory says runs the session a request is about, false when
+// the request is about none or this node runs it.
+func (s *Server) nodeFor(r *http.Request) (string, bool) {
+	if cid, ok := approvalInPath(r.URL.Path); ok {
+		if s.sessions != nil {
+			if _, running := s.sessions.ByConversationWhere(cid, nil); running {
+				return "", false
+			}
+		}
+		address, err := s.directory.NodeByConversation(r.Context(), cid)
+		if err != nil {
+			s.logger.Warn("could not find out which node is answering in a conversation",
+				"conversation", cid, "error", err)
+			return "", false
+		}
+		return address, true
+	}
+	id, ok := sessionInPath(r.URL.Path)
+	if !ok {
+		return "", false
+	}
+	if s.sessions != nil && s.sessions.Running(id) {
+		return "", false
+	}
+
+	address, err := s.directory.Node(r.Context(), id)
+	if err != nil {
+		s.logger.Warn("could not find out which node is running a session",
+			"session", id, "error", err)
+		return "", false
+	}
+	return address, true
+}
+
+// proxySocket carries a socket to the node running its session, upgrade and all, for as long
+// as it stays open. The node at the other end answers it as one that landed there.
+func (s *Server) proxySocket(w http.ResponseWriter, r *http.Request, address string) {
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(out *httputil.ProxyRequest) {
+			out.SetURL(&url.URL{Scheme: "http", Host: address})
+			out.Out.Host = r.Host
+			out.Out.Header.Set(node.ForwardedHeader, "1")
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			s.logger.Error("could not reach the node running a session",
+				"node", address, "path", loggedPath(s.mux, r), "error", err)
+			writeError(w, unavailable(unreachableNode))
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// sessionInPath returns the session a path is about, if it is about one.
+//
+// The collection paths -- query, search -- come back as ids nothing is running, which
+// costs them a lookup that finds nobody and is answered here as before.
+func sessionInPath(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/v1/agents/sessions/")
+	if !ok {
+		return "", false
+	}
+	id, _, _ := strings.Cut(rest, "/")
+
+	return id, id != ""
+}
+
+// approvalInPath returns the conversation an answer to a held call is about, if the path is
+// one (POST /v1/agents/conversations/{cid}/tool_approvals).
+func approvalInPath(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/v1/agents/conversations/")
+	if !ok {
+		return "", false
+	}
+	cid, ok := strings.CutSuffix(rest, "/tool_approvals")
+
+	return cid, ok && cid != "" && !strings.Contains(cid, "/")
+}
+
+// forwardedMessage hands an arriving message to the node running the conversation on its
+// channel, reporting whether this node is not the one to answer it.
+//
+// Without it an agent answering on another node is invisible from here and the message
+// goes to a worker instead, which is a second agent writing into a conversation the first
+// is already answering in. So the directory decides, not the handover: a node that holds
+// the conversation and cannot be reached is still the only one that may answer. taken is
+// false when that node could not be reached or would not take the message.
+func (s *Server) forwardedMessage(ctx context.Context, origin hookOrigin, event messageEvent) (elsewhere, taken bool) {
+	if s.directory == nil || s.forwarder == nil || origin.handOver == nil {
+		return false, false
+	}
+
+	address, err := s.directory.NodeByAgent(ctx, event.ChannelID)
+	if err != nil {
+		s.logger.Warn("could not find out which node is answering in a channel",
+			"channel", event.ChannelID, "error", err)
+		return false, false
+	}
+	if address == "" || address == s.directory.Address() {
+		return false, false
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	defer cancel()
+	answer, err := origin.handOver(ctx, address)
+	switch {
+	case err != nil:
+		s.logger.Error("could not reach the node answering in a channel",
+			"node", address, "channel", event.ChannelID, "error", err)
+	case answer.GetStatus() != http.StatusOK:
+		s.logger.Warn("the node answering in a channel would not take a message",
+			"node", address, "channel", event.ChannelID, "status", answer.GetStatus())
+	default:
+		return true, true
+	}
+
+	return true, false
+}
+
+// forwardedToWorkers hands a hook to another node with a worker waiting for the customer,
+// reporting whether this node is not the one to answer it.
+//
+// A worker waits on whichever node its socket landed on, and Stream's hook lands wherever
+// the load balancer sends it, so without this a call rings out on a node with nobody
+// connected while a worker sits idle on the next one. A worker connected here that takes the
+// hook's kind of work is always asked first, which costs nothing and is most of the time; one
+// that takes other work, such as a process only hosting tools, is passed over.
+//
+// Handed over with handOver, as forwardedMessage hands a message over; nil hands nothing over.
+// taken is false when that node could not be reached or would not take the hook.
+func (s *Server) forwardedToWorkers(ctx context.Context, handOver func(context.Context, string) (*node.ForwardResponse, error), customerID string, kind dispatch.Kind) (elsewhere, taken bool) {
+	if s.directory == nil || s.forwarder == nil || handOver == nil {
+		return false, false
+	}
+	if s.dispatch.Takes(customerID, kind) {
+		return false, false
+	}
+
+	addresses, err := s.directory.Waiting(ctx, customerID)
+	if err != nil {
+		s.logger.Warn("could not find out which nodes have a customer's workers",
+			"customer", customerID, "error", err)
+		return false, false
+	}
+	if len(addresses) == 0 {
+		return false, false
+	}
+	address := addresses[rand.IntN(len(addresses))]
+
+	ctx, cancel := context.WithTimeout(ctx, forwardTimeout)
+	defer cancel()
+	answer, err := handOver(ctx, address)
+	switch {
+	case err != nil:
+		s.logger.Error("could not reach the node with a customer's workers",
+			"node", address, "customer", customerID, "error", err)
+	case answer.GetStatus() != http.StatusOK:
+		s.logger.Warn("the node with a customer's workers would not take a hook",
+			"node", address, "customer", customerID, "status", answer.GetStatus())
+	default:
+		return true, true
+	}
+
+	return true, false
+}

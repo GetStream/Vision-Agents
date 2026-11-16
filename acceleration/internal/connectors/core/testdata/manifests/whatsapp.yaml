@@ -1,0 +1,94 @@
+# WhatsApp through Meta's Cloud API, the shape T51 (subtasks.md on connectors/planning)
+# builds: one operator Meta app as Tech Provider, the customer's WABA and number, one shared
+# webhook routed by phone_number_id (T39); a channel and a tool. Meta's pages, opened October
+# 6, 2026:
+#   [hooks]     https://developers.facebook.com/docs/graph-api/webhooks/getting-started
+#   [sig]       https://developers.facebook.com/docs/messenger-platform/webhooks
+#   [payload]   https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples
+#   [send]      https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages
+#   [templates] https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/
+#   [versions]  https://developers.facebook.com/docs/graph-api/changelog
+id: whatsapp
+revision: 1
+name: WhatsApp
+inputs:
+  # The approved template sent once the customer service window has closed, named by the
+  # customer since templates are approved for each WABA ([send]). Meta's naming rule for a
+  # template is not on these pages. # unverified: the pattern
+  - name: reopen_template
+    pattern: "[a-z0-9_]{1,512}"
+  # [templates]: template.language.code, such as en_US. # unverified: the pattern
+  - name: template_language
+    pattern: "[a-z]{2,3}(_[A-Z]{2})?"
+endpoints:
+  # v25.0: the newest version [versions] lists with an expiry (July 29, 2028); v26.0's is
+  # «TBD».
+  api_base: https://graph.facebook.com/v25.0
+# [send]: «Authorization: Bearer <ACCESS_TOKEN>», the business token Embedded Signup's code
+# exchange gives (channels doc, «Other channels», the WhatsApp row).
+schemes: [oauth2_code]
+client:
+  registration: [operator]
+  # The operator's Meta app, whose app secret also signs webhooks ([hooks]).
+  env: WHATSAPP
+sources:
+  - kind: http
+    endpoint: api_base
+channel:
+  verifier:
+    # [hooks]: «We sign all Event Notification payloads with a SHA256 signature and include
+    # the signature in the request's X-Hub-Signature-256 header, preceded with sha256=», with
+    # the app secret; [sig]: digest("hex"). No timestamp is signed.
+    kind: hmac_header
+    secret: operator
+    header: X-Hub-Signature-256
+    algorithm: sha256
+    encoding: hex
+    prefix: sha256=
+    signed: "{body}"
+  # [payload]
+  format: json
+  # Meta's handshake is a GET with hub.challenge in the query ([hooks]), not a body, so it is
+  # not a challenge path here. # unverified: how T51 answers it
+  messages:
+    # [hooks]: deliveries are batched, «a maximum of 1000 updates»; [payload]: messages sit in
+    # entry[].changes[].value.messages[]. Statuses sit in value.statuses[], so each skips
+    # them.
+    each: $.entry[*].changes[*].value.messages[*]
+    # [payload]: value.metadata.phone_number_id, the business number that received it: the
+    # routing key T39 indexes.
+    provider_unit_id: $.entry[*].changes[*].value.metadata.phone_number_id
+    thread_key:
+      # The person's number: one thread for each person and business number (channels doc,
+      # «Other channels», the WhatsApp row).
+      - name: from
+        path: $.entry[*].changes[*].value.messages[*].from
+    author_id: $.entry[*].changes[*].value.messages[*].from
+    provider_message_id: $.entry[*].changes[*].value.messages[*].id
+    # [payload]: text.body for a text message; other types have no text.
+    text: $.entry[*].changes[*].value.messages[*].text.body
+  reply:
+    # [send]: POST https://graph.facebook.com/<VERSION>/<PHONE_NUMBER_ID>/messages.
+    url: https://graph.facebook.com/v25.0/{provider_unit_id}/messages
+    # [send], the text message example.
+    body:
+      messaging_product: whatsapp
+      recipient_type: individual
+      to: "+{thread.from}"
+      type: text
+      text:
+        body: "{text}"
+    # [send]: «When a WhatsApp user messages you or calls you, a 24-hour timer called a
+    # customer service window starts»; once it closes, only approved templates.
+    window: 24h
+    # [templates]: type template, template.name, template.language.code. The reply text is
+    # not in it: what the bridge does with it is T51's. # unverified
+    after_window:
+      messaging_product: whatsapp
+      recipient_type: individual
+      to: "+{thread.from}"
+      type: template
+      template:
+        name: "{reopen_template}"
+        language:
+          code: "{template_language}"

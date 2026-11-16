@@ -1,0 +1,82 @@
+# Metabase's built-in MCP server, which each Metabase instance serves for itself, asked for in
+# WWSD's platform feedback #46 (AI-1381). Vendor pages, opened October 16, 2026:
+#   [mcp]   https://www.metabase.com/docs/latest/ai/mcp («MCP server», v0.64 docs)
+#   [tools] https://www.metabase.com/docs/latest/ai/mcp-tools («MCP server tools»)
+# And one public instance's metadata, read without signing in («[prm]», «[as]» and «[401]»):
+#   [prm] GET https://stats.metabase.com/.well-known/oauth-protected-resource/api/metabase-mcp
+#         at 2026-10-16T17:16:53Z: resource https://stats.metabase.com/api/metabase-mcp,
+#         authorization_servers [https://stats.metabase.com], scopes_supported
+#         [agent:content:read, agent:content:write, agent:query:run, agent:sql:run,
+#         agent:delivery:write]. metabase-public.metabaseapp.com answered the same shape.
+#   [as]  GET https://stats.metabase.com/.well-known/oauth-authorization-server at
+#         2026-10-16T17:17:04Z: issuer https://stats.metabase.com, authorization_endpoint
+#         /oauth/authorize, token_endpoint /oauth/token, registration_endpoint /oauth/register,
+#         revocation_endpoint /oauth/revoke, code_challenge_methods_supported [S256],
+#         token_endpoint_auth_methods_supported [client_secret_basic, client_secret_post,
+#         none], resource_indicators_supported true.
+#   [401] POST https://stats.metabase.com/api/metabase-mcp with no token at
+#         2026-10-16T17:17:04Z: 401, WWW-Authenticate: Bearer realm="mcp", resource_metadata=
+#         "https://stats.metabase.com/.well-known/oauth-protected-resource/api/metabase-mcp",
+#         scope="agent:content:read agent:content:write agent:query:run agent:sql:run
+#         agent:delivery:write".
+id: metabase
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Metabase
+category: Analytics
+# [mcp]: tools «for searching, browsing, querying, and creating content», «scoped to the
+# connecting person's permissions». This revision asks for the read and query scopes only.
+description: Search and read a Metabase's questions, dashboards and data model, and run queries, as the person who signs in.
+setup:
+  url: https://www.metabase.com/docs/latest/ai/mcp
+  steps:
+    - title: Turn on the MCP server
+      # [mcp], «Turn on the MCP server», and «The MCP server also needs AI features on».
+      description: As a Metabase admin, open Admin, AI, MCP and switch the MCP server on. AI features must be on too.
+    - title: Check the Site URL
+      # [mcp], «Connecting to a local MCP server»: OAuth discovery is built from the Site URL,
+      # and a Site URL the client cannot reach makes the handshake fail.
+      description: Under Admin, Settings, General, set the Site URL to the public address people open Metabase at.
+    - title: Enter the address
+      # The egress policy (internal/egress/public.go, dialPublic) refuses a host that resolves
+      # to a private, loopback or link-local address, as for mcp_servers (AI-1307).
+      description: Paste that address's host name, such as metabase.example.com. It must be reachable from the internet over https; a Metabase on a private network is refused.
+inputs:
+  # The instance's host, put into every endpoint below. A host name only: the last label
+  # starts with a letter, so no IP address is taken, and no port, path or userinfo. That
+  # cannot refuse a name that resolves to a private address, such as
+  # metadata.google.internal; egress refuses those when it dials. A Metabase served under a
+  # path, or on a port other than 443, cannot be entered. Lower case only: the instance's
+  # metadata names its resource in lower case and discovery compares it exactly.
+  - name: host
+    pattern: ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$
+endpoints:
+  # [mcp]: «https://{your-metabase.example.com}/api/metabase-mcp»; [prm]'s resource.
+  # Authorize, token, registration and revoke are not written: oauth2_code discovers them per
+  # host through [prm] and [as] (RFC 9728 and 8414), as [mcp] says a client does («The
+  # client discovers Metabase's OAuth endpoints»). The issuer and resource are not pinned,
+  # since both are the instance's own host.
+  mcp: https://{host}/api/metabase-mcp
+# [mcp], «Authentication»: OAuth 2.0 with Metabase's embedded server; S256: [as].
+schemes: [oauth2_code]
+client:
+  # [mcp]: «Metabase supports dynamic client registration, but not Use Claude's published
+  # identity or Use your own OAuth client»; registration_endpoint: [as].
+  registration: [dcr]
+scopes:
+  # [tools]: agent:content:read is every search, browse and get tool, and agent:query:run is
+  # execute_query, run_saved_question, visualize_query and render_drill_through. Left out:
+  # agent:sql:run, whose execute_sql «Can overwrite or delete existing data or content»
+  # ([tools]); agent:content:write and agent:delivery:write, which create, edit, trash and
+  # schedule ([mcp], «Permission scopes»); agent:resource:read, which «No tool needs» ([mcp]).
+  # [401] challenges with all five, which MCP's «Scope Selection Strategy» would take; this
+  # asks for fewer on purpose, and [mcp] says the consent page lists what the client asks for.
+  # Space separated (RFC 6749 section 3.3), as [401]'s scope parameter is.
+  list: [agent:content:read, agent:query:run]
+# No identity, capture or refresh policy: neither [mcp] nor [as] documents a token response,
+# token lifetimes or rotation. # unverified
+# So refresh.rotating is left unset, which is unknown, as in sentry.yaml.
+# No rate_limit: neither [mcp] nor [tools] documents one. # unverified
+sources:
+  - kind: mcp
+    endpoint: mcp

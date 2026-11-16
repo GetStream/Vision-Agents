@@ -1,0 +1,766 @@
+// Package phone gives an agent a telephone number.
+//
+// Eleven vendors sell numbers and they all sell the same thing, so the contract here is
+// the small part they agree on: find a number, buy it, point it at the bridge, dial out,
+// give it back. Everything a vendor does beyond that is reached through its own client,
+// the same escape hatch the model providers offer.
+//
+// What they do not agree on is how a search can be narrowed, so a provider also declares
+// which filters its API can express. A search using one it cannot is skipped rather than
+// asked without it: answering a search for Colorado with numbers from Ohio reads as a
+// result rather than as a gap. Placing a call works the same way: a vendor declares which
+// of a call's terms it can express, and one it cannot is refused rather than dropped.
+//
+// Stream's SIP support is inbound only today. A call to a number reaches an agent by the
+// vendor bridging it into a Stream inbound trunk; a call from an agent is originated at
+// the vendor and bridged into the same call, because there is nothing to ask Stream to
+// dial out with.
+package phone
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// maxInitialDigits is how many keys can be pressed when a call is answered. Twilio takes
+// 32, so 32 is what can be promised everywhere.
+const maxInitialDigits = 32
+
+// ErrNotImplemented is what a vendor returns when this service knows it exists but cannot
+// yet work with it. It is a real error rather than a silent success, so a caller cannot
+// think a number was bought when it was not.
+var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
+
+// ErrCallNotFound is a call the customer did not place from here.
+var ErrCallNotFound = errors.New("phone: no such call")
+
+// ErrAddressRequired is a number the vendor sells only with a verified address, which is not
+// supported: numbers outside the US and Canada.
+var ErrAddressRequired = errors.New("phone: this number needs a verified address")
+
+// ErrNumberSettling is a release the vendor refused for a number bought moments ago, which it
+// is still setting up: the same release goes through once it has (Telnyx took 13 seconds).
+var ErrNumberSettling = errors.New("phone: the vendor is still setting up this number")
+
+// NumberSettles is how long after its purchase a vendor's refusal to release a number is taken
+// to be ErrNumberSettling.
+const NumberSettles = time.Minute
+
+// ErrDestinationRefused is a number no call from here may reach, whoever asks: one billed to
+// the caller at a premium rate.
+var ErrDestinationRefused = errors.New("phone: calls to this number are refused")
+
+// ErrSuspended is an app Stream staff stopped from using the phone. Why stays with Stream.
+var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact Stream support")
+
+// ErrNotDialable is a number no call may be placed to: not a full E.164 number, or one refused
+// as a destination. A caller that holds a list of numbers can tell it from a failed call.
+var ErrNotDialable = errors.New("phone: not dialable")
+
+// ErrInvalid is a request that cannot be carried out as it was asked, such as a search filter
+// a vendor cannot apply, a ring timeout it does not allow, or a vendor this deployment holds
+// no credentials for. Its message says what to change. A failure of the router's own, such as
+// a database that failed, is never one.
+var ErrInvalid = errors.New("phone: invalid request")
+
+// Invalid marks err as ErrInvalid without changing its message.
+func Invalid(err error) error { return marked{err, ErrInvalid} }
+
+// ErrNotConfigured is a vendor, or every vendor, this deployment has no credentials for, or a
+// setting a vendor needs that the deployment lacks: the operator's to fix, not the request's.
+var ErrNotConfigured = errors.New("phone: not configured")
+
+// NotConfigured marks err as ErrNotConfigured without changing its message.
+func NotConfigured(err error) error { return marked{err, ErrNotConfigured} }
+
+// marked is err that is also kind, with err's own message.
+type marked struct{ err, kind error }
+
+func (e marked) Error() string        { return e.err.Error() }
+func (e marked) Is(target error) bool { return target == e.kind }
+
+// premiumPrefixes are the North American codes billed to the caller at a premium rate, which
+// is how toll fraud turns a stolen account into money.
+var premiumPrefixes = []string{"+1900", "+1976"}
+
+// Dialable reports whether a call may be placed to the number. Only a full E.164 number is,
+// which also keeps short codes such as 911, 112 or 988 from being dialled as they are.
+func Dialable(to string) error {
+	if !store.IsE164(to) {
+		return stack.Wrap(notDialable{fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to)})
+	}
+	for _, prefix := range premiumPrefixes {
+		if strings.HasPrefix(to, prefix) {
+			return stack.Wrap(notDialable{fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to)})
+		}
+	}
+	return nil
+}
+
+// notDialable marks a Dialable failure as ErrNotDialable without changing its message.
+type notDialable struct{ err error }
+
+func (e notDialable) Error() string        { return e.err.Error() }
+func (e notDialable) Unwrap() error        { return e.err }
+func (e notDialable) Is(target error) bool { return target == ErrNotDialable }
+
+// VendorError is a vendor's API refusing a request or not answering it. It carries what
+// debugging needs, so it is logged in full, and none of it is shown to a client: the path can
+// hold an account id and the message is the vendor's own words.
+type VendorError struct {
+	// Vendor is who failed, e.g. "twilio".
+	Vendor string
+	// Path is the request path, for the log only.
+	Path string
+	// Status is the HTTP status, 0 when no answer came.
+	Status int
+	// Code is the vendor's own error code, empty when it sent none.
+	Code string
+	// Message is the vendor's message, or what went wrong before an answer came.
+	Message string
+	// Cause is the transport error, nil for an HTTP answer.
+	Cause error
+}
+
+func (e *VendorError) Error() string {
+	if e.Status == 0 {
+		if e.Cause == nil {
+			return fmt.Sprintf("%s: %s: %s", e.Vendor, e.Path, e.Message)
+		}
+		return fmt.Sprintf("%s: %s: %s: %v", e.Vendor, e.Path, e.Message, e.Cause)
+	}
+	status := fmt.Sprintf("%d %s", e.Status, http.StatusText(e.Status))
+	if e.Code != "" {
+		status += " " + e.Code
+	}
+	return fmt.Sprintf("%s: %s: %s: %s", e.Vendor, e.Path, status, e.Message)
+}
+
+func (e *VendorError) Unwrap() error { return e.Cause }
+
+// Capability is what a number can carry.
+//
+// The names are Telnyx's feature names, because they are the widest vocabulary any of these
+// vendors offers and every other vendor's smaller set maps into them without loss.
+type Capability string
+
+const (
+	Voice            Capability = "voice"
+	SMS              Capability = "sms"
+	MMS              Capability = "mms"
+	Fax              Capability = "fax"
+	Emergency        Capability = "emergency"
+	HDVoice          Capability = "hd_voice"
+	InternationalSMS Capability = "international_sms"
+	LocalCalling     Capability = "local_calling"
+)
+
+// NumberType is what kind of number it is, which decides who pays for the call.
+type NumberType string
+
+const (
+	// Local is a geographic number, the kind an agent usually wants.
+	Local NumberType = "local"
+	// TollFree is free to the caller and charged to whoever holds it.
+	TollFree NumberType = "toll_free"
+	// Mobile is a number on a mobile range, which some countries treat differently.
+	Mobile NumberType = "mobile"
+)
+
+// Filter names one way of narrowing a search.
+//
+// Vendors do not agree on which of these they can express: Telnyx filters by US state,
+// Sinch does not. A provider says which it speaks so a search asking for one it does not is
+// skipped rather than answered with numbers from the wrong place.
+type Filter string
+
+const (
+	FilterCountry            Filter = "country"
+	FilterAreaCode           Filter = "area_code"
+	FilterContains           Filter = "contains"
+	FilterPrefix             Filter = "prefix"
+	FilterLocality           Filter = "locality"
+	FilterAdministrativeArea Filter = "administrative_area"
+	FilterNumberType         Filter = "number_type"
+)
+
+// Search narrows the numbers a vendor offers.
+type Search struct {
+	// Country is an ISO 3166-1 alpha-2 code, e.g. "US".
+	Country string
+	// AreaCode restricts the search to one dialling area, where the vendor supports it.
+	AreaCode string
+	// Contains is a digit pattern the number must appear anywhere in, e.g. "555".
+	Contains string
+	// Prefix is digits the national part of the number must start with, e.g. "719" for
+	// Colorado Springs. It differs from Contains in where the digits have to fall.
+	Prefix string
+	// Locality is a city, region or rate centre, e.g. "Denver".
+	Locality string
+	// AdministrativeArea is a US state or Canadian province, e.g. "CO".
+	AdministrativeArea string
+	// Type is the kind of number wanted. Empty leaves the vendor's default, which is
+	// local everywhere that has one.
+	Type NumberType
+	// Capabilities every number must have. Voice is the one an agent needs.
+	Capabilities []Capability
+	// Limit caps how many are returned. Zero leaves the vendor's default.
+	Limit int
+}
+
+// Filters are the ways this search is narrowed, which is what a vendor has to be able to
+// express to answer it. Capabilities are not among them: every vendor reports what a number
+// carries, so those are checked on the results instead.
+func (s Search) Filters() []Filter {
+	var used []Filter
+	if s.Country != "" {
+		used = append(used, FilterCountry)
+	}
+	if s.AreaCode != "" {
+		used = append(used, FilterAreaCode)
+	}
+	if s.Contains != "" {
+		used = append(used, FilterContains)
+	}
+	if s.Prefix != "" {
+		used = append(used, FilterPrefix)
+	}
+	if s.Locality != "" {
+		used = append(used, FilterLocality)
+	}
+	if s.AdministrativeArea != "" {
+		used = append(used, FilterAdministrativeArea)
+	}
+	if s.Type != "" {
+		used = append(used, FilterNumberType)
+	}
+	return used
+}
+
+// Unsupported are the filters this search uses that a provider cannot express.
+func (s Search) Unsupported(provider Provider) []Filter {
+	var missing []Filter
+	for _, filter := range s.Filters() {
+		if !provider.Supports(filter) {
+			missing = append(missing, filter)
+		}
+	}
+	return missing
+}
+
+// Matches reports whether an offer actually satisfies the capabilities asked for. A vendor
+// that cannot filter by capability still says what each number carries, so this is what
+// keeps its answer honest.
+func (s Search) Matches(offer Available) bool {
+	return covers(offer.Capabilities, s.Capabilities)
+}
+
+// Available is a number a vendor is offering, not one that has been bought.
+type Available struct {
+	// E164 is the number in +15551234567 form, which is the only format used here.
+	E164 string
+	// Vendor is who is offering it, which matters once several vendors are asked at once.
+	Vendor       string
+	Country      string
+	Region       string
+	Locality     string
+	Type         NumberType
+	Capabilities []Capability
+	// MonthlyCostMicros is millionths of a dollar per month, zero when the vendor does
+	// not quote a price on the search.
+	MonthlyCostMicros int64
+}
+
+// Order is a number to buy, as the search offered it.
+//
+// It carries the country because some vendors buy out of a country's inventory rather than
+// by number alone, and the offer already knows which country it came from. Guessing it back
+// out of the dial code would be a table of every country to maintain for one vendor.
+type Order struct {
+	E164 string
+	// Country is an ISO 3166-1 alpha-2 code. Empty is fine at the vendors that do not
+	// need it, which is most of them.
+	Country string
+}
+
+// Number is a number this service owns.
+type Number struct {
+	E164    string
+	Vendor  string
+	Country string
+	// VendorID is the vendor's own identifier for the purchase, which is what releasing
+	// or reconfiguring it needs.
+	VendorID          string
+	Capabilities      []Capability
+	MonthlyCostMicros int64
+}
+
+// Bridge is the Stream SIP trunk a vendor connects a call to. Inbound calls are sent to
+// it and outbound calls are bridged into it, so both directions share one description.
+type Bridge struct {
+	// URI is the SIP address of the trunk, e.g. "sip:trunk-id@sip.stream-io-api.com".
+	URI string
+	// Username and Password authenticate the vendor to the trunk.
+	Username string
+	Password string
+}
+
+// Validate reports whether the bridge is usable.
+func (b Bridge) Validate() error {
+	if b.URI == "" {
+		return stack.Wrap(errors.New("phone: a bridge uri is required"))
+	}
+	if !strings.HasPrefix(b.URI, "sip:") && !strings.HasPrefix(b.URI, "sips:") {
+		return stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
+	}
+	return nil
+}
+
+// BridgeHost is the host of a sip: or sips: URI alone, for logs: no user, password, port
+// or parameters. It is empty for anything that is not a readable SIP URI.
+func BridgeHost(uri string) string {
+	scheme, rest, ok := strings.Cut(uri, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") {
+		return ""
+	}
+	if i := strings.LastIndex(rest, "@"); i >= 0 {
+		rest = rest[i+1:]
+	}
+	rest, _, _ = strings.Cut(rest, ";")
+	if strings.HasPrefix(rest, "[") {
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			return ""
+		}
+		return rest[:end+1]
+	}
+	host, _, _ := strings.Cut(rest, ":")
+	return host
+}
+
+// WithNumber is the bridge with the number as the user part of its URI. Stream finds the
+// trunk and its routing rule by the number in the To user, so a URI without it reaches
+// nothing.
+func (b Bridge) WithNumber(e164 string) (Bridge, error) {
+	scheme, rest, ok := strings.Cut(b.URI, ":")
+	if !ok || (scheme != "sip" && scheme != "sips") || rest == "" {
+		return Bridge{}, stack.Wrap(fmt.Errorf("phone: %q is not a sip uri", b.URI))
+	}
+	if _, host, hasUser := strings.Cut(rest, "@"); hasUser {
+		rest = host
+	}
+	b.URI = scheme + ":" + e164 + "@" + rest
+	return b, nil
+}
+
+// CallIDHeader is the SIP header that carries the call id to Stream.
+const CallIDHeader = sipbridge.CallIDHeader
+
+// WithCallID is the bridge with the call id as the x-stream-call-id parameter of its URI,
+// which Twilio and Telnyx deliver to Stream as CallIDHeader. An empty id changes nothing.
+func (b Bridge) WithCallID(id string) Bridge {
+	if id == "" {
+		return b
+	}
+	b.URI += "?x-stream-call-id=" + url.QueryEscape(id)
+	return b
+}
+
+// Inbound points a number at the bridge, so calling it reaches an agent.
+type Inbound struct {
+	// E164 is the number to configure.
+	E164 string
+	// Bridge is where the vendor should send the call.
+	Bridge Bridge
+}
+
+// CallFeature names one of the terms a call can be placed on.
+//
+// Vendors do not agree on which of these their call APIs can express: Twilio takes a ring
+// timeout on a dial, Bird does not. A provider says which it speaks, so a call asking
+// for one it does not is refused rather than placed without it. Silently dropping a ring
+// timeout means a call that should have given up in fifteen seconds sits in somebody's
+// voicemail for a minute instead.
+type CallFeature string
+
+const (
+	FeatureRingTimeout   CallFeature = "ring_timeout"
+	FeatureInitialDigits CallFeature = "initial_digits"
+	FeatureCustomHeaders CallFeature = "custom_headers"
+)
+
+// Outbound is a call the vendor places and bridges into the agent's call.
+type Outbound struct {
+	// From is one of this service's own numbers, which is what the person sees.
+	From string
+	// To is who to call.
+	To string
+	// Bridge is the trunk the answered call is joined to.
+	Bridge Bridge
+	// RingTimeout is how long to ring before giving up. Zero leaves the vendor's default,
+	// which is around a minute and long enough to reach voicemail.
+	RingTimeout time.Duration
+	// InitialDigits are pressed once the person answers, which is how a call reaches an
+	// extension behind a menu, e.g. "ww1234#" for a conference bridge.
+	InitialDigits string
+	// Headers are carried to the person's leg as custom SIP headers, for whatever is on
+	// the other end to read.
+	Headers map[string]string
+	// AnswerURL is where a vendor that will not take a call plan on the request fetches
+	// one from when the person answers. It is set only for those vendors, and what it
+	// serves is that vendor's own Answer.
+	AnswerURL string
+	// Trunk is the customer's own SIP trunk the call is dialled through. It is set only
+	// for numbers with vendor sip_trunk; every other vendor dials through its own network.
+	Trunk *SIPTrunk
+	// Connected is told where each side sends its audio from once a call through a
+	// customer's own SIP trunk is set up, which only the router's own bridge sees. Nil
+	// tells nobody; other vendors never call it.
+	Connected func(sipbridge.MediaAddrs)
+	// CallID is sent to Stream on the leg the vendor dials, so a number on a shared trunk
+	// finds its session. It is set only on the shared path; empty sends no header.
+	CallID string
+	// MachineURL is where the vendor posts whether a person or an answering machine
+	// picked up. Empty asks for no detection.
+	MachineURL string
+	// StatusURL is where the vendor posts the call's status. Empty sends none.
+	StatusURL string
+	// Ended is told how a call through a customer's own SIP trunk ended, which only the
+	// router's own bridge sees. Nil tells nobody.
+	Ended func(CallStatus)
+	// Resume is what another node needs to continue a call through a customer's own SIP
+	// trunk if this one stops. Set only for a call on a shared line; nil, the call cannot move.
+	Resume *TrunkCallRef
+}
+
+// TrunkCallRef names what a node taking over a call through a customer's own SIP trunk
+// reads fresh from the service. It holds no secret.
+type TrunkCallRef struct {
+	CustomerID string
+	SIPTrunkID string
+	// StreamTrunkID is the shared line's Stream trunk. Only a call on a shared line moves.
+	StreamTrunkID string
+	From          string
+	CallID        string
+	// Token is the call's outcome token, which Ended reports with.
+	Token string
+}
+
+// Features are the terms this call is placed on, which is what a vendor has to be able to
+// express to place it.
+func (o Outbound) Features() []CallFeature {
+	var used []CallFeature
+	if o.RingTimeout > 0 {
+		used = append(used, FeatureRingTimeout)
+	}
+	if o.InitialDigits != "" {
+		used = append(used, FeatureInitialDigits)
+	}
+	if len(o.Headers) > 0 {
+		used = append(used, FeatureCustomHeaders)
+	}
+	return used
+}
+
+// DigitsPlayer is a provider that presses digits on answer but not every key a keypad has.
+type DigitsPlayer interface {
+	PlaysDigits(digits string) bool
+}
+
+// InboundStopper is a vendor whose number keeps sending callers to the trunk until told
+// otherwise. A vendor that asks the router on every call needs no such step.
+type InboundStopper interface {
+	StopInbound(ctx context.Context, e164 string) error
+}
+
+// Hanger is a vendor that can hang up a call it placed, ringing or answered.
+type Hanger interface {
+	HangUp(ctx context.Context, vendorCallID string) error
+}
+
+// StreamLeg is how a vendor's leg to Stream is set up.
+type StreamLeg int
+
+const (
+	// StreamLegPerCall is a trunk and routing rule made for the call.
+	StreamLegPerCall StreamLeg = iota
+	// StreamLegShared is the number's own line, with the call id on the leg.
+	StreamLegShared
+)
+
+// StreamLegger is a provider that says how its leg to Stream is set up.
+type StreamLegger interface {
+	StreamLeg() StreamLeg
+}
+
+// CallResult is how a vendor says a placed call ended. Empty is a report that is not final.
+// There is no unknown: only the router decides that, from a call nobody reported on.
+type CallResult string
+
+const (
+	CallCompleted CallResult = "completed"
+	CallBusy      CallResult = "busy"
+	CallNoAnswer  CallResult = "no_answer"
+	CallFailed    CallResult = "failed"
+	CallCanceled  CallResult = "canceled"
+)
+
+// CallStatus is one report a vendor sent on a placed call. Word is the vendor's own, kept for
+// debugging. The rest is what the report says of the carrier, zero when it says nothing
+// (internal/phone/outcome/AGENTS.md lists what each vendor reports).
+type CallStatus struct {
+	Result CallResult
+	Word   string
+	// SIPCode is the final SIP response to the call's INVITE, from a final report.
+	SIPCode int
+	// Ringing is a report that the person's phone has started ringing.
+	Ringing bool
+	// PostDialDelay is how long the INVITE waited for its first response other than 100
+	// Trying or a challenge (RFC 6076 §4.3), as the router's own bridge measured it.
+	PostDialDelay time.Duration
+}
+
+// StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.
+type StatusReader interface {
+	ReadStatus(contentType string, body []byte) (CallStatus, error)
+}
+
+// Machine is who a vendor says picked up an outbound call.
+type Machine string
+
+const (
+	MachineHuman Machine = "human"
+	// MachineGreetingEnded is an answering machine whose greeting has finished, so what is
+	// said next is recorded.
+	MachineGreetingEnded Machine = "greeting_ended"
+	// MachineFax is a fax machine, which nothing said reaches.
+	MachineFax Machine = "fax"
+	// MachineUnknown is whatever the vendor could not tell.
+	MachineUnknown Machine = "unknown"
+)
+
+// MachineReport is who a vendor says picked up. Word is the vendor's own, kept for debugging.
+type MachineReport struct {
+	Machine Machine
+	Word    string
+}
+
+// MachineDetector is a provider whose vendor can tell an answering machine from a person and
+// posts what it found to Outbound.MachineURL.
+type MachineDetector interface {
+	ReadMachine(contentType string, body []byte) (MachineReport, error)
+}
+
+// MachineOf is the Machine for the AnsweredBy word that Twilio and Telnyx TeXML both report.
+func MachineOf(answeredBy string) Machine {
+	switch answeredBy {
+	case "human":
+		return MachineHuman
+	case "machine_end_beep", "machine_end_silence", "machine_end_other":
+		return MachineGreetingEnded
+	case "fax":
+		return MachineFax
+	}
+	return MachineUnknown
+}
+
+// StreamLegOf is the provider's stream leg, per call for one that does not say.
+func StreamLegOf(p Provider) StreamLeg {
+	if legger, ok := p.(StreamLegger); ok {
+		return legger.StreamLeg()
+	}
+	return StreamLegPerCall
+}
+
+// Unsupported are the terms this call is placed on that a provider cannot express.
+func (o Outbound) Unsupported(provider Provider) []CallFeature {
+	var missing []CallFeature
+	for _, feature := range o.Features() {
+		if !provider.Dials(feature) {
+			missing = append(missing, feature)
+			continue
+		}
+		if player, ok := provider.(DigitsPlayer); ok && feature == FeatureInitialDigits &&
+			!player.PlaysDigits(o.InitialDigits) {
+			missing = append(missing, feature)
+		}
+	}
+	return missing
+}
+
+// Validate reports whether the call can be placed as described.
+func (o Outbound) Validate() error {
+	if o.From == "" || o.To == "" {
+		return stack.Wrap(Invalid(errors.New("phone: a call needs a from and a to")))
+	}
+	if err := Dialable(o.To); err != nil {
+		return err
+	}
+	if err := o.Bridge.Validate(); err != nil {
+		return err
+	}
+	if o.RingTimeout < 0 {
+		return stack.Wrap(Invalid(errors.New("phone: a call cannot ring for less than no time")))
+	}
+	if o.InitialDigits != "" {
+		if err := ValidateDigits(o.InitialDigits); err != nil {
+			return err
+		}
+		if len(o.InitialDigits) > maxInitialDigits {
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
+				len(o.InitialDigits), maxInitialDigits)))
+		}
+	}
+	return nil
+}
+
+// Dialed is a call in progress at the vendor.
+type Dialed struct {
+	// VendorCallID identifies the call at the vendor, for hanging up or inspecting it.
+	VendorCallID string
+	// Status is the vendor's own word for where the call is, e.g. "queued" or "ringing".
+	Status string
+}
+
+// Provider is one telephony vendor.
+type Provider interface {
+	// SearchNumbers returns numbers the vendor is offering.
+	SearchNumbers(ctx context.Context, search Search) ([]Available, error)
+	// BuyNumber buys one, which is what starts the monthly charge.
+	BuyNumber(ctx context.Context, order Order) (Number, error)
+	// ReleaseNumber gives it back, which is what stops the charge.
+	ReleaseNumber(ctx context.Context, e164 string) error
+	// ConfigureInbound points the number at the bridge.
+	ConfigureInbound(ctx context.Context, inbound Inbound) error
+	// Dial places a call and bridges it into the agent's call. Stream cannot dial out
+	// itself, so the vendor originates and the agent is already waiting on the trunk.
+	Dial(ctx context.Context, outbound Outbound) (Dialed, error)
+	// SendDigits presses digits on a leg the vendor is holding, which is how an agent
+	// gets past a menu on a call it placed. The leg is named by the id Dial returned:
+	// there is no such id for an inbound call, so this only reaches calls made from here.
+	SendDigits(ctx context.Context, vendorCallID, digits string) error
+
+	// Supports reports whether this vendor's API can express a way of narrowing a search.
+	// A search using one it cannot is skipped, because answering it with numbers from
+	// somewhere else would look like a result.
+	Supports(filter Filter) bool
+	// Dials reports whether this vendor's call API can express one of a call's terms. A
+	// call asking for one it cannot is refused, because a ring timeout that was ignored
+	// is not a ring timeout.
+	Dials(feature CallFeature) bool
+
+	// Vendor is the stable vendor name used in stats, e.g. "twilio".
+	Vendor() string
+	// Client exposes the underlying HTTP client so a caller can reach what this does not
+	// wrap without building a second one.
+	Client() *http.Client
+}
+
+// Plan is what a vendor is told to do when the person it called picks up.
+type Plan struct {
+	// ContentType is what the vendor expects to be served, which is XML at most of them.
+	ContentType string
+	// Body is the plan itself, in that vendor's dialect.
+	Body []byte
+}
+
+// AnswerRenderer is a vendor that will not take a call plan on the request that places a
+// call, and fetches one when the person answers instead.
+//
+// It is separate from Provider because it is true of three vendors out of eight, and a
+// method every other vendor had to refuse would say less than not having it. Implementing it
+// is also what tells the service this vendor needs an answer url in the first place.
+type AnswerRenderer interface {
+	// Answer renders this vendor's way of saying "press these, then bridge to that".
+	Answer(bridge Bridge, initialDigits string) (Plan, error)
+}
+
+// notImplemented stands in for a vendor this service can name but cannot yet work with.
+// It exists so those vendors list and resolve like the rest rather than being absent,
+// while every call says plainly that it did nothing.
+type notImplemented struct {
+	vendor string
+	client *http.Client
+}
+
+// NotImplemented returns a provider that refuses every operation, naming the vendor.
+func NotImplemented(vendor string) Provider {
+	return &notImplemented{vendor: vendor, client: http.DefaultClient}
+}
+
+func (n *notImplemented) SearchNumbers(context.Context, Search) ([]Available, error) {
+	return nil, n.err()
+}
+
+func (n *notImplemented) BuyNumber(context.Context, Order) (Number, error) {
+	return Number{}, n.err()
+}
+
+func (n *notImplemented) ReleaseNumber(context.Context, string) error { return n.err() }
+
+func (n *notImplemented) ConfigureInbound(context.Context, Inbound) error { return n.err() }
+
+func (n *notImplemented) Dial(context.Context, Outbound) (Dialed, error) {
+	return Dialed{}, n.err()
+}
+
+func (n *notImplemented) SendDigits(context.Context, string, string) error { return n.err() }
+
+// Supports claims every filter, so a search reaches the operation and is refused there by
+// name rather than being quietly skipped as if the vendor had nothing to sell.
+func (n *notImplemented) Supports(Filter) bool { return true }
+
+// Dials claims every feature, for the same reason Supports claims every filter: "didww
+// cannot dial" is the useful answer, and "didww cannot express a ring timeout" would hide
+// it behind a detail.
+func (n *notImplemented) Dials(CallFeature) bool { return true }
+
+func (n *notImplemented) Vendor() string { return n.vendor }
+
+func (n *notImplemented) Client() *http.Client { return n.client }
+
+func (n *notImplemented) err() error {
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNotImplemented, n.vendor))
+}
+
+// ValidateDigits reports whether a string can be pressed on a keypad.
+//
+// A keypad has twelve keys, and w is the pause every vendor spells the same way: a menu
+// that asks for an extension after a beep needs one. W is the longer pause and A to D are
+// the fourth column no consumer handset has but every vendor's API accepts. Anything else
+// is a model that has written words where it meant digits, and sending it would be a
+// silent no-op on the call.
+func ValidateDigits(digits string) error {
+	if digits == "" {
+		return stack.Wrap(Invalid(errors.New("phone: pressing needs digits to press")))
+	}
+	for _, key := range digits {
+		switch {
+		case key >= '0' && key <= '9', key >= 'A' && key <= 'D',
+			key == '*', key == '#', key == 'w', key == 'W':
+		default:
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %q is not something a keypad can press", string(key))))
+		}
+	}
+	return nil
+}
+
+// covers reports whether a set of capabilities includes every one asked for.
+func covers(has, wanted []Capability) bool {
+	for _, capability := range wanted {
+		if !slices.Contains(has, capability) {
+			return false
+		}
+	}
+	return true
+}

@@ -1,0 +1,139 @@
+// Package voices prepares a customer's own recordings with a text-to-speech provider.
+//
+// Cloning is a control-plane call with no session attached: it happens once, over HTTP,
+// long before anybody joins a call. That is why it is here rather than on tts.TTS, which
+// is about a connection that is already open.
+package voices
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// Sample is one recording, held rather than streamed because the providers all want it as
+// a multipart part with a length.
+type Sample struct {
+	// Name is what the file is called upstream. It only has to carry an extension the
+	// provider recognises.
+	Name        string
+	ContentType string
+	Content     []byte
+	// Transcript is what is said in it, for the providers that clone better with one.
+	Transcript string
+}
+
+// Request is a voice to prepare.
+type Request struct {
+	// Name is what to call the voice upstream, so a customer can recognise it in the
+	// provider's own dashboard.
+	Name        string
+	Description string
+	Samples     []Sample
+}
+
+// Speech is a short piece of audio spoken in a prepared voice, and the characters it was
+// billed for saying.
+type Speech struct {
+	Audio       []byte
+	ContentType string
+	Characters  int64
+}
+
+// Used is what saying the line is priced by.
+func (s Speech) Used() pricing.Quantities {
+	return pricing.Quantities{pricing.Characters: s.Characters}
+}
+
+// Prepared is a voice a provider made: the id its sessions ask for, and the clones it billed.
+type Prepared struct {
+	ExternalID string
+	Clones     int64
+}
+
+// Used is what preparing the voice is priced by.
+func (p Prepared) Used() pricing.Quantities { return pricing.Quantities{pricing.Clones: p.Clones} }
+
+// cloned is the one clone a provider made under externalID, or its failure.
+func cloned(externalID string, err error) (Prepared, error) {
+	if err != nil {
+		return Prepared{}, err
+	}
+	return Prepared{ExternalID: externalID, Clones: 1}, nil
+}
+
+// Cloner prepares a voice with one provider.
+//
+// Prepare returns the id the provider's sessions ask for, which is what gets stored as the
+// binding, and the clone it made. Delete takes the voice back off the provider, so deleting
+// ours does not leave the customer paying for voices nobody can reach. Speak says a line in
+// the prepared voice, so a customer can hear what the provider made of it before a caller
+// does; SpeechModel is the model it speaks with, which the line is priced as.
+type Cloner interface {
+	Prepare(ctx context.Context, request Request) (Prepared, error)
+	Delete(ctx context.Context, externalID string) error
+	Speak(ctx context.Context, externalID, text string) (Speech, error)
+	SpeechModel() string
+}
+
+// Registry holds one cloner per provider name.
+type Registry struct {
+	mu      sync.RWMutex
+	cloners map[string]Cloner
+}
+
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry {
+	return &Registry{cloners: map[string]Cloner{}}
+}
+
+// Register adds a provider's cloner, replacing any cloner already under that name.
+func (r *Registry) Register(provider string, cloner Cloner) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cloners[provider] = cloner
+}
+
+// Cloner returns the cloner for a provider.
+func (r *Registry) Cloner(provider string) (Cloner, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cloner, ok := r.cloners[provider]
+	if !ok {
+		return nil, stack.Wrap(fmt.Errorf("voices: %s cannot be given a voice of your own", provider))
+	}
+	return cloner, nil
+}
+
+// Providers reports which providers a voice can be prepared with.
+func (r *Registry) Providers() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	names := make([]string, 0, len(r.cloners))
+	for name := range r.cloners {
+		names = append(names, name)
+	}
+	return names
+}
+
+// Validate reports what is wrong with a request, if anything.
+func (r Request) Validate() error {
+	if r.Name == "" {
+		return stack.Wrap(errors.New("voices: a voice needs a name"))
+	}
+	if len(r.Samples) == 0 {
+		return stack.Wrap(errors.New("voices: a voice needs at least one recording to be cloned from"))
+	}
+	for _, sample := range r.Samples {
+		if len(sample.Content) == 0 {
+			return stack.Wrap(errors.New("voices: a recording with no audio in it cannot be cloned"))
+		}
+	}
+	return nil
+}

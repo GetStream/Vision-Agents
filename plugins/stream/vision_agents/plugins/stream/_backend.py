@@ -1,0 +1,500 @@
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Optional, Sequence, Union
+
+from ._errors import raise_refusal
+from ._generated import AuthenticatedClient
+
+URL_ENV = "STREAM_ACCELERATION_URL"
+# Holds this client to the hosted router in one region, such as us-east4.
+REGION_ENV = "STREAM_ACCELERATION_REGION"
+CUSTOMER_ENV = "STREAM_ACCELERATION_CUSTOMER_ID"
+API_KEY_ENV = "STREAM_API_KEY"
+API_SECRET_ENV = "STREAM_API_SECRET"
+AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE"
+
+CUSTOMER_HEADER = "X-Customer-Id"
+USER_HEADER = "X-Stream-User-Id"
+# Which client a request came from, which the router's audit log records as the change's
+# source. The Go SDK sends the same.
+CLIENT_HEADER = "X-Stream-Client"
+CLIENT_SDK = "sdk"
+# Where a caller the proxy is not in front of names its usage categories, its team among them
+# as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
+# and the proxy deletes this header.
+USAGE_CATEGORIES_HEADER = "X-Stream-Usage-Categories"
+
+# The rule the router and the proxy hold usage categories to. A team is a category of its own,
+# team:<name>, which is why its name is shorter and has no ':'.
+TEAM_PREFIX = "team:"
+MAX_CATEGORIES = 10
+_CATEGORY = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+_TEAM = re.compile(r"[A-Za-z0-9_.-]{1,59}")
+# Stream's hosted router, which is where a client goes when nothing says otherwise.
+DEFAULT_URL = "https://accelerate-us-east4.gcp.stream-io-api.com"
+
+# How long a token minted here lasts. Short, because it is minted per request and a stolen
+# one should stop working sooner than the credential behind it.
+TOKEN_VALIDITY_SECONDS = 60 * 60
+
+# The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
+# which regions are served is the hosted router's to say, so offering another needs no
+# release of this plugin.
+_REGION = re.compile(r"[a-z]+-[a-z]+[0-9]+")
+_REGION_PREFIX = "https://accelerate-"
+_REGION_SUFFIX = ".gcp.stream-io-api.com"
+
+
+def region_url(name: str) -> str:
+    """The hosted router held to one region.
+
+    Requests to it are served there and nowhere else, even when that region is full or down.
+    """
+    if not _REGION.fullmatch(name):
+        raise ValueError(f"{name!r} is not a region, such as us-east4")
+    return _REGION_PREFIX + name + _REGION_SUFFIX
+
+
+def check_team(team: str) -> str:
+    """The team, or ValueError naming why the router would refuse it."""
+    if not isinstance(team, str) or not _TEAM.fullmatch(team):
+        raise ValueError(
+            f"team {team!r} is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -"
+        )
+    return team
+
+
+def check_category(category: str) -> str:
+    """The usage category, or ValueError naming why the router would refuse it."""
+    if not isinstance(category, str) or not _CATEGORY.fullmatch(category):
+        raise ValueError(
+            f"usage category {category!r} is not 1 to 64 characters of "
+            "A-Z, a-z, 0-9, _ . : and -"
+        )
+    # In any case, as the proxy reads it: Team:finance would be a second team.
+    if category[: len(TEAM_PREFIX)].lower() == TEAM_PREFIX:
+        raise ValueError(
+            f"usage category {category!r} names a team: use team= for a team"
+        )
+    return category
+
+
+def checked_categories(
+    team: Optional[str], categories: Sequence[str]
+) -> tuple[str, ...]:
+    """The categories each once and sorted, as the proxy keeps them, or ValueError naming the
+    entry the router would refuse."""
+    if isinstance(categories, str):
+        raise ValueError(
+            f"usage_categories is a list of categories, not the one string {categories!r}"
+        )
+    kept = tuple(sorted({check_category(category) for category in categories}))
+    if team is not None:
+        check_team(team)
+    if len(kept) + (team is not None) > MAX_CATEGORIES:
+        raise ValueError(
+            f"at most {MAX_CATEGORIES} usage categories, the team included; "
+            f"these are {len(kept) + (team is not None)}"
+        )
+    return kept
+
+
+def _hosted(url: str) -> bool:
+    """Whether url is the hosted router in some region, which is always behind the proxy."""
+    if not url.startswith(_REGION_PREFIX) or not url.endswith(_REGION_SUFFIX):
+        return False
+    name = url[len(_REGION_PREFIX) : -len(_REGION_SUFFIX)]
+    return bool(_REGION.fullmatch(name))
+
+
+@dataclass
+class Backend:
+    """Where the acceleration router is, and who is calling it.
+
+    There are three ways to say who that is, and which one a deployment takes is a property
+    of the deployment rather than a choice: a customer id for a router with nothing in front
+    of it, a key and secret for a process the customer runs, and a key and a user token for
+    anything acting on one person's behalf.
+
+    Attributes:
+        url: The router's base URL. Defaults to ``region``, then
+            ``STREAM_ACCELERATION_URL``, then ``STREAM_ACCELERATION_REGION``, then Stream's
+            hosted router, so only a self-hosted or local router needs it.
+        region: Holds this client to the hosted router in one region, such as ``us-east4``.
+            It cannot be passed together with a different ``url``.
+        customer_id: Who the work is billed to, taken at face value. What a router running
+            without keys in front of it reads. Defaults to
+            ``STREAM_ACCELERATION_CUSTOMER_ID``.
+        api_key: The public half of a Stream credential. Defaults to ``STREAM_API_KEY``.
+        api_secret: The secret belonging to that key, which mints a server-side token.
+            Server side only. Defaults to ``STREAM_API_SECRET``.
+        token: A token somebody else minted for ``user_id`` to hold, used instead of signing
+            one here. With it the secret is not needed at all, which is the point: a token is
+            the whole credential, and the secret behind it could mint any other.
+        user_id: The end user this client is acting for, if it is acting for one. Empty
+            speaks for the app itself, which is what a backend does and what keeps the
+            per-user daily limits out of it.
+        authenticate: Whether the router is reached through Stream's authenticating proxy,
+            which is what every hosted deployment sits behind. On for the hosted router.
+            Anywhere else it is opt in rather than inferred from holding a credential, because
+            a Stream key and secret are in the environment for plenty of reasons that have
+            nothing to do with this router. Defaults to ``STREAM_ACCELERATION_AUTHENTICATE``.
+        user: The user this is acting for, as chat and video want them. The id is what the
+            router reads; a name is what a transcript shows without a second lookup.
+        acting_for: The end user a server-side credential speaks for. Unlike ``user_id``
+            it keeps the app's own credential, so the request is still the server's.
+        team: The customer's team the work is counted against, such as ``finance``: its
+            spend and its spend limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+        usage_categories: The customer's own groupings the work is counted against, such
+            as ``project:onboarding``: at most 10 together with the team, each 1 to 64
+            characters of A-Z, a-z, 0-9, _ . : and -, and none starting ``team:``. Kept
+            sorted, each once.
+
+    The team and the categories are signed into every token minted here, and sent in
+    ``X-Stream-Usage-Categories`` to a router with no proxy in front of it. A token handed
+    in carries whatever it was signed with, so neither can be passed beside one.
+    """
+
+    url: Optional[str] = None
+    customer_id: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    token: str = ""
+    user_id: str = ""
+    authenticate: Optional[bool] = None
+    user: dict[str, object] = field(default_factory=dict)
+    acting_for: str = ""
+    region: Optional[str] = None
+    team: Optional[str] = None
+    usage_categories: Sequence[str] = ()
+
+    def __post_init__(self):
+        self.team = self.team or None
+        self.usage_categories = checked_categories(self.team, self.usage_categories)
+        if self.token and (self.team or self.usage_categories):
+            raise ValueError(
+                "a token handed in carries the team and usage categories it was signed "
+                "with; mint it with create_user_token(..., team=..., usage_categories=...)"
+            )
+        # A URL that is the region's own router is not a contradiction, and has to be let
+        # through: ``dataclasses.replace`` builds a copy from the resolved fields, which hold
+        # both.
+        if self.url and self.region and self.url.rstrip("/") != region_url(self.region):
+            raise ValueError("pass a url or a region, not both")
+        if not self.url and not self.region:
+            self.url = os.environ.get(URL_ENV) or None
+        if not self.url and not self.region:
+            self.region = os.environ.get(REGION_ENV) or None
+        if not self.url and self.region:
+            self.url = region_url(self.region)
+        self.url = (self.url or DEFAULT_URL).rstrip("/")
+        self.customer_id = self.customer_id or os.environ.get(CUSTOMER_ENV, "")
+        # Naming a customer is choosing how a router with nothing in front of it is reached,
+        # and a key that happens to be in the environment does not overrule the choice.
+        # Otherwise pointing a client at a local router from a shell that has a Stream key in
+        # it sends the credential that router does not read, and it answers that the customer
+        # header is missing.
+        if self.api_key is None:
+            self.api_key = "" if self.customer_id else os.environ.get(API_KEY_ENV, "")
+        # A token that was handed in is the caller's answer to who they are, so an ambient
+        # secret does not overrule it: without this, a client built the way a device builds
+        # one turns into a backend as soon as it runs in a process that happens to have the
+        # secret in its environment, which is most of them and every test.
+        if self.api_secret is None:
+            self.api_secret = "" if self.token else os.environ.get(API_SECRET_ENV, "")
+        if self.authenticate is None:
+            self.authenticate = _flag(os.environ.get(AUTHENTICATE_ENV)) or _hosted(
+                self.url
+            )
+
+        if self.user and not self.user_id:
+            self.user_id = str(self.user.get("id", ""))
+
+        # Falling back to the customer header would send a request the proxy refuses, and
+        # report it as whatever the proxy says rather than as what it is. Checked here rather
+        # than at first use because it is a contradiction in what was passed.
+        if self.authenticate and not self.api_key:
+            raise ValueError(
+                "a router behind the proxy is reached with a credential; pass api_key or "
+                f"set {API_KEY_ENV}"
+            )
+        if not self.api_key and not self.customer_id:
+            raise ValueError(
+                f"who is calling is not set; pass customer_id or set {CUSTOMER_ENV} for a "
+                "router that trusts one, or api_key with either api_secret or token"
+            )
+        if self.api_key and not self.api_secret and not self.token:
+            raise ValueError(
+                "api_key needs the secret it belongs to, or a token minted with it"
+            )
+
+    @property
+    def server_side(self) -> bool:
+        """Whether this speaks for a process the customer runs rather than for a device.
+
+        Only a server-side caller reaches the operations the spec does not mark client
+        accessible, which is everything about how an agent is configured and the claiming of
+        a guest. Worth asking before a call rather than reading a 403 afterwards.
+        """
+        return bool(self.api_secret) or (not self.api_key and bool(self.customer_id))
+
+    def as_user(self, user: Union[str, dict[str, object]], token: str) -> "Backend":
+        """A backend acting for one end user, holding the token that proves it.
+
+        A new backend rather than a change to this one, because a process usually holds both:
+        its own credential for the things only a backend may do, and one per user for the
+        conversations that belong to them. Sharing one and switching the user on it would make
+        which user a request was for depend on when it happened to run.
+        """
+        named: dict[str, object] = {"id": user} if isinstance(user, str) else dict(user)
+        if not named.get("id"):
+            raise ValueError("a user needs an id")
+        if not token:
+            raise ValueError(f"there is no token for {named['id']} to hold")
+
+        return Backend(
+            url=self.url,
+            customer_id=self.customer_id,
+            api_key=self.api_key,
+            # A token is the whole credential, so holding one stops this being a backend: a
+            # client told who it is acting for should not keep the ability to speak for the
+            # app itself.
+            api_secret="",
+            token=token,
+            user_id=str(named["id"]),
+            authenticate=self.authenticate,
+            user=named,
+        )
+
+    @property
+    def headers(self) -> dict[str, str]:
+        """What every request to the router carries.
+
+        Minted per read, so a client left idle longer than a token lasts does not wake up
+        holding an expired one.
+        """
+        headers = self._credentials()
+        headers[CLIENT_HEADER] = CLIENT_SDK
+        if self.acting_for:
+            headers[USER_HEADER] = self.acting_for
+        headers.update(self._category_header())
+        return headers
+
+    def _category_header(self) -> dict[str, str]:
+        """The team and categories as a router with no proxy in front of it reads them.
+
+        Behind the proxy they are on the token, and the proxy deletes the header.
+        """
+        if self.authenticate or not (self.team or self.usage_categories):
+            return {}
+        named = list(self.usage_categories)
+        if self.team:
+            named.append(TEAM_PREFIX + self.team)
+        return {USAGE_CATEGORIES_HEADER: ",".join(sorted(named))}
+
+    def _category_claims(self) -> dict[str, object]:
+        """The team and categories as claims on a token signed here."""
+        return category_claims(self.team, self.usage_categories)
+
+    def user_token(
+        self,
+        user_id: str,
+        team: Optional[str] = None,
+        usage_categories: Sequence[str] = (),
+        validity_seconds: int = TOKEN_VALIDITY_SECONDS,
+    ) -> str:
+        """A token for one end user to hold, naming their team and usage categories.
+
+        The claims are fixed when it is signed, so a device holding it cannot move its own
+        work to another team or category. Needs the secret.
+        """
+        if not self.api_secret:
+            raise ValueError(
+                "a user token is signed with the app's secret, which only a backend holds"
+            )
+        if not user_id:
+            raise ValueError("a user token needs the user's id")
+        if validity_seconds <= 0:
+            raise ValueError("a user token has to be valid for some seconds")
+        team = team or None
+        categories = checked_categories(team, usage_categories)
+        return _sign(
+            {"user_id": user_id, **category_claims(team, categories)},
+            str(self.api_secret),
+            validity_seconds,
+        )
+
+    def _credentials(self) -> dict[str, str]:
+        """Who is calling, as headers."""
+        if not self.api_key:
+            return {CUSTOMER_HEADER: str(self.customer_id)}
+
+        if self.authenticate:
+            # ``jwt`` whoever the token is for. The proxy works out the caller from the token
+            # it verified and rewrites who the router is told is calling, so saying ``server``
+            # here would be claiming what the proxy is there to decide -- and it refuses it.
+            return {
+                "api_key": str(self.api_key),
+                "stream-auth-type": "jwt",
+                "Authorization": f"Bearer {self._proxy_token()}",
+            }
+
+        headers = {"X-Api-Key": str(self.api_key)}
+        if self.api_secret:
+            headers["Authorization"] = f"Bearer {self._server_token()}"
+            headers["Stream-Auth-Type"] = "server"
+            if self.user_id:
+                headers[USER_HEADER] = self.user_id
+            return headers
+
+        headers["Authorization"] = f"Bearer {self.token}"
+        headers["Stream-Auth-Type"] = "jwt"
+        return headers
+
+    def client(self) -> AuthenticatedClient:
+        """An HTTP client for the generated API, already carrying the credentials.
+
+        The generated client puts one credential in one header, so the rest go in as plain
+        headers. Built per call rather than kept, which is also what keeps a minted token
+        fresh. An answer outside 2xx raises RouterError before anything parses it.
+        """
+        refusals = {"event_hooks": {"response": [raise_refusal]}}
+        if not self.api_key:
+            headers = self._category_header()
+            headers[CLIENT_HEADER] = CLIENT_SDK
+            if self.acting_for:
+                headers[USER_HEADER] = self.acting_for
+            return AuthenticatedClient(
+                base_url=str(self.url),
+                token=str(self.customer_id),
+                auth_header_name=CUSTOMER_HEADER,
+                prefix="",
+                headers=headers,
+                httpx_args=refusals,
+            )
+
+        credentials = dict(self.headers)
+        authorization = credentials.pop("Authorization", "")
+        return AuthenticatedClient(
+            base_url=str(self.url),
+            token=authorization.removeprefix("Bearer "),
+            auth_header_name="Authorization",
+            prefix="Bearer",
+            headers=credentials,
+            httpx_args=refusals,
+        )
+
+    def socket(self, path: str) -> str:
+        """The WebSocket URL for a path on the router.
+
+        The credentials are not in it: a socket opened from here carries the same headers a
+        request does, which the query string only exists to work around for a browser
+        WebSocket that cannot send any.
+        """
+        base = str(self.url)
+        if base.startswith("https://"):
+            return "wss://" + base[len("https://") :] + path
+        if base.startswith("http://"):
+            return "ws://" + base[len("http://") :] + path
+        return base + path
+
+    def stream_credentials(self) -> Optional[dict[str, object]]:
+        """What Stream's own chat and video clients need to connect, or None.
+
+        None for a backend reached by customer id: that is this router's own way of trusting
+        a caller and means nothing to Stream, so there is no credential to pass on. A
+        server-side backend gets a token minted for the user it is acting for rather than its
+        own server token, because a chat client connects as somebody.
+        """
+        if not self.api_key or not self.user_id:
+            return None
+
+        user = self.user or {"id": self.user_id}
+        if self.token:
+            return {"api_key": self.api_key, "user": user, "token": self.token}
+        if not self.api_secret:
+            return None
+        return {
+            "api_key": self.api_key,
+            "user": user,
+            "token": _sign(
+                {"user_id": self.user_id, **self._category_claims()},
+                str(self.api_secret),
+            ),
+        }
+
+    def _server_token(self) -> str:
+        """A token that speaks for the app itself, which is Stream's ``server: true``.
+
+        It names no user by definition: one that named a user would be a token minted for
+        that user to hold. Which of its users a backend is acting for goes in a header.
+        """
+        return _sign({"server": True, **self._category_claims()}, str(self.api_secret))
+
+    def _proxy_token(self) -> str:
+        """The token the proxy is given, which names a user where there is one.
+
+        A token handed in is used as it is. Otherwise it is minted here, and ``user_id`` is
+        what decides whose it is: the proxy has no header to read a backend's choice of user
+        from, so with a user named the token has to be that user's.
+        """
+        if self.token:
+            return self.token
+        if self.user_id:
+            return _sign(
+                {"user_id": self.user_id, **self._category_claims()},
+                str(self.api_secret),
+            )
+        return self._server_token()
+
+
+def category_claims(
+    team: Optional[str], categories: Sequence[str]
+) -> dict[str, object]:
+    """The ``team`` and ``usage_categories`` claims, each only when there is one."""
+    claims: dict[str, object] = {}
+    if team:
+        claims["team"] = team
+    if categories:
+        claims["usage_categories"] = list(categories)
+    return claims
+
+
+def _sign(
+    claims: dict[str, object],
+    secret: str,
+    validity_seconds: int = TOKEN_VALIDITY_SECONDS,
+) -> str:
+    """Sign a Stream token.
+
+    HS256 out of the standard library rather than a JWT package: it is twenty lines, and the
+    alternative is a dependency in every process that installs this plugin for the pipeline
+    and never authenticates against a hosted router at all.
+    """
+    if not secret:
+        raise ValueError("a token cannot be signed without a secret")
+
+    issued = int(time.time())
+    payload = {"iat": issued, "exp": issued + validity_seconds, **claims}
+    signing = (
+        _b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+        + "."
+        + _b64(json.dumps(payload, separators=(",", ":")).encode())
+    )
+    mac = hmac.new(secret.encode(), signing.encode(), hashlib.sha256).digest()
+    return signing + "." + _b64(mac)
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _flag(value: Optional[str]) -> bool:
+    """Read a variable written as a flag, the way the Go and JS clients read the same one."""
+    return value is not None and value.lower() in ("1", "true", "yes", "on")

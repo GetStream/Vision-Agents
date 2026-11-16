@@ -11,7 +11,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.plugins.local.devices import CameraDevice
 from vision_agents.plugins.local.edge import LocalCall, LocalConnection, LocalEdge
 
-from .conftest import _FakeAgent, _FakeAudioInput, _FakeAudioOutput, _make_transport
+from .fakes import _FakeAgent, _FakeAudioInput, _FakeAudioOutput, _make_transport
 
 
 class TestLocalEdge:

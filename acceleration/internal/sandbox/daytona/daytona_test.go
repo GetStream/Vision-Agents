@@ -1,0 +1,1134 @@
+package daytona
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"net/textproto"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+)
+
+// platform stands in for Daytona so the wire contract can be tested without a key.
+type platform struct {
+	server *httptest.Server
+
+	mu sync.Mutex
+	// created is every sandbox this platform was asked for.
+	created []string
+	// deleted is every sandbox it was asked to release.
+	deleted []string
+	// ran is the body of every code-run, in order.
+	ran []map[string]any
+	// creations is the body of every request for a sandbox.
+	creations []map[string]any
+	// files is what the sandbox's file system holds, by path, and uploads each file written
+	// into it, with how many runs came before.
+	files   map[string][]byte
+	uploads []string
+	// sized are files of the sandbox's that hold only their size, as many bytes of x, and
+	// served is how many bytes each download of a file put on the wire, counted once its
+	// answer ended.
+	sized  map[string]int
+	served map[string]int64
+	// cut are the files whose download breaks off halfway, as a dropped connection does.
+	cut map[string]bool
+	// failing are the files whose download answers a part named error of that many bytes of x.
+	failing map[string]int
+	// refuseUpload answers every file written into the sandbox with a 400, and refusal, when set,
+	// with that many bytes of x after it, counted in served under "upload".
+	refuseUpload bool
+	refusal      int
+	// commands are every shell command run in the sandbox, with how many runs came before,
+	// and commandExit and commandOutput the exit code and output each gives.
+	commands      []string
+	commandExit   int
+	commandOutput string
+	// rawCommands are the request bodies of those commands.
+	rawCommands []string
+	// steps are the file uploads ("upload") and shell commands ("command") in the order they came.
+	steps []string
+	// auth is the last Authorization header seen.
+	auth string
+
+	// runStatus and runBody are what a code-run answers with.
+	deleteStatus int
+	runStatus    int
+	runBody      string
+	// sequence names the next sandbox created.
+	sequence int
+
+	// secrets are the organization's secrets by id, and calls every request about a secret
+	// or a sandbox's creation, in order, as "<method> <path>".
+	secrets map[string]*heldSecret
+	calls   []string
+	// refuse answers every request with a 500, and refuseSecret the creation of a secret
+	// whose name holds it; createStatus, when set, answers a sandbox's creation with it.
+	refuse       bool
+	refuseSecret string
+	// refuseUpdate answers the update of a secret whose name holds it with a 500.
+	refuseUpdate string
+	createStatus int
+	// test is the test the platform serves, when tests share it.
+	test string
+	// stall, while open, holds every code-run, and arrived hears of each one held.
+	stall, arrived chan struct{}
+	// slowCommand and slowRun are how long each shell command and each code-run take to answer,
+	// or until the caller gives up; checking, when set, hears of each shell command.
+	slowCommand, slowRun time.Duration
+	checking             chan struct{}
+	// slowUpload is how long each file written into the sandbox takes to answer, or until the
+	// caller gives up.
+	slowUpload time.Duration
+	// asked, when set, hears of each download before it is served, by the files it names.
+	asked func(name string)
+	// slowDownload is how long each download takes to answer, and slowSecret how long each
+	// request of a method about a secret, or until the caller gives up.
+	slowDownload time.Duration
+	slowSecret   map[string]time.Duration
+	// slowCreate and slowState are how long each sandbox's creation and each read of a
+	// sandbox's state take to answer, or until the caller gives up.
+	slowCreate, slowState time.Duration
+}
+
+// heldSecret is a secret as Daytona keeps it.
+type heldSecret struct {
+	Name, Value string
+	Hosts       []string
+}
+
+func newPlatform() *platform {
+	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{},
+		sized: map[string]int{}, served: map[string]int64{}, cut: map[string]bool{}, failing: map[string]int{}, secrets: map[string]*heldSecret{}}
+	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
+	return stub
+}
+
+func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/files/download") || strings.HasSuffix(r.URL.Path, "/files/bulk-download") {
+		p.download(w, r)
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/process/execute") {
+		p.mu.Lock()
+		slow, checking := p.slowCommand, p.checking
+		p.mu.Unlock()
+		if checking != nil {
+			checking <- struct{}{}
+		}
+		answerAfter(r, slow)
+	}
+	if strings.HasSuffix(r.URL.Path, "/files/upload-v2") {
+		p.mu.Lock()
+		slow := p.slowUpload
+		p.mu.Unlock()
+		answerAfter(r, slow)
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/sandbox") {
+		p.mu.Lock()
+		slow := p.slowState
+		if r.Method == http.MethodPost {
+			slow = p.slowCreate
+		}
+		p.mu.Unlock()
+		answerAfter(r, slow)
+		if r.Context().Err() != nil {
+			return
+		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/secret") {
+		p.mu.Lock()
+		slow := p.slowSecret[r.Method]
+		p.mu.Unlock()
+		answerAfter(r, slow)
+		if r.Context().Err() != nil {
+			// The client gave up: nothing it asked for is done.
+			return
+		}
+	}
+	if strings.HasSuffix(r.URL.Path, "/process/code-run") {
+		p.mu.Lock()
+		stall, arrived, slow := p.stall, p.arrived, p.slowRun
+		p.mu.Unlock()
+		answerAfter(r, slow)
+		if stall != nil {
+			arrived <- struct{}{}
+			<-stall
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.auth = r.Header.Get("Authorization")
+
+	if strings.HasPrefix(r.URL.Path, "/api/secret") || r.Method == http.MethodPost && r.URL.Path == "/api/sandbox" {
+		p.calls = append(p.calls, r.Method+" "+r.URL.Path)
+	}
+	if p.refuse {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"daytona is down"}`))
+		return
+	}
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/secret"):
+		p.secret(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox" && p.createStatus != 0:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(p.createStatus)
+		_, _ = w.Write([]byte(`{"message":"no capacity"}`))
+	case strings.HasPrefix(r.URL.Path, "/api/socket.io"):
+		w.WriteHeader(404)
+		return
+	case r.Method == http.MethodPost && r.URL.Path == "/api/sandbox":
+		raw, _ := io.ReadAll(r.Body)
+		body := map[string]any{}
+		_ = json.Unmarshal(raw, &body)
+		p.creations = append(p.creations, body)
+		p.sequence++
+		id := "sandbox-" + string(rune('0'+p.sequence))
+		p.created = append(p.created, id)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write(p.sandbox(id))
+
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/sandbox/"):
+		// A sandbox's state, read once it may have stopped for idling: it runs still.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(p.sandbox(strings.TrimPrefix(r.URL.Path, "/api/sandbox/")))
+
+	case strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
+		file, _, err := r.FormFile("file")
+		if err != nil || p.refuseUpload {
+			w.WriteHeader(http.StatusBadRequest)
+			wire := &counted{Writer: w}
+			_, _ = io.Copy(wire, io.LimitReader(filler{}, int64(p.refusal)))
+			p.served["upload"] += wire.n
+			return
+		}
+		if r.Context().Err() != nil {
+			// The client gave up: Daytona stores nothing it did not take whole, so an abandoned
+			// upload never lands after the next one.
+			return
+		}
+		data, _ := io.ReadAll(file)
+		p.files[r.URL.Query().Get("path")] = data
+		p.steps = append(p.steps, "upload")
+		p.uploads = append(p.uploads, fmt.Sprintf("%s after %d runs", r.URL.Query().Get("path"), len(p.ran)))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"file","path":"` + r.URL.Query().Get("path") + `","type":"file"}`))
+
+	case strings.HasSuffix(r.URL.Path, "/process/execute"):
+		var body struct{ Command string }
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		p.rawCommands = append(p.rawCommands, string(raw))
+		p.steps = append(p.steps, "command")
+		p.commands = append(p.commands, fmt.Sprintf("%s after %d runs", body.Command, len(p.ran)))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": p.commandOutput, "exitCode": p.commandExit})
+
+	case r.Method == http.MethodDelete:
+		p.deleted = append(p.deleted, r.URL.Path)
+		if p.deleteStatus != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(p.deleteStatus)
+			_, _ = w.Write([]byte(`{"message":"retry deletion"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		raw, _ := io.ReadAll(r.Body)
+		body := map[string]any{}
+		_ = json.Unmarshal(raw, &body)
+		body["path"] = r.URL.Path
+		body["authorization"] = r.Header.Get("Authorization")
+		p.ran = append(p.ran, body)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(p.runStatus)
+		_, _ = w.Write([]byte(p.runBody))
+	}
+}
+
+// sandbox is the sandbox id as Daytona describes it, running.
+func (p *platform) sandbox(id string) []byte {
+	return []byte(`{"organizationId":"org","name":"test","user":"root","env":{},"public":false,"networkBlockAll":false,"target":"us","cpu":2,"gpu":0,"memory":4,"disk":10,"id":"` + id + `","state":"started","toolboxProxyUrl":"` + p.server.URL + `/toolbox","labels":{"daytona.io/code-toolbox-language":"python"}}`)
+}
+
+// download serves a file of the sandbox's as Daytona's toolbox does: whole from /files/download,
+// and as the part named file of a multipart answer from /files/bulk-download, which is how the
+// SDK streams one. A file it does not hold is a 404, or a part named error. It holds no lock while
+// it writes, so a reader that stops early leaves it waiting on nothing.
+func (p *platform) download(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("path")
+	bulk := strings.HasSuffix(r.URL.Path, "/files/bulk-download")
+	if bulk {
+		var body struct {
+			Paths []string `json:"paths"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		name = strings.Join(body.Paths, ",")
+	}
+	p.mu.Lock()
+	asked, slow := p.asked, p.slowDownload
+	p.mu.Unlock()
+	if asked != nil {
+		asked(name)
+	}
+	answerAfter(r, slow)
+	p.mu.Lock()
+	var content io.Reader
+	if data, ok := p.files[name]; ok {
+		content = bytes.NewReader(data)
+	} else if size, ok := p.sized[name]; ok {
+		content = io.LimitReader(filler{}, int64(size))
+		if p.cut[name] {
+			content = io.MultiReader(io.LimitReader(filler{}, int64(size/2)), breaker{})
+		}
+	}
+	failing, fails := p.failing[name]
+	p.mu.Unlock()
+	wire := &counted{Writer: w}
+	defer func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.served[name] += wire.n
+	}()
+	var copied error
+	switch {
+	case !bulk && content == nil:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"no such file"}`))
+	case !bulk:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, copied = io.Copy(wire, content)
+	default:
+		parts := multipart.NewWriter(wire)
+		w.Header().Set("Content-Type", parts.FormDataContentType())
+		disposition := fmt.Sprintf(`form-data; name="file"; filename=%q`, name)
+		if content == nil {
+			disposition = `form-data; name="error"`
+			content = strings.NewReader(`{"message":"no such file","statusCode":404}`)
+		}
+		if fails {
+			disposition = `form-data; name="error"`
+			content = io.LimitReader(filler{}, int64(failing))
+		}
+		part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
+		if _, copied = io.Copy(part, content); copied == nil {
+			_ = parts.Close()
+		}
+	}
+	if errors.Is(copied, errBroken) {
+		panic(http.ErrAbortHandler)
+	}
+}
+
+// errBroken is a download breaking off, which breaker reads as.
+var errBroken = errors.New("the connection dropped")
+
+type breaker struct{}
+
+func (breaker) Read([]byte) (int, error) { return 0, errBroken }
+
+// filler reads as an endless run of x.
+type filler struct{}
+
+func (filler) Read(b []byte) (int, error) {
+	for i := range b {
+		b[i] = 'x'
+	}
+	return len(b), nil
+}
+
+// counted counts the bytes written through it.
+type counted struct {
+	io.Writer
+	n int64
+}
+
+func (c *counted) Write(b []byte) (int, error) {
+	n, err := c.Writer.Write(b)
+	c.n += int64(n)
+	return n, err
+}
+
+// secret serves Daytona's secret API: create, update and delete. The caller holds mu.
+func (p *platform) secret(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name  string   `json:"name"`
+		Value *string  `json:"value"`
+		Hosts []string `json:"hosts"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	id := strings.TrimPrefix(r.URL.Path, "/api/secret/")
+	held := p.secrets[id]
+	switch {
+	case r.Method == http.MethodPost && p.refuseSecret != "" && strings.Contains(body.Name, p.refuseSecret):
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	case r.Method == http.MethodPost:
+		p.sequence++
+		id = "secret-" + string(rune('0'+p.sequence))
+		held = &heldSecret{Name: body.Name, Value: *body.Value, Hosts: body.Hosts}
+		p.secrets[id] = held
+	case held == nil:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"no such secret"}`))
+		return
+	case r.Method == http.MethodPatch && p.refuseUpdate != "" && strings.Contains(held.Name, p.refuseUpdate):
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	case r.Method == http.MethodPatch:
+		held.Value = *body.Value
+	case r.Method == http.MethodDelete:
+		delete(p.secrets, id)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	answer, _ := json.Marshal(map[string]any{"id": id, "name": held.Name, "placeholder": "dtn_secret_" + id,
+		"hosts": held.Hosts, "createdAt": "2026-10-20T00:00:00Z", "updatedAt": "2026-10-20T00:00:00Z"})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(answer)
+}
+
+func (p *platform) executed() []map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]map[string]any(nil), p.ran...)
+}
+
+func (p *platform) requests() []map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]map[string]any(nil), p.creations...)
+}
+
+func (p *platform) holds(path string, data []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.files[path] = data
+}
+
+// holdsCut puts a file of size bytes of x at path whose download breaks off halfway.
+func (p *platform) holdsCut(path string, size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sized[path] = size
+	p.cut[path] = true
+}
+
+// onDownload has asked hear of each download before it is served.
+func (p *platform) onDownload(asked func(name string)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.asked = asked
+}
+
+// holdsSized puts a file of size bytes of x at path.
+func (p *platform) holdsSized(path string, size int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sized[path] = size
+}
+
+// sent is how many bytes the downloads of path put on the wire, and whether one has ended.
+func (p *platform) sent(path string) (int64, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n, ok := p.served[path]
+	return n, ok
+}
+
+// answerAfter waits slow before a request is answered, or until its caller gives up. The
+// server hears that only once the request's body is read, so it reads it first.
+func answerAfter(r *http.Request, slow time.Duration) {
+	raw, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	select {
+	case <-time.After(slow):
+	case <-r.Context().Done():
+	}
+}
+
+func (p *platform) sandboxes() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.created...)
+}
+
+// outlasting starts code in box that the platform holds until release, or the test's end, and
+// returns once it is held, with the run's error to come.
+func (p *platform) outlasting(t *testing.T, box *Sandbox) (ran <-chan error, release func()) {
+	stall, arrived, done := make(chan struct{}), make(chan struct{}, 1), make(chan error, 1)
+	var once sync.Once
+	release = func() { once.Do(func() { close(stall) }) }
+	t.Cleanup(release)
+	p.mu.Lock()
+	p.stall, p.arrived = stall, arrived
+	p.mu.Unlock()
+	go func() {
+		_, err := box.Run(context.Background(), "print(1)", nil)
+		done <- err
+	}()
+	select {
+	case <-arrived:
+	case err := <-done:
+		t.Fatalf("the run ended before its code ran: %v", err)
+	}
+	return done, release
+}
+
+func (p *platform) released() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.deleted...)
+}
+
+type DaytonaSuite struct {
+	suite.Suite
+	ctx      context.Context
+	platform *platform
+	box      *Sandbox
+}
+
+func TestDaytonaSuite(t *testing.T) {
+	suite.Run(t, new(DaytonaSuite))
+}
+
+func (s *DaytonaSuite) SetupTest() {
+	s.ctx = context.Background()
+	s.platform = newPlatform()
+	s.T().Cleanup(s.platform.server.Close)
+
+	box, err := New(Options{
+		APIKey:   "key-1",
+		APIURL:   s.platform.server.URL + "/api",
+		ProxyURL: s.platform.server.URL + "/toolbox",
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.box = box
+	s.T().Cleanup(func() { _ = box.Close() })
+}
+
+func (s *DaytonaSuite) TestAKeyIsRequired() {
+	s.T().Setenv(apiKeyEnvVar, "")
+
+	_, err := New(Options{})
+
+	s.ErrorContains(err, apiKeyEnvVar)
+}
+
+func (s *DaytonaSuite) TestCodeRunsInASandboxAndItsOutputComesBack() {
+	result, err := s.box.Run(s.ctx, "print(84.20 * 0.15)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("12.63\n", result.Output)
+	s.Zero(result.ExitCode)
+
+	s.Require().Len(s.platform.executed(), 1)
+	ran := s.platform.executed()[0]
+	s.Equal("print(84.20 * 0.15)", ran["code"])
+	s.Equal("python", ran["language"])
+	s.Equal("/toolbox/sandbox-1/process/code-run", ran["path"])
+	s.Equal("Bearer key-1", ran["authorization"])
+}
+
+func (s *DaytonaSuite) TestOneSandboxServesEveryPieceOfCode() {
+	// Creating one is the slow part, and a conversation that delegates twice should not
+	// wait for it twice.
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	_, err = s.box.Run(s.ctx, "print(2)", nil)
+	s.Require().NoError(err)
+
+	s.Len(s.platform.sandboxes(), 1)
+	s.Len(s.platform.executed(), 2)
+}
+
+func (s *DaytonaSuite) TestNothingIsCreatedUntilThereIsCodeToRun() {
+	s.Empty(s.platform.sandboxes(), "a session that never delegates never pays for one")
+}
+
+func (s *DaytonaSuite) TestCodeThatFailedIsAResultRatherThanAnError() {
+	// The code ran. That it did not work is something the model can read and act on.
+	s.platform.mu.Lock()
+	s.platform.runBody = `{"result":"NameError: total","exitCode":1}`
+	s.platform.mu.Unlock()
+
+	result, err := s.box.Run(s.ctx, "print(total)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(1, result.ExitCode)
+	s.Equal("NameError: total", result.Output)
+}
+
+func (s *DaytonaSuite) TestARefusedRunIsReportedWithWhatDaytonaSaid() {
+	s.platform.mu.Lock()
+	s.platform.runStatus = http.StatusBadGateway
+	s.platform.runBody = `{"message":"the sandbox is gone"}`
+	s.platform.mu.Unlock()
+
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+
+	s.ErrorContains(err, "the sandbox is gone")
+}
+
+func (s *DaytonaSuite) TestClosingReleasesTheSandbox() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.box.Close())
+
+	s.Equal([]string{"/api/sandbox/sandbox-1"}, s.platform.released())
+}
+
+func (s *DaytonaSuite) TestClosingTwiceIsSafe() {
+	s.NoError(s.box.Close())
+	s.NoError(s.box.Close())
+
+	s.Empty(s.platform.released(), "there was never a sandbox to release")
+}
+
+func (s *DaytonaSuite) TestCodeIsRefusedOnceTheSandboxIsClosed() {
+	s.Require().NoError(s.box.Close())
+
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+
+	s.ErrorContains(err, "closed")
+}
+
+func (s *DaytonaSuite) TestThereHasToBeSomethingToRun() {
+	_, err := s.box.Run(s.ctx, "   ", nil)
+
+	s.ErrorContains(err, "no code")
+	s.Empty(s.platform.sandboxes())
+}
+
+func (s *DaytonaSuite) TestConcurrentRunsCreateOnlyOneSandbox() {
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() { defer wg.Done(); _, err := s.box.Run(s.ctx, "print(1)", nil); s.NoError(err) }()
+	}
+	wg.Wait()
+	s.Len(s.platform.sandboxes(), 1)
+	s.Len(s.platform.executed(), 8)
+	s.NoError(s.box.Close())
+}
+
+// TestACloseARunOutlastsReturnsAtItsTimeout is the control: the error is the one of base
+// c573d2ba6 (probe: this test there).
+func (s *DaytonaSuite) TestACloseARunOutlastsReturnsAtItsTimeout() {
+	box := s.configured(Options{Timeout: time.Second})
+	ran, release := s.platform.outlasting(s.T(), box)
+
+	s.ErrorIs(box.Close(), context.DeadlineExceeded)
+
+	release()
+	s.NoError(<-ran)
+}
+
+func (s *DaytonaSuite) TestFailedDeletionRetainsIdentity() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.platform.mu.Lock()
+	s.platform.deleteStatus = 503
+	s.platform.mu.Unlock()
+	s.Error(s.box.Close())
+	s.Require().NotNil(s.box.box)
+	_, err = s.box.Run(s.ctx, "print(2)", nil)
+	s.ErrorContains(err, "closed")
+	s.platform.mu.Lock()
+	s.platform.deleteStatus = 0
+	s.platform.mu.Unlock()
+	s.NoError(s.box.Close())
+	s.Nil(s.box.box)
+	s.Len(s.platform.sandboxes(), 1)
+}
+
+func (s *DaytonaSuite) configured(config Options) *Sandbox {
+	config.APIKey = "key-1"
+	config.APIURL = s.platform.server.URL + "/api"
+	config.Logger = slog.New(slog.DiscardHandler)
+	box, err := New(config)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = box.Close() })
+	return box
+}
+
+func (s *DaytonaSuite) TestWithoutSetupDaytonasOwnSandboxIsUsed() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	s.Require().Len(s.platform.requests(), 1)
+	s.NotContains(s.platform.requests()[0], "buildInfo", "nothing has to be built")
+}
+
+func (s *DaytonaSuite) TestASandboxReachesNothingByDefault() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+
+	created := s.platform.requests()[0]
+	s.Equal(true, created["networkBlockAll"])
+	s.NotContains(created, "domainAllowList")
+	s.NotContains(created, "networkAllowList")
+}
+
+func (s *DaytonaSuite) TestANetworkedSandboxReachesTheInternet() {
+	box := s.configured(Options{Config: sandbox.Config{Network: true}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Equal(false, s.platform.requests()[0]["networkBlockAll"])
+}
+
+func (s *DaytonaSuite) TestASandboxReachesOnlyWhatItsAllowListsName() {
+	box := s.configured(Options{Config: sandbox.Config{AllowedDomains: []string{"api.example.com", "pypi.org"}}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal(false, created["networkBlockAll"])
+	s.Equal("api.example.com,pypi.org", created["domainAllowList"])
+	s.NotContains(created, "networkAllowList", "Daytona refuses a sandbox given two allow lists")
+}
+
+func (s *DaytonaSuite) TestASandboxReachesOnlyTheRangesItsAllowListNames() {
+	box := s.configured(Options{Config: sandbox.Config{NetworkAllowList: []string{"10.0.0.0/8", "192.168.1.0/24"}}})
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	created := s.platform.requests()[0]
+	s.Equal("10.0.0.0/8,192.168.1.0/24", created["networkAllowList"])
+	s.NotContains(created, "domainAllowList")
+}
+
+func (s *DaytonaSuite) TestASetupIsBuiltOnTheImageItNames() {
+	box := s.configured(Options{Config: sandbox.Config{
+		Image: "python:3.13-slim-bookworm",
+		Setup: []string{"apt-get update && apt-get install -y libgl1", "pip install bpy==5.2.2"},
+		CPU:   2, MemoryGB: 4,
+	}})
+
+	_, err := box.Run(s.ctx, "import bpy", nil)
+
+	s.Require().NoError(err)
+	s.Require().Len(s.platform.requests(), 1)
+	created := s.platform.requests()[0]
+	build, _ := created["buildInfo"].(map[string]any)
+	s.Equal("FROM python:3.13-slim-bookworm\n"+
+		"RUN apt-get update && apt-get install -y libgl1\n"+
+		"RUN pip install bpy==5.2.2", build["dockerfileContent"])
+	s.EqualValues(2, created["cpu"])
+	s.EqualValues(4, created["memory"])
+}
+
+func (s *DaytonaSuite) TestASetupWithoutAnImageStartsFromSlimPython() {
+	box := s.configured(Options{Config: sandbox.Config{Setup: []string{"pip install numpy"}}})
+
+	_, err := box.Run(s.ctx, "import numpy", nil)
+
+	s.Require().NoError(err)
+	build, _ := s.platform.requests()[0]["buildInfo"].(map[string]any)
+	s.Equal("FROM python:3.13-slim-bookworm\nRUN pip install numpy", build["dockerfileContent"])
+}
+
+func (s *DaytonaSuite) TestARunMayTakeAsLongAsTheConfigAllows() {
+	box := s.configured(Options{Config: sandbox.Config{TimeoutMs: 300_000}})
+
+	_, err := box.Run(s.ctx, "render()", nil)
+
+	s.Require().NoError(err)
+	s.EqualValues(300, s.platform.executed()[0]["timeout"], "Daytona is asked for five minutes, in seconds")
+}
+
+func (s *DaytonaSuite) TestNoRunMayTakeLongerThanTheCeiling() {
+	box := s.configured(Options{Config: sandbox.Config{TimeoutMs: 24 * 3600 * 1000}})
+
+	_, err := box.Run(s.ctx, "render()", nil)
+
+	s.Require().NoError(err)
+	s.EqualValues(sandbox.MaxTimeout.Seconds(), s.platform.executed()[0]["timeout"])
+}
+
+func (s *DaytonaSuite) TestFilesTheCodeWroteComeBackWithItsOutput() {
+	png := []byte("\x89PNG\r\n\x1a\nnot really a picture")
+	s.platform.holds("/tmp/render.png", png)
+
+	result, err := s.box.Run(s.ctx, "render()", []string{"/tmp/render.png"})
+
+	s.Require().NoError(err)
+	s.Equal([]sandbox.File{{Name: "render.png", MIME: "image/png", Data: png}}, result.Files)
+	s.Empty(result.Missing)
+	s.Equal("12.63\n", result.Output, "what it printed still comes back")
+}
+
+func (s *DaytonaSuite) TestAFileTheCodeDidNotWriteIsReportedMissing() {
+	s.platform.holds("/tmp/a.txt", []byte("a"))
+
+	result, err := s.box.Run(s.ctx, "render()", []string{"/tmp/a.txt", "/tmp/render.png"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	s.Equal("a.txt", result.Files[0].Name)
+	s.Equal("text/plain", result.Files[0].MIME)
+	s.Equal([]string{"/tmp/render.png"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestOnlySoManyFilesComeBackFromOneRun() {
+	var wanted []string
+	for i := range sandbox.MaxFiles + 2 {
+		name := "/tmp/" + string(rune('a'+i)) + ".txt"
+		s.platform.holds(name, []byte("x"))
+		wanted = append(wanted, name)
+	}
+
+	result, err := s.box.Run(s.ctx, "write()", wanted)
+
+	s.Require().NoError(err)
+	s.Len(result.Files, sandbox.MaxFiles)
+	s.Equal(wanted[sandbox.MaxFiles:], result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileComesBackOnlyIfItIsNeitherEmptyNorTooLarge() {
+	sizes := map[string]int{"/tmp/empty.bin": 0, "/tmp/one.bin": 1, "/tmp/limit.bin": sandbox.MaxFileBytes,
+		"/tmp/over.bin": sandbox.MaxFileBytes + 1}
+	for name, size := range sizes {
+		s.platform.holdsSized(name, size)
+	}
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/empty.bin", "/tmp/one.bin", "/tmp/limit.bin", "/tmp/over.bin"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 2)
+	s.Equal("one.bin", result.Files[0].Name)
+	s.Equal([]byte("x"), result.Files[0].Data)
+	s.Equal("limit.bin", result.Files[1].Name)
+	s.True(bytes.Equal(bytes.Repeat([]byte("x"), sandbox.MaxFileBytes), result.Files[1].Data), "the largest file allowed comes back whole")
+	s.Equal([]string{"/tmp/empty.bin", "/tmp/over.bin"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileFarTooLargeIsRefusedWithoutBeingReadWhole() {
+	s.platform.holdsSized("/tmp/dump.bin", 10*sandbox.MaxFileBytes)
+
+	result, err := s.box.Run(s.ctx, "dump()", []string{"/tmp/dump.bin"})
+
+	s.Require().NoError(err)
+	s.Empty(result.Files)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("/tmp/dump.bin")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// What passed the limit is only what the connection's buffers took before the router
+	// stopped reading: a few MiB at most, well short of another MaxFileBytes.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestADownloadsErrorFarTooLargeIsNotReadWhole() {
+	s.platform.failing["/tmp/dump.bin"] = 10 * sandbox.MaxFileBytes
+
+	result, err := s.box.Run(s.ctx, "dump()", []string{"/tmp/dump.bin"})
+
+	s.Require().NoError(err)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("/tmp/dump.bin")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// The SDK reads an error part whole; past its bound the router stops reading it.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestAnUploadsRefusalFarTooLargeIsNotReadWhole() {
+	s.platform.refuseUpload = true
+	s.platform.refusal = 10 * sandbox.MaxFileBytes
+
+	err := s.box.Write(s.ctx, "notes.txt", []byte("hello"))
+
+	s.Require().Error(err)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("upload")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// The SDK reads a refused upload's answer whole; past its bound the router stops reading it.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestACommandsOutputFarOverTheBoundIsCutInItsError() {
+	s.platform.commandExit = 1
+	s.platform.commandOutput = strings.Repeat("x", 4*sandbox.MaxOutputBytes)
+
+	err := s.box.Write(s.ctx, "skills/pdf/merge.py", []byte("print(1)"))
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), sandbox.OutputCut)
+	s.Less(len(err.Error()), 2*sandbox.MaxOutputBytes)
+}
+
+func (s *DaytonaSuite) TestARefusedDownloadHasEndedBeforeTheNextFileIsAskedFor() {
+	s.platform.holdsSized("/tmp/dump.bin", 10*sandbox.MaxFileBytes)
+	s.platform.holds("/tmp/small.txt", []byte("small"))
+	endedFirst := make(chan bool, 1)
+	s.platform.onDownload(func(name string) {
+		if name != "/tmp/small.txt" {
+			return
+		}
+		// The refused download ends once the router closes it; give the server a moment to
+		// notice, but never longer than the test may wait.
+		var ended bool
+		for deadline := time.Now().Add(3 * time.Second); !ended && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			_, ended = s.platform.sent("/tmp/dump.bin")
+		}
+		endedFirst <- ended
+	})
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/dump.bin", "/tmp/small.txt"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	s.Equal("small.txt", result.Files[0].Name)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	s.True(<-endedFirst, "the refused download was still open when the next file was asked for")
+}
+
+func (s *DaytonaSuite) TestAHandBackLeavesNoFileOnTheRoutersDisk() {
+	temp := s.T().TempDir()
+	s.T().Setenv("TMPDIR", temp)
+	s.platform.holds("/tmp/render.png", []byte("\x89PNG\r\n\x1a\nnot really a picture"))
+
+	result, err := s.box.Run(s.ctx, "render()", []string{"/tmp/render.png"})
+
+	s.Require().NoError(err)
+	s.Require().Len(result.Files, 1)
+	left, err := os.ReadDir(temp)
+	s.Require().NoError(err)
+	s.Empty(left, "the file was copied to the router's disk and left there")
+}
+
+func (s *DaytonaSuite) TestAFileAskedForTwiceComesBackOnceAndTakesOneSlot() {
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		s.platform.holds("/tmp/"+name+".txt", []byte(name))
+	}
+
+	result, err := s.box.Run(s.ctx, "write()",
+		[]string{"/tmp/a.txt", "/tmp//a.txt", "/tmp/b.txt", "/tmp/./a.txt", "/tmp/c.txt", "/tmp/d.txt", "/tmp/a.txt", "/tmp/e.txt"})
+
+	s.Require().NoError(err)
+	var names []string
+	for _, file := range result.Files {
+		names = append(names, file.Name)
+	}
+	s.Equal([]string{"a.txt", "b.txt", "c.txt", "d.txt"}, names)
+	s.Equal([]string{"/tmp/e.txt"}, result.Missing)
+}
+
+func (s *DaytonaSuite) TestAFileWhoseDownloadBreaksOffIsMissingRatherThanCutShort() {
+	s.platform.holdsCut("/tmp/report.csv", 1<<20)
+
+	result, err := s.box.Run(s.ctx, "write()", []string{"/tmp/report.csv"})
+
+	s.Require().NoError(err)
+	s.Empty(result.Files)
+	s.Equal([]string{"/tmp/report.csv"}, result.Missing)
+}
+
+// TestAHungUploadIsCutAtTheSandboxsTimeout: a write holds the sandbox, so an upload Daytona
+// never answers is cut at the sandbox's timeout, as every other call to it is, and the next
+// call gets in.
+func (s *DaytonaSuite) TestAHungUploadIsCutAtTheSandboxsTimeout() {
+	box := s.configured(Options{Timeout: 2 * time.Second})
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	started := time.Now()
+
+	err := box.Write(s.ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 30*time.Second, "cut long before the upload's end")
+	s.platform.mu.Lock()
+	s.platform.slowUpload = 0
+	s.platform.mu.Unlock()
+	s.NoError(box.Write(s.ctx, "f.txt", []byte("y")), "the next write gets in")
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.Equal([]byte("y"), s.platform.files["f.txt"])
+}
+
+// TestAHungMkdirIsCutAtTheSandboxsTimeout: the directory a file sits in is made under the same
+// bound, and a write whose directory was not made uploads nothing.
+func (s *DaytonaSuite) TestAHungMkdirIsCutAtTheSandboxsTimeout() {
+	box := s.configured(Options{Timeout: 2 * time.Second})
+	s.platform.mu.Lock()
+	s.platform.slowCommand = time.Minute
+	s.platform.mu.Unlock()
+	started := time.Now()
+
+	err := box.Write(s.ctx, "dir/f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/process/execute": context deadline exceeded`)
+	s.Less(time.Since(started), 30*time.Second, "cut long before the command's end")
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.Empty(s.platform.uploads)
+}
+
+// TestACallerGivingUpDuringAWriteEndsIt is the control: the bound is on the caller's context,
+// so a caller that gives up before the sandbox's timeout is answered then.
+func (s *DaytonaSuite) TestACallerGivingUpDuringAWriteEndsIt() {
+	s.platform.mu.Lock()
+	s.platform.slowUpload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	err := s.box.Write(ctx, "f.txt", []byte("x"))
+
+	s.ErrorContains(err, `/files/upload-v2?path=f.txt": context deadline exceeded`)
+	s.Less(time.Since(started), 30*time.Second, "answered long before the sandbox's 60 s timeout")
+}
+
+// TestAHungDownloadIsCutAtTheChecksTimeout: a run's downloads hold the gate, and a built
+// sandbox's timeout is the 20 minutes a build may take, so a download Daytona never answers is
+// cut at defaultTimeout, the file is missing, and the next run gets in.
+func (s *DaytonaSuite) TestAHungDownloadIsCutAtTheChecksTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(defaultTimeout, box.check)
+	box.check = 2 * time.Second // defaultTimeout, shorter in tests
+	s.platform.holds("/tmp/report.csv", []byte("a,b"))
+	s.platform.mu.Lock()
+	s.platform.slowDownload = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	result, err := box.Run(ctx, "write()", []string{"/tmp/report.csv"})
+
+	s.Require().NoError(err)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	s.Equal([]string{"/tmp/report.csv"}, result.Missing)
+	s.platform.mu.Lock()
+	s.platform.slowDownload = 0
+	s.platform.mu.Unlock()
+	result, err = box.Run(ctx, "write()", []string{"/tmp/report.csv"})
+	s.Require().NoError(err, "the next run gets in")
+	s.Require().Len(result.Files, 1)
+	s.Equal([]byte("a,b"), result.Files[0].Data)
+}
+
+// TestAHungReadOfALapsedSandboxsStateIsCutAtTheStateTimeout: the read before a run wakes a
+// sandbox holds the gate, and a built sandbox's timeout is the 20 minutes a build may take, so
+// a read Daytona never answers is cut at stateTimeout, and the next run gets in.
+func (s *DaytonaSuite) TestAHungReadOfALapsedSandboxsStateIsCutAtTheStateTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(stateTimeout, box.state)
+	box.state = 2 * time.Second // stateTimeout, shorter in tests
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.used = time.Now().Add(-24 * time.Hour) // Daytona may have stopped it by now
+	s.platform.mu.Lock()
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 20*time.Second, "cut at the state's bound, not the caller's 30 s")
+	s.platform.mu.Lock()
+	s.platform.slowState = 0
+	s.platform.mu.Unlock()
+	_, err = box.Run(ctx, "print(2)", nil)
+	s.NoError(err, "the next run gets in")
+}
+
+// TestACallerGivingUpDuringTheReadOfALapsedSandboxsStateEndsTheRun: the read before a run wakes
+// a sandbox runs on the caller's context, so a caller that gives up during a hung read is
+// answered then, not at the state's bound.
+func (s *DaytonaSuite) TestACallerGivingUpDuringTheReadOfALapsedSandboxsStateEndsTheRun() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	box.state = 10 * time.Second // stateTimeout, longer than the caller waits
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.used = time.Now().Add(-24 * time.Hour) // Daytona may have stopped it by now
+	s.platform.mu.Lock()
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	s.T().Cleanup(s.unslowState) // so closing the sandbox is not held up
+	ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Less(time.Since(started), 6*time.Second, "answered when the caller gave up, long before the state's bound")
+}
+
+// TestAHungReadConfirmingADeletedSandboxIsCutAtTheStateTimeout: a run Daytona answers with not
+// found is followed by a read of the sandbox's state, which holds the gate, and a built
+// sandbox's timeout is the 20 minutes a build may take, so a read Daytona never answers is cut
+// at stateTimeout.
+func (s *DaytonaSuite) TestAHungReadConfirmingADeletedSandboxIsCutAtTheStateTimeout() {
+	box := s.configured(Options{Config: sandbox.Config{CPU: 1}})
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	box.state = 2 * time.Second // stateTimeout, shorter in tests
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.platform.mu.Lock()
+	s.platform.runStatus = http.StatusNotFound
+	s.platform.runBody = `{"message":"sandbox not found"}`
+	s.platform.slowState = time.Minute
+	s.platform.mu.Unlock()
+	s.T().Cleanup(s.unslowState) // so closing the sandbox is not held up
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+	started := time.Now()
+
+	_, err = box.Run(ctx, "print(2)", nil)
+
+	s.Error(err)
+	s.Less(time.Since(started), 20*time.Second, "cut at the state's bound, not the caller's 30 s")
+}
+
+func (s *DaytonaSuite) unslowState() {
+	s.platform.mu.Lock()
+	s.platform.slowState = 0
+	s.platform.mu.Unlock()
+}

@@ -1,0 +1,2652 @@
+// Command router serves the model router's HTTP API.
+package main
+
+import (
+	"cmp"
+	"context"
+	"crypto/ed25519"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"maps"
+	"math"
+	"net"
+	"net/http"
+	"net/http/pprof"
+	"os"
+	"os/signal"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/getsentry/sentry-go"
+	"github.com/hibiken/asynq"
+	"github.com/redis/rueidis"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/ed25519header"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/hmacheader"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/verifiers/standardwebhooks"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/detectionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
+	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/mcpevents"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/relay"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/twiliosig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
+)
+
+// release is the version this binary was built from, set with -X main.release
+// at link time by the workflow that publishes it. Empty in a local build, which
+// Sentry reads as "no release" rather than as an error.
+var release string
+
+// idleTimeout is how long the API, peer, pprof and metrics servers hold a keep-alive
+// connection that sends no next request. It must outlast the idle timeout of every
+// client that pools connections to them, or that client reuses a connection the router
+// has just closed and a request that cannot be replayed fails. The clients:
+//   - the stream-accelerate gateway sets no ReverseProxy.Transport (GetStream/chat
+//     projects/stream-accelerate/proxy.go), so it pools with http.DefaultTransport's
+//     IdleConnTimeout, 90 s (net/http/transport.go:55). The router's Service is a
+//     ClusterIP (chat infra/charts/accelerate/values.yaml, service.type): no pooling;
+//   - Prometheus' scrape client keeps a connection 5 min (prometheus/common v0.66.1
+//     config/http_config.go:55) and scrapes every 15 s (chat values.yaml,
+//     monitoring.serviceMonitor.interval). The Datadog agent's check leaves
+//     persist_connections at its default, false (DataDog/integrations-core
+//     datadog_checks_base/utils/http.py, STANDARD_FIELDS), so it opens a new connection per
+//     scrape and pools none;
+//   - peers talk gRPC over h2c, which this timeout does not reach: x/net v0.58.0
+//     http2/server_wrap.go:109 gives the h2 server the http2.Server's own idle timeout,
+//     zero in node.Serve, not the http.Server's.
+//
+// 10 min is twice the longest, Prometheus'. A response still being written, such as
+// the SSE log stream, is not idle: net/http arms the deadline once a response is
+// finished (net/http/server.go:2163), and a hijacked websocket is out of it.
+//
+// A variable so a test can shorten it; nothing else assigns it.
+var idleTimeout = 10 * time.Minute
+
+const (
+	// authKEKEnvVar and authKEKVersionEnvVar name the connector credential keyring: the
+	// keys are authKEKEnvVar with a _V<n> suffix, and authKEKVersionEnvVar says which one
+	// seals new rows.
+	authKEKEnvVar        = "ROUTER_AUTH_KEK"
+	authKEKVersionEnvVar = "ROUTER_AUTH_KEK_VERSION"
+	// authKEKWrappedSuffix marks a key a KMS wrapped, ROUTER_AUTH_KEK_V<n>_WRAPPED, which
+	// auth.kms_key unwraps at startup into the same version n.
+	authKEKWrappedSuffix = "_WRAPPED"
+	shutdownGrace        = 10 * time.Second
+	readHeaderTimeout    = 10 * time.Second
+	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
+	// to a search because nobody is on the phone waiting for it: a page that has to be
+	// crawled live rather than served from an index takes seconds, and giving up on it
+	// leaves a subscription that never works.
+	crawlTimeout = 60 * time.Second
+	// sentryFlushTimeout bounds how long the process spends delivering buffered
+	// events on the way out. Short, because this runs while the orchestrator is
+	// already counting down the termination grace period.
+	sentryFlushTimeout = 2 * time.Second
+	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
+	traceFlushTimeout = 2 * time.Second
+	// phoneHangupGrace bounds handing the calls this node holds through customers' own SIP
+	// trunks to another node, or hanging them up when there is no Redis to hand them through.
+	// A BYE is one round trip and a takeover a few, so this is generous. On a signal this
+	// runs first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
+	// orchestrator's termination grace period.
+	phoneHangupGrace = 5 * time.Second
+	// usageDrainTimeout is how long the usage writer has to write what is queued once
+	// everything that records has stopped: it starts after the HTTP drain, any session drain
+	// and sessions.Shutdown, and counts none of them. What is still queued after it is lost,
+	// and logged in full; what a kill at the end of the pod's termination grace period finds
+	// queued first is lost without a log line.
+	usageDrainTimeout = 15 * time.Second
+)
+
+// usage is what the binary does besides serving.
+const usage = `usage: router [--config path] [command]
+
+  serve                 serve the API (the default)
+  keys create           mint a credential for an app, printing the secret once
+  replicate             copy another deployment's data here and follow its changes
+  stream-apps           look after the Stream apps customers registered in app mode
+  prices                read and check the price list (router prices for its commands)
+  usage replay          write the usage rows a log says were lost, once each (--from path)
+  usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
+  usage storage         record the last hour of every knowledge base's size, once each (hourly, one job per turbopuffer key)
+`
+
+func main() {
+	path, command, args := arguments(os.Args[1:])
+	settings, from, configErr := config.Load(path)
+	logger := newLogger(os.Stderr, logLevel(settings))
+	slog.SetDefault(logger)
+	if configErr != nil {
+		logger.Error("router stopped", "error", configErr)
+		os.Exit(1)
+	}
+	logger.Info("loaded configuration", "from", from)
+	for _, retired := range settings.Retired {
+		logger.Warn(retired)
+	}
+
+	// Dsn is deliberately not set. The SDK reads SENTRY_DSN and
+	// SENTRY_ENVIRONMENT itself, so the DSN stays out of this repository and an
+	// unset one disables reporting -- which is what a local run and the tests
+	// want, and what self-hosting this service wants too.
+	//
+	// A failed Init is logged, not fatal: a malformed DSN is a configuration
+	// mistake, but it is a bad reason to refuse to serve calls.
+	if err := sentry.Init(sentryOptions()); err != nil {
+		logger.Error("sentry is disabled", "error", err)
+	}
+
+	if err := dispatchCommand(command, args, settings, logger); err != nil {
+		logger.Error("router stopped", "error", err)
+		// Reported here because a startup failure never reaches an HTTP handler,
+		// so the middleware in internal/api would never see it.
+		sentry.CaptureException(err)
+		sentry.Flush(sentryFlushTimeout)
+		os.Exit(1)
+	}
+	// Not deferred: os.Exit above skips defers, so a single deferred flush would
+	// cover only the path that does not need it.
+	sentry.Flush(sentryFlushTimeout)
+}
+
+// arguments pulls --config off the command line, wherever it sits, and returns the
+// command and what is left for it.
+//
+// It is read by hand rather than by a flag set because the subcommands have flags of
+// their own, and --config belongs to all of them: it says which deployment is being
+// talked about before anything decides what to do with it.
+func arguments(argv []string) (path, command string, rest []string) {
+	for index := 0; index < len(argv); index++ {
+		argument := argv[index]
+		switch {
+		case argument == "--config" || argument == "-config":
+			if index+1 < len(argv) {
+				path = argv[index+1]
+				index++
+			}
+		case strings.HasPrefix(argument, "--config="):
+			path = strings.TrimPrefix(argument, "--config=")
+		case command == "" && !strings.HasPrefix(argument, "-"):
+			command = argument
+		default:
+			rest = append(rest, argument)
+		}
+	}
+	if command == "" {
+		command = "serve"
+	}
+	return path, command, rest
+}
+
+// dispatchCommand runs what the command line asked for.
+func dispatchCommand(command string, args []string, settings config.Config, logger *slog.Logger) error {
+	switch command {
+	case "serve":
+		return run(settings, logger)
+	case "keys":
+		return runKeys(args, settings, logger)
+	case "replicate":
+		return runReplicate(args, settings, logger)
+	case "stream-apps":
+		return runStreamApps(args, settings, logger)
+	case "prices":
+		return runPrices(args, settings, logger)
+	case "usage":
+		return runUsage(args, settings, os.Stdout)
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+		return nil
+	default:
+		return fmt.Errorf("unknown command %q\n\n%s", command, usage)
+	}
+}
+
+// logLevel reads the level to log at. Debug is where the turn-taking decisions are: what
+// was heard, what the flow controller made of it, and why the agent did or did not speak.
+//
+// It is read from the settings when they loaded and from the environment when they did
+// not, so that the failure to load them is itself logged at the level asked for.
+func logLevel(settings config.Config) slog.Level {
+	var level slog.Level
+	text := settings.LogLevel
+	if text == "" {
+		text = os.Getenv("ROUTER_LOG_LEVEL")
+	}
+	if text == "" {
+		return slog.LevelInfo
+	}
+	if err := level.UnmarshalText([]byte(text)); err != nil {
+		return slog.LevelInfo
+	}
+	return level
+}
+
+// newLogger is the router's logger, which writes text to w and takes every credential out of
+// what it prints: a provider's error can echo the key the router sent it. A line logged with an
+// authenticated request's context carries its app_id and api_key.
+func newLogger(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(api.NewLogHandler(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr})))
+}
+
+// sentryOptions are the router's Sentry options. An event carries an error's text, which can
+// echo the key a provider was sent, so it is redacted as the log is.
+func sentryOptions() sentry.ClientOptions {
+	return sentry.ClientOptions{
+		Release:          release,
+		ServerName:       "acceleration-router",
+		AttachStacktrace: true,
+		BeforeSend:       store.RedactSentryEvent,
+	}
+}
+
+// newSecretSealer builds the keyring the secrets the router holds for its customers are
+// sealed under: connector credentials, Stream app keys, channel credentials and the
+// passwords of customers' own SIP trunks. Connectors and app mode refuse to start without
+// one; channels and SIP trunks use it when it is set and are off otherwise, so it is nil only when nothing requires it and no key is set. It does not
+// depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
+//
+// The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
+// ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
+// writer and is never a ceiling: moving it back to an older key must leave the newer ones
+// loaded, or the rows sealed under them stop opening. auth.kek is version 1, so a
+// deployment that already has it needs nothing more.
+func newSecretSealer(ctx context.Context, settings config.Config) (*auth.Sealer, error) {
+	var holders []string
+	if settings.Connectors.Enabled {
+		holders = append(holders, "connectors.enabled")
+	}
+	if settings.Stream.Tenancy == config.TenancyApp {
+		holders = append(holders, "stream.tenancy="+config.TenancyApp)
+	}
+	if len(holders) == 0 {
+		if !keyringSet(settings) {
+			return nil, nil
+		}
+		return loadKeyring(ctx, settings, "channels need")
+	}
+	// The setting that needs the keyring is what each refusal names, so whoever reads it
+	// knows which change brought it on.
+	needs := strings.Join(holders, " and ") + " need"
+	if len(holders) == 1 {
+		needs = holders[0] + " needs"
+	}
+	return loadKeyring(ctx, settings, needs)
+}
+
+// keyringSet reports whether any key of the keyring is set: auth.kek, a
+// ROUTER_AUTH_KEK_V<n> or its _WRAPPED form, or auth.kms_key to unwrap one with.
+func keyringSet(settings config.Config) bool {
+	if settings.Auth.KEK != "" || settings.Auth.KMSKey != "" {
+		return true
+	}
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		if strings.HasPrefix(name, authKEKEnvVar+"_V") && key != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// loadKeyring reads every ROUTER_AUTH_KEK_V<n>, ROUTER_AUTH_KEK_V<n>_WRAPPED and auth.kek
+// into a keyring, with ROUTER_AUTH_KEK_VERSION naming the writer, and unwraps the wrapped
+// ones with the KMS key auth.kms_key names. needs says which setting requires it, for each
+// refusal to name.
+func loadKeyring(ctx context.Context, settings config.Config, needs string) (*auth.Sealer, error) {
+	if settings.Auth.KMSKey == "" {
+		return readKeyring(ctx, settings, nil, needs)
+	}
+	unwrapper, err := newKEKUnwrapper(ctx, settings.Auth.KMSKey)
+	if err != nil {
+		return nil, err
+	}
+	// The keys are unwrapped once, here, so nothing needs the client after.
+	defer unwrapper.Close()
+	return readKeyring(ctx, settings, unwrapper, needs)
+}
+
+// readKeyring is loadKeyring with the unwrapper given, nil when auth.kms_key is unset.
+func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwrapper, needs string) (*auth.Sealer, error) {
+	current := auth.KEKVersion
+	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
+		version, err := strconv.Atoi(configured)
+		if err != nil || version < 1 {
+			// The value is left out on purpose: a key pasted into the wrong variable would
+			// otherwise reach the logs and Sentry with this error.
+			return nil, fmt.Errorf("%s %s to be a positive integer", needs, authKEKVersionEnvVar)
+		}
+		current = version
+	}
+	keys := make(map[int]string)
+	if settings.Auth.KEK != "" {
+		keys[1] = settings.Auth.KEK
+	}
+	wrapped := make(map[int]string)
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		suffix, ok := strings.CutPrefix(name, authKEKEnvVar+"_V")
+		suffix, isWrapped := strings.CutSuffix(suffix, authKEKWrappedSuffix)
+		version, err := strconv.Atoi(suffix)
+		// Only the plain spelling counts, so _V01 cannot stand in for _V1 and
+		// ROUTER_AUTH_KEK_VERSION is not read as a key.
+		if !ok || err != nil || version < 1 || strconv.Itoa(version) != suffix || key == "" {
+			continue
+		}
+		if isWrapped {
+			wrapped[version] = key
+			continue
+		}
+		if version == 1 && keys[1] != "" && keys[1] != key {
+			return nil, stack.Wrap(fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
+				authKEKEnvVar, authKEKEnvVar))
+		}
+		keys[version] = key
+	}
+	for _, version := range slices.Sorted(maps.Keys(wrapped)) {
+		name := fmt.Sprintf("%s_V%d%s", authKEKEnvVar, version, authKEKWrappedSuffix)
+		if keys[version] != "" {
+			return nil, fmt.Errorf("%s and a plain version %d key (%s_V%d, or %s for version 1) "+
+				"are both set: set one of them", name, version, authKEKEnvVar, version, authKEKEnvVar)
+		}
+		if unwrapper == nil {
+			return nil, fmt.Errorf("%s is set, but auth.kms_key names no KMS key to unwrap it with", name)
+		}
+		key, err := unwrapKEK(ctx, unwrapper, version, wrapped[version])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		keys[version] = key
+	}
+	if keys[current] == "" {
+		if os.Getenv(authKEKVersionEnvVar) == "" {
+			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: "+
+				"set %s_V1 (%s is version 1)", needs, authKEKEnvVar, authKEKEnvVar)
+		}
+		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
+		// parses as one, and naming it would send the key to the logs and Sentry. The
+		// versions that are set come from variable names, never from values.
+		return nil, fmt.Errorf("%s a key for the version %s names: "+
+			"set the matching %s_V<n> (versions set: %v)",
+			needs, authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
+	}
+	return auth.NewSealerWithKeyring(current, keys)
+}
+
+// connectorHTTPTimeout bounds one outbound request oauth2_code or oauth2_client_credentials
+// makes: a discovery fetch, a client registration, a code exchange or a token request. 10 s is the prototype's (defaultHTTPClient in
+// internal/mcp/oauth.go on codex/connector-support at cf62af0d), not a measured one.
+const connectorHTTPTimeout = 10 * time.Second
+
+// newConnectorRegistry is the connector adapters this deployment has: none when connectors
+// are off, so no connection and no custom connector can name a scheme, and oauth2_code,
+// oauth2_client_credentials, api_key, bearer and none when they are on. A new scheme is one more entry in the list
+// below. It follows the sealer: without a keyring no attempt or grant can be sealed,
+// so a scheme registered without one would take connections nothing could ever authorize.
+//
+// ClientMetadataURL is where the API serves the router's client metadata document
+// (api.ConnectorClientMetadataPath under public_url), and empty, which turns CIMD off, when
+// public_url is not https: CIMD section 3 allows only an https client_id URL. clients finds a
+// client registered in advance: the app's own from its record, the operator's from the
+// environment (api.ConnectorClients).
+func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLookup) (core.Registry, error) {
+	if !settings.Connectors.Enabled {
+		return core.Registry{}, nil
+	}
+	code, err := oauth2code.New(connectorSchemeConfig(settings, clients))
+	if err != nil {
+		return core.Registry{}, err
+	}
+	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	if err != nil {
+		return core.Registry{}, err
+	}
+	schemes := map[string]core.Scheme{}
+	for _, scheme := range []core.Scheme{code, clientCredentials, apikey.New(), bearer.New(), none.New()} {
+		schemes[scheme.Name()] = scheme
+	}
+	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.
+	verifiers := map[string]core.Verifier{}
+	for _, verifier := range []core.Verifier{hmacheader.New(), standardwebhooks.New(), ed25519header.New()} {
+		verifiers[verifier.Name()] = verifier
+	}
+	// The tool sources a manifest's sources[].kind may name; a new one is one more entry.
+	sources := map[string]core.ToolSource{}
+	for _, source := range []core.ToolSource{mcp.New()} {
+		sources[source.Kind()] = source
+	}
+	return core.Registry{Schemes: schemes, Verifiers: verifiers, ToolSources: sources}, nil
+}
+
+// connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
+// A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
+// refuses loopback for, and keeps the rest.
+func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLookup) oauth2code.Config {
+	return oauth2code.Config{
+		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		Clients:           clients,
+		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
+	}
+}
+
+// errAPIKeyNeedsKeyring is the refusal of an api_key start with no keyring: the one
+// loadKeyring gave before newAuthenticator took the keyring from newSecretSealer.
+var errAPIKeyNeedsKeyring = errors.New("auth.mode=" + string(auth.APIKey) + " needs a key encryption " +
+	"keyring to seal the secrets it holds: set " + authKEKEnvVar + "_V1 (" + authKEKEnvVar + " is version 1)")
+
+// newAuthenticator builds the authenticator the deployment's mode asks for.
+//
+// api_key needs both a store to look keys up in and the key that unseals their secrets, and
+// says which is missing rather than starting and refusing every request for a reason only
+// visible in a 401.
+//
+// secrets is the keyring newSecretSealer built, so a start unwraps its keys once; nil
+// refuses api_key, and the keyring is never read again here.
+func newAuthenticator(ctx context.Context, settings config.Config, configs *appconfig.Store, secrets *auth.Sealer, logger *slog.Logger) (auth.Authenticator, error) {
+	mode, err := auth.ParseMode(settings.Auth.Mode)
+	if err != nil {
+		return nil, err
+	}
+
+	switch mode {
+	case auth.NoAuth:
+		logger.Warn("running without authentication: anyone who can reach this router can "+
+			"read and spend any customer's account, and every one of them is treated as "+
+			"that customer's own backend, so nothing but a laptop should run this way",
+			"mode", auth.NoAuth, "set", "auth.mode")
+		return auth.New(mode, nil)
+	case auth.Proxy:
+		logger.Warn("authenticating nothing: the caller is whoever the headers in front of "+
+			"this router say, so only a proxy that overwrites them should be able to reach it",
+			"mode", auth.Proxy, "set", "auth.mode", "proxy_declares_kind", settings.Auth.ProxyDeclaresKind)
+		return auth.NewProxy(auth.ProxyOptions{DeclaresKind: settings.Auth.ProxyDeclaresKind}), nil
+	case auth.Custom:
+		return nil, fmt.Errorf("auth.mode=%s has no authenticator in this binary: a deployment "+
+			"answering for itself embeds the module and passes api.WithAuthenticator", auth.Custom)
+	}
+
+	if configs == nil {
+		return nil, fmt.Errorf("auth.mode=%s needs postgres.dsn, because that is where the keys are",
+			auth.APIKey)
+	}
+	if secrets == nil {
+		// newSecretSealer leaves it nil only when no key is set, so this is the refusal
+		// the keyring would give, without opening a second KMS client for it.
+		return nil, errAPIKeyNeedsKeyring
+	}
+
+	return auth.New(mode, configs.Lookup(secrets))
+}
+
+func run(settings config.Config, logger *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The WebRTC SDK signals every call's SFU and coordinator through the default transport.
+	// Its two idle connections a host are shared by every agent on the router, so past two
+	// requests at once each one paid a TLS handshake for a connection then thrown away.
+	defaultTransport := http.DefaultTransport.(*http.Transport)
+	defaultTransport.MaxIdleConns = 1024
+	defaultTransport.MaxIdleConnsPerHost = 256
+	// Each join still dials its SFU anew, and verifying the server's certificate chain was
+	// most of that handshake. A resumed session skips it.
+	defaultTransport.TLSClientConfig = &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(1024)}
+
+	capabilities, err := routing.LoadConfig(settings.RoutingConfig)
+	if err != nil {
+		return err
+	}
+	vendorConfig, err := phone.LoadConfig(settings.PhoneConfig)
+	if err != nil {
+		return err
+	}
+	priceFiles, err := loadPriceFiles(settings, logger)
+	if err != nil {
+		return err
+	}
+	fallbackPrices, err := newPrices(capabilities, priceFiles, pricesVersion(settings), logger)
+	if err != nil {
+		return err
+	}
+	// Without a database the price files are the price list; with one they only seed it.
+	var prices pricing.Pricer = fallbackPrices
+
+	// Traces go nowhere unless the deployment names a collector in the environment, so
+	// this is a no-op on a laptop and on every deployment that has not asked for them.
+	flushTraces, err := tracing.Setup(ctx, "acceleration-router", release)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), traceFlushTimeout)
+		defer cancel()
+		if err := flushTraces(shutdown); err != nil {
+			logger.Error("could not flush the last traces", "error", err)
+		}
+	}()
+
+	// Checked before anything is opened, so a deployment that turned on something holding
+	// secrets without a keyring is refused at startup rather than on its first secret.
+	secrets, err := newSecretSealer(ctx, settings)
+	if err != nil {
+		return err
+	}
+	// Connectors seal under the same keyring, and only when they are on.
+	var connectorSecrets *auth.Sealer
+	if settings.Connectors.Enabled {
+		connectorSecrets = secrets
+	}
+
+	// Postgres and Redis are optional so the API can be brought up for inspection before
+	// the data stores exist. /health reports what is missing.
+	var pgStore *store.Store
+	var activePrices *pricing.Active
+	if settings.Postgres.DSN != "" {
+		pgStore, err = openStore(ctx, settings)
+		if err != nil {
+			return err
+		}
+		defer pgStore.Close()
+		activePrices = startPrices(ctx, pgStore, capabilities, fallbackPrices, priceFiles, settings.PricesFile != "",
+			priceRetry, priceReload, logger)
+		prices = activePrices
+	} else {
+		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
+	}
+	// Checked against the list in force: the database's once read, which holds what staff
+	// priced since the files, else the files'.
+	billed := billable.Items(billableOf(settings, capabilities, vendorConfig))
+	if activePrices != nil {
+		logUnpriced(activePrices.List(), billed, logger)
+	} else {
+		logUnpriced(fallbackPrices, billed, logger)
+	}
+	// After the store, which holds the apps' own OAuth clients oauth2_code looks up.
+	connectors, err := newConnectorRegistry(settings, api.ConnectorClients(pgStore, connectorSecrets, os.Getenv))
+	if err != nil {
+		return err
+	}
+	// The validate endpoint and the session's dispatcher ask it for a credential. The events
+	// endpoint revokes through it.
+	connectorResolver, err := newConnectorResolver(connectors, pgStore, connectorSecrets)
+	if err != nil {
+		return err
+	}
+	connectorTransports, err := newConnectorTransports(connectorResolver)
+	if err != nil {
+		return err
+	}
+
+	var liveClient *live.Client
+	if settings.Redis.Addr != "" {
+		liveClient, err = live.New(live.Options{
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Shard: live.Shard{
+				Address:  settings.Redis.Shard.Addr,
+				Username: settings.Redis.Shard.Username,
+				Password: settings.Redis.Shard.Password,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		defer liveClient.Close()
+	} else {
+		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
+	}
+	defer serveSaturation(pgStore, liveClient, logger)()
+	usageClient, err := newUsageClient(settings, pgStore, logger)
+	if err != nil {
+		return err
+	}
+	shard := cmp.Or(settings.Shard, routing.Unsharded)
+	host, _ := os.Hostname()
+	source := routing.Source(shard, host)
+	// Started before the writer, so they stop after the writer has closed and still send what
+	// the shutdown lost, and what the rows recorded while it drained said, before Sentry is
+	// flushed.
+	stopAlerts := startUsageAlerts(ctx, source, shard, logger)
+	defer stopAlerts()
+	stopMeteringAlerts := startMeteringAlerts(ctx, source, shard, logger)
+	defer stopMeteringAlerts()
+	connectorLimiter := newConnectorLimiter(connectorTransports, liveClient, logger)
+	sandboxProxy, err := newSandboxProxy(settings.CodeSandbox, liveClient, connectorResolver, pgStore, connectors.Schemes, logger)
+	if err != nil {
+		return err
+	}
+
+	// What every request is measured against -- the key it presented, the app behind it,
+	// their policies and what they have configured -- read through Redis and the cache
+	// rueidis keeps beside it. Without Redis it is Postgres on every read, which is what
+	// this deployment did before the cache existed.
+	var configs *appconfig.Store
+	if pgStore != nil {
+		configs, err = appconfig.New(appconfig.Options{
+			Store:    pgStore,
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer configs.Close()
+	}
+	// The keys customers keep for their own accounts at the vendors, read through the same cache
+	// and opened with the keyring they were sealed under. Without either, work is routed on the
+	// deployment's own keys alone.
+	var customerKeys routing.CustomerKeys
+	if configs != nil && secrets != nil {
+		customerKeys = providerkeys.NewKeyring(configs, secrets)
+	}
+
+	// Who each app is acting for, written down once per user rather than once per
+	// request: an LRU of the last few thousand this process saw, a key the replicas share
+	// in Redis, and the row underneath.
+	var endUsers *users.Recorder
+	if pgStore != nil {
+		endUsers, err = users.New(users.Options{
+			Store:    pgStore,
+			Address:  settings.Redis.Addr,
+			Username: settings.Redis.Username,
+			Password: settings.Redis.Password,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer endUsers.Close()
+	}
+
+	// The activity record counts every request an app makes, by area and client, and writes
+	// the sums once a minute. It closes after the listeners do, so the last requests are
+	// written too.
+	var activityRecord *activity.Recorder
+	if pgStore != nil {
+		activityRecord, err = activity.New(activity.Options{Store: pgStore, Logger: logger})
+		if err != nil {
+			return err
+		}
+		activityRecord.Start()
+		defer activityRecord.Close()
+	}
+
+	// Spend limits, data policies and prompt injection screening are stored per organization
+	// and app, so a deployment without a database enforces none of them, and may run only
+	// with limits off. Money is read from the usage service, and from Postgres without one.
+	warnLimits(settings, logger)
+	warnKnowledgeLimits(settings, logger)
+	// Checked here as well as where the backends are built, since a router that cannot build
+	// them serves without knowledge rather than failing.
+	if err := knowledgeRegionsApart(knowledgeRegions(settings.Knowledge)); err != nil {
+		return err
+	}
+	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
+		return err
+	}
+	var holds rueidis.Client
+	if liveClient != nil {
+		holds = liveClient.Redis()
+	}
+	// The forwarder that sends the policies' warnings is made after them, once connectors are.
+	var warned atomic.Pointer[eventforward.Forwarder]
+	notified := func() {
+		if forwarder := warned.Load(); forwarder != nil {
+			forwarder.Wake()
+		}
+	}
+	policies, closeCounters, err := newPolicies(settings, configs, usageClient, holds, notified, logger)
+	if err != nil {
+		return err
+	}
+	defer closeCounters()
+	var gate routing.Gate
+	var shipped, written, counted func([]routing.Acked)
+	if policies != nil {
+		defer policies.Close()
+		gate, shipped, written, counted = policies, policies.Acked, policies.Written, policies.Counted
+	}
+
+	// Every recorder of the process writes through this one writer, so there is one queue to
+	// drain at shutdown. Deferred here, it closes after everything that records and before
+	// the policies it asks, the store and Redis. The policies say whose a row is, and its
+	// organization's tier, for a recorder with no gate of its own, and are told which rows the
+	// ledger has, which lets go of what they held for them.
+	usageWriter := routing.NewWriter(routing.WriterOptions{
+		Store: pgStore, Live: liveClient, Logger: logger, Gate: gate, Usage: usageClient, Source: source,
+		Shipped: shipped, Written: written, Counted: counted,
+	})
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), usageDrainTimeout)
+		defer cancel()
+		usageWriter.Close(ctx)
+	}()
+	if usageClient != nil {
+		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger, Shipped: shipped})
+		defer stopSweeper()
+	}
+
+	// One router of the deployment checks every organization's spend for a jump each hour.
+	if anomalies := costAnomalies(settings, pgStore, logger); anomalies != nil {
+		anomalies.Start()
+		defer anomalies.Close()
+	}
+
+	limiter, err := newDailyLimiter(liveClient, quota.Limits{
+		MessagesPerDay: settings.RateLimit.MessagesPerDay,
+		TokensPerDay:   settings.RateLimit.TokensPerDay,
+	}, policies, logger)
+	if err != nil {
+		return err
+	}
+
+	if settings.Agent.SpeculativeReplies {
+		logger.Info("starting replies before the flow controller rules on them",
+			"env", "ROUTER_SPECULATIVE_REPLIES")
+	}
+
+	trustedProxies, err := api.TrustedProxies(settings.TrustedProxies)
+	if err != nil {
+		return err
+	}
+	if len(trustedProxies) == 0 {
+		logger.Warn("no trusted proxies configured, X-Forwarded-For will be ignored",
+			"setting", "trusted_proxies")
+	}
+
+	// Voices a customer brought with them live in an object bucket and a few tables. The
+	// resolver only reads the tables, so a deployment with a database but no bucket can
+	// still speak in voices another one prepared.
+	// The resolver checks a library voice against the same catalogue the picker reads.
+	library := buildLibrary(logger)
+	var resolver routing.VoiceResolver
+	if configs != nil {
+		resolver = voices.NewResolver(configs, library)
+	}
+
+	bucket, err := blob.Open(ctx, settings.VoicesBucketURL)
+	if err != nil {
+		return err
+	}
+	if bucket != nil {
+		defer bucket.Close()
+	}
+
+	// A modality the config says nothing about is simply not served, and its paths 404.
+	routers := map[routing.Modality]routing.Inspector{}
+	streams := &api.Streams{}
+
+	// One chorus-asr server serves every agent: as a transcriber where one names it, and
+	// to the flow controller of an agent whose floor control opts in, or of every agent that
+	// chose none where agent.floor_control_default says so.
+	floor := audiofloor.Open(settings.Agent)
+
+	if section, ok := capabilities[routing.STT]; ok {
+		transcribers := sttrouter.DefaultRegistry()
+		if settings.MockProviders {
+			sttrouter.RegisterMock(transcribers)
+		}
+		if floor != nil {
+			sttrouter.RegisterAudioFloor(transcribers, floor)
+		}
+		speech, err := sttrouter.New(sttrouter.Options{
+			Config:   section,
+			Registry: transcribers,
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer speech.Close()
+		routers[routing.STT] = speech
+		streams.STT = speech
+
+		// The recording half of the same section. It is a second router rather than a
+		// second method because it routes to different models: the batch endpoints,
+		// which are the ones declared realtime: false.
+		recorded, err := sttrouter.NewRecordings(sttrouter.Options{
+			Config:       section,
+			Transcribers: sttrouter.DefaultTranscriberRegistry(),
+			Store:        pgStore,
+			Live:         liveClient,
+			Gate:         gate,
+			Pricer:       prices,
+			Writer:       usageWriter,
+			Logger:       logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer recorded.Close()
+		streams.Transcriptions = recorded
+	}
+
+	if section, ok := capabilities[routing.TTS]; ok {
+		speakers := ttsrouter.DefaultRegistry()
+		if settings.MockProviders {
+			ttsrouter.RegisterMock(speakers)
+		}
+		voice, err := ttsrouter.New(ttsrouter.Options{
+			Config:   section,
+			Registry: speakers,
+			Store:    pgStore,
+			Live:     liveClient,
+			Voices:   resolver,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer voice.Close()
+		routers[routing.TTS] = voice
+		streams.TTS = voice
+
+		recorded, err := ttsrouter.NewRecordings(ttsrouter.Options{
+			Config:    section,
+			Recorders: ttsrouter.DefaultRecorderRegistry(),
+			Store:     pgStore,
+			Live:      liveClient,
+			Voices:    resolver,
+			Gate:      gate,
+			Pricer:    prices,
+			Writer:    usageWriter,
+			Logger:    logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer recorded.Close()
+		streams.Speech = recorded
+	}
+
+	// The classifier is routed for the same reason search is, and is absent for the same
+	// reason: a deployment that declares no section for it runs agents that cannot be
+	// given a guardrail, and says so when one is asked for rather than ignoring it. It is
+	// opened before the LLM router, which screens prompt injection on it.
+	var judging *decisionrouter.Router
+	if section, ok := capabilities[routing.DecisionModel]; ok {
+		judging, err = decisionrouter.New(decisionrouter.Options{
+			Config:   section,
+			Registry: decisionrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer judging.Close()
+		routers[routing.DecisionModel] = judging
+		streams.DecisionModel = judging
+	}
+
+	if section, ok := capabilities[routing.LLM]; ok {
+		var screen llmrouter.Screen
+		if policies != nil {
+			screen = policies.Screener(judging)
+		}
+		var models routing.ModelResolver
+		if configs != nil {
+			models = llmrouter.NewCustomModels(configs, secrets, settings.Models.PrivateEndpoints)
+		}
+		thinkers := llmrouter.DefaultRegistry()
+		if settings.MockProviders {
+			llmrouter.RegisterMock(thinkers)
+		}
+		chat, err := llmrouter.New(llmrouter.Options{
+			Config:     section,
+			Registry:   thinkers,
+			Store:      pgStore,
+			Live:       liveClient,
+			Quota:      limiter,
+			Gate:       gate,
+			Pricer:     prices,
+			Models:     models,
+			Keys:       customerKeys,
+			Screen:     screen,
+			ReplyHedge: settings.Agent.ReplyHedge,
+			FlowHedge:  settings.Agent.FlowHedge,
+			Writer:     usageWriter,
+			Logger:     logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer chat.Close()
+		routers[routing.LLM] = chat
+		streams.LLM = chat
+	}
+
+	if section, ok := capabilities[routing.STS]; ok {
+		conversing, err := stsrouter.New(stsrouter.Options{
+			Config:   section,
+			Registry: stsrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer conversing.Close()
+		routers[routing.STS] = conversing
+		streams.STS = conversing
+	}
+
+	// Search is routed like the three above, so a deployment with no key for any of the
+	// providers still inspects and reports on them: what stops a session searching is a
+	// candidate refusing to be built, not the section being absent.
+	var finding *searchrouter.Router
+	if section, ok := capabilities[routing.Search]; ok {
+		finding, err = searchrouter.New(searchrouter.Options{
+			Config:   section,
+			Registry: searchrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer finding.Close()
+		routers[routing.Search] = finding
+		streams.Search = finding
+	}
+
+	// Image generation is served when the config has a section for it, and a deployment
+	// with no key for either provider still inspects and reports on them: what stops a
+	// picture being drawn is a candidate refusing to be built.
+	if section, ok := capabilities[routing.Image]; ok {
+		imaging, err := imagerouter.New(imagerouter.Options{
+			Config:   section,
+			Registry: imagerouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer imaging.Close()
+		routers[routing.Image] = imaging
+		streams.Image = imaging
+	}
+
+	// Detection is served the same way: a section in the config, and a provider with no
+	// key is a candidate that refuses to be built rather than a router that is missing.
+	if section, ok := capabilities[routing.Detection]; ok {
+		detecting, err := detectionrouter.New(detectionrouter.Options{
+			Config:   section,
+			Registry: detectionrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer detecting.Close()
+		routers[routing.Detection] = detecting
+		streams.Detection = detecting
+	}
+
+	// OCR is served the same way. Its vision language models are built the way the LLM
+	// router builds them, so they read the same keys.
+	if section, ok := capabilities[routing.OCR]; ok {
+		reading, err := ocrrouter.New(ocrrouter.Options{
+			Config:   section,
+			Registry: ocrrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer reading.Close()
+		routers[routing.OCR] = reading
+		streams.OCR = reading
+	}
+
+	// Every Stream action taken for a customer, a call joined, a line made, a transcript
+	// written, a token minted, is taken in the app this resolves for them.
+	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
+	if err != nil {
+		return err
+	}
+	if err := checkDeploymentApp(ctx, settings, streamClients); err != nil {
+		return err
+	}
+	// An app whose policies require one of its own is never written into the deployment's.
+	if stored, ok := streamClients.Stored(); ok && policies != nil {
+		stored.SetFloor(policies.RequiresOwnStreamApp)
+	}
+	if pgStore != nil {
+		pgStore.SetStreamPins(streamPins(streamClients))
+	}
+	go learnDeploymentApp(ctx, streamClients, logger)
+
+	// Texts, call minutes, numbers and 10DLC fees are all telephony rows, through one recorder.
+	var phoneRecorder *routing.Recorder
+	if pgStore != nil || liveClient != nil {
+		phoneRecorder = routing.NewRecorderOn(routing.Phone, usageWriter, prices, logger)
+	}
+	registrations, dlcGate, err := buildDLC(settings, pgStore, liveClient, phoneRecorder, logger)
+	if err != nil {
+		return err
+	}
+	if registrations != nil {
+		go registrations.Run(ctx, dlcPollEvery)
+	}
+	// Every text, call and number a customer pays for asks the same admission as a model, and
+	// is kept to the channel limits of its organization's tier, in the same mode as money.
+	if policies != nil {
+		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
+	}
+	telephony, stopTakingTrunkCalls, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
+	if err != nil {
+		return err
+	}
+	defer closePhone(telephony, logger)
+	if pgStore != nil {
+		// A call whose end was never announced is ended at the longest a call may last, and a
+		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
+		// billed by jobs of their own (router usage numbers, router usage dlc).
+		go telephony.RunLegSweep(ctx, legSweepEvery)
+		go checkCallHook(ctx, settings, logger)
+		startPhoneSweeper(ctx, telephony, logger)
+	}
+
+	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
+	// tool is offered to no session, and there is nothing to fill either.
+	base := newKnowledge(settings, routing.NewRecorderOn(routing.Knowledge, usageWriter, prices, logger), gate, pgStore, customerKeys, logger)
+	if base != nil {
+		defer base.Close()
+	}
+
+	// Which node is running which session. A socket is reached by the relay below, and
+	// everything else a session is asked over HTTP is carried to the node that can answer
+	// it, which first has to be findable.
+	directory, err := newDirectory(settings, liveClient, logger)
+	if err != nil {
+		return err
+	}
+	if directory != nil {
+		defer directory.Close()
+	}
+	if err := startSecretSweeper(ctx, settings.CodeSandbox, liveClient, directory, customerDaytonaKeys(pgStore, secrets), logger); err != nil {
+		return err
+	}
+
+	// An LLM-only deployment serves text sessions; voice modes validate their own
+	// speech dependencies before a call is opened.
+	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
+		// Nil with connectors off: no secrets to seal an attempt with.
+		Consents: api.ConnectorConsents(pgStore, connectors, connectorSecrets, settings.PublicURL),
+		Limiter:  connectorLimiter}
+	// A nil *resolver.Resolver in the interface would not be a nil interface.
+	if connectorResolver != nil {
+		sessionConnectors.Resolver = connectorResolver
+	}
+	// Closed after sessions.Shutdown, which is deferred below it: a campaign call is held until
+	// its session ends, so the dialer waits for its calls only once the sessions are ended,
+	// and writes how each went while Postgres is still open.
+	var dialer *campaign.Runner
+	defer func() {
+		if dialer != nil {
+			dialer.Close()
+		}
+	}()
+	// The pictures agents are asked for are queued in Postgres and drawn after their turn by
+	// whichever router claims them, where there is an image router to draw with.
+	var drawings *imagejobs.Service
+	if pgStore != nil && streams.Image != nil {
+		if drawings, err = imagejobs.New(imagejobs.Options{Store: pgStore, Images: streams.Image, Logger: logger}); err != nil {
+			return err
+		}
+	}
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
+		sessionConnectors, prices, policies, customerKeys, drawings, logger)
+	if err != nil {
+		return err
+	}
+	if sessions != nil {
+		defer sessions.Shutdown()
+	}
+	// A picture is posted into its conversation, which only sessions reach Stream Chat for.
+	if drawings != nil && sessions != nil {
+		if conversations, err := sessions.Conversations(); err == nil {
+			drawings.Start(ctx, conversations)
+			defer drawings.Close()
+		} else {
+			drawings = nil
+		}
+	}
+	// A simulation is a conversation, a model to judge it and a row, so it too runs only
+	// where all three are configured. Elsewhere a simulation can be written down but the
+	// path that runs it says why it cannot.
+	var simulations *simulation.Runner
+	if pgStore != nil && sessions != nil && streams.LLM != nil {
+		simulations, err = simulation.New(simulation.Options{
+			Store:    pgStore,
+			Sessions: sessions,
+			LLM:      streams.LLM,
+			// Speech is what an audio simulation needs and a text one does not, so it is
+			// passed where it exists rather than required.
+			TTS:    streams.TTS,
+			STT:    streams.STT,
+			Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer simulations.Close()
+
+		// Runs an older process left going are nobody's to finish: the conversations were
+		// held in it, and it is gone.
+		if err := simulations.Abandon(ctx); err != nil {
+			logger.Error("could not write off the runs an older router left going", "error", err)
+		}
+	}
+
+	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
+	// at least one provider willing to be taught. Missing any of those, the voice paths
+	// say so rather than half-working.
+	voiceService, err := buildVoices(configs, bucket, routing.NewRecorderOn(routing.TTS, usageWriter, prices, logger), logger)
+	if err != nil {
+		return err
+	}
+
+	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
+	// Missing any of those, the url paths say so rather than storing a subscription
+	// nothing would ever honour.
+	pages, err := buildKnowledgeURLs(pgStore, settings.Redis, holds, base, knowledgeLimits(settings.Knowledge), logger)
+	if err != nil {
+		return err
+	}
+	if pages != nil {
+		if err := pages.Start(); err != nil {
+			return err
+		}
+		defer pages.Close()
+	}
+
+	// A file uploaded to a knowledge base waits in its own bucket until a worker reads it.
+	// Without the bucket, or any of what the urls need, uploads say so.
+	knowledgeBucket, err := blob.Open(ctx, settings.KnowledgeBucketURL)
+	if err != nil {
+		return err
+	}
+	if knowledgeBucket != nil {
+		defer knowledgeBucket.Close()
+	}
+	var scans files.Reader
+	if streams.OCR != nil {
+		scans = streams.OCR
+	}
+	var shardHolds rueidis.Client
+	if liveClient != nil {
+		shardHolds = liveClient.ShardRedis()
+	}
+	uploads, err := buildKnowledgeFiles(pgStore, shardRedis(settings.Redis), shardHolds, base, knowledgeBucket, scans,
+		knowledgeLimits(settings.Knowledge), logger)
+	if err != nil {
+		return err
+	}
+	if uploads != nil {
+		if err := uploads.Start(); err != nil {
+			return err
+		}
+		defer uploads.Close()
+	}
+
+	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
+	// pool exists whether or not anybody is: an empty pool is a call nobody answers, which
+	// is a different thing from a deployment that does not dispatch at all.
+	workers := dispatch.NewPool()
+	if sessions != nil {
+		sessions.HostTools(workers)
+	}
+
+	authenticator, err := newAuthenticator(ctx, settings, configs, secrets, logger)
+	if err != nil {
+		return err
+	}
+	authMode, err := auth.ParseMode(settings.Auth.Mode)
+	if err != nil {
+		return err
+	}
+
+	// The changes recorded for a customer moving away are kept for as long as the move
+	// has to finish in, and then they are somebody's storage bill for nothing.
+	if pgStore != nil {
+		go pruneDataChanges(ctx, pgStore, settings.DataMove.Retention, logger)
+	}
+	// A scheduled task's finished runs, and the tasks that completed or failed, are kept for
+	// store.ScheduledTasksKept.
+	if pgStore != nil {
+		go pruneScheduledTasks(ctx, pgStore, logger)
+	}
+	// A tool item's output is taken out once the retention its session was held to runs out.
+	if pgStore != nil {
+		go redactToolOutput(ctx, pgStore, logger)
+	}
+
+	// A session lives in one process's memory, so a deployment running more than one
+	// node needs the sessions reachable from whichever node a socket lands on. The relay
+	// is what reaches them, and Redis is all it takes: a single-node deployment gets one
+	// anyway and nothing is published that nobody asks for.
+	// The relay is the shard's, since a session's frames only travel between the nodes of the
+	// shard running it. Work for a node's workers is asked for from any shard, so it travels
+	// on the shared Redis.
+	var sessionRelay, workBus *relay.Bus
+	if liveClient != nil {
+		sessionRelay, err = relay.New(relay.Options{Redis: liveClient.ShardRedis(), Logger: logger})
+		if err != nil {
+			return err
+		}
+		workBus = sessionRelay
+		if liveClient.ShardRedis() != liveClient.Redis() {
+			if workBus, err = relay.New(relay.Options{Redis: liveClient.Redis(), Logger: logger}); err != nil {
+				return err
+			}
+		}
+	} else {
+		logger.Warn("no redis configured, so a session is only reachable on the node running it",
+			"setting", "redis.addr")
+	}
+
+	// A worker waits on whichever node its socket landed on, and a session needing it may be
+	// running on any other.
+	var everyWorker *node.Workers
+	if workBus != nil && directory != nil {
+		everyWorker, err = node.NewWorkers(ctx, workers, directory, workBus, logger)
+		if err != nil {
+			return err
+		}
+		if sessions != nil {
+			sessions.HostTools(everyWorker)
+		}
+	}
+
+	// A key that does not read is refused at start: the endpoint would otherwise answer
+	// every delivery 401 and Stream's messages would go unanswered with nothing in the log
+	// but rejections.
+	chatInboundKeys, err := chatinbound.ParsePublicKeys(settings.Chat.InboundKeys)
+	if err != nil {
+		return err
+	}
+
+	var telnyxPublicKey ed25519.PublicKey
+	if settings.Telnyx.PublicKey != "" {
+		telnyxPublicKey, err = telnyxsig.ParsePublicKey(settings.Telnyx.PublicKey)
+		if err != nil {
+			logger.Error("calls to telnyx numbers will not be answered", "error", err)
+		}
+	}
+	// Both gaps are silent otherwise: Telnyx just gets rejected responses.
+	if settings.Telnyx.APIKey != "" {
+		if telnyxPublicKey == nil {
+			logger.Warn("calls to telnyx numbers will not be answered until "+
+				telnyxsig.PublicKeyEnvVar+" is set to a valid key", "setting", telnyxsig.PublicKeyEnvVar)
+		}
+		// Attach refuses Telnyx numbers then, which an operator only finds out on attach.
+		if secrets == nil {
+			logger.Warn("telnyx numbers cannot be attached and calls to them will not be answered until "+
+				authKEKEnvVar+" is set", "setting", authKEKEnvVar)
+		}
+		if settings.Telnyx.ConnectionID == "" {
+			logger.Warn("telnyx numbers cannot be attached and calls to or from them will not work until "+
+				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
+		}
+	}
+	// A token that cannot be Twilio's is refused at start, as an unreadable chat inbound key is.
+	if err := twiliosig.CheckAuthToken(settings.Twilio.WebhookAuthToken); err != nil {
+		return err
+	}
+	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
+
+	documents := api.NewDocumentReader(extract.Options{Logger: logger})
+	defer documents.Close()
+	options := api.Options{
+		Documents:             documents,
+		Routers:               routers,
+		Pricer:                prices,
+		Prices:                activePrices,
+		Billable:              billed,
+		Voices:                voiceService,
+		VoiceLibrary:          library,
+		KnowledgeURLs:         pages,
+		KnowledgeFiles:        uploads,
+		Store:                 pgStore,
+		Configs:               configs,
+		Users:                 endUsers,
+		Activity:              activityRecord,
+		Live:                  liveClient,
+		Phone:                 telephony,
+		Sessions:              sessions,
+		Relay:                 sessionRelay,
+		Directory:             directory,
+		Workers:               everyWorker,
+		Streams:               streams,
+		AudioFloor:            floor,
+		Stream:                streamClients,
+		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
+		HookSecret:            settings.Stream.APISecret,
+		TelnyxPublicKey:       telnyxPublicKey,
+		ChatInboundKeys:       chatInboundKeys,
+		TwilioAuthToken:       settings.Twilio.WebhookAuthToken,
+		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
+		Simulations:           simulations,
+		DLC:                   registrations,
+		Gate:                  dlcGate,
+		OpsKey:                settings.Auth.OpsKey,
+		ManageKey:             settings.Auth.ManageKey,
+		Dispatch:              workers,
+		Quota:                 limiter,
+		RunsPerApp:            settings.Runs.ConcurrentPerApp,
+		Policies:              policies,
+		Connectors:            connectors,
+		ConnectorSecrets:      connectorSecrets,
+		TrustedProxies:        trustedProxies,
+		AuthMode:              authMode,
+		DataRetention:         settings.DataMove.Retention,
+		PrivateModelEndpoints: settings.Models.PrivateEndpoints,
+		PublicURL:             settings.PublicURL,
+		DashboardURL:          settings.DashboardURL,
+		Auth:                  authenticator,
+		Release:               release,
+		Logger:                logger,
+	}
+	// A provider app's events go on to the customer's event destinations, whose secrets are
+	// sealed under the connector keyring. Every router runs the worker that sends them; a
+	// forward is taken by one router at a time. Its client is egress's, as every scheme's is.
+	// Built before the channel bridge, which hands it the deliveries of the messages it gives
+	// up, and so closed after it.
+	var forwarder *eventforward.Forwarder
+	if connectorSecrets != nil && pgStore != nil {
+		forwarder, err = eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
+		if err != nil {
+			return err
+		}
+		forwarder.Start()
+		defer forwarder.Close()
+		options.EventForwarder = forwarder
+		warned.Store(forwarder)
+	}
+	// A nil *resolver.Resolver in the interface would not be a nil interface, so the absence
+	// stays absent, and the events endpoint takes no events without it.
+	var bridge *channelbridge.Bridge
+	if connectorResolver != nil {
+		options.ConnectorResolver = connectorResolver
+		options.ConnectorTransports = connectorTransports
+		// The proxy holds a connection's direct calls after a provider's 429, as the session's
+		// dispatcher holds its tool calls.
+		options.ConnectorLimiter = connectorLimiter
+		options.ProxyCallsPerMinute = settings.Connectors.ProxyCallsPerMinute
+		options.ConnectorEventSecrets = api.ConnectorEventSecrets(os.Getenv)
+		// The events endpoint hands it a provider app's messages; the conversation held on a
+		// thread channel, the agent's finished replies to them. Its texts pass the gate
+		// internal/channels' do.
+		bridgeOptions := channelbridge.Options{
+			Store: pgStore, Stream: streamClients, Schemes: connectors.Schemes, Transports: connectorTransports,
+			Resolver: connectorResolver, Gate: dlcGate, Logger: logger,
+		}
+		if forwarder != nil {
+			bridgeOptions.Unanswered = forwarder.ForwardUnanswered
+		}
+		bridge, err = channelbridge.New(bridgeOptions)
+		if err != nil {
+			return err
+		}
+		defer bridge.Close()
+		options.ChannelBridge = bridge
+		if sessions != nil {
+			if conversations, err := sessions.Conversations(); err == nil {
+				conversations.OnFinishedReply(bridge.Reply)
+			}
+		}
+	}
+	// The customer's Slack app (managed) and Stream's own (operator) are written only where
+	// connector secrets can be sealed. Slack is reached through egress, as every scheme is.
+	if connectorSecrets != nil {
+		options.SlackApps, err = slackapps.New(slackapps.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+		if err != nil {
+			return err
+		}
+		options.OperatorProviderApps = api.ConnectorOperatorApps(os.Getenv)
+	}
+	// A connection's MCP events are subscribed to on its server, signed with secrets sealed
+	// under the connector keyring, and each opens a conversation, so they need connectors on,
+	// a database, sessions and an https public URL for the callback: the draft refuses any
+	// other («Servers MUST reject events/subscribe with a non-https delivery.url»). Every router
+	// runs the worker that refreshes them; a subscription is taken by one router at a time.
+	if connectorResolver != nil && connectorSecrets != nil && pgStore != nil && sessions != nil &&
+		strings.HasPrefix(settings.PublicURL, "https://") {
+		events, err := mcpevents.New(mcpevents.Options{
+			Store: pgStore, Sessions: sessions, Registry: connectors, Transports: connectorTransports,
+			Secrets: connectorSecrets, PublicURL: settings.PublicURL, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		events.Start()
+		defer events.Close()
+		options.MCPEvents = events
+	}
+	// A person's episodes close and are summarized (T55): a call's when the call hook says it
+	// ended, a thread's by the idle sweeper, which starts only where an episode can be
+	// (startEpisodeSweeper). A summary is an LLM response, so this needs the LLM router too.
+	if pgStore != nil && streams.LLM != nil {
+		closer, err := omnichannel.NewCloser(omnichannel.CloserOptions{
+			Store: pgStore, Stream: streamClients, LLM: streams.LLM, IdleAfter: settings.Episodes.IdleAfter, Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		options.Episodes = closer
+		if _, err := startEpisodeSweeper(ctx, settings, pgStore, closer); err != nil {
+			logger.Error("could not tell whether any episode can be idle, so none is swept", "error", err)
+		}
+	}
+	if streamClients.PerApp() {
+		// Each registered app signs its own hooks and mints its own tokens, so only work in
+		// the deployment's own app goes without.
+		if settings.Stream.APIKey == "" {
+			logger.Info("no stream.api_key or stream.api_secret set, so only registered apps act in Stream: " +
+				"nothing is written into a deployment app, and the old hook paths accept nothing")
+		}
+	} else {
+		if options.HookSecret == "" {
+			logger.Warn("no stream.api_secret set, so inbound calls cannot be dispatched: "+
+				"the call events Stream sends cannot be told apart from anyone who found the url",
+				"hook", "POST /v1/phone/hooks/stream")
+		}
+		if settings.Stream.APIKey == "" {
+			logger.Warn("no stream.api_key set, so nobody can join a call from a browser",
+				"endpoint", "POST /v1/agents/calls/{id}/token")
+		}
+	}
+	options.Knowledge = base
+	options.KnowledgeLimits = knowledgeLimits(settings.Knowledge)
+	// A channel's provider credentials are sealed under the same keyring as the other
+	// secrets the router holds. Without one the channel paths refuse to hold them, which is
+	// better than keeping a WhatsApp token in the clear, and nothing is delivered because
+	// nothing can be connected. A message that arrives opens a conversation from a row, so
+	// answering one needs a database and sessions as well.
+	if secrets != nil {
+		options.Secrets = secrets
+		if pgStore != nil && sessions != nil {
+			inbound, err := channels.New(channels.Options{
+				Store:    pgStore,
+				Sessions: sessions,
+				Secrets:  options.Secrets,
+				Gate:     dlcGate,
+				Recorder: phoneRecorder,
+				Logger:   logger,
+			})
+			if err != nil {
+				return err
+			}
+			options.Channels = inbound
+			defer inbound.Close()
+		}
+	} else {
+		logger.Warn("no key encryption keyring set (ROUTER_AUTH_KEK_V1), so no channel can be "+
+			"connected: there is nowhere safe to keep a provider's credentials",
+			"endpoint", "POST /v1/agents/channels")
+	}
+
+	server, err := api.NewServer(options)
+	if err != nil {
+		return err
+	}
+	// Every router runs the worker that writes the queued inbound messages and hands each to
+	// the agent; a message is taken by one router at a time. The hand-off is the server's
+	// (AnswerQueued), and the server is built with the bridge (options.ChannelBridge), so the
+	// worker is handed it here, once both exist, not in channelbridge.Options.
+	if bridge != nil {
+		bridge.Start(ctx, server.AnswerQueued)
+	}
+	// Every router runs the scheduled-task worker: whichever of them claims
+	// an occurrence delivers it, in the conversation its task belongs to. It
+	// claims until the stop signal ends ctx; the drain then waits for the
+	// occurrences it is delivering, as for the sessions.
+	var scheduler *scheduling.Scheduler
+	if pgStore != nil && sessions != nil {
+		scheduler = scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
+		// Before Start: a session the first delivery opens takes the kick then.
+		server.SetSchedulerKick(scheduler.Kick)
+		scheduler.Start(ctx)
+		defer scheduler.Close()
+	}
+	// Every router runs the campaign dialer: running campaigns are in Postgres, and each
+	// contact's next call is claimed by one router at a time. It claims until the stop signal
+	// ends ctx; the drain then waits for its calls, as for the sessions.
+	if pgStore != nil && sessions != nil && streams.LLM != nil {
+		dialer, err = campaign.New(campaign.Options{
+			Store:       pgStore,
+			Dialer:      campaign.NewPhoneDialer(telephony, sessions, pgStore, logger),
+			Transcripts: server,
+			Classifier:  campaign.NewClassifier(streams.LLM),
+			Logger:      logger,
+		})
+		if err != nil {
+			return err
+		}
+		if err := dialer.Start(ctx); err != nil {
+			return err
+		}
+		logger.Info("campaign dialer started", "owner", dialer.Owner())
+	} else {
+		logger.Warn("campaigns will not dial: the dialer needs postgres, sessions and an llm",
+			"postgres", pgStore != nil, "sessions", sessions != nil, "llm", streams.LLM != nil)
+	}
+	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
+	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.
+	var deliveries *chatinbound.Worker
+	if pgStore != nil && len(chatInboundKeys) > 0 {
+		deliveries, err = chatinbound.NewWorker(chatinbound.Options{Store: pgStore, Answer: server.AnswerChatInbound, Logger: logger})
+		if err != nil {
+			return err
+		}
+		server.SetChatInboundKick(deliveries.Kick)
+		deliveries.Start(ctx)
+		defer deliveries.Close()
+	}
+
+	handler := server.Handler()
+	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
+	if err != nil {
+		return err
+	}
+	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
+	listening := make(chan error, 3)
+	serve := func(httpServer *http.Server, listener net.Listener) {
+		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			listening <- err
+			return
+		}
+		listening <- nil
+	}
+	logger.Info("listening", "address", public.Addr().String(), "modalities", len(routers))
+	go serve(httpServer, public)
+
+	// Peers get a listener of their own when one is asked for, so a node still answers for
+	// its sessions after it has stopped taking new work on the public one.
+	var peerServer *http.Server
+	if settings.Node.Listen != "" {
+		peers, err := net.Listen("tcp", settings.Node.Listen)
+		if err != nil {
+			return err
+		}
+		peerServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
+		logger.Info("listening for peers", "address", peers.Addr().String(), "setting", "node.listen")
+		go serve(peerServer, peers)
+	}
+
+	stopSandboxProxy, handOverSandboxProxy, err := serveSandboxProxy(sandboxProxy, settings.CodeSandbox.ProxyAddr,
+		settings.CodeSandbox.ProxyListenFD, settings.CodeSandbox.ProxyPublicURL, settings.ListenFD != 0, serve, logger)
+	if err != nil {
+		return err
+	}
+	defer stopSandboxProxy()
+
+	if settings.PprofAddr != "" {
+		go servePprof(settings.PprofAddr, idleTimeout, logger)
+	}
+	stopMetrics, handOverMetrics := serveMetrics(settings.MetricsAddr, logger)
+	defer stopMetrics()
+
+	select {
+	case err := <-listening:
+		return err
+	case <-ctx.Done():
+		logger.Info("shutting down", "drain", settings.Shutdown.Drain)
+		return stopServing(stopping{
+			public:          httpServer,
+			peers:           peerServer,
+			drainWork:       server.Drain,
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer, drawings) },
+			telephony:       telephony,
+			handOverMetrics: handOverMetrics,
+			stopTaking:      stopTakingTrunkCalls,
+			handOverProxy:   handOverSandboxProxy,
+			drain:           settings.Shutdown.Drain,
+			logger:          logger,
+		})
+	}
+}
+
+// listen opens a listener: the socket a supervisor handed down when there is one, so the
+// process before this one and this one take connections from the same queue. setting names
+// fd in the error.
+func listen(address string, fd int, setting string) (net.Listener, error) {
+	if fd == 0 {
+		return net.Listen("tcp", address)
+	}
+	inherited := os.NewFile(uintptr(fd), "listener")
+	defer inherited.Close()
+	listener, err := net.FileListener(inherited)
+	if err != nil {
+		return nil, fmt.Errorf("could not serve on the inherited socket %d (%s): %w", fd, setting, err)
+	}
+	return listener, nil
+}
+
+// stopping is what a router has to stop.
+type stopping struct {
+	public *http.Server
+	peers  *http.Server
+	// drainWork sends away the work that reconnects, the dispatch workers.
+	drainWork func()
+	// held is how many sessions, scheduled deliveries, inbound writes and
+	// turns, chat answers and campaign calls the process is still running.
+	held      func() int
+	telephony *phone.Service
+	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
+	// over on the same address is the one scraped. Without a drain the caller stops it at
+	// exit.
+	handOverMetrics func()
+	// stopTaking stops this node taking calls through customers' own SIP trunks over from
+	// other nodes when a drain starts, while it keeps relaying its own.
+	stopTaking func()
+	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
+	// so the router taking over on the same address serves the sandboxes; the tunnels already
+	// open stay until the process ends. Without a drain the caller stops it at exit. It does
+	// nothing without an overlap deploy, unless proxy_listen_fd is set.
+	handOverProxy func()
+	drain         time.Duration
+	// grace is how long the requests still open on a closing listener get to finish; zero
+	// means shutdownGrace.
+	grace  time.Duration
+	logger *slog.Logger
+}
+
+// drainPoll is how often a draining router looks at how many sessions it still holds.
+const drainPoll = 250 * time.Millisecond
+
+// stopServing stops taking work, then lets what is running finish.
+//
+// Without a drain it hands the calls through customers' own SIP trunks to another node (or
+// hangs them up without Redis), then drains HTTP, both inside the grace: the drain gets
+// whatever that left of it, and metrics and the sandbox egress proxy are served until the
+// process exits. With one, the metrics, sandbox egress proxy and public listeners close first
+// and the sessions this process holds, phone calls included, keep going until they end or the
+// drain runs out, still answering their peers' requests. A second signal stops waiting. The
+// sessions left are ended by the caller's sessions.Shutdown either way.
+func stopServing(s stopping) error {
+	s.drainWork()
+	grace := cmp.Or(s.grace, shutdownGrace)
+	if s.drain <= 0 {
+		deadline := time.Now().Add(grace)
+		closePhone(s.telephony, s.logger)
+		shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+		return errors.Join(shutdown(shutdownCtx, s.public, "public", grace, s.logger), shutdown(shutdownCtx, s.peers, "peers", grace, s.logger))
+	}
+
+	again := make(chan os.Signal, 1)
+	signal.Notify(again, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(again)
+	timeout := time.NewTimer(s.drain)
+	defer timeout.Stop()
+
+	if s.handOverMetrics != nil {
+		s.handOverMetrics()
+	}
+	if s.stopTaking != nil {
+		s.stopTaking()
+	}
+	if s.handOverProxy != nil {
+		s.handOverProxy()
+	}
+	httpCtx, cancel := context.WithTimeout(context.Background(), grace)
+	if err := s.public.Shutdown(httpCtx); err != nil {
+		s.logger.Warn("requests were still running when the public listener closed", "error", err)
+	}
+	cancel()
+
+	ticker := time.NewTicker(drainPoll)
+	defer ticker.Stop()
+	for held := s.held(); held > 0; held = s.held() {
+		select {
+		case <-ticker.C:
+			continue
+		case <-again:
+			s.logger.Info("told again to stop, ending the sessions still running", "held", held)
+		case <-timeout.C:
+			s.logger.Warn("the drain ran out, ending the sessions still running",
+				"held", held, "drain", s.drain, "setting", "shutdown.drain")
+		}
+		break
+	}
+
+	closePhone(s.telephony, s.logger)
+	peerCtx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	return shutdown(peerCtx, s.peers, "peers", grace, s.logger)
+}
+
+// running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
+// over, chat answers, the app chat's episode cards, campaign calls and pictures being drawn a
+// router holds; one
+// without one of them holds none of its work. A turn counts until it ends, also before the
+// session it opens is counted, and so does a campaign call placed before its session exists.
+func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
+	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner, drawings *imagejobs.Service) int {
+	held := 0
+	if drawings != nil {
+		held += drawings.Running()
+	}
+	if dialer != nil {
+		held += dialer.Running()
+	}
+	if sessions != nil {
+		held += sessions.Len()
+	}
+	if scheduler != nil {
+		held += scheduler.Running()
+	}
+	if bridge != nil {
+		held += bridge.Running()
+	}
+	if deliveries != nil {
+		held += deliveries.Running()
+	}
+	if server != nil {
+		held += server.ChatCardsRunning()
+	}
+	return held
+}
+
+// servePprof serves the runtime profiles on an address of their own, with lock contention
+// and blocking sampled so the mutex and block profiles have something in them. The idle
+// timeout is read by the caller, as the server is built on a goroutine of its own.
+func servePprof(addr string, idleTimeout time.Duration, logger *slog.Logger) {
+	runtime.SetMutexProfileFraction(100)
+	runtime.SetBlockProfileRate(int(time.Millisecond))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	logger.Info("serving pprof", "address", addr, "setting", "pprof_addr")
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: readHeaderTimeout, IdleTimeout: idleTimeout}
+	// A router taking over from one still draining its calls finds the address held until
+	// that one ends, so it keeps trying rather than going without.
+	for {
+		err := server.ListenAndServe()
+		logger.Warn("pprof is not serving, trying again", "error", err)
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// shutdown drains a server that may not exist. A request still open when ctx runs out is
+// a warning, not an error: a deploy outlasting a slow request is how a deploy goes, and an
+// error here would page Sentry and exit 1 on every such rollout. The warning names the
+// listener and its grace, since a router without a drain closes both inside the one grace.
+func shutdown(ctx context.Context, server *http.Server, listener string, grace time.Duration, logger *slog.Logger) error {
+	if server == nil {
+		return nil
+	}
+	err := server.Shutdown(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		logger.Warn("requests were still running when the grace ran out",
+			"listener", listener, "grace", grace, "error", err)
+		return nil
+	}
+	return err
+}
+
+// pruneDataChanges drops the recorded changes nobody can resume from any more, and which rows
+// counted toward grants long ended, hourly until the process stops.
+func pruneDataChanges(ctx context.Context, pgStore *store.Store, retention time.Duration, logger *slog.Logger) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		removed, err := pgStore.PruneDataChanges(ctx, retention)
+		if err != nil {
+			logger.Error("could not prune recorded changes", "error", err)
+		} else if removed > 0 {
+			logger.Debug("pruned recorded changes", "rows", removed)
+		}
+		if removed, err := pgStore.PruneGrantUses(ctx); err != nil {
+			logger.Error("could not prune the uses of ended grants", "error", err)
+		} else if removed > 0 {
+			logger.Debug("pruned the uses of ended grants", "rows", removed)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// pruneScheduledTasks deletes the runs and tasks of scheduled tasks that are past
+// store.ScheduledTasksKept, daily until the process stops.
+func pruneScheduledTasks(ctx context.Context, pgStore *store.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		runs, tasks, err := pgStore.PruneScheduledTasks(ctx)
+		if err != nil {
+			logger.Error("could not prune scheduled tasks", "error", err)
+		} else if runs > 0 || tasks > 0 {
+			logger.Info("pruned scheduled tasks", "runs", runs, "tasks", tasks)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// How often and how much tool output redaction does. A run stops at a ceiling, so one
+// shard's backlog after a long outage is worked off over several runs instead of in one
+// burst of writes; 100 batches of 1,000 every ten minutes keeps up with 600,000 tool items
+// an hour falling due on a shard.
+const (
+	redactInterval = 10 * time.Minute
+	redactBatch    = 1000
+	redactBatches  = 100
+)
+
+// redactToolOutput takes the arguments and output out of the tool items in this router's
+// shard whose retention has run out, every redactInterval until the process stops.
+func redactToolOutput(ctx context.Context, pgStore *store.Store, logger *slog.Logger) {
+	ticker := time.NewTicker(redactInterval)
+	defer ticker.Stop()
+	for {
+		var redacted int64
+		for range redactBatches {
+			rows, err := pgStore.RedactToolOutput(ctx, time.Now().UTC(), redactBatch)
+			if err != nil {
+				logger.Error("could not redact tool output", "error", err)
+				break
+			}
+			redacted += rows
+			if rows < redactBatch {
+				break
+			}
+		}
+		if redacted > 0 {
+			logger.Info("redacted tool output", "rows", redacted, "ceiling", redactBatch*redactBatches)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// openStore opens the database and brings the schema up to date. Every command that
+// touches a customer's rows starts here, so migrating is part of opening rather than
+// something only serving does.
+func openStore(ctx context.Context, settings config.Config) (*store.Store, error) {
+	if settings.Postgres.DSN == "" {
+		return nil, errors.New("this needs a database: set postgres.dsn")
+	}
+	pgStore, err := store.OpenShards(store.Options{
+		DSN:      settings.Postgres.DSN,
+		ShardDSN: settings.Postgres.ShardDSN,
+		Shards:   settings.Postgres.Shards,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := pgStore.Migrate(ctx); err != nil {
+		pgStore.Close()
+		return nil, err
+	}
+	// Seeded whether connectors are on or not: the built-ins are data with no secret in
+	// them, and a deployment that turns connectors on later finds them already there.
+	if err := pgStore.SeedConnectorDefinitions(ctx, providers.FS); err != nil {
+		pgStore.Close()
+		return nil, err
+	}
+	return pgStore, nil
+}
+
+// newDirectory wires the register of which node of this deployment is running which
+// session, which is what lets a request about a session land on any of them.
+//
+// It needs Redis to keep the register in and an address this node's peers reach it at.
+// Without either it returns nil, and the deployment behaves as a single node did: a
+// session is only reachable through the process running it.
+//
+// The address is not asked for in the ordinary case. A node listens on every interface
+// and is reached on one of them, so the port it listens on and the address this host
+// answers at are enough to work it out; node.advertise is for the deployment where that
+// is not what a peer can reach, which is any of them behind network address translation.
+func newDirectory(
+	settings config.Config,
+	liveClient *live.Client,
+	logger *slog.Logger,
+) (*node.Directory, error) {
+	// The absence is already reported where the relay is built, which is missing for the
+	// same reason.
+	if liveClient == nil {
+		return nil, nil
+	}
+
+	address := settings.Node.Advertise
+	if address == "" {
+		listen := settings.Addr
+		if settings.Node.Listen != "" {
+			listen = settings.Node.Listen
+		}
+		found, err := node.Address(listen)
+		if err != nil {
+			return nil, fmt.Errorf("could not work out the address this node's peers reach it at, "+
+				"so set node.advertise: %w", err)
+		}
+		address = found
+	}
+	logger.Info("reachable by this deployment's other nodes", "address", address,
+		"setting", "node.advertise")
+
+	return node.NewDirectory(node.DirectoryOptions{
+		Redis:   liveClient.Redis(),
+		Address: address,
+		Shard:   settings.Shard,
+		Logger:  logger,
+	})
+}
+
+// buildSessions wires the part of the router that holds conversations rather than
+// describing them.
+//
+// It returns nil when the LLM router is missing. Speech routers are optional for text. The
+// factories live here rather than in the session package so the Stream edge, whose Opus
+// path is cgo, stays out of everything that only needs to be tested.
+func buildSessions(
+	settings config.Config,
+	streams *api.Streams,
+	pgStore *store.Store,
+	configs *appconfig.Store,
+	liveClient *live.Client,
+	usageWriter *routing.Writer,
+	directory *node.Directory,
+	telephony *phone.Service,
+	base *metered.Knowledge,
+	finding *searchrouter.Router,
+	judging *decisionrouter.Router,
+	floor *audiofloor.Client,
+	stream *streamapp.Clients,
+	connectors session.Connectors,
+	prices pricing.Pricer,
+	policies *policy.Enforcer,
+	keys routing.CustomerKeys,
+	drawings *imagejobs.Service,
+	logger *slog.Logger,
+) (*session.Manager, error) {
+	if streams.LLM == nil {
+		logger.Warn("not serving sessions, which need an llm router configured")
+		return nil, nil
+	}
+
+	// Without a mem0 key a session starts every call knowing nothing but its
+	// instructions, which is the behaviour before memory existed.
+	var remembering *metered.Memory
+	if recall, err := mem0.New(mem0.Options{Logger: logger}); err != nil {
+		logger.Debug("sessions will not remember anything between calls", "error", err)
+	} else {
+		remembering = metered.NewMemory(recall, routing.NewRecorderOn(routing.Memory, usageWriter, prices, logger))
+	}
+
+	options := session.ManagerOptions{
+		LLM:        streams.LLM,
+		STT:        streams.STT,
+		TTS:        streams.TTS,
+		STS:        streams.STS,
+		Memory:     remembering,
+		Knowledge:  base,
+		Pricer:     prices,
+		Search:     finding,
+		Drawings:   drawings,
+		Classifier: judging,
+		FlowJudge:  settings.Agent.FlowJudge,
+		Phone:      telephony,
+		// Off unless the deployment names a server and an agent opts in, or the deployment
+		// defaults every agent that chose none to it.
+		AudioFloor:          floor,
+		FloorControlDefault: settings.Agent.FloorControlDefault,
+		// Off unless the deployment asks: a reply started before its ruling is paid for
+		// whether or not it is spoken.
+		SpeculativeReplies: settings.Agent.SpeculativeReplies,
+		UnifiedReplies:     settings.Agent.UnifiedReplies,
+		Stream:             stream,
+		Store:              pgStore,
+		Policies:           policies,
+		Live:               liveClient,
+		Writer:             usageWriter,
+		Logger:             logger,
+		Edge:               edgeFor(stream),
+		Transcript:         transcriptFor(settings.Agent.ChatTimings),
+		Configs:            configs,
+		Directory:          directory,
+		// The session's dispatcher shares the validate endpoint's transports, so each
+		// connection has one outbound client in the router.
+		Connectors: connectors,
+	}
+	if err := sandboxBroker(settings.CodeSandbox, liveClient, &options); err != nil {
+		return nil, err
+	}
+	options.Sandboxes = newSandboxes(settings, usageWriter, prices, keys, logger)
+	options.SandboxLimits = policies
+	options.ResumeHistories = policies
+	return session.NewManager(options)
+}
+
+// buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled
+// from.
+//
+// It returns nil unless there is a database to remember a subscription, a Redis to queue the
+// reads on, a knowledge base to write the passages into and a key for something that can
+// read a page, since a url that is recorded and never fetched is a promise nothing keeps.
+// The url paths report the absence.
+//
+// Exa is built here rather than taken from the search router because the two want opposite
+// timeouts: a search happens while somebody waits on the phone, and a live crawl of a page
+// nobody is listening to can take as long as it takes.
+func buildKnowledgeURLs(
+	pgStore *store.Store,
+	redis config.Redis,
+	shared rueidis.Client,
+	base *metered.Knowledge,
+	limits ingest.Limits,
+	logger *slog.Logger,
+) (*urls.Service, error) {
+	if pgStore == nil || shared == nil || base == nil {
+		logger.Debug("not serving knowledge urls",
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil)
+		return nil, nil
+	}
+
+	reader, err := exa.New(exa.Options{Timeout: crawlTimeout, Logger: logger})
+	if err != nil {
+		logger.Debug("not serving knowledge urls: nothing can read a page", "error", err)
+		return nil, nil
+	}
+
+	return urls.New(urls.Options{
+		Store:     pgStore,
+		Redis:     queueRedis(redis, shared),
+		Reader:    reader,
+		Knowledge: base,
+		Limits:    limits,
+		Logger:    logger,
+	})
+}
+
+// buildKnowledgeFiles is the service that reads files uploaded to a knowledge base, or nil
+// when a file would have nowhere to wait, nowhere to be queued or nowhere to be written.
+// Without scans, a file whose pages are all scans is refused as having no text.
+//
+// redis and shared are this shard's own Redis, not the one every shard shares: a task names
+// a row of this shard's database and a file in this shard's bucket, so a worker of another
+// shard would find no row, take the upload for one overtaken and delete its file.
+func buildKnowledgeFiles(
+	pgStore *store.Store,
+	redis config.Redis,
+	shared rueidis.Client,
+	base *metered.Knowledge,
+	bucket *blob.Bucket,
+	scans files.Reader,
+	limits ingest.Limits,
+	logger *slog.Logger,
+) (*files.Service, error) {
+	if pgStore == nil || shared == nil || base == nil || bucket == nil {
+		logger.Debug("not taking knowledge files",
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil, "bucket", bucket != nil)
+		return nil, nil
+	}
+	return files.New(files.Options{
+		Store:     pgStore,
+		Redis:     queueRedis(redis, shared),
+		Bucket:    bucket,
+		Extractor: extract.New(extract.Options{Logger: logger}),
+		Knowledge: base,
+		OCR:       scans,
+		Limits:    limits,
+		Logger:    logger,
+	})
+}
+
+// shardRedis is this shard's own Redis, or the shared one when the shard has none, as
+// live.New picks it.
+func shardRedis(redis config.Redis) config.Redis {
+	if redis.Shard.Addr == "" {
+		return redis
+	}
+	return config.Redis{Addr: redis.Shard.Addr, Username: redis.Shard.Username, Password: redis.Shard.Password}
+}
+
+// queueRedis is how asynq reaches redis, the Redis shared is a client of. asynq does not find
+// out for itself whether that is a cluster, and a client of one node is answered MOVED for
+// every key another shard holds, so it is told what rueidis found when it connected.
+func queueRedis(redis config.Redis, shared rueidis.Client) asynq.RedisConnOpt {
+	if shared.Mode() == rueidis.ClientModeCluster {
+		return asynq.RedisClusterClientOpt{Addrs: []string{redis.Addr}, Username: redis.Username, Password: redis.Password}
+	}
+	return asynq.RedisClientOpt{Addr: redis.Addr, Username: redis.Username, Password: redis.Password}
+}
+
+// newKnowledge is the knowledge base every lookup and write goes through, a backend in each
+// region the settings map, recorded by recorder, each write admitted by gate, and the place
+// each base is kept recorded in pgStore: its region, and the customer's own account there when
+// keys holds their turbopuffer key for it as the base is first written. Nil without a
+// turbopuffer key of the deployment's.
+func newKnowledge(settings config.Config, recorder *routing.Recorder, gate routing.Gate, pgStore *store.Store,
+	keys routing.CustomerKeys, logger *slog.Logger) *metered.Knowledge {
+	backends, err := knowledgeBackends(settings.Knowledge, 0, logger)
+	if err != nil {
+		logger.Debug("nothing will be looked up or written down", "error", err)
+		return nil
+	}
+	// A nil *store.Store in the interface would not be a nil interface.
+	var places metered.NamespacePlaces
+	if pgStore != nil {
+		places = pgStore
+	}
+	base := metered.NewRegionalKnowledge(backends, recorder, gate, places)
+	if keys != nil {
+		base.WithCustomerAccounts(keys, knowledgeAccounts(settings.Knowledge, 0, logger))
+	}
+	return base
+}
+
+// knowledgeAccounts builds the turbopuffer store of a customer's own account in a region the
+// settings map, on their key, at the turbopuffer region the deployment's own store there is at.
+// Each is built for one call, which costs nothing: it holds no connection of its own, every
+// store dialling through the default transport.
+func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) metered.AccountBackend {
+	return func(region, key string) (knowledge.Backend, error) {
+		return turbopuffer.New(turbopuffer.Options{APIKey: key, Region: settings.Regions[region], Timeout: timeout, Logger: logger})
+	}
+}
+
+// knowledgeBackends is a turbopuffer store in each region knowledge.regions maps to one of
+// turbopuffer's, each bounding a call by timeout (zero is a lookup's). The default region is
+// always served: where the setting names none for it, at TURBOPUFFER_REGION, then
+// gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
+// every turbopuffer region.
+func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
+	mapped := knowledgeRegions(settings)
+	if err := knowledgeRegionsApart(mapped); err != nil {
+		return nil, err
+	}
+	backends := make(map[string]knowledge.Backend, len(mapped))
+	for region, theirs := range mapped {
+		backend, err := turbopuffer.New(turbopuffer.Options{Cost: knowledgeCost(settings), Region: theirs, Timeout: timeout, Logger: logger})
+		if err != nil {
+			return nil, err
+		}
+		backends[region] = backend
+	}
+	return backends, nil
+}
+
+// knowledgeRegions is each region knowledge is kept in, mapped to the turbopuffer region the
+// settings name for it, the default region always among them and empty where none is named.
+func knowledgeRegions(settings config.Knowledge) map[string]string {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	return mapped
+}
+
+// knowledgeRegionsApart refuses two regions kept in one turbopuffer region, the default
+// region's included: its knowledge bases would be listed under both, and the storage job would
+// bill each twice.
+func knowledgeRegionsApart(mapped map[string]string) error {
+	served := map[string]string{}
+	for _, region := range slices.Sorted(maps.Keys(mapped)) {
+		theirs := turbopuffer.Region(mapped[region])
+		if other, ok := served[theirs]; ok {
+			return fmt.Errorf("knowledge.regions (ROUTER_KNOWLEDGE_REGIONS) keeps %s and %s in one turbopuffer region, %s: "+
+				"give each its own", other, region, theirs)
+		}
+		served[theirs] = region
+	}
+	return nil
+}
+
+// knowledgeCost is the knowledge provider's rates as the settings name them.
+func knowledgeCost(settings config.Knowledge) turbopuffer.Cost {
+	cost := turbopuffer.Cost{}
+	for meter, rate := range settings.StreamCost {
+		cost[pricing.Meter(meter)] = rate
+	}
+	return cost
+}
+
+// knowledgeLimits are how documents are cut into passages, as the settings name them.
+func knowledgeLimits(settings config.Knowledge) ingest.Limits {
+	return ingest.Limits{MinChunk: settings.MinChunk, MaxHeading: settings.MaxHeading}
+}
+
+// maxKnowledgeSizeMultiple is how many times larger than a document its passages may be before
+// the router warns of it at startup.
+const maxKnowledgeSizeMultiple = 4
+
+// warnKnowledgeLimits says at startup when the knowledge limits let one ingest request write
+// many times what it sent.
+func warnKnowledgeLimits(settings config.Config, logger *slog.Logger) {
+	multiple := knowledgeLimits(settings.Knowledge).SizeMultiple()
+	switch {
+	case math.IsInf(multiple, 1):
+		logger.Warn("knowledge has no minimum chunk, so nothing limits the size of the passages of a document",
+			"set", "ROUTER_KNOWLEDGE_MIN_CHUNK")
+	case multiple > maxKnowledgeSizeMultiple:
+		logger.Warn("the knowledge limits let the passages of a document be many times its size: lower the "+
+			"heading limit or raise the minimum chunk",
+			"size_multiple", fmt.Sprintf("%.1f", multiple),
+			"request_bytes", api.MaxKnowledgeBody, "written_bytes", int64(multiple*api.MaxKnowledgeBody),
+			"set", "ROUTER_KNOWLEDGE_MAX_HEADING or ROUTER_KNOWLEDGE_MIN_CHUNK")
+	}
+}
+
+// buildLibrary wires the catalogues the speech providers publish, so a voice can be picked
+// by name. It needs neither a database nor a bucket: the voices belong to the vendor, and
+// all this reads them.
+//
+// It returns nil when no provider that publishes one has a key here, since an empty
+// catalogue and a deployment that cannot browse are not the same thing to somebody
+// choosing a voice.
+func buildLibrary(logger *slog.Logger) *voices.Catalogue {
+	catalogue := voices.NewCatalogue()
+	if lister, err := voices.NewElevenLabs(voices.ElevenLabsOptions{}); err == nil {
+		catalogue.Register(elevenlabs.ProviderName, lister)
+	}
+	if lister, err := voices.NewCartesia(voices.CartesiaOptions{}); err == nil {
+		catalogue.Register(cartesia.ProviderName, lister)
+	}
+	if lister, err := voices.NewInworld(voices.InworldOptions{}); err == nil {
+		catalogue.Register(inworld.ProviderName, lister)
+	}
+	if len(catalogue.Providers()) == 0 {
+		logger.Debug("no provider here publishes a voice library")
+		return nil
+	}
+	logger.Debug("serving voice libraries", "providers", catalogue.Providers())
+	return catalogue
+}
+
+// buildVoices wires the control plane for voices a customer brought with them.
+//
+// It returns nil when there is no database, no bucket, or no provider this deployment has
+// a key for, since a voice needs a row, somewhere to keep the recordings and somebody to
+// teach them to. The voice paths report the absence rather than failing halfway through an
+// upload.
+func buildVoices(
+	configs *appconfig.Store,
+	bucket *blob.Bucket,
+	recorder *routing.Recorder,
+	logger *slog.Logger,
+) (*voices.Service, error) {
+	if configs == nil || bucket == nil {
+		logger.Debug("not serving voices of your own", "database", configs != nil, "bucket", bucket != nil)
+		return nil, nil
+	}
+
+	cloners := voices.NewRegistry()
+	if cloner, err := voices.NewElevenLabs(voices.ElevenLabsOptions{}); err == nil {
+		cloners.Register(elevenlabs.ProviderName, cloner)
+	}
+	if cloner, err := voices.NewCartesia(voices.CartesiaOptions{}); err == nil {
+		cloners.Register(cartesia.ProviderName, cloner)
+	}
+	if cloner, err := voices.NewFish(voices.FishOptions{}); err == nil {
+		cloners.Register(fish.ProviderName, cloner)
+	}
+	if len(cloners.Providers()) == 0 {
+		logger.Warn("not serving voices of your own: no provider this deployment has a key for can be taught one")
+		return nil, nil
+	}
+
+	return voices.NewService(voices.Options{
+		Store:    configs,
+		Bucket:   bucket,
+		Cloners:  cloners,
+		Recorder: recorder,
+		Logger:   logger,
+	})
+}
+
+// newPrices is the price list of the price files the router loads (the deployment's own over
+// the embedded vendor.json), priced as a first load prices them, with the models the routing
+// config runs itself marked local: every row is priced by it on a router with no database,
+// and until the database is read on one with. A price: block in the
+// routing config is no longer read, which is said at start.
+func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
+	if ignored := pricedProviders(capabilities); len(ignored) > 0 {
+		logger.Warn("price: in the routing config is ignored; prices come from prices/vendor.json and "+
+			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
+			"providers", ignored)
+	}
+	return pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
+}
+
+// newActivePrices is the price list every row is priced by on a router with a database: the
+// one in force in it, read every interval and at each scheduled change, with the models the
+// routing config runs itself marked local. Until a read answers any entry it prices with
+// fallback, which has none of the prices staff set since, so a deployment with its own price
+// file (requireEntries) reports not ready until then rather than serve on it.
+func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities routing.Config, fallback *pricing.List,
+	requireEntries bool, interval time.Duration, logger *slog.Logger) *pricing.Active {
+	return pricing.NewActive(ctx, pricing.ActiveOptions{
+		Source:         pgStore.PriceSource(),
+		Fallback:       fallback,
+		Local:          routing.LocalItems(capabilities),
+		Interval:       interval,
+		RequireEntries: requireEntries,
+		Logger:         logger,
+	})
+}
+
+// buildPhone wires the telephony service. Stream credentials are only needed to attach a
+// number, so a deployment without them still lists vendors and searches for numbers, and
+// the operations that need them say so. The calls through customers' own SIP trunks are
+// taken over from other nodes until stopTaking, nil without them, or the provider closes.
+func buildPhone(
+	settings config.Config,
+	vendorConfig phone.Config,
+	pgStore *store.Store,
+	liveClient *live.Client,
+	recorder *routing.Recorder,
+	stream *streamapp.Clients,
+	gate *dlc.Gate,
+	secrets *auth.Sealer,
+	logger *slog.Logger,
+) (service *phone.Service, stopTaking func(), err error) {
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
+		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
+	}
+
+	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
+	// a key those trunks are off, rather than their passwords stored in the clear.
+	var trunks phone.Provider
+	var trunkCalls *siptrunk.Provider
+	// The Redis of every shard: the node that ends a refused call's leg need not be the one
+	// that refused it, and the node that stops need not be the one that continues a call.
+	var shared rueidis.Client
+	if liveClient != nil {
+		shared = liveClient.Redis()
+	}
+	if secrets != nil {
+		trunkCalls = siptrunk.New(siptrunk.Options{Logger: logger, Redis: shared})
+		trunks = trunkCalls
+	} else {
+		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
+	}
+
+	service, err = phone.NewService(phone.ServiceOptions{
+		Registry:  vendors.Registry(vendorConfig),
+		Redis:     shared,
+		Store:     pgStore,
+		Apps:      phone.AppsOf(stream),
+		Recorder:  recorder,
+		Gate:      gate,
+		PublicURL: settings.PublicURL,
+		Logger:    logger,
+		Sealer:    secrets,
+		SIPTrunks: trunks,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if trunkCalls != nil {
+		trunkCalls.Start(service)
+		stopTaking = trunkCalls.StopTaking
+	}
+	return service, stopTaking, nil
+}
+
+// callHookCheckTimeout bounds the one read of the deployment's app hooks at boot.
+const callHookCheckTimeout = 30 * time.Second
+
+// checkCallHook reads the hooks of the deployment's own app once, and logs at ERROR a hook to
+// this router's call events that does not ask for every one of them: one pointed before the
+// participant events were added, whose placed calls and transfers never connect and are not
+// billed until cmd/phone hooks is run again. Registered apps are not read here, which would be
+// a Stream request per app at every boot; the phone service logs theirs when a placed call ends
+// with no participant event delivered.
+func checkCallHook(ctx context.Context, settings config.Config, logger *slog.Logger) {
+	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" || settings.PublicURL == "" {
+		return
+	}
+	stream, err := phone.NewStream(phone.StreamOptions{APIKey: settings.Stream.APIKey, APISecret: settings.Stream.APISecret})
+	if err != nil {
+		logger.Warn("could not check the deployment's call hook", "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, callHookCheckTimeout)
+	defer cancel()
+	hooks, err := stream.CallHooks(ctx)
+	if err != nil {
+		logger.Warn("could not check the deployment's call hook", "error", err)
+		return
+	}
+	missing, found := phone.MissingCallHookEvents(hooks, strings.TrimSuffix(settings.PublicURL, "/")+phone.CallHookPath)
+	if found && len(missing) > 0 {
+		logger.Error("call hook does not deliver participant events; re-run cmd/phone hooks",
+			"stream_app", "deployment", "missing", missing)
+	}
+}
+
+// closePhone hands the calls this node holds through customers' own SIP trunks to another
+// node, or hangs them up when no other node takes them or there is no Redis to hand them
+// through. Their signalling runs through this process, so stopping with neither would leave
+// both ends of each call connected to nothing.
+func closePhone(telephony *phone.Service, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), phoneHangupGrace)
+	defer cancel()
+	if err := telephony.Close(ctx); err != nil {
+		logger.Error("could not hang up every call through a customer's sip trunk", "error", err)
+	}
+}
+
+// dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
+// its hook missed. A campaign takes days, so this is not what makes one quick. It and
+// telnyxDLC are variables, and so is legSweepEvery, so a test of the router's start can sweep
+// and poll sooner, against a vendor of its own.
+var (
+	legSweepEvery = phone.LegSweepEvery
+	dlcPollEvery  = 15 * time.Minute
+	telnyxDLC     dlctelnyx.Options
+)
+
+// buildDLC wires 10DLC review and the gate every text and call passes. Without a database
+// there is nothing to register or enforce. Without a Telnyx key Stream's approval is final,
+// which is a deployment registering with no vendor of ours.
+func buildDLC(
+	settings config.Config,
+	pgStore *store.Store,
+	liveClient *live.Client,
+	recorder *routing.Recorder,
+	logger *slog.Logger,
+) (*dlc.Service, *dlc.Gate, error) {
+	if pgStore == nil {
+		return nil, nil, nil
+	}
+	var counters rueidis.Client
+	if liveClient != nil {
+		counters = liveClient.Redis()
+	}
+	gate := dlc.NewGate(pgStore, counters, dlc.Sandbox{
+		Enabled:            settings.Sandbox.Enabled,
+		Recipients:         settings.Sandbox.Recipients,
+		MessagesPerDay:     settings.Sandbox.MessagesPerDay,
+		AudioMinutesPerDay: settings.Sandbox.AudioMinutesPerDay,
+	}, logger)
+	if settings.Sandbox.Enabled {
+		logger.Info("sandboxing apps with no approved 10DLC use case",
+			"recipients", settings.Sandbox.Recipients, "messages", settings.Sandbox.MessagesPerDay,
+			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
+	}
+
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Booker: gate, Logger: logger}
+	if registrar, err := dlctelnyx.New(telnyxDLC); err == nil {
+		options.Registrar = registrar
+	} else {
+		logger.Debug("no 10DLC registrar, Stream's approval of a use case is final", "error", err)
+	}
+	service, err := dlc.NewService(options)
+	if err != nil {
+		return nil, nil, err
+	}
+	return service, gate, nil
+}
+
+// newDailyLimiter caps what one end user may spend in a day, or returns nil when nothing
+// can be capped.
+//
+// A daily limit is counted in Redis, so a deployment without one caps nothing. That is the
+// right way round: the limit protects against a customer's end users spending more than
+// they were meant to, and refusing every request because the counter is missing would be a
+// worse outage than the one it prevents. The deployment's numbers are only the default: an
+// app sets its own in its policy, so a deployment with no default still caps an app that
+// sets one.
+func newDailyLimiter(liveClient *live.Client, limits quota.Limits, policies *policy.Enforcer, logger *slog.Logger) (*quota.Limiter, error) {
+	// A nil *Enforcer in the interface is not a nil Source.
+	var source quota.Source
+	if policies != nil {
+		source = policies
+	}
+	switch {
+	case !limits.Enforced() && source == nil:
+		logger.Warn("no daily limit configured, an end user may spend without bound",
+			"setting", "rate_limit.messages_per_day")
+		return nil, nil
+	case liveClient == nil:
+		logger.Warn("no redis configured, daily limits will not be enforced", "setting", "redis.addr")
+		return nil, nil
+	}
+	limiter, err := quota.New(liveClient.Redis(), limits, source, logger)
+	if err != nil {
+		return nil, err
+	}
+	if !limits.Enforced() {
+		logger.Info("no default daily limit is set, only the daily limits in app policies apply",
+			"setting", "rate_limit.messages_per_day")
+		return limiter, nil
+	}
+	logger.Info("capping what one end user may spend in a day, unless their app's policy says otherwise",
+		"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
+	return limiter, nil
+}

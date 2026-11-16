@@ -1,0 +1,316 @@
+package api
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// AgentConfigPatch is what changes about an agent config. Every field is optional, and one
+// left out keeps what is stored.
+type AgentConfigPatch struct {
+	Name               *string                  `json:"name,omitempty" minLength:"1" doc:"What the config is called, which is unique among the customer's own."`
+	Region             *string                  `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each."`
+	Role               *AgentRole               `json:"role,omitempty"`
+	Review             *AgentReview             `json:"review,omitempty"`
+	Mode               *AgentMode               `json:"mode,omitempty"`
+	Stt                *string                  `json:"stt,omitempty"`
+	Tts                *string                  `json:"tts,omitempty"`
+	Sts                *string                  `json:"sts,omitempty"`
+	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
+	Llm                *string                  `json:"llm,omitempty"`
+	LlmFallbacks       *[]string                `json:"llm_fallbacks,omitempty" maxItems:"5" doc:"Replaces the list whole. An empty list removes it."`
+	Agents             *[]ChildAgent            `json:"agents,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
+	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
+	Search             *string                  `json:"search,omitempty"`
+	Image              *string                  `json:"image,omitempty" doc:"An empty string removes it, and the agent stops being offered generate_image."`
+	Instructions       *string                  `json:"instructions,omitempty"`
+	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
+	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
+	Skills             *[]string                `json:"skills,omitempty"`
+	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
+	Channels           *AgentChannels           `json:"channels,omitempty"`
+	ChatChannels       *[]AgentChatChannel      `json:"chat_channels,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
+	Keyterms           *[]string                `json:"keyterms,omitempty"`
+	VisibleTools       *[]string                `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
+	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
+	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
+	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
+	Harness            *Harness                 `json:"harness,omitempty"`
+	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty"`
+	Tools              *AgentTools              `json:"tools,omitempty"`
+	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
+	Calls              *AgentCalls              `json:"calls,omitempty"`
+	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default."`
+	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
+	Tags               *map[string]string       `json:"tags,omitempty"`
+	Video              *SessionVideo            `json:"video,omitempty"`
+}
+
+func (*AgentConfigPatch) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What changes about an agent config. A field left out keeps what is " +
+		"stored, and an unknown one is refused rather than ignored."
+	schema.AdditionalProperties = false
+	return schema
+}
+
+func (AgentMode) Schema(registry huma.Registry) *huma.Schema {
+	ref := namedEnum(registry, "AgentMode", "Whether the agent is spoken to or written to. A voice agent joins a call, "+
+		"transcribes what it hears and speaks its replies. A text agent holds the same conversation in "+
+		"writing, so it uses neither speech target and a session created from it needs no call to join.",
+		string(AgentModeVoice), string(AgentModeText))
+	registry.Map()["AgentMode"].Default = string(AgentModeVoice)
+	return ref
+}
+
+func (Sandbox) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "Sandbox", "Where the agent may run code it writes. A text agent runs it itself; a "+
+		"voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it "+
+		"and the agent works everything out in its head.", string(Daytona))
+}
+
+func (Harness) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "Harness", "Which harness the agent's sessions run: what hands "+
+		"work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on "+
+		"the agent, never on a session. Omit it for the default, the only one there is.", string(Default))
+}
+
+func (EpisodeCardsMode) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "EpisodeCardsMode", "What the agent does with episode cards, the same for every "+
+		"channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel "+
+		"connections. off writes none and reads none. record writes each conversation's card and its summary into "+
+		"the person's omni-channel, and no session reads them. on writes them as record does, and a session starts "+
+		"with the person's other cards. Turning record into on reads what record wrote.",
+		string(EpisodeCardsOff), string(EpisodeCardsRecord), string(EpisodeCardsOn))
+}
+
+func (AgentRole) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "AgentRole", "What the agent is for in the app, beyond answering people. "+
+		"agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app "+
+		"holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share "+
+		"the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit "+
+		"it for an ordinary agent.", string(AgentRoleAgentModerator))
+}
+
+func (DispatchSetting) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "DispatchSetting", "Whether this kind of work is left to the "+
+		"customer's own dispatch worker.", string(Enabled), string(Disabled))
+}
+
+type patchAgentConfigRequest struct {
+	ID   string `path:"id" doc:"The config, as returned when it was created."`
+	Body AgentConfigPatch
+}
+
+type agentConfigResponse struct {
+	Body AgentConfig
+}
+
+func (s *Server) registerConfigPatch(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "patchAgentConfig",
+		Method:      http.MethodPatch,
+		Path:        "/v1/agents/configs/{id}",
+		Summary:     "Change some of an agent config",
+		Description: "Writes only the fields sent, so a guardrail can be set without restating " +
+			"the instructions, skills and models beside it. Sessions already running keep the " +
+			"configuration they started with.\n\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
+			"end user's device.",
+		Responses: map[string]*huma.Response{"200": {Description: "The config as it now is"}},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict},
+	}, s.patchAgentConfig)
+}
+
+// patchAgentConfig writes what a caller changed onto a stored config.
+func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfigRequest) (*agentConfigResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil {
+		return nil, errNoConfigs
+	}
+	patch := request.Body
+	if err := retiredComplaint(patch.Plugins, patch.PluginEvents, patch.McpServers); err != nil {
+		return nil, err
+	}
+	config, err := s.configs.AgentConfig(ctx, customerID, request.ID)
+	if err != nil {
+		return nil, errUnknownConfig
+	}
+	existing := agentConfigOf(config)
+	original := config
+	heard := config.STT
+	was := sandboxOfConfig(config)
+
+	if message, ok := configComplaint(ctx, AgentConfigRequest{
+		Name:           override(config.Name, patch.Name),
+		Mode:           patch.Mode,
+		Region:         patch.Region,
+		Keyterms:       patch.Keyterms,
+		Sandbox:        patch.Sandbox,
+		SandboxOptions: patch.SandboxOptions,
+		Harness:        patch.Harness,
+		Guardrail:      patch.Guardrail,
+		VisibleTools:   patch.VisibleTools,
+		Connectors:     patch.Connectors,
+		Dispatch:       patch.Dispatch,
+		ChatChannels:   patch.ChatChannels,
+	}); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.unboundConnectors(ctx, customerID, patch.Connectors); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+
+	config.Name = override(config.Name, patch.Name)
+	if patch.Role != nil {
+		config.Role = string(*patch.Role)
+	}
+	if patch.Mode != nil {
+		config.Mode, _ = modeOf(patch.Mode)
+	}
+	config.Region = override(config.Region, patch.Region)
+	config.STT = override(config.STT, patch.Stt)
+	config.TTS = override(config.TTS, patch.Tts)
+	config.STS = override(config.STS, patch.Sts)
+	config.Voice = override(config.Voice, patch.Voice)
+	config.LLM = override(config.LLM, patch.Llm)
+	if patch.LlmFallbacks != nil {
+		config.LLMFallbacks = fallbacksOf(patch.LlmFallbacks)
+	}
+	if patch.Agents != nil {
+		config.Agents = childAgentsOf(patch.Agents)
+	}
+	config.Subagent = override(config.Subagent, patch.Subagent)
+	config.Search = override(config.Search, patch.Search)
+	config.Image = override(config.Image, patch.Image)
+	config.Instructions = override(config.Instructions, patch.Instructions)
+	if patch.Greeting != nil {
+		config.Greeting, config.GreetingMode = greetingOf(patch.Greeting)
+	}
+	config.Guardrail = override(config.Guardrail, patch.Guardrail)
+	config.ReviewInstructions = reviewOf(config.ReviewInstructions, patch.Review)
+	config.Skills = override(config.Skills, patch.Skills)
+	if patch.Connectors != nil {
+		config.Connectors = storedBindings(*patch.Connectors)
+	}
+	if patch.Channels != nil {
+		config.Channels = channelsOf(patch.Channels)
+	}
+	if patch.ChatChannels != nil {
+		config.ChatChannels = chatChannelsOf(patch.ChatChannels)
+	}
+	if patch.Keyterms != nil {
+		config.Keyterms = keytermsOf(patch.Keyterms)
+	}
+	config.VisibleTools = override(config.VisibleTools, patch.VisibleTools)
+	config.KnowledgeNamespace = override(config.KnowledgeNamespace, patch.KnowledgeNamespace)
+	if patch.Sandbox != nil {
+		config.Sandbox, _ = sandboxOf(patch.Sandbox)
+	}
+	if patch.SandboxOptions != nil {
+		config.SandboxOptions = sandboxConfigOf(patch.SandboxOptions)
+	}
+	if patch.Harness != nil {
+		config.Harness, _ = harnessOf(patch.Harness)
+	}
+	applyDispatch(&config, patch.Dispatch)
+	if patch.EpisodeCards != nil {
+		setEpisodeCards(&config, *patch.EpisodeCards)
+	}
+	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
+	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, patch.Tools)
+	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
+	config.Calls = callsOr(config.Calls, patch.Calls)
+	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
+	config.FloorControl = floorControlOr(config.FloorControl, patch.FloorControl)
+	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.floorControlRefusal(patch.FloorControl, patch.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, original.FloorControl); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := callsComplaint(config.Calls); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := outputRetentionComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	config.Tags = override(config.Tags, patch.Tags)
+	if message, ok := teamTagComplaint(config.Tags, original.Tags); !ok {
+		return nil, invalidRequest(message)
+	}
+	if patch.Video != nil {
+		config.VideoSource = override(config.VideoSource, patch.Video.Source)
+		config.VideoMaxFrames = override(config.VideoMaxFrames, patch.Video.MaxFrames)
+	}
+	if message, ok := textSubagentComplaint(&config, patch.Subagent); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.channelsComplaint(ctx, config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.storedSkillSandboxComplaint(ctx, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	// The config no longer matches the directory last synced onto it, so the next sync of
+	// that directory writes it again rather than finding nothing changed.
+	config.SyncHash = ""
+	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.liveSTTComplaint(config, heard); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.llmFallbacksComplaint(config, original.LLMFallbacks); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, &original); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, was); refused {
+		return nil, failure
+	}
+	if message, ok, err := s.regionComplaint(ctx, config, &original); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
+
+	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
+		return nil, storeFailure(err, errAgentNameTaken)
+	}
+	stored := agentConfigOf(config)
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
+		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
+	})
+	return &agentConfigResponse{Body: stored}, nil
+}

@@ -1,0 +1,250 @@
+package sts
+
+import (
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// Event is emitted on the channel returned by STS.Events.
+type Event interface {
+	isSTSEvent()
+}
+
+// Connected means the upstream session is open and the model has taken its configuration.
+type Connected struct {
+	Provider string
+	Model    string
+	At       time.Time
+}
+
+func (Connected) isSTSEvent() {}
+
+// Disconnected means the upstream connection closed. Clean is true for a connection the
+// vendor or the provider ended on purpose, which includes one that is about to be resumed.
+type Disconnected struct {
+	Provider string
+	Model    string
+	Reason   string
+	Clean    bool
+	At       time.Time
+}
+
+func (Disconnected) isSTSEvent() {}
+
+// Error reports a provider failure. Fatal means the session cannot continue. ResponseID
+// names the response the failure belongs to, when it belongs to one, so the response is
+// still one stat row.
+type Error struct {
+	Provider   string
+	Model      string
+	ResponseID string
+	Err        error
+	Context    string
+	Fatal      bool
+}
+
+func (e Error) Error() string { return e.Err.Error() }
+
+func (e Error) Unwrap() error { return e.Err }
+
+func (Error) isSTSEvent() {}
+
+// SpeechStarted means the model's own voice activity detector heard the participant
+// begin. It says nothing about the response in flight: whether that was cut off is what
+// ResponseComplete says, and only it.
+type SpeechStarted struct {
+	Participant Participant
+	At          time.Time
+}
+
+func (SpeechStarted) isSTSEvent() {}
+
+// SpeechStopped means the model judged the participant's turn over. It is the moment the
+// caller starts waiting, and what a response's time to first byte is measured from.
+type SpeechStopped struct {
+	Participant Participant
+	At          time.Time
+	// Answered says a reply already open takes the stop, so no reply follows for it.
+	Answered bool
+}
+
+func (SpeechStopped) isSTSEvent() {}
+
+// InputTranscript is what the model heard the participant say. Mode says whether the text
+// adds to, replaces or settles what came before, in the same words a transcriber uses.
+type InputTranscript struct {
+	Participant Participant
+	Mode        stt.Mode
+	Text        string
+	Language    string
+}
+
+func (InputTranscript) isSTSEvent() {}
+
+// OutputTranscript is what the model said, for the response it said it in.
+type OutputTranscript struct {
+	ResponseID string
+	Mode       stt.Mode
+	Text       string
+}
+
+func (OutputTranscript) isSTSEvent() {}
+
+// ResponseStarted means the model began a reply. Generation counts replies from one, so a
+// consumer can tell late audio from an earlier reply apart from the current one without
+// keeping every response id it ever saw.
+type ResponseStarted struct {
+	ResponseID string
+	Generation int
+	At         time.Time
+}
+
+func (ResponseStarted) isSTSEvent() {}
+
+// AudioChunk is a piece of the model's speech. Index counts chunks within one response, so
+// a consumer can tell playback order from arrival order.
+type AudioChunk struct {
+	ResponseID string
+	Generation int
+	Index      int
+	Audio      audio.PcmData
+}
+
+func (AudioChunk) isSTSEvent() {}
+
+// Usage is what one response cost, where the model says. The modality counts are a subset of
+// the totals rather than an addition to them, and each cached count is a part of its
+// modality's input, as CachedInputTokens is of InputTokens. A vendor that bills each
+// modality at its own rate reports them; one that does not leaves them at zero and is
+// priced on the totals.
+type Usage struct {
+	InputTokens       int64
+	CachedInputTokens int64
+	// OutputTokens is everything generated, thinking included.
+	OutputTokens           int64
+	InputTextTokens        int64
+	InputAudioTokens       int64
+	InputImageTokens       int64
+	CachedInputTextTokens  int64
+	CachedInputAudioTokens int64
+	CachedInputImageTokens int64
+	OutputTextTokens       int64
+	OutputAudioTokens      int64
+	// ReasoningTokens is the part of the output spent thinking, shown and never priced on
+	// its own: the output tokens include it.
+	ReasoningTokens int64
+	// BilledAudioMs is the audio the vendor bills for the reply, by its own count, where it
+	// keeps one: xAI's growth in billable_audio_seconds since the last reply. AudioBilled says
+	// the vendor keeps it, so it replaces the caller's audio on the row even at zero, which is
+	// a reply too short to move the vendor's rounded figure.
+	BilledAudioMs int64
+	AudioBilled   bool
+	// Estimated is usage the vendor never reported, for a reply cut off before it said, which
+	// the adapter filled in from what the reply streamed (Estimator).
+	Estimated bool
+}
+
+// Counted reports whether the vendor said what the reply used.
+func (u Usage) Counted() bool { return u.InputTokens > 0 || u.OutputTokens > 0 }
+
+// ResponseComplete settles one reply. It is the natural unit of billable work, the way
+// SynthesisComplete is for a voice, and Interrupted true is the one signal that the caller
+// cut in: a consumer that drops its buffered audio does so on this and nothing else.
+type ResponseComplete struct {
+	ResponseID string
+	Generation int
+	Provider   string
+	Model      string
+	// Interrupted is true when the caller spoke over the reply and the model stopped.
+	Interrupted bool
+	// AudioDurationMs is how much speech came back.
+	AudioDurationMs float64
+	// TimeToFirstByteMs is how long the caller waited, from the end of their turn to the
+	// first audio of the reply. Zero for a reply that answered nobody's wait.
+	TimeToFirstByteMs float64
+	// ResponseTimeMs is the whole reply, first event to last.
+	ResponseTimeMs float64
+	Usage          Usage
+}
+
+func (ResponseComplete) isSTSEvent() {}
+
+// ToolCall is the model asking for a tool to be run. The answer goes back through
+// STS.Answer against the same CallID.
+type ToolCall struct {
+	ResponseID string
+	CallID     string
+	Name       string
+	Arguments  string
+}
+
+func (ToolCall) isSTSEvent() {}
+
+// ToolCancel means the model no longer wants the answers to those calls, usually because
+// the caller interrupted the turn that asked.
+type ToolCancel struct {
+	CallIDs []string
+}
+
+func (ToolCancel) isSTSEvent() {}
+
+// SessionUsage is how long the vendor says the session has been open, in whole seconds since it
+// started, for a vendor that bills the session's time rather than its replies (GPT-Live). Each
+// report is cumulative, and the last comes as the session closes.
+type SessionUsage struct {
+	Seconds int64
+	// Final is the report the vendor sends as the session closes. A session that ends without
+	// one is billed the seconds it was open beyond the last report, on the router's clock.
+	Final bool
+}
+
+func (SessionUsage) isSTSEvent() {}
+
+// BackendUsage is one response of the text model a voice hands its reasoning and tools to,
+// which the vendor bills on top of the voice at that model's rates. ResponseID is the vendor's,
+// so a response reported twice is billed once.
+type BackendUsage struct {
+	ResponseID  string
+	Model       string
+	ServiceTier string
+	Usage       llm.Usage
+}
+
+func (BackendUsage) isSTSEvent() {}
+
+// TranscriptionUsage is what writing down one caller turn cost, for a vendor that bills its
+// transcriber apart from the conversation (OpenAI Realtime's input transcription): its
+// tokens, or AudioMs for a transcriber billed by the second of audio. ItemID is the turn's,
+// so a turn reported twice is billed once.
+type TranscriptionUsage struct {
+	ItemID  string
+	Model   string
+	Usage   Usage
+	AudioMs int64
+}
+
+func (TranscriptionUsage) isSTSEvent() {}
+
+// SessionExpiring warns that the vendor is about to cut the session off. A provider that
+// can resume does so on its own; one that cannot lets this be the caller's warning.
+type SessionExpiring struct {
+	TimeLeft time.Duration
+}
+
+func (SessionExpiring) isSTSEvent() {}
+
+// EmitterBuffer is the buffer a provider's emitter is given. It is deeper than a voice's
+// because the model's audio arrives at a rate a slow consumer holds up, and a provider
+// stalled on its emitter is late reading the frame that says the caller interrupted.
+const EmitterBuffer = 256
+
+// Emitter fans provider events out to a single consumer channel. Providers hold one
+// rather than managing the channel and its close semantics themselves.
+type Emitter = emit.Emitter[Event]
+
+// NewEmitter returns an Emitter with the given channel buffer.
+func NewEmitter(buffer int) *Emitter { return emit.New[Event](buffer) }

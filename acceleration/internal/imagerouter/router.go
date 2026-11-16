@@ -1,0 +1,251 @@
+// Package imagerouter routes image generation and records what each request cost.
+//
+// Resolving a target, ranking candidates and failing over are generic and live in
+// internal/routing. What this package adds is the image shape: which providers exist, when
+// a failed generation is worth asking of the next candidate, and what counts as a unit of
+// work, which is one request however many pictures it asked for.
+//
+// Nothing is kept. The pictures go back to the caller and the only thing written down is
+// the stat row saying what they cost.
+package imagerouter
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// Registry is the set of image providers a build can construct.
+type Registry = routing.Registry[imagegen.Provider]
+
+// DefaultTarget is where a request that names nowhere goes: the fast tier, since whoever
+// asked is usually waiting on the answer.
+const DefaultTarget = "image-fast"
+
+// Deadline bounds one generation, wherever it was asked from. A queued provider can hold a job
+// for minutes, and whoever asked is owed an answer rather than a wait until something upstream
+// gives up. The money a generation may cost is held for as long.
+const Deadline = 240 * time.Second
+
+// Options configures a Router. Store and Live are optional: without them the router still
+// routes, it just stops recording.
+type Options struct {
+	Config   routing.ModalityConfig
+	Registry *Registry
+	Store    *store.Store
+	Live     *live.Client
+	Gate     routing.Gate
+	Writer   *routing.Writer
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
+}
+
+// Request is a prompt to draw and who pays for it.
+type Request struct {
+	// CustomerID owns the request. It is what every statistic is keyed by.
+	CustomerID string
+	// AgentID is the agent the picture is for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the picture is drawn in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty names none.
+	Region string
+	// UsageID names a generation that may be drawn again, such as a picture an agent asked for
+	// that a stopped router drew without keeping, so its row is written, and billed, once. Zero
+	// gives each generation an id of its own.
+	UsageID uuid.UUID
+	// Tags are the customer's own cost labels, recorded on the row this request writes.
+	Tags routing.Tags
+	// Target is a "provider/model" name or a capability shortcut. Empty means
+	// DefaultTarget.
+	Target string
+	// Providers is a priority list of where to try, in the order given, and it wins over
+	// Target when it holds anything.
+	Providers []string
+	// Image is what to draw. A size, shape, seed, negative prompt or format named here
+	// narrows the candidates to the models that declared it.
+	Image imagegen.Request
+}
+
+// Generation is what was drawn, by whom, and what it cost.
+type Generation struct {
+	// Provider and Model are who drew it, or who refused to. Both are empty when nothing
+	// got as far as a provider.
+	Provider string
+	Model    string
+	Images   []imagegen.Image
+	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
+	// A generation that failed costs nothing.
+	CostMicros int64
+	// Queued and Drawn are how long the job waited in the provider's queue and how long it was
+	// drawn for, zero where the provider cannot tell them apart (imagegen.Result).
+	Queued time.Duration
+	Drawn  time.Duration
+}
+
+// Router selects an image provider and draws with it.
+type Router struct {
+	*routing.Router[imagegen.Provider]
+}
+
+// New validates the options and returns a Router.
+func New(options Options) (*Router, error) {
+	core, err := routing.New(routing.Options[imagegen.Provider]{
+		Modality: routing.Image,
+		Config:   options.Config,
+		Registry: options.Registry,
+		Store:    options.Store,
+		Live:     options.Live,
+		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
+		Logger:   options.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Router{Router: core}, nil
+}
+
+// Generate draws the request with the best candidate that will have it.
+//
+// A candidate that fails before it accepted the job - no key, a refusal at the door, a
+// size it cannot draw - hands the request to the next one the target resolved to, in the
+// order it resolved to them. Once a provider has accepted the job nothing else is asked:
+// it may have billed and may still be drawing, and a second vendor's attempt would be paid
+// for twice. A picture a safety filter refused is not asked again either, since asking
+// the next vendor is shopping for a laxer filter.
+//
+// A failure is an *imagegen.Error. Any other error is a request that names nowhere this
+// router can send it.
+func (r *Router) Generate(ctx context.Context, request Request) (Generation, error) {
+	ctx, cancel := context.WithTimeout(ctx, Deadline)
+	defer cancel()
+	core := routing.Request{
+		CustomerID:  request.CustomerID,
+		AgentID:     request.AgentID,
+		CallID:      request.CallID,
+		Region:      request.Region,
+		Attribution: routing.AttributionFrom(ctx),
+		Spent:       routing.SpentFrom(ctx),
+		Tags:        request.Tags,
+		Target:      request.Target,
+		Providers:   request.Providers,
+		Terms:       request.Image.Terms(),
+	}
+	if core.Target == "" && len(core.Providers) == 0 {
+		core.Target = DefaultTarget
+	}
+
+	candidates, err := r.Candidates(ctx, core)
+	if err != nil {
+		return Generation{}, err
+	}
+	honouring := func(candidate routing.Candidate) bool { return candidate.Config.Supports(core.Terms) }
+	if !slices.ContainsFunc(candidates, honouring) {
+		return Generation{}, imagegen.Fail(imagegen.UnsupportedOption, false,
+			fmt.Errorf("imagerouter: nothing %s resolves to can honour %s", where(core), named(core.Terms)))
+	}
+
+	var failures []error
+	for _, candidate := range candidates {
+		if !honouring(candidate) {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return Generation{}, imagegen.Fail(imagegen.CodeOf(err), false, err)
+		}
+
+		// The list would win over the target, so it is cleared to ask this one alone.
+		one := core
+		one.Target = candidate.Config.Name()
+		one.Providers = nil
+		provider, config, err := r.Select(ctx, one)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+
+		generation, err := r.draw(ctx, provider, config, core.Owner(), request.UsageID, request.Image)
+		if err == nil {
+			return generation, nil
+		}
+		if imagegen.Accepted(err) || imagegen.CodeOf(err) == imagegen.ContentFiltered || ctx.Err() != nil || routing.ReservationRefused(err) {
+			return generation, err
+		}
+		failures = append(failures, fmt.Errorf("%s: %w", config.Name(), err))
+	}
+
+	// A request every candidate refused for its size or shape is the caller's to change,
+	// not a provider that failed.
+	code := imagegen.UnsupportedOption
+	for _, failure := range failures {
+		if imagegen.CodeOf(failure) != imagegen.UnsupportedOption {
+			code = imagegen.ProviderFailed
+		}
+	}
+	return Generation{}, imagegen.Fail(code, false, errors.Join(failures...))
+}
+
+// draw asks one provider for the pictures and records what they cost.
+func (r *Router) draw(
+	ctx context.Context,
+	provider imagegen.Provider,
+	config routing.ProviderConfig,
+	owner routing.Owner,
+	usageID uuid.UUID,
+	request imagegen.Request,
+) (Generation, error) {
+	defer provider.Close()
+
+	result, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: owner, UsageID: usageID,
+		Code:       func(err error) string { return string(imagegen.CodeOf(err)) },
+		Estimate:   pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
+		ReserveFor: Deadline,
+	}, func(ctx context.Context) (imagegen.Result, error) {
+		return provider.Generate(ctx, request)
+	})
+	generation := Generation{Provider: config.Provider, Model: config.Model}
+	if err != nil {
+		return generation, err
+	}
+	generation.Images = result.Images
+	generation.Queued, generation.Drawn = result.Queued, result.Drawn
+	// Priced as its row is, size included.
+	var stat routing.Stat
+	stat.Use(result.Used())
+	stat.Describe(result)
+	generation.CostMicros = r.Recorder().QuoteStat(config, stat).CostMicros
+	return generation, nil
+}
+
+// where names what a request asked for, for an error about it.
+func where(request routing.Request) string {
+	if len(request.Providers) > 0 {
+		return strings.Join(request.Providers, ", ")
+	}
+	return request.Target
+}
+
+func named(terms []options.Term) string {
+	names := make([]string, 0, len(terms))
+	for _, term := range terms {
+		names = append(names, string(term))
+	}
+	return strings.Join(names, " and ")
+}

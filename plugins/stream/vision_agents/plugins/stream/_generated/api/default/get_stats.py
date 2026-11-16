@@ -1,0 +1,315 @@
+import datetime
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.error_response import ErrorResponse
+from ...models.granularity import Granularity
+from ...models.modality import Modality
+from ...models.stats_bucket import StatsBucket
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    modality: Modality,
+    *,
+    granularity: Granularity | Unset = UNSET,
+    from_: datetime.datetime,
+    to: datetime.datetime,
+    tag: list[str] | Unset = UNSET,
+) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    json_granularity: str | Unset = UNSET
+    if not isinstance(granularity, Unset):
+        json_granularity = granularity.value
+
+    params["granularity"] = json_granularity
+
+    json_from_ = from_.isoformat()
+    params["from"] = json_from_
+
+    json_to = to.isoformat()
+    params["to"] = json_to
+
+    json_tag: list[str] | Unset = UNSET
+    if not isinstance(tag, Unset):
+        json_tag = tag
+
+    params["tag"] = json_tag
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/v1/{modality}/stats".format(
+            modality=quote(str(modality), safe=""),
+        ),
+        "params": params,
+    }
+
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> ErrorResponse | list[StatsBucket] | None:
+    if response.status_code == 200:
+        response_200 = []
+        _response_200 = response.json()
+        for response_200_item_data in _response_200:
+            response_200_item = StatsBucket.from_dict(response_200_item_data)
+
+            response_200.append(response_200_item)
+
+        return response_200
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 402:
+        response_402 = ErrorResponse.from_dict(response.json())
+
+        return response_402
+
+    if response.status_code == 403:
+        response_403 = ErrorResponse.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
+
+    if response.status_code == 503:
+        response_503 = ErrorResponse.from_dict(response.json())
+
+        return response_503
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[ErrorResponse | list[StatsBucket]]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+    granularity: Granularity | Unset = UNSET,
+    from_: datetime.datetime,
+    to: datetime.datetime,
+    tag: list[str] | Unset = UNSET,
+) -> Response[ErrorResponse | list[StatsBucket]]:
+    """Aggregated usage for the calling customer
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several. Filtering reads the request rows rather than the
+            rollups, since a rollup bucket no longer knows which labels its requests carried.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorResponse | list[StatsBucket]]
+    """
+
+    kwargs = _get_kwargs(
+        modality=modality,
+        granularity=granularity,
+        from_=from_,
+        to=to,
+        tag=tag,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+    granularity: Granularity | Unset = UNSET,
+    from_: datetime.datetime,
+    to: datetime.datetime,
+    tag: list[str] | Unset = UNSET,
+) -> ErrorResponse | list[StatsBucket] | None:
+    """Aggregated usage for the calling customer
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several. Filtering reads the request rows rather than the
+            rollups, since a rollup bucket no longer knows which labels its requests carried.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorResponse | list[StatsBucket]
+    """
+
+    return sync_detailed(
+        modality=modality,
+        client=client,
+        granularity=granularity,
+        from_=from_,
+        to=to,
+        tag=tag,
+    ).parsed
+
+
+async def asyncio_detailed(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+    granularity: Granularity | Unset = UNSET,
+    from_: datetime.datetime,
+    to: datetime.datetime,
+    tag: list[str] | Unset = UNSET,
+) -> Response[ErrorResponse | list[StatsBucket]]:
+    """Aggregated usage for the calling customer
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several. Filtering reads the request rows rather than the
+            rollups, since a rollup bucket no longer knows which labels its requests carried.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[ErrorResponse | list[StatsBucket]]
+    """
+
+    kwargs = _get_kwargs(
+        modality=modality,
+        granularity=granularity,
+        from_=from_,
+        to=to,
+        tag=tag,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+    granularity: Granularity | Unset = UNSET,
+    from_: datetime.datetime,
+    to: datetime.datetime,
+    tag: list[str] | Unset = UNSET,
+) -> ErrorResponse | list[StatsBucket] | None:
+    """Aggregated usage for the calling customer
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+        granularity (Granularity | Unset):
+        from_ (datetime.datetime): Start of the window, inclusive.
+        to (datetime.datetime): End of the window, exclusive.
+        tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
+            written "key:value". Repeat for several. Filtering reads the request rows rather than the
+            rollups, since a rollup bucket no longer knows which labels its requests carried.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        ErrorResponse | list[StatsBucket]
+    """
+
+    return (
+        await asyncio_detailed(
+            modality=modality,
+            client=client,
+            granularity=granularity,
+            from_=from_,
+            to=to,
+            tag=tag,
+        )
+    ).parsed

@@ -1,0 +1,247 @@
+package turbopuffer
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+)
+
+// search stands in for turbopuffer's API so the wire contract can be tested without a key.
+type search struct {
+	server *httptest.Server
+
+	method string
+	path   string
+	auth   string
+	body   map[string]any
+	status int
+	// bodies is every request the stub was sent, so a test can tell one write from
+	// several.
+	bodies  []map[string]any
+	respond string
+}
+
+func newSearch() *search {
+	stub := &search{status: http.StatusOK, respond: `{"rows":[]}`}
+	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stub.method = r.Method
+		stub.path = r.URL.Path
+		stub.auth = r.Header.Get("Authorization")
+
+		raw, _ := io.ReadAll(r.Body)
+		stub.body = map[string]any{}
+		_ = json.Unmarshal(raw, &stub.body)
+		stub.bodies = append(stub.bodies, stub.body)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(stub.status)
+		_, _ = w.Write([]byte(stub.respond))
+	}))
+	return stub
+}
+
+type TurbopufferSuite struct {
+	suite.Suite
+	ctx    context.Context
+	search *search
+	store  *Store
+}
+
+func TestTurbopufferSuite(t *testing.T) {
+	suite.Run(t, new(TurbopufferSuite))
+}
+
+func (s *TurbopufferSuite) SetupTest() {
+	s.ctx = context.Background()
+	s.search = newSearch()
+	s.T().Cleanup(s.search.server.Close)
+
+	store, err := New(Options{
+		APIKey:  "test-key",
+		BaseURL: s.search.server.URL,
+		Logger:  slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.store = store
+}
+
+func (s *TurbopufferSuite) TestAKeyIsRequired() {
+	s.T().Setenv("TURBOPUFFER_API_KEY", "")
+
+	_, err := New(Options{})
+
+	s.ErrorContains(err, "TURBOPUFFER_API_KEY")
+}
+
+func (s *TurbopufferSuite) TestASearchRanksTheNamespaceItWasGiven() {
+	_, err := s.store.Search(s.ctx, knowledge.Query{
+		Namespace: "handbook", Text: "what does delivery cost", Limit: 3,
+	})
+	s.Require().NoError(err)
+
+	s.Equal("Bearer test-key", s.search.auth)
+	s.Equal("/v2/namespaces/handbook/query", s.search.path)
+	s.Equal([]any{"text", "BM25", "what does delivery cost"}, s.search.body["rank_by"])
+	s.Equal(float64(3), s.search.body["limit"])
+}
+
+func (s *TurbopufferSuite) TestSearchReturnsThePassagesAndWhereTheyCameFrom() {
+	s.search.respond = `{"rows":[
+		{"id":"shipping_0","$dist":4.2,"text":"Delivery is free over $50.","source":"shipping.md"},
+		{"id":"shipping_1","$dist":1.1,"text":"Next-day costs $9.","source":"shipping.md"}
+	]}`
+
+	found, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "delivery"})
+	s.Require().NoError(err)
+
+	s.Require().Len(found.Documents, 2)
+	s.Equal(knowledge.Document{
+		ID:     "shipping_0",
+		Text:   "Delivery is free over $50.",
+		Source: "shipping.md",
+		Score:  4.2,
+	}, found.Documents[0])
+	s.Equal("Next-day costs $9.", found.Documents[1].Text)
+}
+
+func (s *TurbopufferSuite) TestANumericIdIsStillReadable() {
+	// A namespace written from curl carries integer ids, and a document nobody can name
+	// is no less an answer.
+	s.search.respond = `{"rows":[{"id":7,"$dist":2.0,"text":"We open at nine."}]}`
+
+	found, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "hours"})
+	s.Require().NoError(err)
+
+	s.Require().Len(found.Documents, 1)
+	s.Equal("7", found.Documents[0].ID)
+	s.Empty(found.Documents[0].Source)
+}
+
+func (s *TurbopufferSuite) TestAnEmptyKnowledgeBaseIsNotAFailure() {
+	// A namespace nobody has written to yet 404s. An agent configured against one that
+	// is still being filled should say it does not know, not fail the turn.
+	s.search.status = http.StatusNotFound
+	s.search.respond = `{"status":"error","error":"namespace not found"}`
+
+	found, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "anything"})
+
+	s.Require().NoError(err)
+	s.Empty(found.Documents)
+	s.Equal(knowledge.Billed{Requests: 1}, found.Billed, "the request was made, and turbopuffer billed nothing it said")
+}
+
+func (s *TurbopufferSuite) TestSearchingWithoutANamespaceIsRejectedBeforeTheNetwork() {
+	_, err := s.store.Search(s.ctx, knowledge.Query{Text: "anything"})
+
+	s.ErrorContains(err, "namespace")
+	s.Empty(s.search.path, "an unscoped search would answer out of somebody else's handbook")
+}
+
+func (s *TurbopufferSuite) TestWrittenPassagesAreIndexedForFullTextSearch() {
+	// Nothing embeds anything here, so a passage that was not indexed for BM25 could be
+	// written and never found again.
+	_, err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{
+		{ID: "shipping_0", Text: "Delivery is free over $50.", Source: "shipping.md"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("/v2/namespaces/handbook", s.search.path)
+	rows := s.search.body["upsert_rows"].([]any)
+	s.Require().Len(rows, 1)
+	s.Equal(map[string]any{
+		"id":     "shipping_0",
+		"text":   "Delivery is free over $50.",
+		"source": "shipping.md",
+	}, rows[0])
+
+	text := s.search.body["schema"].(map[string]any)["text"].(map[string]any)
+	s.Equal(true, text["full_text_search"])
+	s.NotContains(s.search.body, "distance_metric", "a namespace with no vectors needs none")
+}
+
+func (s *TurbopufferSuite) TestALargeIngestIsWrittenInSeveralRequests() {
+	documents := make([]knowledge.Document, upsertBatch+1)
+	for i := range documents {
+		documents[i] = knowledge.Document{ID: strconv.Itoa(i), Text: "a passage"}
+	}
+
+	billed, err := s.store.Upsert(s.ctx, "handbook", documents)
+	s.Require().NoError(err)
+
+	s.Len(s.search.bodies, 2, "one request for a whole body of documentation would be refused")
+	s.EqualValues(2, billed.Requests, "each request is billed on its own")
+}
+
+func (s *TurbopufferSuite) TestAPassageWithNothingToReadIsRejectedBeforeTheNetwork() {
+	_, err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{{ID: "empty", Text: "  "}})
+
+	s.ErrorContains(err, "something to read")
+	s.Empty(s.search.path, "a passage the model cannot read is not worth storing")
+}
+
+func (s *TurbopufferSuite) TestABadPassageLateInALargeIngestWritesNothing() {
+	documents := make([]knowledge.Document, upsertBatch+1)
+	for i := range documents {
+		documents[i] = knowledge.Document{ID: strconv.Itoa(i), Text: "a passage"}
+	}
+	documents[upsertBatch].Text = ""
+
+	_, err := s.store.Upsert(s.ctx, "handbook", documents)
+
+	s.ErrorContains(err, "something to read")
+	s.Empty(s.search.bodies, "a first batch written under a call that failed would be billed and never recorded")
+}
+
+func (s *TurbopufferSuite) TestWritingWithoutANamespaceIsRejected() {
+	_, err := s.store.Upsert(s.ctx, "", []knowledge.Document{{ID: "1", Text: "a passage"}})
+
+	s.ErrorContains(err, "namespace")
+}
+
+func (s *TurbopufferSuite) TestDroppingAKnowledgeBaseDeletesItsNamespace() {
+	s.search.respond = `{"status":"OK"}`
+
+	dropped, err := s.store.Drop(s.ctx, "app-1__docs")
+
+	s.Require().NoError(err)
+	s.True(dropped.Existed)
+	s.EqualValues(1, dropped.Requests)
+	s.Equal(http.MethodDelete, s.search.method)
+	s.Equal("/v2/namespaces/app-1__docs", s.search.path)
+}
+
+func (s *TurbopufferSuite) TestDroppingAKnowledgeBaseTurbopufferDoesNotHaveIsNotAFailure() {
+	s.search.status = http.StatusNotFound
+	s.search.respond = `{"status":"error","error":"namespace not found"}`
+
+	dropped, err := s.store.Drop(s.ctx, "app-1__docs")
+
+	s.Require().NoError(err)
+	s.False(dropped.Existed)
+}
+
+func (s *TurbopufferSuite) TestDroppingWithoutANamespaceIsRejectedBeforeTheNetwork() {
+	_, err := s.store.Drop(s.ctx, "")
+
+	s.ErrorContains(err, "namespace")
+	s.Empty(s.search.bodies)
+}
+
+func (s *TurbopufferSuite) TestAFailureCarriesWhatTheServiceSaid() {
+	s.search.status = http.StatusUnprocessableEntity
+	s.search.respond = `{"error":"text is not indexed for full-text search"}`
+
+	_, err := s.store.Search(s.ctx, knowledge.Query{Namespace: "handbook", Text: "anything"})
+
+	s.ErrorContains(err, "422")
+	s.ErrorContains(err, "full-text search")
+}
