@@ -83,16 +83,19 @@ struct VoiceMode: View {
                 .padding(.bottom)
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: latestTurnWithUI?.id)
+        // The card grows as Juno writes it, which moves the glow above it: both ease into place.
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: latestTurnWithUI?.ui?.customData)
         .task { await start() }
         .onChange(of: voice?.session.state) { _, state in
             if state == .ended { dismiss() }
         }
     }
 
-    /// The newest of Juno's turns on the call that wrote UI.
+    /// The newest of Juno's turns on the call that wrote UI, once a statement of it is finished.
     private var latestTurnWithUI: Turn? {
-        voice?.session.turns.last { $0.speaker.isAgent && $0.ui != nil && !before.contains($0.id) }
+        voice?.session.turns.last {
+            $0.speaker.isAgent && $0.ui?.content.isEmpty == false && !before.contains($0.id)
+        }
     }
 
     private func start() async {

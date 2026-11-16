@@ -6,6 +6,7 @@ import StreamChatA2UI
 import StreamChatAI
 import StreamChatOpenUI
 import StreamAgents
+import SwiftUI
 
 /// How Stream's `AIConversation` reaches Juno: the session that answers the conversation, and
 /// the channel the router keeps it in.
@@ -230,7 +231,11 @@ final class AgentChat: AIConversationTransport {
     private func sessionChanged(_ conversation: Conversation) {
         sessionFailure = conversation.failure
         if liveUI.observe(conversation) {
-            publish()
+            // A reply's UI grows a statement at a time: the reply makes room for each, and its
+            // text gives way to the UI, rather than jumping.
+            withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.35)) {
+                publish()
+            }
         }
         let activity: AIAgentActivity? = switch conversation.state {
         case .responding:
