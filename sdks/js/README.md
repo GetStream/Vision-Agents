@@ -117,12 +117,14 @@ strings; event-stream responses return a `ReadableStream<Uint8Array>` for the ca
 
 `api.router().routes(modality)` lists the capability shortcuts a modality offers as a choice,
 default first, each with the models it resolves to now, best first. For `"image"` they are
-`image-fast` and `image-quality`, the values an agent config's `image` takes. It is server side
-only.
+`image-fast` and `image-quality`, either of which an agent config's `image` accepts in place of a
+`provider/model`. It is server side only.
 
 ```ts
-const [fastest] = await api.router().routes("image");
-console.log(fastest.id, fastest.candidates.map((c) => `${c.provider}/${c.model}`));
+const routes = await api.router().routes("image");
+for (const route of routes) {
+  console.log(route.id, route.candidates.map((c) => `${c.provider}/${c.model}`));
+}
 ```
 
 ## Spend limits and teams
