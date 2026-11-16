@@ -1552,7 +1552,11 @@ conversation carried on after it ended, in this process or another, waits as lon
 the same tools. `POST /v1/agents/sessions/{id}/resume`, which JavaScript's and Go's `resume` send when
 they have something to say, writes a `tool_timeout_ms` and `tools` over those, the caller's own
 winning; an empty `tools` offers none. A conversation still running takes the new timeout for
-the calls that start after it and keeps its tools until it ends and is carried on.
+the calls that start after it and keeps its tools until it ends and is carried on. Both are
+kept for the kind of caller that opened the conversation: an end user's device carrying on its
+backend's conversation is not offered the backend's tools, and what it says runs only in the
+session it reopens, never on the row the backend carries it on from. Requests that carry the
+same conversation on at once all get the one that runs.
 
 Sessions are keyed by customer. A session id that exists but belongs to somebody else is
 reported as not existing at all, since a forbidden would confirm it was real.
