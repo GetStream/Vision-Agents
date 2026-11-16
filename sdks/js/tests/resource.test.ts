@@ -206,6 +206,17 @@ describe("sessions", () => {
     await held.close();
   });
 
+  it("reads a conversation it will not watch as it is, though it has tools", async () => {
+    router.serve("GET", "/v1/agents/sessions/session-4", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "ended" }),
+    });
+    const tools = new Tools().register({ name: "lookup_order", description: "Finds an order", run: () => "found" });
+    const held = await api.agent("docs").sessions.resume("session-4", { tools, watch: false });
+
+    assert.equal(held.id, "session-4");
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-4/resume").length, 0);
+  });
+
   it("spells the model overwrites the way the wire does", async () => {
     const { session: held } = await open({ modelOverwrites: { thinking: "high" } });
 

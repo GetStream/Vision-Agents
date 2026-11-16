@@ -189,11 +189,15 @@ export class Sessions {
    * caller declared and the `tool_timeout_ms` it ran with.
    *
    * The `tools` declared here and `tool_timeout_ms` are written over those. A conversation
-   * still running takes `tool_timeout_ms` at once and keeps its tools until it ends.
+   * still running takes `tool_timeout_ms` at once and keeps its tools until it ends: the tools
+   * given then are not offered to its model. Unwatched (`watch: false`), nothing here runs a
+   * tool, so none is declared, and only a `tool_timeout_ms` asks the router to carry it on;
+   * otherwise it is read as it is. Needs a router that has `resumeSession`.
    */
   async resume(id: string, options: ResumeOptions = {}): Promise<Session> {
     const { tool_timeout_ms, ...rest } = options;
-    const declared = rest.tools?.declared() ?? [];
+    // Unwatched, no tool is run here, so none is declared.
+    const declared = rest.watch === false ? [] : (rest.tools?.declared() ?? []);
     // With nothing to say, the conversation is read as it is, which a call that kept no
     // conversation can be too. No declared tools leaves the ones it has: another watcher may
     // run them.
