@@ -1567,3 +1567,37 @@ func (s *TakeoverSuite) TestACallHungUpAtStopIsForgottenOnlyAfterAWriteInFlight(
 	unlocked = true
 	s.Eventually(func() bool { return s.gone(id) }, 2*time.Second, 10*time.Millisecond, "never forgot")
 }
+
+// Defect: a call is offered while a renewal that read it earlier is still in flight, and the
+// renewal lands after the give-up and claims the call back, so it is hung up, not handed over.
+func (s *TakeoverSuite) TestACallIsOfferedOnlyAfterAWriteInFlight() {
+	// A take gets holdFor less renewEvery to finish, so b needs the difference.
+	s.holdFor, s.renewEvery = 2*time.Minute, time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	held := s.heldOn(a, id)
+	held.writing.Lock()
+	unlocked := false
+	closed := make(chan struct{})
+	defer func() {
+		if !unlocked {
+			held.writing.Unlock()
+		}
+		<-closed
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	go func() {
+		defer close(closed)
+		_ = a.provider.Close(ctx)
+	}()
+
+	s.Never(func() bool { return s.get("owner:"+id) != "a" }, 300*time.Millisecond, 10*time.Millisecond, "offered while a write was in flight")
+	held.writing.Unlock()
+	unlocked = true
+	s.Eventually(func() bool { return s.get("owner:"+id) == "b" && a.dialer.call.wasReleased() }, 2*time.Second, 10*time.Millisecond, "never handed to b")
+	s.False(a.dialer.call.wasHungUp(), "a hung up a call it could have handed over")
+	s.Equal(1, b.takeover.resumes())
+}

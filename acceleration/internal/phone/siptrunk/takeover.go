@@ -652,8 +652,9 @@ func (p *Provider) forget(id string, log *slog.Logger) {
 // once the call ended.
 func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
-	// Under writing too, so a renewal that read the call before this lands before the offer and
-	// cannot claim the call back after it.
+	// Under writing too. A renewal that read the call before the offer can land after the give-up,
+	// once another node's failed take moved the score off 0. Its script then sees this node as
+	// owner and claims the call back, and the call is hung up instead of handed over.
 	held.writing.Lock()
 	held.mu.Lock()
 	held.handingOver = true
