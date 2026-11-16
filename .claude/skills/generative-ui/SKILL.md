@@ -59,7 +59,8 @@ capped at 512 KiB.
 
 Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`) and JavaScript (`sdks/js/src/ui-catalog.ts`,
 from `loadFolder` in `folder.ts`). Python, .NET, Ruby, Rust and PHP don't read `ui:` yet (see the
-note at the end of the `sdk` skill). The two compilers must produce the same bytes for the same
+note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an unknown key
+(`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
 folder; there is no shared golden test yet, and JavaScript parses this YAML by hand, so they
 still differ on comments in list items, `ui:` with no value, and a few scalar forms.
 
