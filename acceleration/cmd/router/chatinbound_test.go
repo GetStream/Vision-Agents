@@ -23,6 +23,8 @@ import (
 type ChatInboundStartupSuite struct {
 	suite.Suite
 	settings config.Config
+	// logger is what run logs to; the discarding one unless a test reads the log.
+	logger *slog.Logger
 	// stopped is closed when run returns, with what it returned in err.
 	stopped chan struct{}
 	err     error
@@ -34,6 +36,7 @@ func TestChatInboundStartupSuite(t *testing.T) {
 
 func (s *ChatInboundStartupSuite) SetupTest() {
 	s.settings = config.Defaults()
+	s.logger = slog.New(slog.DiscardHandler)
 	s.settings.Auth.Mode = string(auth.NoAuth)
 	s.settings.Limits.Mode = config.LimitsOff
 }
@@ -91,7 +94,7 @@ func (s *ChatInboundStartupSuite) TestWithAKeyAnUnsignedDeliveryIsRefused() {
 func (s *ChatInboundStartupSuite) start() {
 	s.stopped = make(chan struct{})
 	go func() {
-		s.err = run(s.settings, slog.New(slog.DiscardHandler))
+		s.err = run(s.settings, s.logger)
 		close(s.stopped)
 	}()
 	s.T().Cleanup(func() {
@@ -108,4 +111,38 @@ func (s *ChatInboundStartupSuite) start() {
 			s.Fail("the router did not stop on SIGTERM")
 		}
 	})
+}
+
+// The router's access line names the release the binary was built from, which run passes on
+// to the server: a line that lost it could not tell one rollout's errors from the last's.
+func (s *ChatInboundStartupSuite) TestTheAccessLineNamesTheRelease() {
+	previous := release
+	release = "v9.9.9-test"
+	s.T().Cleanup(func() { release = previous })
+	logged := &lockedBuffer{}
+	s.logger = slog.New(slog.NewTextHandler(logged, nil))
+	opened, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.settings.Addr = opened.Addr().String()
+	s.Require().NoError(opened.Close())
+
+	s.start()
+
+	transport := &http.Transport{}
+	s.T().Cleanup(transport.CloseIdleConnections)
+	client := http.Client{Timeout: time.Second, Transport: transport}
+	s.Require().Eventually(func() bool {
+		response, err := client.Get("http://" + s.settings.Addr + "/health")
+		if err != nil {
+			return false
+		}
+		s.Require().NoError(response.Body.Close())
+		for line := range strings.Lines(logged.String()) {
+			if strings.Contains(line, `msg="served a request"`) && strings.Contains(line, " path=/health ") {
+				s.Contains(line, " build_version=v9.9.9-test")
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 50*time.Millisecond)
 }

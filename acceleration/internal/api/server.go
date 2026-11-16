@@ -341,7 +341,10 @@ type Options struct {
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
 	TrustedProxies []netip.Prefix
-	Logger         *slog.Logger
+	// Release is the version this binary was built from, logged on every access line as
+	// build_version. Empty, which a local build is, logs none.
+	Release string
+	Logger  *slog.Logger
 }
 
 // Server serves the router's HTTP API.
@@ -470,6 +473,8 @@ type Server struct {
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
+	// release is Options.Release.
+	release string
 
 	// draining is closed when the process stops taking work, which sends its dispatch
 	// workers to another one.
@@ -626,6 +631,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		manageKey:          options.ManageKey,
 		popularity:         newPopularity(options.Store, logger),
 		logger:             logger,
+		release:            options.Release,
 		draining:           make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
@@ -1049,12 +1055,62 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		if failure.trace != "" {
 			fields = append(fields, "stack", failure.trace)
 		}
+		fields = append(fields, s.accessFields(routes, r, recorder)...)
 		if recorder.status() >= http.StatusInternalServerError {
 			s.logger.ErrorContext(r.Context(), "served a request", fields...)
 			return
 		}
 		s.logger.InfoContext(r.Context(), "served a request", fields...)
 	})
+}
+
+// maxLoggedValue caps a value the caller chose, a header or an anonymous caller's user id, on
+// the access line. net/http admits up to 1 MiB of headers (http.DefaultMaxHeaderBytes), which
+// would otherwise land on one line. The clients the router knows by X-Stream-Client are short
+// words (store.AuditSource), and 256 bytes is enough to tell user agents apart.
+const maxLoggedValue = 256
+
+// accessFields are the access line's fields named as the Stream platform's access logs name
+// them, each left out when the request has none.
+//
+// trace_id is logged for a sampled span only: the sampler's dropped span is never exported, so
+// its id would name a trace nobody can open.
+// operation_type is the route's pattern (routeLabel), never the path, since a token route's
+// path is its secret. user_id is the end user's: a backend's request is its own, whichever
+// user it says it acts for. request_size is the declared Content-Length, so a chunked body
+// names none.
+func (s *Server) accessFields(routes *chi.Mux, r *http.Request, answered *loggedResponse) []any {
+	var fields []any
+	if span := trace.SpanContextFromContext(r.Context()); span.IsValid() && span.IsSampled() {
+		fields = append(fields, "trace_id", span.TraceID().String())
+	}
+	if route := routeLabel(routes, r); route != unmatchedRoute {
+		fields = append(fields, "operation_type", route)
+	}
+	if answered.refusal != "" {
+		fields = append(fields, "error_code", answered.refusal)
+	}
+	for _, header := range []struct{ field, name string }{
+		{"x_stream_client", clientHeader},
+		{"user_agent", "User-Agent"},
+	} {
+		if value := trimmedTo(r.Header.Get(header.name), maxLoggedValue); value != "" {
+			fields = append(fields, header.field, value)
+		}
+	}
+	if declared := trimmedTo(auth.DeclaredAuthType(r), maxLoggedValue); declared != "" {
+		fields = append(fields, "stream_auth_type", declared)
+	}
+	if r.ContentLength > 0 {
+		fields = append(fields, "request_size", r.ContentLength)
+	}
+	if caller, ok := routing.CallerFrom(r.Context()); ok && !caller.ServerSide && caller.UserID != "" {
+		fields = append(fields, "user_id", trimmedTo(caller.UserID, maxLoggedValue))
+	}
+	if s.release != "" {
+		fields = append(fields, "build_version", s.release)
+	}
+	return fields
 }
 
 // loggedResponse remembers what was answered so it can be logged once the handler is done.

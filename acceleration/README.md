@@ -2090,6 +2090,19 @@ and the public key it came with as `api_key`, as the Stream platform's logs do (
 same app as `app_id`). A hook, which is not authenticated, and a request nobody authenticated carry
 neither.
 
+The access line also carries these fields, named like the Stream platform's access logs. Each one
+is left out when the request has none:
+
+| Field | What it is |
+| --- | --- |
+| `trace_id` | The trace of the request's span. None when tracing is off or the request was not sampled |
+| `operation_type` | The route's pattern, such as `/v1/agents/sessions/{id}`. None for a path no route serves |
+| `error_code` | The `code` of the error the request was answered with |
+| `x_stream_client`, `stream_auth_type`, `user_agent` | The `X-Stream-Client`, `Stream-Auth-Type` and `User-Agent` headers, each cut to 256 bytes. `stream_auth_type` falls back to a socket's `stream-auth-type` query (`jwt` or `anonymous`) |
+| `request_size` | The request's `Content-Length`. None for a chunked body |
+| `user_id` | The end user of a request from a user's device, cut to 256 bytes. None for a backend's request, even one that names a user |
+| `build_version` | The release the router was built from. None in a local build |
+
 A socket is logged once, when it closes, so its `duration` is how long the connection lived
 rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
 at error instead, because an access log at a busy deployment is the one stream nobody reads

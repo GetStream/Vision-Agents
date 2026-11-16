@@ -227,6 +227,9 @@ type RouterSuite struct {
 	// proxied authenticates as a router behind Stream's proxy does, believing the headers it
 	// writes, so a test names its caller with proxiedClient rather than a key.
 	proxied bool
+	// release is the version the router says it was built from (Options.Release). A suite
+	// sets it before SetupSuite runs; empty, as a local build is, names none.
+	release string
 	// byCustomer authenticates as a local router in proxy mode with nothing in front, as
 	// every example runs: a caller names its customer itself and is a backend unless it
 	// declares otherwise.
@@ -783,6 +786,7 @@ func (s *RouterSuite) SetupSuite() {
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
 		AudioFloor:         s.audioFloor,
+		Release:            s.release,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,

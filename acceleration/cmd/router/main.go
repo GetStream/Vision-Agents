@@ -1459,6 +1459,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		PublicURL:             settings.PublicURL,
 		DashboardURL:          settings.DashboardURL,
 		Auth:                  authenticator,
+		Release:               release,
 		Logger:                logger,
 	}
 	// A provider app's events go on to the customer's event destinations, whose secrets are
