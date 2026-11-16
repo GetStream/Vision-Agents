@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
@@ -514,6 +516,90 @@ func (s *RefusedAttemptsSuite) TestARefusedKeyAlertsOncePerVariableAndStatusUnti
 
 	s.post(p.Pool)
 	s.Contains(refused(start.Add(time.Hour+2*time.Second)), item, "sent again once the limit passed")
+}
+
+// sentEvents runs the key_refused condition in a loop, as cmd/router does, after refuse, and
+// returns the events sent, by item tag, for the items of keyVar.
+func (s *RefusedAttemptsSuite) sentEvents(keyVar string, refuse func()) map[string]*sentry.Event {
+	var mu sync.Mutex
+	events := map[string]*sentry.Event{}
+	client, err := sentry.NewClient(sentry.ClientOptions{
+		BeforeSend: func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+			mu.Lock()
+			defer mu.Unlock()
+			events[event.Tags["item"]] = event
+			return nil
+		},
+	})
+	s.Require().NoError(err)
+	loop := alerts.New(alerts.Options{
+		Hub: sentry.NewHub(client, sentry.NewScope()), Logger: slog.New(slog.DiscardHandler),
+		Every: time.Hour, Limit: time.Hour,
+	}, Alerts(time.Hour)...)
+	refuse()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	loop.Run(ctx)
+	mu.Lock()
+	defer mu.Unlock()
+	kept := map[string]*sentry.Event{}
+	for item, event := range events {
+		if strings.HasPrefix(item, keyVar+"/") {
+			kept[item] = event
+		}
+	}
+	return kept
+}
+
+// Each status the counter carries, refused the way the pool counts it, and the title its alert
+// gets: the item as before, then the reason.
+func (s *RefusedAttemptsSuite) TestEveryRefusalStatusAlertsWithItsReason() {
+	for _, tc := range []struct {
+		name, status, reason string
+		refuse               func(p pooled)
+	}{
+		{"400 key not valid", "400", "key not valid, replace it", func(p pooled) {
+			s.answerWith(http.StatusBadRequest, `{"error":{"details":[{"reason":"API_KEY_INVALID"}]}}`, p.keys[0])
+			s.post(p.Pool)
+		}},
+		{"401", "401", "key not valid, replace it", func(p pooled) { s.answer(http.StatusUnauthorized, p.keys[0]); s.post(p.Pool) }},
+		{"402", "402", "out of funds, top up the account", func(p pooled) { s.answer(http.StatusPaymentRequired, p.keys[0]); s.post(p.Pool) }},
+		{"403 key not valid", "403", "key not valid, replace it", func(p pooled) {
+			s.answerWith(http.StatusForbidden, "Authentication failed", p.keys[0])
+			s.post(p.Pool)
+		}},
+		{"429", "429", "rate limited, wait or add keys", func(p pooled) { s.answer(http.StatusTooManyRequests, p.keys[0]); s.post(p.Pool) }},
+		{"quota frame", "quota_exceeded", "quota spent, wait for it to reset or raise it", func(p pooled) { p.QuotaExceeded(p.keys[0]) }},
+		{"invalid key frame", "invalid_key", "key not valid, replace it", func(p pooled) { p.InvalidKey() }},
+		{"out of funds frame", "402", "out of funds, top up the account", func(p pooled) { p.OutOfFunds() }},
+	} {
+		s.Run(tc.name, func() {
+			p := s.pool("reason")
+			item := p.keyVars[0] + "/" + tc.status
+
+			events := s.sentEvents(p.keyVars[0], func() { tc.refuse(p) })
+
+			s.Require().Contains(events, item)
+			s.Equal("usage alert: key_refused "+item+": "+tc.reason, events[item].Message)
+			s.Equal([]string{"usage_key_refused:" + item}, events[item].Fingerprint)
+			s.Equal("key_refused", events[item].Tags["usage_alert"])
+		})
+	}
+}
+
+// A status the counter does not carry has no reason, and its title is what it was before
+// the alert had one.
+func (s *RefusedAttemptsSuite) TestAStatusWithNoReasonKeepsItsTitle() {
+	keyVar := "RA_NOREASON_" + strings.ToUpper(rand.Text()) + "_API_KEY"
+	item := keyVar + "/418"
+
+	events := s.sentEvents(keyVar, func() { refusedAttempts.WithLabelValues(keyVar, "418").Inc() })
+
+	s.Require().Contains(events, item)
+	s.Equal("usage alert: key_refused "+item, events[item].Message)
+	s.Equal([]string{"usage_key_refused:" + item}, events[item].Fingerprint)
+	s.Empty(describeRefusal("not an item"))
+	s.Empty(describeRefusal(keyVar + "/"))
 }
 
 func (s *RefusedAttemptsSuite) TestASpentQuotaFrameAlertsUnderItsVariable() {

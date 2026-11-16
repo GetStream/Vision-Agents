@@ -679,6 +679,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The key_refused alert says why a key was refused
+
+The Sentry title of a `key_refused` alert now ends with the reason, such as `usage alert: key_refused GOOGLE_API_KEY/402: out of funds, top up the account`. The same reason is given for `400`, `401` and `403` (key not valid, replace it), `429` (rate limited), `quota_exceeded` (quota spent) and `invalid_key`. A status with no reason keeps its title. The fingerprint and the `item` tag are unchanged, so existing Sentry issues and rules still match (AI-3301).
+
 ### OpenAI agents answer every turn on an account with Zero Data Retention
 
 An OpenAI organisation with Zero Data Retention answers `previous_response_id` with a 400, and an agent on an OpenAI model sent one on every turn after a stored reply, so about every other turn failed with "Previous response cannot be used for this organization due to Zero Data Retention". The OpenAI provider now sends the whole conversation every turn, as every other provider does, with `store: false`, so OpenAI keeps no response as application state; it is billed the same, since a continued response was billed for the whole chain. OpenAI's text models declare a 30-day retention, the abuse-monitoring logs that are left, instead of unspecified, so a data policy floor that accepts 30 days can now route to them. On the LLM socket, a `previous_response_id` or `conversation` sent to a model that keeps neither is refused, rather than answered from only the newest messages. Earlier turns' OpenAI reasoning items are no longer carried into the next turn (#2021).
