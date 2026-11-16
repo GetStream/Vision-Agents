@@ -56,7 +56,9 @@ class CreateSessionRequest:
             writing.
         description (str | Unset): A longer note about the conversation, searched alongside the title.
         floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
-            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the
+            router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router
+            defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default;
             anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         history (list[HistoryMessage] | Unset): The conversation so far, for a backend that keeps its own: a thread in
@@ -135,7 +137,9 @@ class CreateSessionRequest:
         title (str | Unset): What to call the conversation, for a list a person reads, until the router names a
             persistent one for what was said. Never shown to the model: what a conversation is called is a label on it
             rather than part of it.
-        tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
+        tool_timeout_ms (int | Unset): How long the model waits for the result of a tool the caller or a worker runs, in
+            milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one
+            slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
         tools (list[SessionTool] | Unset):
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         user_id (str | Unset): The name the agent joins the call as. It is not the owner of the session. The owner is

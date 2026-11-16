@@ -26,6 +26,7 @@ type AgentConfigPatch struct {
 	Agents             *[]ChildAgent            `json:"agents,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`
+	Image              *string                  `json:"image,omitempty" doc:"An empty string removes it, and the agent stops being offered generate_image."`
 	Instructions       *string                  `json:"instructions,omitempty"`
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
@@ -48,7 +49,7 @@ type AgentConfigPatch struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default."`
 	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
@@ -195,6 +196,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
+	config.Image = override(config.Image, patch.Image)
 	config.Instructions = override(config.Instructions, patch.Instructions)
 	if patch.Greeting != nil {
 		config.Greeting, config.GreetingMode = greetingOf(patch.Greeting)

@@ -40,6 +40,17 @@ func TestGeminiArgonIntegrationSuite(t *testing.T) {
 	}})
 }
 
+func TestGeminiHydrogenIntegrationSuite(t *testing.T) {
+	suite.Run(t, &GeminiIntegrationSuite{Suite: llmsuite.Suite{
+		New: func() llm.LLM {
+			provider, err := New(Options{Model: "gemini-4-hydrogen"})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires: []string{apiKeyEnvVar},
+	}})
+}
+
 func (s *GeminiIntegrationSuite) TestAToolCallComesBackSigned() {
 	// Google signs every call it asks for and rejects the turn that carries the result
 	// back unless the signature comes with it. The suite checks that turn is answered;

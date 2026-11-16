@@ -32,6 +32,7 @@ export {
 } from "./agent-chat.js";
 export {
   AGENT_ACTIVITY_STATES,
+  AgentBranchError,
   agentChatTransport,
   type AgentChatTransportOptions,
   type AgentTransport,

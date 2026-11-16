@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/getstream-go/v5"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
@@ -22,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -596,6 +598,51 @@ func (s *SessionConnectorsSuite) TestAForkOfARunningSessionReachesTheConnectionI
 
 	s.Equal(connectorEchoText, ran["result"])
 	s.Empty(ran["error"])
+}
+
+// A slow tool, such as one that draws a picture, needs the longer timeout the caller gave the
+// conversation: a fork that dropped it would fail that tool at 30 seconds.
+func (s *SessionConnectorsSuite) TestAForkNamingAConfigKeepsItsRunningParentsToolTimeout() {
+	request := s.session(s.modelledConfig("counted/counted-model", nil), nil)
+	request.ToolTimeoutMs = pointerTo(180_000)
+	running := s.client.createSession(request)
+	named := s.modelledConfig("noted/noted-model", nil)
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ConfigId: &named}, &forked))
+
+	s.Equal(180_000, s.heldSpec(forked.Id).ToolTimeoutMs)
+}
+
+// The row of a conversation that ended keeps no tool timeout, so a fork of one is given it.
+func (s *SessionConnectorsSuite) TestAForkOfAnEndedSessionTakesTheToolTimeoutItIsGiven() {
+	parent := s.endedSession(s.modelledConfig("counted/counted-model", nil))
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+parent+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ToolTimeoutMs: pointerTo(180_000)}, &forked))
+
+	s.Equal(180_000, s.heldSpec(forked.Id).ToolTimeoutMs)
+}
+
+func (s *SessionConnectorsSuite) TestAForksToolTimeoutWinsOverItsRunningParents() {
+	request := s.session(s.modelledConfig("counted/counted-model", nil), nil)
+	request.ToolTimeoutMs = pointerTo(60_000)
+	running := s.client.createSession(request)
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false), ToolTimeoutMs: pointerTo(180_000)}, &forked))
+
+	s.Equal(180_000, s.heldSpec(forked.Id).ToolTimeoutMs)
+}
+
+// heldSpec is the spec of the session id this node holds.
+func (s *SessionConnectorsSuite) heldSpec(id string) session.Spec {
+	held, ok := s.manager.Get(id, session.Owner{CustomerID: s.customerID(), Kind: auth.KindServer})
+	s.Require().True(ok, "session %s is held here", id)
+	return held.Spec()
 }
 
 // TestAForkOfARunningSessionKeepsTheModelItWasOpenedWith: a live parent's spec carries its

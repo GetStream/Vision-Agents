@@ -65,7 +65,9 @@ class AgentConfig:
             channel, and no session reads them. on writes them as record does, and a session starts with the person's other
             cards. Turning record into on reads what record wrote.
         floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
-            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the
+            router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router
+            defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default;
             anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset):
@@ -117,6 +119,7 @@ class AgentConfig:
             agent answers in besides agent channels. Absent when there are none.
         agents (list[ChildAgent] | Unset): The app's other text agents this one may hand work to, each as a tool. Absent
             when there are none.
+        image (str | Unset):
     """
 
     created_at: datetime.datetime
@@ -160,6 +163,7 @@ class AgentConfig:
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
+    image: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -305,6 +309,8 @@ class AgentConfig:
                 agents_item = agents_item_data.to_dict()
                 agents.append(agents_item)
 
+        image = self.image
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -387,6 +393,8 @@ class AgentConfig:
             field_dict["chat_channels"] = chat_channels
         if agents is not UNSET:
             field_dict["agents"] = agents
+        if image is not UNSET:
+            field_dict["image"] = image
 
         return field_dict
 
@@ -602,6 +610,8 @@ class AgentConfig:
 
                 agents.append(agents_item)
 
+        image = d.pop("image", UNSET)
+
         agent_config = cls(
             created_at=created_at,
             id=id,
@@ -644,6 +654,7 @@ class AgentConfig:
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
             agents=agents,
+            image=image,
         )
 
         agent_config.additional_properties = d

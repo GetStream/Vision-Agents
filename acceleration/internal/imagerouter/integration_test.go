@@ -111,6 +111,38 @@ func (s *ImageRouterIntegrationSuite) TestAGenerationIsOneRowCountingItsPictures
 	s.EqualValues(2, labelled[0].RequestCount)
 }
 
+func (s *ImageRouterIntegrationSuite) TestAGenerationDrawnTwiceUnderOneUsageIDIsBilledOnce() {
+	// A picture an agent asked for, drawn by a router that stopped before keeping it, is drawn
+	// again by the next under the job's usage id: one row, one bill.
+	drawing := &stubImages{name: "quick", drawn: pictures(1, 1024, 1024)}
+	registry := NewRegistry()
+	registry.Register("quick", func(routing.Spec) (imagegen.Provider, error) { return drawing, nil })
+	router, err := New(Options{
+		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{
+			{Provider: "quick", Model: "fast", Languages: []string{"en"}, Price: routing.Price{PerImage: 0.04}},
+		}},
+		Registry: registry,
+		Store:    s.store,
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	usageID := routing.UsageID("image_job", s.customerID)
+
+	for range 2 {
+		_, err = router.Generate(s.ctx, Request{
+			CustomerID: s.customerID, Target: "quick/fast", UsageID: usageID, Image: imagegen.Request{Prompt: "a field"},
+		})
+		s.Require().NoError(err)
+	}
+	router.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", s.customerID).Scan(s.ctx))
+	s.Require().Len(rows, 1, "drawn twice, recorded once")
+	s.Equal(usageID, rows[0].UsageID)
+	s.EqualValues(40_000, rows[0].CostMicros)
+}
+
 func (s *ImageRouterIntegrationSuite) TestAnImageRowSaysTheSizeItWasDrawnAtWhichCanChooseThePrice() {
 	drawing := &stubImages{name: "quick", drawn: pictures(1, 1024, 1792)}
 	registry := NewRegistry()

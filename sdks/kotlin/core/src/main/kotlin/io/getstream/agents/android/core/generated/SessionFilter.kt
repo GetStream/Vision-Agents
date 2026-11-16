@@ -26,7 +26,9 @@ package io.getstream.agents.android.core.generated
 import io.getstream.agents.android.core.generated.Equals
 import io.getstream.agents.android.core.generated.EqualsOrIn
 import io.getstream.agents.android.core.generated.ReviewScoreMatch
+import io.getstream.agents.android.core.generated.SessionStateEquals
 import io.getstream.agents.android.core.generated.TextMatch
+import io.getstream.agents.android.core.generated.TimeWindow
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -43,8 +45,12 @@ import kotlinx.serialization.encoding.Encoder
  * @param dollarAnd Every one of these filters holds.
  * @param dollarOr At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
  * @param agent 
+ * @param configId 
+ * @param createdAt 
+ * @param custom Labels the session's custom object holds, every one of them: {\"origin\": \"test\"} matches a session whose custom has origin set to the string \"test\".
  * @param projectId 
  * @param reviewScore 
+ * @param state 
  * @param text 
  * @param userId 
  */
@@ -63,11 +69,24 @@ internal data class SessionFilter (
     @SerialName(value = "agent")
     val agent: Equals? = null,
 
+    @SerialName(value = "config_id")
+    val configId: Equals? = null,
+
+    @SerialName(value = "created_at")
+    val createdAt: TimeWindow? = null,
+
+    /* Labels the session's custom object holds, every one of them: {\"origin\": \"test\"} matches a session whose custom has origin set to the string \"test\". */
+    @SerialName(value = "custom")
+    val custom: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
+
     @SerialName(value = "project_id")
     val projectId: EqualsOrIn? = null,
 
     @SerialName(value = "review_score")
     val reviewScore: ReviewScoreMatch? = null,
+
+    @SerialName(value = "state")
+    val state: SessionStateEquals? = null,
 
     @SerialName(value = "text")
     val text: TextMatch? = null,

@@ -100,6 +100,11 @@ def sync_detailed(
     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
     caller's only
     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+    - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename
+    leaves alone
+    - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+    - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+    - `custom`: an object of string labels the session's `custom` holds, every one of them
 
     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
     take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
@@ -185,6 +190,11 @@ def sync(
     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
     caller's only
     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+    - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename
+    leaves alone
+    - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+    - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+    - `custom`: an object of string labels the session's `custom` holds, every one of them
 
     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
     take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
@@ -265,6 +275,11 @@ async def asyncio_detailed(
     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
     caller's only
     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+    - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename
+    leaves alone
+    - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+    - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+    - `custom`: an object of string labels the session's `custom` holds, every one of them
 
     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
     take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
@@ -348,6 +363,11 @@ async def asyncio(
     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
     caller's only
     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+    - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename
+    leaves alone
+    - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+    - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+    - `custom`: an object of string labels the session's `custom` holds, every one of them
 
     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
     take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30

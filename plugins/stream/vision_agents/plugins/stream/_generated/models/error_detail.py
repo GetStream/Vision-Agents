@@ -69,7 +69,15 @@ class ErrorDetail:
             here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the
             change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a
             launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a
-            400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for
+            400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the
+            conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit
+            is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long
+            (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in
+            a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes
+            them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an
+            activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream
+            Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try
+            again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for
             agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url,
             limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A
             scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time

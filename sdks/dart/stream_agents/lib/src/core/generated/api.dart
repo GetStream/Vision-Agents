@@ -177,10 +177,13 @@ final class Operations {
 
 final class AgentResponse {
   const AgentResponse({
+    this.branch,
     required this.createdAt,
     this.error,
     this.finishedAt,
     required this.id,
+    this.parentResponseId,
+    this.rewoundTo,
     this.said,
     required this.sessionId,
     required this.status,
@@ -189,6 +192,10 @@ final class AgentResponse {
   factory AgentResponse.fromJson(Object? value) {
     final json = _object(value, 'AgentResponse');
     return AgentResponse(
+      branch: switch (json['branch']) {
+        null => null,
+        final Object value => ResponseBranch.fromJson(value),
+      },
       createdAt: _date(json['created_at'], 'AgentResponse.created_at'),
       error: switch (json['error']) {
         null => null,
@@ -199,6 +206,14 @@ final class AgentResponse {
         final Object value => _date(value, 'AgentResponse.finished_at'),
       },
       id: _string(json['id'], 'AgentResponse.id'),
+      parentResponseId: switch (json['parent_response_id']) {
+        null => null,
+        final Object value => _string(value, 'AgentResponse.parent_response_id'),
+      },
+      rewoundTo: switch (json['rewound_to']) {
+        null => null,
+        final Object value => RewoundTo.fromJson(value),
+      },
       said: switch (json['said']) {
         null => null,
         final Object value => _string(value, 'AgentResponse.said'),
@@ -208,19 +223,25 @@ final class AgentResponse {
     );
   }
 
+  final ResponseBranch? branch;
   final DateTime createdAt;
   final String? error;
   final DateTime? finishedAt;
   final String id;
+  final String? parentResponseId;
+  final RewoundTo? rewoundTo;
   final String? said;
   final String sessionId;
   final String status;
 
   Map<String, Object?> toJson() => {
+    if (branch case final value?) 'branch': value.toJson(),
     'created_at': createdAt.toUtc().toIso8601String(),
     'error': ?error,
     if (finishedAt case final value?) 'finished_at': value.toUtc().toIso8601String(),
     'id': id,
+    'parent_response_id': ?parentResponseId,
+    if (rewoundTo case final value?) 'rewound_to': value.toJson(),
     'said': ?said,
     'session_id': sessionId,
     'status': status,
@@ -400,6 +421,7 @@ final class CreateResponseRequest {
     this.images,
     this.maxOutputTokens,
     this.reasoningEffort,
+    this.replaces,
     this.requestId,
     required this.text,
     this.uiAction,
@@ -434,6 +456,10 @@ final class CreateResponseRequest {
         null => null,
         final Object value => _string(value, 'CreateResponseRequest.reasoning_effort'),
       },
+      replaces: switch (json['replaces']) {
+        null => null,
+        final Object value => _string(value, 'CreateResponseRequest.replaces'),
+      },
       requestId: switch (json['request_id']) {
         null => null,
         final Object value => _string(value, 'CreateResponseRequest.request_id'),
@@ -458,6 +484,7 @@ final class CreateResponseRequest {
   final List<ImageSource>? images;
   final int? maxOutputTokens;
   final String? reasoningEffort;
+  final String? replaces;
   final String? requestId;
   final String text;
   final Map<String, Object?>? uiAction;
@@ -469,6 +496,7 @@ final class CreateResponseRequest {
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
     'max_output_tokens': ?maxOutputTokens,
     'reasoning_effort': ?reasoningEffort,
+    'replaces': ?replaces,
     'request_id': ?requestId,
     'text': text,
     'ui_action': ?uiAction,
@@ -865,6 +893,7 @@ final class ForkSessionRequest {
     this.projectId,
     this.responseId,
     this.title,
+    this.toolTimeoutMs,
   });
 
   factory ForkSessionRequest.fromJson(Object? value) {
@@ -910,6 +939,10 @@ final class ForkSessionRequest {
         null => null,
         final Object value => _string(value, 'ForkSessionRequest.title'),
       },
+      toolTimeoutMs: switch (json['tool_timeout_ms']) {
+        null => null,
+        final Object value => _int(value, 'ForkSessionRequest.tool_timeout_ms'),
+      },
     );
   }
 
@@ -923,6 +956,7 @@ final class ForkSessionRequest {
   final String? projectId;
   final String? responseId;
   final String? title;
+  final int? toolTimeoutMs;
 
   Map<String, Object?> toJson() => {
     'agent': ?agent,
@@ -935,6 +969,7 @@ final class ForkSessionRequest {
     'project_id': ?projectId,
     'response_id': ?responseId,
     'title': ?title,
+    'tool_timeout_ms': ?toolTimeoutMs,
   };
 }
 
@@ -1179,6 +1214,25 @@ final class ModelOverwrites {
   };
 }
 
+final class ResponseBranch {
+  const ResponseBranch({required this.count, required this.index, required this.of});
+
+  factory ResponseBranch.fromJson(Object? value) {
+    final json = _object(value, 'ResponseBranch');
+    return ResponseBranch(
+      count: _int(json['count'], 'ResponseBranch.count'),
+      index: _int(json['index'], 'ResponseBranch.index'),
+      of: _string(json['of'], 'ResponseBranch.of'),
+    );
+  }
+
+  final int count;
+  final int index;
+  final String of;
+
+  Map<String, Object?> toJson() => {'count': count, 'index': index, 'of': of};
+}
+
 /// How a conversation is handed back to the model when a session carries it on.
 final class ResumeHistory {
   const ResumeHistory({this.includeTools, this.maxCharacters, this.maxMessages});
@@ -1225,6 +1279,23 @@ final class RewindSessionRequest {
   final String responseId;
 
   Map<String, Object?> toJson() => {'response_id': responseId};
+}
+
+final class RewoundTo {
+  const RewoundTo({required this.inclusive, required this.messageId});
+
+  factory RewoundTo.fromJson(Object? value) {
+    final json = _object(value, 'RewoundTo');
+    return RewoundTo(
+      inclusive: _bool(json['inclusive'], 'RewoundTo.inclusive'),
+      messageId: _string(json['message_id'], 'RewoundTo.message_id'),
+    );
+  }
+
+  final bool inclusive;
+  final String messageId;
+
+  Map<String, Object?> toJson() => {'inclusive': inclusive, 'message_id': messageId};
 }
 
 final class SearchAnswer {
@@ -1787,8 +1858,12 @@ final class SessionFilter {
     this.and,
     this.or,
     this.agent,
+    this.configId,
+    this.createdAt,
+    this.custom,
     this.projectId,
     this.reviewScore,
+    this.state,
     this.text,
     this.userId,
   });
@@ -1812,11 +1887,27 @@ final class SessionFilter {
         null => null,
         final Object value => value,
       },
+      configId: switch (json['config_id']) {
+        null => null,
+        final Object value => value,
+      },
+      createdAt: switch (json['created_at']) {
+        null => null,
+        final Object value => TimeWindow.fromJson(value),
+      },
+      custom: switch (json['custom']) {
+        null => null,
+        final Object value => _strings(value, 'SessionFilter.custom'),
+      },
       projectId: switch (json['project_id']) {
         null => null,
         final Object value => value,
       },
       reviewScore: switch (json['review_score']) {
+        null => null,
+        final Object value => value,
+      },
+      state: switch (json['state']) {
         null => null,
         final Object value => value,
       },
@@ -1834,8 +1925,12 @@ final class SessionFilter {
   final List<SessionFilter>? and;
   final List<SessionFilter>? or;
   final Object? agent;
+  final Object? configId;
+  final TimeWindow? createdAt;
+  final Map<String, String>? custom;
   final Object? projectId;
   final Object? reviewScore;
+  final Object? state;
   final TextMatch? text;
   final Object? userId;
 
@@ -1843,8 +1938,12 @@ final class SessionFilter {
     if (and case final value?) '\$and': [for (final item in value) item.toJson()],
     if (or case final value?) '\$or': [for (final item in value) item.toJson()],
     'agent': ?agent,
+    'config_id': ?configId,
+    if (createdAt case final value?) 'created_at': value.toJson(),
+    'custom': ?custom,
     'project_id': ?projectId,
     'review_score': ?reviewScore,
+    'state': ?state,
     if (text case final value?) 'text': value.toJson(),
     'user_id': ?userId,
   };
@@ -2189,6 +2288,33 @@ final class TextMatch {
   final String q;
 
   Map<String, Object?> toJson() => {'\$q': q};
+}
+
+/// A window of time: $gte is its start, which it holds, and $lt its end, which it does not.
+final class TimeWindow {
+  const TimeWindow({this.gte, this.lt});
+
+  factory TimeWindow.fromJson(Object? value) {
+    final json = _object(value, 'TimeWindow');
+    return TimeWindow(
+      gte: switch (json['\$gte']) {
+        null => null,
+        final Object value => _date(value, 'TimeWindow.\$gte'),
+      },
+      lt: switch (json['\$lt']) {
+        null => null,
+        final Object value => _date(value, 'TimeWindow.\$lt'),
+      },
+    );
+  }
+
+  final DateTime? gte;
+  final DateTime? lt;
+
+  Map<String, Object?> toJson() => {
+    if (gte case final value?) '\$gte': value.toUtc().toIso8601String(),
+    if (lt case final value?) '\$lt': value.toUtc().toIso8601String(),
+  };
 }
 
 /// What to change about one session.

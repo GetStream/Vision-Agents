@@ -1,3 +1,4 @@
+import { followRewinds, heldIds, pruneRewound } from "./branches.js";
 import type { Client, Schemas } from "./client.js";
 import { Conversation } from "./conversation.js";
 import { ConfigurationError, RouterError } from "./errors.js";
@@ -44,6 +45,23 @@ export interface ToolApprovalRequest {
    * or the empty string.
    */
   readonly reason: string;
+}
+
+/** A person's answer to a call that asks first, for `Session.decide`. */
+export interface ToolDecision {
+  readonly allowed: boolean;
+  /** What a declined call's step shows. */
+  readonly summary?: string;
+  /**
+   * The call as the conversation shows it, for one this session was not asked on its own
+   * socket: its function, its arguments as JSON, and the request and turn it is part of.
+   */
+  readonly call?: {
+    readonly name: string;
+    readonly arguments?: string;
+    readonly requestId?: string;
+    readonly turnId?: string;
+  };
 }
 
 /** Somebody on the call, as the backend reports them. */
@@ -181,6 +199,10 @@ export class Session {
   private readonly socket: Socket | undefined;
   /** The Stream Chat channel and the video call, each opened on first use. */
   private chatPeer: Promise<SessionChat> | undefined;
+  /** The channel once it has opened, which a regenerate, an edit or an activation prunes. */
+  private chatOpened: SessionChat | undefined;
+  /** Stops following the channel's rewinds. */
+  private unfollowRewinds: (() => void) | undefined;
   private videoPeer: Promise<SessionVideo> | undefined;
   private readonly client: Client;
   private readonly tools: Tools | undefined;
@@ -192,6 +214,8 @@ export class Session {
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
   private readonly ending = new AbortController();
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
+  /** The calls answered here, so answering one shown from the conversation again sends nothing. */
+  private readonly answered = new Set<string>();
   private readonly finished: Promise<void>;
   private ended = false;
   private stopped = false;
@@ -207,7 +231,12 @@ export class Session {
     this.socket = socket;
     this.tools = tools;
     this.conversation = new Conversation(socket !== undefined);
-    this.responses = new Responses(client, created.id, (asked) => this.conversation.said(asked));
+    this.responses = new Responses(
+      client,
+      created.id,
+      (asked) => this.conversation.said(asked),
+      () => this.branching(),
+    );
     this.voice = new Voice(client, created.id, Boolean(created.call_id), (on) =>
       this.speech.voiceChanged(on),
     );
@@ -316,16 +345,24 @@ export class Session {
   }
 
   /**
-   * Answers a call waiting in `approvals`.
+   * Answers a call waiting in `approvals`, or one the conversation shows waiting.
    *
    * Allowed, the function runs and its result goes back as it would have. Declined, it never
-   * runs: the model is told the person declined, and the call's step shows `summary`. A call
-   * that is not waiting is left alone, so answering twice does nothing. If the answer cannot
-   * be sent, the call goes on waiting.
+   * runs: the model is told the person declined, and the call's step shows `summary`.
+   *
+   * A call this session was not asked on its own socket, such as one shown from the channel
+   * after `sessions.resume` or a restart, is answered when `call` says what the conversation
+   * shows of it, which `AgentChat.decide` reads for you: an allowed call of one of this
+   * session's tools then runs here. Without `call`, such a call is left alone, so answering
+   * twice does nothing; the router ignores an answer that reaches no waiting call. If the answer
+   * cannot be sent, the call goes on waiting.
    */
-  decide(id: string, answer: { allowed: boolean; summary?: string }): void {
+  decide(id: string, answer: ToolDecision): void {
     const waiting = this.asking.get(id);
     if (!waiting) {
+      if (answer.call) {
+        this.decideShown(id, answer.call, answer);
+      }
       return;
     }
     const ids: Record<string, string> = {};
@@ -342,6 +379,7 @@ export class Session {
       ...ids,
     });
     this.asking.delete(id);
+    this.answered.add(id);
     this.approvalsChanged();
     if (answer.allowed) {
       void this.runTool(waiting.frame);
@@ -352,6 +390,38 @@ export class Session {
         ...ids,
         error: "The person declined this call.",
       });
+    }
+  }
+
+  /**
+   * Answers a call that never reached this socket, from what the conversation shows of it, once.
+   * The router settles a client call only with its result, so a declined one is answered with
+   * the same error a waiting one gets, and an allowed one of this session's tools is run here,
+   * or failed when the conversation left out its arguments, so the model isn't left waiting.
+   */
+  private decideShown(id: string, call: NonNullable<ToolDecision["call"]>, { allowed, summary }: ToolDecision): void {
+    if (this.answered.has(id)) {
+      return;
+    }
+    const ids = {
+      ...(call.requestId ? { request_id: call.requestId } : {}),
+      ...(call.turnId ? { turn_id: call.turnId } : {}),
+    };
+    this.held().send({ type: "tool_approval", tool_call_id: id, allowed, ...(summary ? { summary } : {}), ...ids });
+    this.answered.add(id);
+    if (!allowed) {
+      this.held().send({ type: "tool_result", tool_call_id: id, ...ids, error: "The person declined this call." });
+    } else if (this.tools?.has(call.name)) {
+      if (call.arguments === undefined) {
+        this.held().send({
+          type: "tool_result",
+          tool_call_id: id,
+          ...ids,
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
+      } else {
+        void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
+      }
     }
   }
 
@@ -599,6 +669,8 @@ export class Session {
       }
     }
     this.stopped = true;
+    this.unfollowRewinds?.();
+    this.unfollowRewinds = undefined;
     this.socket?.close();
     await this.finished;
     if (!this.socket) {
@@ -809,7 +881,33 @@ export class Session {
     const [type, ...rest] = channel.split(":");
 
     const connected = await this.client.peers.chat();
-    return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+    const opened: SessionChat = { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+    // A rewind another device made, or this one, hides messages this client already holds.
+    // Not followed for a session closed while the channel opened: nothing would stop it.
+    if (!this.stopped) {
+      this.unfollowRewinds?.();
+      this.unfollowRewinds = followRewinds(connected, opened.channel, channel);
+    }
+    this.chatOpened = opened;
+    return opened;
+  }
+
+  /**
+   * What a regenerate, an edit or an activation does to the open channel: notes what it holds
+   * before the request goes, and drops what the answer's `rewound_to` hid of that once it
+   * comes back. A channel not opened yet holds nothing, and is not opened for this.
+   */
+  private branching(): (rewoundTo: Schemas["RewoundTo"] | undefined) => void {
+    const chat = this.chatOpened;
+    if (!chat) {
+      return () => undefined;
+    }
+    const before = heldIds(chat.channel);
+    return (rewoundTo) => {
+      if (rewoundTo) {
+        pruneRewound(chat.channel, rewoundTo, before);
+      }
+    };
   }
 
   private async openVideo(): Promise<SessionVideo> {

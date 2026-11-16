@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/video"
 	"github.com/danielgtaylor/huma/v2"
@@ -67,6 +68,9 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		if err := refuseOversizeWithoutAudio(request.Body.Audio, size); err != nil {
 			return nil, err
 		}
+	}
+	if request.Body != nil && request.Body.Replaces != nil {
+		return s.branchResponse(ctx, request.Id, request.Body)
 	}
 	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
@@ -194,9 +198,74 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		Status: AgentResponseStatusRunning, CreatedAt: time.Now().UTC()}}, nil
 }
 
+// branchResponse is createResponse with replaces: a regenerate of the replaced response's
+// reply without text, an edit of its question with it.
+func (s *Server) branchResponse(ctx context.Context, id string, body *CreateResponseRequest) (*createResponseResponse, error) {
+	replaces, commandID := *body.Replaces, value(body.RequestId)
+	switch {
+	case replaces == "":
+		return nil, invalidRequest("replaces names the response to regenerate or edit")
+	case commandID == "":
+		return nil, invalidRequest("a request_id is required with replaces")
+	case body.Audio != nil || len(value(body.Images)) > 0 || len(value(body.Videos)) > 0 || len(value(body.Files)) > 0 || body.UiAction != nil:
+		return nil, invalidRequest("a regenerate or an edit takes text alone: images, audio, videos, files and ui_action cannot go with replaces")
+	}
+	found, sent, failure := s.sessionToAnswer(ctx, id)
+	if failure != nil {
+		return nil, failure
+	}
+	defer sent()
+
+	asked := options.LLM{MaxOutputTokens: body.MaxOutputTokens, ReasoningEffort: value(body.ReasoningEffort)}
+	said := body.Text
+	var branched session.Branched
+	var err error
+	if body.Text == "" {
+		// The question is asked again as it was.
+		if s.store != nil {
+			if replaced, err := s.store.SessionResponse(ctx, OwnerFrom(ctx).CustomerID, found.ID(), replaces); err == nil {
+				said = replaced.Said
+			}
+		}
+		branched, err = found.Regenerate(ctx, commandID, replaces, asked)
+	} else {
+		branched, err = found.Edit(ctx, commandID, replaces, body.Text, "", asked)
+	}
+	if err != nil {
+		if refused := branchRefused(err); refused != nil {
+			return nil, refused
+		}
+		return nil, refusedResponse(err)
+	}
+	if branched.ResponseID == "" {
+		// A retry of a request already taken, or a turn with no name: answered as a duplicate
+		// request id is, with no id.
+		return &createResponseResponse{Body: AgentResponse{SessionId: found.ID(), Status: AgentResponseStatusRunning,
+			CreatedAt: found.CreatedAt()}}, nil
+	}
+
+	answer := AgentResponse{Id: branched.ResponseID, SessionId: found.ID(), Status: AgentResponseStatusRunning,
+		CreatedAt: time.Now().UTC()}
+	if said != "" {
+		answer.Said = &said
+	}
+	if branched.ParentResponseID != "" {
+		answer.ParentResponseId = &branched.ParentResponseID
+	}
+	if branched.Count > 1 {
+		answer.Branch = &ResponseBranch{Of: branched.Of, Index: branched.Index, Count: branched.Count}
+	}
+	if branched.Rewound {
+		answer.RewoundTo = &RewoundTo{MessageId: branched.RewoundTo.MessageID, Inclusive: branched.RewoundTo.Inclusive}
+	}
+	return &createResponseResponse{Body: answer}, nil
+}
+
 // refusedResponse is the answer to a question its session refused before the turn started.
 func refusedResponse(err error) error {
 	switch {
+	case errors.Is(err, session.ErrSwitchUnfinished):
+		return errSwitchUnfinished
 	case errors.Is(err, conversation.ErrCommandConflict):
 		return conflict(err.Error())
 	case errors.Is(err, agent.ErrCannotSeeImages):
@@ -286,6 +355,9 @@ func responseOf(row store.AgentResponse) AgentResponse {
 		Status: AgentResponseStatus(row.Status), CreatedAt: row.CreatedAt,
 		FinishedAt: row.FinishedAt,
 	}
+	if row.ParentResponseID != "" {
+		rendered.ParentResponseId = &row.ParentResponseID
+	}
 	if row.Said != "" {
 		rendered.Said = &row.Said
 	}
@@ -348,12 +420,21 @@ func (s *Server) registerResponses(api huma.API) {
 			"seconds and a request that waited them out would time out on anything long enough to be " +
 			"worth asking.\n" +
 			"A voice note in audio is transcribed before the turn starts, and what was said is the " +
-			"question, after any text. A voice note that cannot be heard is refused and no turn starts.",
+			"question, after any text. A voice note that cannot be heard is refused and no turn starts.\n" +
+			"With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier " +
+			"response instead of asking something new. No text answers the replaced response's question " +
+			"again, beside its reply; text asks it in place of that question. Chat hides the conversation " +
+			"from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, " +
+			"activateResponse), and the answer says where the channel was rewound to (rewound_to), so the " +
+			"acting device prunes its view at once. A request_id is required, and images, audio, videos " +
+			"and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate " +
+			"points; past them it is a 409 branch_limit_reached.",
 		Extensions:    map[string]any{clientAccessibleExtension: true},
 		DefaultStatus: http.StatusAccepted,
 		Responses: map[string]*huma.Response{
 			"202": {Description: "The agent is answering"},
-			"409": errorResponse("The request id was already accepted with different content"),
+			"409": errorResponse("The request id was already accepted with different content, or a regenerate or an edit found the conversation changed or out of room"),
+			"503": errorResponse("A regenerate or an edit found the conversation's queued messages cannot be written to Stream Chat now"),
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.createResponse)
@@ -409,13 +490,16 @@ type listResponseItemsResponse struct {
 
 // AgentResponse is the AgentResponse schema.
 type AgentResponse struct {
-	CreatedAt  time.Time           `json:"created_at"`
-	Error      *string             `json:"error,omitempty"`
-	FinishedAt *time.Time          `json:"finished_at,omitempty"`
-	Id         string              `json:"id"`
-	Said       *string             `json:"said,omitempty" doc:"What the person asked, which is the first item of every response."`
-	SessionId  string              `json:"session_id"`
-	Status     AgentResponseStatus `json:"status" doc:"cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld." enum:"running,completed,failed,cancelled,refused"`
+	CreatedAt        time.Time           `json:"created_at"`
+	Error            *string             `json:"error,omitempty"`
+	FinishedAt       *time.Time          `json:"finished_at,omitempty"`
+	Id               string              `json:"id"`
+	ParentResponseId *string             `json:"parent_response_id,omitempty" doc:"The response this one was answered after, absent for a session's first."`
+	Branch           *ResponseBranch     `json:"branch,omitempty" doc:"Where a regenerate or an edit stands among its alternatives, on the answer to one. Absent when it is the only one."`
+	RewoundTo        *RewoundTo          `json:"rewound_to,omitempty" doc:"Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid something: the acting device drops that message, when inclusive, and every message after it."`
+	Said             *string             `json:"said,omitempty" doc:"What the person asked, which is the first item of every response."`
+	SessionId        string              `json:"session_id"`
+	Status           AgentResponseStatus `json:"status" doc:"cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld." enum:"running,completed,failed,cancelled,refused"`
 }
 
 // AgentResponseStatus is the AgentResponseStatus schema.
@@ -521,6 +605,7 @@ type CreateResponseRequest struct {
 	Files           *[]FileSource   `json:"files,omitempty" doc:"A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy." maxItems:"1"`
 	Audio           *AudioSource    `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
 	Images          *[]ImageSource  `json:"images,omitempty"`
+	Replaces        *string         `json:"replaces,omitempty" doc:"An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos, files or ui_action."`
 	MaxOutputTokens *int            `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string         `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
 	Text            string          `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id."`

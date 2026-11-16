@@ -304,8 +304,8 @@ public struct StreamAgents: Sendable {
     ///
     /// The model forgets the later turns and they drop out of `responses`. A transcript an
     /// `AgentSession` is showing still has them, so read it back from `responses` after this.
-    /// A conversation kept in Stream Chat cannot be rewound, because the channel would still
-    /// hold the later turns: fork it at the response instead.
+    /// A conversation kept in Stream Chat is rewound there too: the later turns are hidden in
+    /// the channel and kept as a branch that can be brought back.
     public func rewind(sessionID: String, to responseID: String) async throws {
         try await call {
             try await $0.rewindSession(id: sessionID, rewindSessionRequest: .init(responseId: responseID))

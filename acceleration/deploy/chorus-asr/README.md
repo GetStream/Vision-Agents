@@ -125,14 +125,15 @@ The router makes chorus-asr available, and each agent opts in to it.
 
 | Variable | Purpose |
 | --- | --- |
-| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`, with the path of a gateway it sits behind if it has one ([Behind a gateway](#behind-a-gateway)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in. It rules no agent's floor of its own accord |
+| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`, with the path of a gateway it sits behind if it has one ([Behind a gateway](#behind-a-gateway)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so |
 | `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as `Authorization: Bearer <key>` on every request, for a server behind a gateway that asks for a key. Never logged, and taken out of what a gateway says back. Send it over `https` |
 | `ROUTER_CHORUS_ASR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
 | `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` | How long the router waits for a ruling while the caller talks over the agent, as a duration: `250ms` (default) up to `450ms`, and at least `100ms`. The router refuses to start outside that. A ruling that comes later is not acted on, and the flow controller rules instead ([Fallbacks](#fallbacks)). The checks of a pause keep their 1 s whatever it says. Set it from the server's round trip ([The wait over the agent](#the-wait-over-the-agent)) |
+| `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control`: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at the server's default point, for every such agent on the router ([The router's default](#the-routers-default-router_floor_control_default)). Without `ROUTER_CHORUS_ASR_URL` the router warns once at start and the flow controller rules; no session is refused for it |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`); `cmd/agent`'s one
-agent opts in with `-floor-control stream/chorus-asr`.
+agent opts in with `-floor-control stream/chorus-asr`, and reads no default.
 
 `ROUTER_CHORUS_ASR_MODE`, which once had every agent on a router shadow or act on chorus-asr,
 is no longer read. A router started with it, as a variable or in its settings file, acts on it
@@ -194,7 +195,10 @@ speech over the agent, is the app's to choose, per agent, beside its `stt`, `llm
 `floor_control` is one setting: `model` names the model that controls the floor, as `stt` names
 the transcriber, and `max_wait_ms` is its one knob, how long a caller may wait once they stop
 ([How long a caller waits](#how-long-a-caller-waits-max_wait_ms)). An agent that names none
-keeps the default flow controller, as every agent did before there was a choice:
+gets the router's default ([The router's default](#the-routers-default-router_floor_control_default)):
+the flow controller, as every agent had before there was a choice, unless the router defaults
+every such agent to chorus-asr. `model: flow-controller` keeps the flow controller whatever the
+router's default:
 
 ```yaml
 # agent.yaml
@@ -213,13 +217,14 @@ it does with no such model; chorus-asr still transcribes for an agent whose `stt
   it), a config's create, replace and patch, and a server-side `createSession` or the session
   socket's start frame, which choose for one session over its config's, all take the same
   field. Sent, it replaces the stored choice whole, `max_wait_ms` included, and
-  `floor_control: {}` is the default flow controller again; left out, or null, the stored one
-  stays. A device may not choose a session's (403).
+  `floor_control: {}` is no choice again, which the router's default rules; left out, or null,
+  the stored one stays. An agent reads back what it stored, `{model: flow-controller}` included,
+  and nothing where it chose none. A device may not choose a session's (403).
 - **What is refused.** `stream/chorus-asr` sent to a router without `ROUTER_CHORUS_ASR_URL` is
   refused at write time (400, `not_configured`), before anything is stored, saying what the
-  router needs. So is, with a 400, a `max_wait_ms` without a `model`, a model nobody knows, a
-  key it doesn't have, the string `floor_control` once was, and `end_of_turn`, which
-  `max_wait_ms` replaced. A choice stored on one router and read on another without a server
+  router needs. So is, with a 400, a `max_wait_ms` without a `model` or with `flow-controller`,
+  which has no wait to choose, a model nobody knows, a key it doesn't have, the string
+  `floor_control` once was, and `end_of_turn`, which `max_wait_ms` replaced. A choice stored on one router and read on another without a server
   asks nothing there, and the router logs a warning for the session.
 - **One router, many choices.** Each session runs by its own: on one router, an agent whose
   floor chorus-asr controls and one with the default flow controller take their calls side by
@@ -227,7 +232,30 @@ it does with no such model; chorus-asr still transcribes for an agent whose `stt
   loop's contract are each session's, and an agent with none chosen behaves exactly as it did
   before.
 - **A session row** keeps the floor control it was opened with, which reopening it keeps; one
-  opened with none takes its config's.
+  opened with none takes its config's, and the router's default after it.
+
+## The router's default: `ROUTER_FLOOR_CONTROL_DEFAULT`
+
+`ROUTER_FLOOR_CONTROL_DEFAULT` (`agent.floor_control_default`) is what controls the floor of
+every agent on the router that chose no `floor_control` of its own: empty, or
+`flow-controller`, is the flow controller, as before; `stream/chorus-asr` has chorus-asr
+control it at the server's default point, as `floor_control: {model: stream/chorus-asr}` with
+no `max_wait_ms` would. It is how chorus-asr's floor control is rolled out to an environment
+at once, and each agent keeps control through the SDK: an agent's own choice always wins,
+`{model: stream/chorus-asr}` with its own `max_wait_ms` as today, or `{model: flow-controller}`
+to keep the flow controller, which is stored and read back, where `{}` is no choice and
+follows the default. Floor control only: which transcriber writes the words does not change,
+and `ROUTER_CHORUS_ASR_MODE`, which once changed both, is not back. On a router without
+`ROUTER_CHORUS_ASR_URL` the default is warned of once at start and the flow controller rules;
+no session is refused for it.
+
+| Router default | Agent chose | Floor |
+| --- | --- | --- |
+| empty or `flow-controller` | none, or `{}` | flow controller |
+| `stream/chorus-asr`, with a server | none, or `{}` | chorus-asr, server's default point |
+| `stream/chorus-asr`, no server | none, or `{}` | flow controller, one warning at start |
+| any | `{model: stream/chorus-asr, max_wait_ms: N}` | chorus-asr at N, as today (refused without a server) |
+| any | `{model: flow-controller}` | flow controller |
 
 ## How long a caller waits: `max_wait_ms`
 

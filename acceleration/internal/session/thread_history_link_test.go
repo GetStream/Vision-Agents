@@ -4,6 +4,7 @@ package session
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,11 +34,12 @@ func (s *EpisodeReadingSuite) threadStory(number string, linked bool, history *s
 }
 
 // reply writes the agent's answer into a thread at seconds after the test's start, as the
-// conversation writes it: the people's messages before a reply are history, the ones after the
-// last reply are what the session is about to be told.
+// conversation writes it: as the channel's own id, the agent the bridge stamps on a thread
+// channel (support_agent_id). The people's messages before a reply are history, the ones after
+// the last reply are what the session is about to be told.
 func (s *EpisodeReadingSuite) reply(thread string, seconds int) {
 	at := s.at(seconds).Format(time.RFC3339Nano)
-	s.write(thread, "agent-user", "Noted. "+uuid.NewString(), map[string]any{
+	s.write(thread, strings.TrimPrefix(thread, "agent:"), "Noted. "+uuid.NewString(), map[string]any{
 		"support_runtime": map[string]any{"role": "assistant", "state": "completed", "answer_start": 0,
 			"response_started_at": at, "state_started_at": at, "duration_ms": 0},
 		"support_message": map[string]any{"schema_version": 1, "sequence": 0, "state": "completed"},

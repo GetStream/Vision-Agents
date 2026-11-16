@@ -141,7 +141,8 @@ the other commands that read them there.
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
 | `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
-| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules no agent's floor of its own accord. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control` of its own: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at its server's default point, for every such agent on the router. An agent's own choice always wins, on its config or its session: `{model: stream/chorus-asr}` with its own `max_wait_ms`, or `{model: flow-controller}` to keep the flow controller whatever this says. `{}` is no choice. Without `ROUTER_CHORUS_ASR_URL` it warns once at start and the flow controller rules; no session is refused for it. Floor control only: which transcriber writes the words does not change |
 | `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as a bearer token on every request to a chorus-asr server behind a gateway that asks for a key |
 | `ROUTER_CHORUS_ASR_AUDIO` | How the chorus-asr model's audio is sent: `opus` (default), encoded once as it arrives, or `pcm`, for debugging. `cmd/agent` reads the `ROUTER_CHORUS_ASR_*` variables too, and its agent opts in with `-floor-control stream/chorus-asr` |
 | `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
@@ -158,9 +159,10 @@ the other commands that read them there.
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
 | `TWILIO_AUTH_TOKEN`     | Twilio credentials. With `TWILIO_API_KEY_SID` set, that key's secret |
 | `TWILIO_API_KEY_SID`    | Optional Twilio API key (SK...). Requests are signed with it instead of the account SID |
+| `TWILIO_WEBHOOK_AUTH_TOKEN` | Auth Token of the Twilio account whose webhooks the router checks (`X-Twilio-Signature`). It only checks signatures: those of the Monitor alerts and usage-trigger callbacks sent to `/v1/phone/hooks/twilio/events`, signed over `ROUTER_PUBLIC_URL` and the path. Without it, or without `ROUTER_PUBLIC_URL`, that route answers 404. A token with whitespace in it stops the router at start |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
-| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx`. Without it Telnyx numbers are not answered. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
+| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx` and the account events it sends to `/v1/phone/hooks/telnyx/events`. Without it Telnyx numbers are not answered and the events route answers 404. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
 | `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
@@ -752,6 +754,8 @@ pick rather than a list of their own to keep:
 | `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
 | `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
+| `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
+| `image-quality`      | Gemini 3.1 Flash Image: follows a long prompt and writes legible text. Takes a shape only |
 
 ```yaml
 stt:
@@ -1144,6 +1148,66 @@ no keys.
 
 `router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
 as the router, so their CronJobs need its variables too.
+
+## Pictures
+
+`POST /v1/image/generations` draws pictures from a prompt and answers with them. It is server-side
+only, like every routed modality but search.
+
+```bash
+curl -s localhost:8080/v1/image/generations -H 'X-Customer-Id: acme' \
+  -d '{"prompt": "A yellow watering can beside a seedling, flat illustration, no text",
+       "options": {"target": "image-fast", "aspect_ratio": "16:9"}}'
+```
+
+```json
+{"id": "img_1b9d...", "status": "completed", "provider": "fal",
+ "model": "alibaba/qwen-image-3/text-to-image", "cost_micros": 0,
+ "images": [{"data": "iVBORw0...", "media_type": "image/png", "width": 0, "height": 0}]}
+```
+
+The zeros stand in for real values. The pictures come back as base64 bytes, never a link, and nothing is kept: `id` is for logs. A
+generation that reached a provider is a 200 whether it drew or not. A failed one has `status:
+failed`, an `error_code` (`content_filtered`, `unsupported_option`, `timeout` and the rest of
+`ImageErrorCode`) and `error`, and costs nothing. A request that cannot be routed is a 400.
+
+| Option | What it does |
+| --- | --- |
+| `target` | A shortcut or `provider/model`. Defaults to `image-fast` |
+| `providers` | A priority list, which wins over `target` |
+| `n` | How many pictures, 1 to 4 |
+| `size` | `1024x1024`, on a model that takes a size. FAL draws 512 to 2048 a side |
+| `aspect_ratio` | `16:9`, on a model that takes a shape |
+| `seed`, `negative_prompt`, `output_format` | On a model that declares them |
+
+An option narrows the candidates to the models that declared it, so it is honoured or refused,
+never dropped.
+
+**Routes.** `GET /v1/image/routes` lists `image-fast` and `image-quality` (see
+[The default groups](#the-default-groups)), default first, each with the model it resolves to
+now. The Go SDK has it as `client.Routes(ctx, acceleration.ModalityImage)` and the JavaScript
+SDK as `api.router().routes("image")`. The four shared shortcuts (`en-low-latency` and the
+rest) work here too.
+
+**Time.** A request is answered when its pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. FAL is a queue: the router submits the job and asks every 3 seconds whether it is done, and one router process holds at most 2 FAL jobs at once, so a third waits for a slot before it is submitted. Gemini is one call per picture, drawn one after another. A FAL picture's usage row splits its time into `queued_ms`, submit to the first poll that saw it drawing, and `drawn_ms`, from then to done, each to within a poll; both are left out when no poll saw it drawing. `latency_ms` is the whole request, a wait for a slot included.
+
+**Limits.** At most 4 pictures a request, each at most 10 MiB and 4096 pixels a side, checked
+by decoding the picture before it is returned.
+
+**Billing.** Per picture, at the model's entry in the price list (see [Prices](#prices)). The
+vendor rates behind them, in `prices/vendor.json`, are $0.04 a picture for Qwen Image 3 on FAL
+and $0.0672 a picture for Gemini plus its prompt and thinking tokens. `cost_micros` is what the
+request cost the customer. The money is held before the job is submitted, so a
+spend limit that covers the caller refuses a draw it cannot pay for, and a failed draw costs
+nothing. A request is one row in `requests` counting its pictures.
+
+**From an agent.** `image: image-fast` on an agent config, or in agent.yaml, offers a text agent
+whose conversation has a Chat channel the built-in `generate_image(prompt, aspect_ratio?)`. It
+answers at once and the turn ends; the picture is drawn after it, on whichever router claims the
+job, and posted into the conversation as the agent's own message, or a short message saying why
+there is none. It is billed as this endpoint is, under the session's attribution. An empty
+`image` turns it off, and a target the deployment cannot draw with is refused when the config is
+saved.
 
 ## Run
 

@@ -41,6 +41,7 @@ type SyncAgentRequest struct {
 	Video             *SessionVideo              `json:"video,omitempty"`
 	Subagent          *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search            *string                    `json:"search,omitempty"`
+	Image             *string                    `json:"image,omitempty" doc:"agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it."`
 	Greeting          *Greeting                  `json:"greeting,omitempty"`
 	Plugins           *[]retiredPlugin           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents      *[]map[string]any          `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -61,7 +62,7 @@ type SyncAgentRequest struct {
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
-	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
+	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is no choice again; left out or null, the stored one stays. An agent that chose none gets the router's default: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever that default. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
 	EndOfTurn      any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 }
 
@@ -585,6 +586,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Search != nil {
 		config.Search = *body.Search
+	}
+	if body.Image != nil {
+		config.Image = *body.Image
 	}
 	if body.Greeting != nil {
 		config.Greeting, config.GreetingMode = greetingOf(body.Greeting)

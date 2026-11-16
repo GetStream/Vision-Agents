@@ -3025,6 +3025,28 @@ llm:
         trains_on_data: "no"
         retention: unspecified
 
+    # Gemini 4 Hydrogen, Google's cheaper Gemini 4 for coding and agent work. It takes low,
+    # medium, high and xhigh, where Argon stops at high, and defaults to high as Google do.
+    # Artificial Analysis score it 27, 41, 51 and 54 across those, so high is one above
+    # Argon, and on our own runs it started answering in a sixth of Argon's time. xhigh
+    # spent two and a half times the output of high for 3 points. The same unified
+    # 1M-token context as Argon. $1.50 in, $0.075 cached and $7.50 out per
+    # 1M tokens, flat across the context, thinking billed as output, implicit caching only
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-11-13). The data terms are the paid
+    # Developer API's, as for Argon above.
+    - provider: gemini
+      model: gemini-4-hydrogen
+      description: "Google's cheaper Gemini 4, quick at agent and tool work. Reads images, and can be asked to think from low to xhigh."
+      benchmark: { intelligence_index: 51 }
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
     # code for "no linguistic content", so no shortcut asking for a language reaches it,
