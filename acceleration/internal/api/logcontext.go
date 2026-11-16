@@ -5,8 +5,8 @@ import (
 	"log/slog"
 )
 
-// Field names a log line names the app and the key it was made with by, as the Stream
-// platform's own logs do.
+// The names a log line gives the app and the key a request was made with: the Stream
+// platform's own field names.
 const (
 	logAppField    = "app_id"
 	logAPIKeyField = "api_key"
