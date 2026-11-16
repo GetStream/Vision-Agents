@@ -1066,8 +1066,8 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 
 // maxLoggedValue caps a value the caller chose, a header or an anonymous caller's user id, on
 // the access line. net/http admits up to 1 MiB of headers (http.DefaultMaxHeaderBytes), which
-// would otherwise land on one line; a browser's User-Agent and Stream's SDK X-Stream-Client
-// names are far shorter than 256 bytes.
+// would otherwise land on one line. The clients the router knows by X-Stream-Client are short
+// words (store.AuditSource), and 256 bytes is enough to tell user agents apart.
 const maxLoggedValue = 256
 
 // accessFields are the access line's fields named as the Stream platform's access logs name

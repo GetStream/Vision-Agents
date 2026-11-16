@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -45,6 +46,10 @@ func TestLogAppSuite(t *testing.T) {
 
 // testRelease is the version LogAppSuite's router says it was built from.
 const testRelease = "v0.0.0-logtest"
+
+// loggedCap is how many bytes of a value the caller chose the access line keeps, as
+// acceleration/README.md documents it. Not maxLoggedValue, so a changed cap fails here.
+const loggedCap = 256
 
 func (s *LogAppSuite) SetupSuite() {
 	s.release = testRelease
@@ -133,14 +138,14 @@ func (s *LogAppSuite) TestTheAccessLineOfARequestWithoutThoseHeadersNamesNone() 
 // Defect: a header the caller chose logged whole, so one request can write a megabyte line;
 // or cut inside a character, which the log then shows as bytes.
 func (s *LogAppSuite) TestAHeaderTheCallerChoseIsCutOnTheAccessLine() {
-	long := strings.Repeat("a", maxLoggedValue+44)
+	long := strings.Repeat("a", loggedCap+44)
 	// A two-byte character straddling the cap, which is cut before rather than in half.
-	straddling := strings.Repeat("b", maxLoggedValue-1) + "éé"
+	straddling := strings.Repeat("b", loggedCap-1) + "éé"
 
 	line := s.servedAs(s.serverClient.with(clientHeader, long).with("User-Agent", straddling))
 
-	s.Equal(strings.Repeat("a", maxLoggedValue), s.field(line, "x_stream_client"))
-	s.Equal(strings.Repeat("b", maxLoggedValue-1), s.field(line, "user_agent"))
+	s.Equal(strings.Repeat("a", loggedCap), s.field(line, "x_stream_client"))
+	s.Equal(strings.Repeat("b", loggedCap-1), s.field(line, "user_agent"))
 }
 
 // Defect: the body's size left off, or the response's logged as it.
@@ -182,9 +187,19 @@ func (s *LogAppSuite) TestTheAccessLineOfABackendNamesNoUserEvenActingForOne() {
 
 // Defect: a user id the caller chose logged whole.
 func (s *LogAppSuite) TestAUserIDTheCallerChoseIsCutOnTheAccessLine() {
-	anonymous := s.data.claiming(strings.Repeat("u", maxLoggedValue+10))
+	anonymous := s.data.claiming(strings.Repeat("u", loggedCap+10))
 
-	s.Equal(strings.Repeat("u", maxLoggedValue), s.field(s.servedAs(anonymous), "user_id"))
+	s.Equal(strings.Repeat("u", loggedCap), s.field(s.servedAs(anonymous), "user_id"))
+}
+
+// Defect: an end user who named nobody logged with an empty user id.
+func (s *LogAppSuite) TestTheAccessLineOfAnEndUserWhoNamedNobodyNamesNoUser() {
+	nameless := s.signedIn(jwt.MapClaims{}, auth.AuthTypeAnonymous, anonymous, "")
+
+	line := s.servedAs(nameless)
+
+	s.Contains(line, " app_id="+s.customerID()+" ")
+	s.NotContains(line, "user_id")
 }
 
 func (s *LogAppSuite) TestTheAccessLineNamesTheReleaseTheRouterWasBuiltFrom() {
