@@ -134,6 +134,20 @@ func newRouter(t *testing.T) *router {
 		})
 	})
 
+	mux.HandleFunc("GET /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "ended", CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running", CreatedAt: time.Now(),
+		})
+	})
+
 	mux.HandleFunc("PATCH /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		// A target that does not route is refused, and the session carries on as it was.
@@ -1782,6 +1796,67 @@ func TestAForksToolTimeoutUnderAMillisecondIsNotSent(t *testing.T) {
 
 	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["tool_timeout_ms"] != nil {
 		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
+	}
+}
+
+func TestAResumesToolTimeoutGoesOverInMilliseconds(t *testing.T) {
+	backend := newRouter(t)
+
+	resumed, err := backend.client(t).Agent("docs").Sessions.Resume(t.Context(), "session-7",
+		ResumeOptions{ToolTimeout: 3 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(t.Context())
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-7/resume")
+	if body["tool_timeout_ms"] != float64(180_000) {
+		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
+	}
+	if _, sent := body["tools"]; sent {
+		t.Errorf("an agent with no functions declared tools: %v", body["tools"])
+	}
+}
+
+func TestAResumeDeclaresTheAgentsFunctions(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+	if err := register(agent.Tools(), "get_weather"); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := agent.Sessions.Resume(t.Context(), "session-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(t.Context())
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-7/resume")
+	declared, _ := body["tools"].([]any)
+	if len(declared) != 1 || declared[0].(map[string]any)["name"] != "get_weather" {
+		t.Errorf("tools went over as %v", body["tools"])
+	}
+	if _, sent := body["tool_timeout_ms"]; sent {
+		t.Errorf("tool_timeout_ms went over as %v though none was given", body["tool_timeout_ms"])
+	}
+}
+
+func TestAResumeWithNothingToSayReadsTheConversationAsItIs(t *testing.T) {
+	// A timeout under a millisecond would go over as zero, 30 seconds, not what it ran with.
+	backend := newRouter(t)
+
+	resumed, err := backend.client(t).Agent("docs").Sessions.Resume(t.Context(), "session-7",
+		ResumeOptions{ToolTimeout: 500 * time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(t.Context())
+
+	backend.query(t, "GET", "/v1/agents/sessions/session-7")
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if _, posted := backend.bodies["POST /v1/agents/sessions/session-7/resume"]; posted {
+		t.Error("a resume with nothing to say asked the router to carry the conversation on")
 	}
 }
 

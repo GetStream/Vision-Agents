@@ -3,7 +3,7 @@ import { Client, type Schemas } from "./client.js";
 import { Dispatch } from "./dispatch.js";
 import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
 import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
-import { Session, type SessionOptions } from "./session.js";
+import { Session, type ResumeOptions, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
 import type { UIDeclaration } from "./ui-catalog.js";
 import type { InboundCall, InboundMessage } from "./inbound.js";
@@ -391,7 +391,7 @@ export class Agent {
    * Carries on a conversation held in writing, by the id of the session it was held in, and
    * starts watching it. One that ended is reopened with what was said in it.
    */
-  resume(id: string, options: SessionOptions = {}): Promise<Session> {
+  resume(id: string, options: ResumeOptions = {}): Promise<Session> {
     return this.client.agent(this.name).sessions.resume(id, { tools: this.tools, ...options });
   }
 

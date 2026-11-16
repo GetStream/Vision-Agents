@@ -1540,6 +1540,24 @@ caller's own functions live wherever the caller is, so the model asks for one he
 answer comes back from there, and a caller that does not answer inside the tool timeout
 leaves the model to carry on without it rather than leaving the call silent.
 
+#### Tool timeout
+
+`tool_timeout_ms` on `POST /v1/agents/sessions` is how long the model waits for a tool the
+caller or a worker runs: 30 seconds when it is zero or left out. A tool's own `timeout_ms`
+replaces it for that tool, which is how one slow tool gets longer without every tool waiting
+as long. A fork takes its own `tool_timeout_ms` and otherwise keeps a running parent's.
+
+The session row keeps the timeout and the tools the caller declared (definitions only), so a
+conversation carried on after it ended, in this process or another, waits as long and offers
+the same tools. `POST /v1/agents/sessions/{id}/resume`, which JavaScript's and Go's `resume` send when
+they have something to say, writes a `tool_timeout_ms` and `tools` over those, the caller's own
+winning; an empty `tools` offers none. A conversation still running takes the new timeout for
+the calls that start after it and keeps its tools until it ends and is carried on. Both are
+kept for the kind of caller that opened the conversation: an end user's device carrying on its
+backend's conversation is not offered the backend's tools, and what it says runs only in the
+session it reopens, never on the row the backend carries it on from. Requests that carry the
+same conversation on at once all get the one that runs.
+
 Sessions are keyed by customer. A session id that exists but belongs to somebody else is
 reported as not existing at all, since a forbidden would confirm it was real.
 

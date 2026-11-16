@@ -940,7 +940,7 @@ func (s *Server) deliverChainReopened(ctx context.Context, delivery scheduledDel
 		go holdUntilAnswered(created, events, detach)
 		return s.deliverChain(ctx, delivery, created)
 	}
-	found, hold, err := s.carryOn(ctx, delivery.SessionID, unpaid)
+	found, hold, err := s.carryOn(ctx, delivery.SessionID, unpaid, resumed{})
 	if err != nil {
 		return "", "", err
 	}
