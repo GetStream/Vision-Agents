@@ -2,6 +2,10 @@
 
 ## Features
 
+### A conversation carried on keeps its tool timeout and declared tools, and resume can change them
+
+A text conversation carried on after it ended in another router process, by a message, a watch or a resume, used to lose the caller's `tool_timeout_ms` and the tools it declared: it waited 30 seconds and offered the model none of them. The session row now keeps both (`tool_timeout_ms`, and `caller_tools`, the declarations without results; an additive migration), so it carries on as it ran. `POST /v1/agents/sessions/{id}/resume` takes `tool_timeout_ms` and `tools` to write over them, as a fork does: the caller's tools win, and an empty list offers none. A conversation still running takes the timeout for the tool calls that start after it and keeps its tools. JavaScript's `sessions.resume(id, { tool_timeout_ms, tools })` and Go's `Sessions.Resume(ctx, id, client.ResumeOptions{ToolTimeout})` send it when there is something to say, the agent's own functions declared; with nothing to say they read the session as before. A fork of a conversation that ended still has the default 30 seconds (AI-3201).
+
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
 `AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
