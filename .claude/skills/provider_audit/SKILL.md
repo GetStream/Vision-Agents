@@ -68,7 +68,7 @@ Each time, from the repo root:
 # OTHER_TOKEN) and the connector tokens (GITHUB_, GITLAB_, LINEAR_). A second credential of
 # a listed vendor (SINCH_APPLICATION_*, VONAGE_API_SECRET, VONAGE_PRIVATE_KEY,
 # TELNYX_PUBLIC_KEY) needs no row of its own; *_PERSON_* keys are in the Telnyx and Twilio rows.
-git grep -hoE '"[A-Z][A-Z0-9_]*_(API_KEY|TOKEN|SECRET|KEY)"' origin/accelerate -- \
+git grep -hoE '"[A-Z][A-Z0-9_]*_(API_KEY|TOKEN|SECRET|KEY)"' origin/main -- \
   'acceleration/*.go' ':!*_test.go' | sort -u
 # Every provider routed, per modality.
 awk '/^[a-z_]+:/{s=$1} /^    - provider:/{print s, $3}' acceleration/internal/routing/router.yaml | sort -u
