@@ -325,10 +325,6 @@ func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// Ended while the script ran: hold decides the call's way out.
-	if h.ended {
-		return
-	}
 	switch kept {
 	case 0:
 		// Another node took it, or will: two nodes relaying one call would answer each
@@ -624,12 +620,6 @@ func (p *Provider) rewrite(id string, held *heldCall, log *slog.Logger) {
 	// hold deletes the call's keys only after.
 	held.writing.Lock()
 	defer held.writing.Unlock()
-	held.mu.Lock()
-	ended := held.ended
-	held.mu.Unlock()
-	if ended {
-		return
-	}
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State(), PostDialDelay: held.postDialDelay})
 	if err != nil {
 		log.Warn("could not record a call's changed dialogs", "error", err)
