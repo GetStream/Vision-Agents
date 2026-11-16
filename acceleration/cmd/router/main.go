@@ -297,9 +297,10 @@ func logLevel(settings config.Config) slog.Level {
 }
 
 // newLogger is the router's logger, which writes text to w and takes every credential out of
-// what it prints: a provider's error can echo the key the router sent it.
+// what it prints: a provider's error can echo the key the router sent it. A line logged with an
+// authenticated request's context carries its app_id and api_key.
 func newLogger(w io.Writer, level slog.Level) *slog.Logger {
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
+	return slog.New(api.NewLogHandler(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr})))
 }
 
 // sentryOptions are the router's Sentry options. An event carries an error's text, which can

@@ -1016,7 +1016,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			// ErrAbortHandler is net/http's own way of dropping a connection, not a bug.
 			if recovered != http.ErrAbortHandler {
 				customer, _ := CustomerFrom(r.Context())
-				s.logger.Error("a request panicked",
+				s.logger.ErrorContext(r.Context(), "a request panicked",
 					"method", r.Method, "path", loggedPath(routes, r), "customer", customer,
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
@@ -1050,10 +1050,10 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			fields = append(fields, "stack", failure.trace)
 		}
 		if recorder.status() >= http.StatusInternalServerError {
-			s.logger.Error("served a request", fields...)
+			s.logger.ErrorContext(r.Context(), "served a request", fields...)
 			return
 		}
-		s.logger.Info("served a request", fields...)
+		s.logger.InfoContext(r.Context(), "served a request", fields...)
 	})
 }
 
@@ -1230,6 +1230,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
 			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r, principal))
+			ctx = WithLoggedApp(ctx, principal.AppID, principal.APIKey)
 			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),

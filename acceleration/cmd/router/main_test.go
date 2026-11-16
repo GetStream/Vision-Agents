@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/getsentry/sentry-go"
@@ -132,6 +134,24 @@ func TestTheRoutersLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
 	require.NotContains(t, out.String(), key)
 	require.NotContains(t, out.String(), "below the level")
 	require.Contains(t, out.String(), `msg="agent failure" error="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`)
+}
+
+// A line the router logs with an authenticated request's context names its app and public key,
+// and the router's logger still takes a credential out of what else the line holds.
+func TestTheRoutersLogNamesTheAppAndPublicKeyOfTheRequestAndStillRedacts(t *testing.T) {
+	key := rand.Text()
+	var out bytes.Buffer
+	logger := newLogger(&out, slog.LevelInfo)
+	ctx := api.WithLoggedApp(context.Background(), "1732479", "pubkey123")
+
+	logger.InfoContext(ctx, "probe", "reason", "Authorization: Bearer sk-test-"+key)
+	logger.Info("without the request")
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 2)
+	require.Contains(t, lines[0], " app_id=1732479 api_key=pubkey123")
+	require.NotContains(t, lines[0], key)
+	require.NotContains(t, lines[1], "app_id")
 }
 
 // The router's Sentry events carry a failure's text: the key a provider echoed in it is taken

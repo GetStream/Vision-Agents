@@ -165,6 +165,12 @@ skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, 
 To set up, test or debug an SMS line on a Telnyx number, staging's permanent line included,
 read the `telnyx` skill (`.claude/skills/telnyx/SKILL.md`).
 
+## Generative UI
+
+To change how an agent answers with a card (the `ui:` key in `agent.yaml`, the router's UI
+splitter, the `ui_delta`/`ui_completed` frames, `custom.ai_ui`, `LiveUI`), or to find why a card
+is missing or jumps, read the `generative-ui` skill (`.claude/skills/generative-ui/SKILL.md`).
+
 ## Scheduled tasks
 
 To give an agent reminders and later work for its users, schedule one, or find why one never

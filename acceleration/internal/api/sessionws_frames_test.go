@@ -471,3 +471,20 @@ func TestAnLLMSocketErrorForAProviderFailureIsTheFrameItAlwaysWas(t *testing.T) 
 	require.Equal(t, `{"context":"stream","error":"unauthorized","fatal":false,"id":"r1","type":"error"}`,
 		string(marshalled(t, sent, ok)))
 }
+
+func TestAUIDeltaFrameCarriesTheTurnFormatAndChunk(t *testing.T) {
+	sent, ok := frameOf(agent.UIDelta{TurnID: "turn-1", Format: "openui", Mode: "replace", Delta: "root = Card([hdr])"})
+
+	require.Equal(t, `{"delta":"root = Card([hdr])","format":"openui","turn_id":"turn-1","type":"ui_delta"}`,
+		string(marshalled(t, sent, ok)))
+}
+
+func TestAUIPatchAndVersionAreIncludedWhenPresent(t *testing.T) {
+	delta, ok := frameOf(agent.UIDelta{TurnID: "turn-2", Format: "openui", Version: "1.1", Mode: "patch", Delta: "$party = 4"})
+	require.Equal(t, `{"delta":"$party = 4","format":"openui","mode":"patch","turn_id":"turn-2","type":"ui_delta","version":"1.1"}`,
+		string(marshalled(t, delta, ok)))
+
+	completed, ok := frameOf(agent.UICompleted{TurnID: "turn-2", Format: "openui", Version: "1.1", Mode: "patch", Content: "$party = 4"})
+	require.Equal(t, `{"content":"$party = 4","format":"openui","mode":"patch","turn_id":"turn-2","type":"ui_completed","version":"1.1"}`,
+		string(marshalled(t, completed, ok)))
+}

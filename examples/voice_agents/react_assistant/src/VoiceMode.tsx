@@ -1,20 +1,28 @@
 import type { ToolApprovalRequest, Turn } from "@stream-io/stream-agents";
 import type { VoiceSnapshot } from "@stream-io/stream-agents/video";
 import type { Call, StreamVideoParticipant } from "@stream-io/video-client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AIToolApprovalCard,
+  AIUIHost,
+  AIUIView,
+  aiUIActionJSON,
+  parseAIUIDocument,
+  useAIUIHostRefresh,
   useAudioLevel,
   VoiceGlow,
   type AIToolApprovalState,
   type VoiceAgentState,
 } from "stream-chat-react/ai-components";
+import { createA2UIRenderer } from "stream-chat-react/a2ui";
+import { createOpenUIRenderer } from "stream-chat-react/openui";
 
 import type { Session } from "@stream-io/stream-agents";
 import { Captions, type Caption } from "./captions";
 import { CameraIcon, CameraOffIcon, CloseIcon, HangUpIcon, MicIcon, MicOffIcon } from "./icons";
 import type { ChatScreen } from "./chatScreen";
 import { Store, useSelected, useStore } from "./store";
+import { tripComponents } from "./tripComponents";
 import { VoiceMeter } from "./voiceMeter";
 import { Presence, phaseLabel, troubleText, type Phase } from "./voicePresence";
 
@@ -43,6 +51,17 @@ export function VoiceMode({ screen, session }: { screen: ChatScreen; session: Se
   const approvals = useSelected(conversation, (each) => each.approvals);
   const failureAt = useSelected(conversation, (each) => each.failureAt);
   const failureContext = useSelected(conversation, (each) => each.failureContext);
+  const latestVoiceTurn = useSelected(conversation, (each) => {
+    for (let i = each.turns.length - 1; i >= 0; i--) {
+      const turn = each.turns[i]!;
+      if (turn.speaker === "agent" && "ui" in turn && turn.ui) {
+        return turn as Turn & {
+          readonly ui: { readonly format: string; readonly version?: string; readonly status: string; readonly content: string };
+        };
+      }
+    }
+    return undefined;
+  });
   // What the agent cannot do on the call right now: the call stays up when it fails, so without
   // this voice mode would go on saying it is listening to someone it cannot hear. A failure from
   // before voice mode opened belongs to the chat.
@@ -81,6 +100,7 @@ export function VoiceMode({ screen, session }: { screen: ChatScreen; session: Se
       </div>
       {call && snapshot.cameraEnabled && <CameraPreview call={call} />}
       <AgentPresence call={call} chat={chat} isStarting={!voice && !voiceFailure} />
+      {latestVoiceTurn && <VoiceLiveUICard session={session} turn={latestVoiceTurn} />}
       {request && <ApprovalCard chat={chat} key={request.id} request={request} />}
       {reason && <p className="voice-failure">{reason}</p>}
       {call && <RemoteAudio call={call} />}
@@ -299,6 +319,62 @@ function ParticipantAudio({ call, sessionId }: { call: Call; sessionId: string }
     return call.bindAudioElement(audio.current, sessionId);
   }, [call, sessionId]);
   return <audio autoPlay ref={audio} />;
+}
+
+function VoiceLiveUICard({
+  session,
+  turn,
+}: {
+  session: Session;
+  turn: Turn & {
+    readonly ui: { readonly format: string; readonly version?: string; readonly status: string; readonly content: string };
+  };
+}) {
+  const host = useMemo(
+    () =>
+      new AIUIHost({
+        components: tripComponents,
+        renderers: [createOpenUIRenderer(), createA2UIRenderer()],
+        send: async (action) => {
+          await session.responses.create(action.label, { uiAction: aiUIActionJSON(action) });
+        },
+      }),
+    [session],
+  );
+  useAIUIHostRefresh(host);
+  const document = useMemo(
+    () =>
+      parseAIUIDocument({
+        v: 1,
+        format: turn.ui.format,
+        ...(turn.ui.version ? { version: turn.ui.version } : {}),
+        status: turn.ui.status,
+        content: turn.ui.content,
+      }),
+    [turn.ui],
+  );
+
+  useEffect(() => {
+    if (!document) return;
+    host.receive([
+      {
+        id: turn.id,
+        role: "assistant",
+        text: turn.text,
+        isGenerating: turn.ui.status === "streaming",
+        uiDocument: document,
+        parts: [],
+        attachments: [],
+      } as never,
+    ]);
+  }, [host, document, turn.id, turn.text, turn.ui.status]);
+
+  if (!document) return null;
+  return (
+    <div className="voice-live-ui">
+      <AIUIView document={document} host={host} messageId={turn.id} />
+    </div>
+  );
 }
 
 /**

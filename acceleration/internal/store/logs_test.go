@@ -330,6 +330,20 @@ func TestRedactLogAttrTakesTheKeyOutOfAStringAndTheMessage(t *testing.T) {
 	}
 }
 
+// A line names the app's public key as api_key (api.NewLogHandler), which must stay readable
+// while the same key's secret, echoed in a text, does not.
+func TestRedactLogAttrKeepsAPublicKeyAndMasksItsSecret(t *testing.T) {
+	key := "vak_test_" + rand.Text()[:24]
+	secret := "vas_test_" + rand.Text()
+	line := logged(t, true, "served a request", "api_key", key, "reason", "api_key="+secret)
+	if !strings.Contains(line, "api_key="+key+" ") {
+		t.Fatalf("the public key was masked: %s", line)
+	}
+	if strings.Contains(line, secret) {
+		t.Fatalf("the secret survived: %s", line)
+	}
+}
+
 func TestRedactLogAttrTakesTheKeyOutOfAGroup(t *testing.T) {
 	err, key := echoedKey()
 	line := logged(t, true, "agent failure", slog.Group("turn", "error", err))

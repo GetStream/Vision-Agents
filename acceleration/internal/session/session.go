@@ -1667,6 +1667,10 @@ func turnIDOf(event Event) string {
 		return typed.TurnID
 	case agent.ReasoningDelta:
 		return typed.TurnID
+	case agent.UIDelta:
+		return typed.TurnID
+	case agent.UICompleted:
+		return typed.TurnID
 	case agent.Responded:
 		return typed.TurnID
 	case agent.ToolStarted:

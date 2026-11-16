@@ -2081,9 +2081,14 @@ Everything above is what a request *did*. That it arrived at all is a log line, 
 request served, at info:
 
 ```
-level=INFO msg="served a request" method=POST path=/v1/agents/sessions status=201 duration=425ms customer=examples bytes=877
-level=INFO msg="served a request" method=GET path=/v1/agents/sessions/d84a…/events status=101 duration=94ms customer=examples
+level=INFO msg="served a request" method=POST path=/v1/agents/sessions status=201 duration=425ms customer=examples request_id=… bytes=877 app_id=examples api_key=noauth
+level=INFO msg="served a request" method=GET path=/v1/agents/sessions/d84a…/events status=101 duration=94ms customer=examples request_id=… app_id=examples api_key=noauth
 ```
+
+An authenticated request's line, and any line logged with its context, names its app as `app_id`
+and the public key it came with as `api_key`, as the Stream platform's logs do (`customer` is the
+same app as `app_id`). A hook, which is not authenticated, and a request nobody authenticated carry
+neither.
 
 A socket is logged once, when it closes, so its `duration` is how long the connection lived
 rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
