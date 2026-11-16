@@ -1512,3 +1512,58 @@ func (s *TakeoverSuite) TestARecordRewriteBehindARedisReconnectLeavesTimeToHangT
 
 	s.Eventually(a.dialer.call.wasHungUp, 2500*time.Millisecond, 10*time.Millisecond, "a record rewrite behind a Redis reconnect held up the BYE")
 }
+
+// Defect: a call that ends is forgotten while a renewal's write is still in flight, and the write
+// lands after, bringing the ended call's record, owner and set entry back.
+func (s *TakeoverSuite) TestACallThatEndsIsForgottenOnlyAfterAWriteInFlight() {
+	s.holdFor, s.renewEvery = time.Minute, time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	held := s.heldOn(a, id)
+	held.writing.Lock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			held.writing.Unlock()
+		}
+	}()
+
+	a.dialer.call.bye()
+	s.reported(a.ended)
+
+	s.Never(func() bool { return s.gone(id) }, 300*time.Millisecond, 10*time.Millisecond, "forgot while a write was in flight")
+	held.writing.Unlock()
+	unlocked = true
+	s.Eventually(func() bool { return s.gone(id) }, 2*time.Second, 10*time.Millisecond, "never forgot")
+}
+
+// Defect: a call hung up at stop is forgotten while a renewal's write is still in flight, and the
+// write lands after, bringing the ended call's record, owner and set entry back.
+func (s *TakeoverSuite) TestACallHungUpAtStopIsForgottenOnlyAfterAWriteInFlight() {
+	s.holdFor, s.renewEvery = time.Minute, time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	held := s.heldOn(a, id)
+	held.writing.Lock()
+	unlocked := false
+	closed := make(chan struct{})
+	defer func() {
+		if !unlocked {
+			held.writing.Unlock()
+		}
+		<-closed
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	go func() {
+		defer close(closed)
+		_ = a.provider.Close(ctx)
+	}()
+
+	s.Eventually(a.dialer.call.wasHungUp, 2*time.Second, 10*time.Millisecond, "the BYE waited on a write in flight")
+	s.Never(func() bool { return s.gone(id) }, 300*time.Millisecond, 10*time.Millisecond, "forgot while a write was in flight")
+	held.writing.Unlock()
+	unlocked = true
+	s.Eventually(func() bool { return s.gone(id) }, 2*time.Second, 10*time.Millisecond, "never forgot")
+}
