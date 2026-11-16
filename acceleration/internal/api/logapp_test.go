@@ -142,10 +142,11 @@ func (s *LogAppSuite) TestAHeaderTheCallerChoseIsCutOnTheAccessLine() {
 	// A two-byte character straddling the cap, which is cut before rather than in half.
 	straddling := strings.Repeat("b", loggedCap-1) + "éé"
 
-	line := s.servedAs(s.serverClient.with(clientHeader, long).with("User-Agent", straddling))
+	line := s.servedAs(s.serverClient.with(clientHeader, long).with("User-Agent", straddling).with(auth.AuthTypeHeader, long))
 
 	s.Equal(strings.Repeat("a", loggedCap), s.field(line, "x_stream_client"))
 	s.Equal(strings.Repeat("b", loggedCap-1), s.field(line, "user_agent"))
+	s.Equal(strings.Repeat("a", loggedCap), s.field(line, "stream_auth_type"))
 }
 
 // Defect: the body's size left off, or the response's logged as it.
