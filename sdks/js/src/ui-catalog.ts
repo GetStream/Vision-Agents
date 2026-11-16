@@ -2,7 +2,8 @@ import { ConfigurationError } from "./errors.js";
 
 /** Declarative `ui:` configuration in `agent.yaml`. */
 export interface UIDeclaration {
-  format?: "openui" | "a2ui";
+  /** openui, the default. a2ui is refused: the compiled prompt teaches only OpenUI. */
+  format?: "openui";
   keep?: string[];
   components?: string;
   blueprints?: string;
@@ -17,7 +18,7 @@ export interface UIPortableComponent {
   description: string;
   parameters?: {
     type: string;
-    properties?: Record<string, { type: string; format?: string; description?: string; enum?: string[] }>;
+    properties?: Record<string, { type: string; format?: string; description?: string; enum?: string[]; items?: unknown }>;
     required?: string[];
     "x-order"?: string[];
   };
@@ -96,9 +97,8 @@ export function compileUIPrompt(
   blueprints: readonly UIBlueprint[] = [],
   where = "ui",
 ): string {
-  const format = settings.format ?? "openui";
-  if (format !== "openui" && format !== "a2ui") {
-    throw new ConfigurationError(`${where}: ui.format must be openui or a2ui, not ${JSON.stringify(format)}`);
+  if (settings.format && settings.format !== "openui") {
+    throw new ConfigurationError(`${where}: ui.format must be openui, not ${JSON.stringify(settings.format)}`);
   }
   validatePortableComponents(components, where);
 
@@ -161,7 +161,7 @@ export function compileUIPrompt(
     if (bp.order.length === 0) {
       throw new ConfigurationError(`${where}: blueprint ${JSON.stringify(bp.name)} needs an order list`);
     }
-    if (bp.example && format === "openui") {
+    if (bp.example) {
       const problems = validateOpenUIProgram(extractFence(bp.example), knownArity);
       if (problems.length > 0) {
         throw new ConfigurationError(

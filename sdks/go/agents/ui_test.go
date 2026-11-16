@@ -169,3 +169,55 @@ func (s *FolderUISuite) TestUnknownUIKeyAndDuplicateBlueprintReportLineNumbers()
 	s.Require().Error(err)
 	s.Contains(err.Error(), "line 4: blueprint \"booking\" was already declared")
 }
+
+func (s *FolderUISuite) TestTheSharedFixtureCompilesToTheInstructionsJavaScriptAlsoWrites() {
+	// sdks/js/tests/ui-catalog.test.ts holds the JavaScript SDK to the same file.
+	fixture := filepath.Join("..", "..", "testdata", "ui")
+	golden, err := os.ReadFile(filepath.Join(fixture, "concierge.instructions.txt"))
+	s.Require().NoError(err)
+
+	loaded, err := Load(filepath.Join(fixture, "concierge"))
+	s.Require().NoError(err)
+	s.Equal(string(golden), loaded.Instructions+"\n")
+}
+
+func (s *FolderUISuite) TestABareUIKeyAppendsNothing() {
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "instructions.md"), []byte("You are Juno."), 0o644))
+
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n"), 0o644))
+	loaded, err := Load(dir)
+	s.Require().NoError(err)
+	s.Equal("You are Juno.", loaded.Instructions)
+
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  # nothing yet\n"), 0o644))
+	loaded, err = Load(dir)
+	s.Require().NoError(err)
+	s.Equal("You are Juno.", loaded.Instructions)
+}
+
+func (s *FolderUISuite) TestA2UIFormatIsRefusedSinceThePromptTeachesOnlyOpenUI() {
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  format: a2ui\n"), 0o644))
+
+	_, err := Load(dir)
+	s.Require().Error(err)
+	s.Contains(err.Error(), `line 3: ui.format must be openui, not "a2ui"`)
+}
+
+func (s *FolderUISuite) TestAComponentFieldNobodyReadsIsRefused() {
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  format: openui\n"), 0o644))
+	s.Require().NoError(os.MkdirAll(filepath.Join(dir, "ui"), 0o755))
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "components.json"), []byte(`[
+  {
+    "name": "loyalty_badge",
+    "description": "The guest's loyalty tier.",
+    "parameters": { "type": "object", "properties": { "tier": { "type": "string", "default": "gold" } }, "x-order": ["tier"] }
+  }
+]`), 0o644))
+
+	_, err := Load(dir)
+	s.Require().Error(err)
+	s.Contains(err.Error(), `unknown field "default"`)
+}
