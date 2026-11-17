@@ -19,8 +19,9 @@ class PlacedCall:
         status (str): The vendor's own word for where the call is, e.g. "queued".
         vendor_call_id (str):
         session_id (str | Unset): The session to open, with start_voice, for the call: the answered leg is routed into
-            agent:<session id>, and an agent that is not in it hears nothing when the person picks up. If nobody besides the
-            person is in the call phone.agent_join_timeout after the answer, the router ends the call.
+            agent:<session id>, and an agent that is not in it hears nothing when the person picks up.
+            phone.agent_join_timeout after the answer, the router asks Stream who is in the call. If only the person is
+            there, it ends the call. If Stream does not answer, the call continues.
         vendor (str | Unset): Who is placing the call.
     """
 
