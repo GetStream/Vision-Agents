@@ -271,10 +271,19 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
 
 ## Releasing
 
-`flutter pub publish` from `sdks/dart/stream_agents`, after the CI dry run passes. The first
-release of `stream_agents` also discontinues `stream_agents_core`, `stream_agents_chat` and
-`stream_agents_rtc` on pub.dev, each with `stream_agents` as its replacement (the package's
-admin page, "Mark as discontinued"), so an app on 0.1.0 is pointed at the one package.
+The version follows the repository's release tag on main (the first release, 0.7.0, matches
+the `0.7.0` tag). Raise `version` in `pubspec.yaml` and the `CHANGELOG.md` heading in a pull
+request, then, once it is merged, `flutter pub publish` from `sdks/dart/stream_agents` on that
+commit and tag it `sdk-dart-v<version>`. No GitHub release: publishing one starts the Python
+release (`release.yml`).
+
+The first release of `stream_agents` also discontinues `stream_agents_core`, `stream_agents_chat`
+and `stream_agents_rtc` on pub.dev, each with `stream_agents` as its replacement, and unlists
+them (each package's admin page), so an app on 0.1.0 is pointed at the one package and new apps
+do not find the old ones.
+
+Next: turn on pub.dev's automated publishing for `sdk-dart-v{{version}}` tags and publish from a
+workflow, as the other SDKs do.
 
 ## Reviewing a change
 
