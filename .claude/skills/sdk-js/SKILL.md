@@ -1,0 +1,348 @@
+---
+name: sdk-js
+description: How to build and extend the JavaScript SDK in sdks/js. Read this before changing the client, the socket, the agent or dispatch, or before reaching for a dependency.
+---
+
+# JavaScript SDK conventions
+
+The per-language half of [sdk](../sdk/SKILL.md). It records the decisions
+[`sdks/js`](../../../sdks/js) already follows, so a change lands consistently rather than
+re-litigating them. Where a rule has an exception, the exception is written down.
+
+Assume TypeScript 5.7 with `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+`verbatimModuleSyntax` and `module: NodeNext`. ESM only. Node 22 or a browser.
+
+## One package, both ends
+
+Not `-core`/`-ui`/`-rtc` the way Swift splits. That split exists because `StreamWebRTC` is a
+47 MB binary; there is no such weight here, and npm has no equivalent of SwiftPM's resolution
+problem. One package with two entry points:
+
+```
+.        src/index.ts   everything that runs in a browser and on a server
+./node   src/node.ts    loadFolder, which needs node:fs
+```
+
+`node:fs` is the *only* thing that earns a place in `./node`. `Dispatch` stays in the main
+entry even though a worker is server-side, because it is server-side by *credential*, not by
+runtime: it contains no Node API, and a browser opening that socket gets a 403 from the
+router, which is the correct answer rather than a bundling error.
+
+**What a caller may do is decided by what they authenticated as, never by which file they
+imported.** Do not add a `server-only` guard, a `typeof window` check, or a second class for
+the browser. `Backend.serverSide` exists to let a caller ask before a call instead of reading
+a 403 afterwards; it is not an enforcement point, and the router is.
+
+## Zero runtime dependencies
+
+`dependencies` is empty and stays empty. `fetch`, `WebSocket`, `crypto.subtle`, `btoa`,
+`TextEncoder`, `URL` and `AbortController` are all in both runtimes. This is why:
+
+- **JWTs are signed with Web Crypto**, not `jsonwebtoken` or `jose`. HS256 is about fifteen
+  lines (`signToken` in `backend.ts`). A JWT library here would be a dependency in every
+  browser bundle that imported the package for something else.
+- **`ws` is a dev dependency only**, for the test server. Node 22 has a global `WebSocket`.
+- **`urls.yaml` is parsed by hand** (`parsePages`), not with `yaml`. It is a list of urls; the
+  subset is a screenful. A key it does not recognise is refused rather than dropped, so the
+  narrowness is visible rather than silent.
+- **Stream Video calls are created with one `fetch`** (`edge.ts`), not with
+  `@stream-io/node-sdk`. The generic `sdk` skill says to depend on Stream's server SDK; here
+  the SDK needs exactly one endpoint (`POST /api/v2/video/call/{type}/{id}`) and a token it
+  can already sign, and the dependency would land in browser bundles.
+
+If a change needs a dependency, that is a design question, not an install. Ask first.
+
+## The client is generated types plus a hand-written request layer
+
+`openapi-typescript`, not `openapi-fetch`, not `oapi-codegen`'s TS equivalent, and **not a
+generated client**. A generated client brings a runtime, and the runtime is the part that has
+to decide how a token is minted and which global `fetch` to use — which is the part that
+differs between a browser and a server. So: types only, no runtime emitted, output committed
+so installing the package needs no code generation.
+
+`npm run types` regenerates; `npm run types -- --check` is what CI runs. `--default-non-nullable
+false` is deliberate: a field the spec gives a default is one the caller may leave out, and
+generated non-nullable it would be required on the way in, so every session request would have
+to spell out the defaults it wanted.
+
+**The public API is resources, never raw requests** (see "Resource methods, never raw requests"
+in the `sdk` skill). Customers, examples, the README and the docs never write this:
+
+```ts
+// never
+const simulation = await client.post("/v1/agents/simulations", { body });
+```
+
+They write `client.simulations.create(body)`. Each resource is a small class in its own module
+(`simulations.ts`, `memories.ts`, `sessions.ts`) built on the client, hung off `Client` or a
+handle, and exported from `index.ts`:
+
+```ts
+const simulation = await client.simulations.create(body);
+let run = await client.simulations.run(simulation.id);
+run = await client.simulations.runs.get(run.id);
+```
+
+Underneath, `Client` keeps one typed method per HTTP method (`get`, `post`, `put`, `patch`,
+`delete`), typed from the spec. Resources are built on them, and they reach an endpoint no
+resource covers yet. They are plumbing, not what a snippet shows. A new endpoint is not done
+until it has a resource method, and the docs use it.
+
+A resource method takes the generated request schema (or an options object when it renames
+query parameters to camelCase, as `runs.list({ simulationId })` does) and returns the generated
+response. It adds no defaults and re-declares nothing.
+
+The type machinery in `client.ts` is load-bearing and worth reading before editing:
+
+- `PathsWith<M>` filters paths by method with a tuple guard, `[Operation<P,M>] extends [never]`.
+  A bare `extends never` is always true, because `never` extends everything.
+- `BodyOf` has three cases, not two. An optional body and no body at all are different:
+  attaching a number takes one and does not need one, and a caller should be able to leave it
+  out without being able to invent one where the spec has none.
+- `QueryOf` widens query values with `| undefined`, because `exactOptionalPropertyTypes` would
+  otherwise reject a value passed through from somewhere that may not have it. They are dropped
+  from the query string rather than sent as the word.
+- `Result` maps 204 to `void`, which is most of the ways a session is acted on.
+
+Never re-declare a schema by hand — name it `Schemas["CreateSessionRequest"]`.
+
+## Sockets
+
+Hand-written, because OpenAPI stops at the upgrade. One `Socket` for all six: session events,
+dispatch, and the four modality streams.
+
+- **Frames are loosely typed on purpose.** `Frame` is `{ type?: string } & Record<string,
+  unknown>`, read through `text`, `number`, `flag` and `nested`. A deployment that has learned
+  a new event must reach a caller reading `frame.type` rather than be dropped here. The
+  generated REST shapes are strict; these cannot be.
+- **`messages()` is an `AsyncGenerator` with one reader.** Two `for await` loops over one
+  socket take half the frames each. Say so in the doc comment of anything that exposes one.
+- A text frame that is not JSON is skipped, not fatal. Ending the stream over it would lose
+  everything said after it.
+- `close()` is idempotent. `finish()` removes the listeners and resolves every waiting reader
+  as done, so a `for await` ends rather than hanging.
+- Credentials go in the query string, because a browser WebSocket carries no headers.
+  **A socket never says it is a backend.** The router reads a `stream-auth-type` query
+  parameter only as `jwt` or `anonymous`, only in `proxy` mode without declared kinds, and
+  never over the header; the hosted proxy reads it only as `jwt`. That is what stops a
+  socket opened from a browser claiming to be a backend. Never send `server` there.
+- **No automatic reconnection.** `respond` and `tool_result` are not idempotent and the
+  protocol has no sequence number to resume from. Replaying would duplicate turns and tool
+  results. Adding reconnection means adding resume semantics to the router first.
+
+## Answering a tool call may not depend on anybody reading events
+
+`Session.watch()` starts in the constructor and runs whether or not the caller has begun a
+loop. `tool_call` and `tool_cancel` are handled there and never reach `events()`: the model is
+mid-sentence waiting, and a tool call that depended on the caller having started iterating
+would hang on a session nobody is watching.
+
+- Each call runs on its own `void this.runTool(frame)`, not awaited, because reading the socket
+  is also what delivers `tool_cancel`.
+- A tool that throws is answered with `{ error }`, never dropped. The model can only say
+  something useful about a tool that did not work if it is told that it did not work.
+- `tool_cancel` aborts that call's `AbortController`; ending the session aborts all of them.
+- `events()` gives each loop its own queue, from when it started reading; the first loop also
+  gets what arrived while nobody read (256, oldest dropped). A loop that falls 256 behind is
+  ended rather than left with a hole, as Swift's are. Neither ever drops a turn, because turns
+  are answered by `watch`.
+
+## Stores fed beside `events()`
+
+What a page shows is fed from the frames `watch` reads, never from `events()`: `session.state`
+(what the agent is doing), `session.speech` (how much of a reply has been heard) and
+`session.conversation` (turns, `failure` with `failureContext` and `failureAt`, cleared when the
+agent next hears, answers or speaks, the `approvals` waiting, `connected` and `socketError`).
+Each has bound `get` and `subscribe` for `useSyncExternalStore`, and a snapshot that stays the
+same object until it changes. Extend one of these rather than adding a store or asking a page to
+loop over `events()`.
+
+- `socketError` comes from `Socket.closedBy`: an error event, or a close other than 1000 or 1005,
+  never a close this side asked for. A browser reports a drop as an error and then the close,
+  and the close's code wins.
+- A tool returns words, or a `ToolOutput` with `images`, which goes on the wire as parts.
+- Session options keep the wire's snake_case names, with camelCase only where the phones' name
+  differs from the wire's and a port would reach for it: `modelOverwrites`, `returnUrl`.
+
+## nil means omit
+
+A field left out of `AgentOptions` or `Pipeline` is left out of the request, so the config or
+the router decides. **Never copy a schema default into the request.** A `backchannel: false`
+sent because the type had a default is how a caller silently loses what their config named —
+which is also why `--default-non-nullable false` is set.
+
+Hence the conditional-spread style throughout `agent.ts`:
+
+```ts
+...(pipeline.llm ? { llm: pipeline.llm } : {}),
+...(pipeline.backchannel === undefined ? {} : { backchannel: pipeline.backchannel }),
+```
+
+A boolean tests `=== undefined`, because `false` is a value somebody chose. A string tests
+truthiness, because an empty target means the same as no target.
+
+An absent skill list and an empty one differ: absent leaves the built-in set, `skills: []`
+sends `skills: []` and turns delegation off. Both live on the agent config, written by `sync`.
+
+## A backend rule the caller cannot guess gets a function, not a doc note
+
+Holding a text conversation is the example. The channel is the backend's to name, so a
+conversation is carried on by the id of the session it was held in: `sessions.resume(id)` reads
+the session and watches it, rather than a create naming a channel. When a rule like this turns
+up, add the function here instead of explaining it downstream.
+
+A session a browser opened cannot be driven by writing into its channel: the hook looks for a
+session whose `agent_id` is the channel, the backend named the channel something else, and the
+write lands nowhere. Chat is the transcript; `responses.create` is the way in.
+
+## Check a claim about the backend against the backend
+
+`tests/live/` is where a claim in this README stops being a reading of the router and starts
+being true. The unit suite proves the SDK sends what it meant to; only a deployment proves that
+was the right thing to send. Two suites, neither in CI, both skipping when there is nothing to
+talk to: `local.test.ts` against a router on this machine, `hosted.test.ts` against the hosted
+deployments. A third, `integration.test.ts` (`npm run test:integration`), holds the client
+promises: a device token gets 403 `server_side_only` from a router in `api_key` mode, and
+sessions share one Stream Chat and one Video socket, counted off Node's diagnostics channels.
+The README says how to run the second router it needs. Add to it when a new server-side
+operation or a new Stream connection appears.
+
+They earn it. The QA suite is what found that the hosted deployments want the credential spelled
+Stream's own way — `api_key`, not `X-Api-Key`, and `stream-auth-type: jwt` whoever the token is
+for — which is the `authenticate` switch in `backend.ts` and which the SDK simply could not do
+before. It also found that an ambient `STREAM_API_SECRET` was quietly turning a browser-shaped
+client into a backend.
+
+Where a deployment does something other than what it should, the test says what it should and is
+marked `todo` with the cause, so the suite stays green and the gap stays named. Three are today:
+the proxy tells the router nothing about which end user is calling, so a proxied caller is read
+as that app's backend — it reaches every session the app has and the operations that configure an
+agent — and the proxy requires a header a browser WebSocket cannot set, so a page cannot watch a
+session on a hosted deployment at all. Do not write a test that asserts the broken behaviour; it
+would have to be found and undone by whoever fixes it.
+
+## Agent
+
+`Agent` is configuration plus function calling. The conversation runs in the backend.
+
+- A session owns its call, `agent:<session id>`. `join` opens one with `start_voice`; `chat`
+  opens one without, and `session.voice` starts and stops it later. `answer` opens the session
+  an inbound call names, because dispatch already put the caller in its call; `startCall`
+  places the call *before* joining and joins the `session_id` it comes back with, since placing
+  it makes the routing rule pinned to that session, and attaching the number first would be a
+  second rule for the same number. `waitForCall` attaches the number and waits on a dispatch
+  socket of its own for the next caller.
+- Instructions are the stored config's, written by `sync`: a session takes none.
+- What is written in code wins over what a `folder` says. A directory is a starting point.
+- `sync` uses **`POST /v1/agents/sync`**, one request carrying the whole directory, not the
+  configs/skills/knowledge sequence, with the directory's knowledge urls as `knowledge_urls` in
+  the same body. It sends a SHA-256 `fingerprint` of everything in the body, and a folder
+  from `loadFolder` records it in `.agent_sync`, so syncing on startup sends nothing when
+  nothing changed. The stamp's file access is handed in as `Folder.stamp` by `./node`, which
+  keeps `Agent.sync` free of `node:fs` in the browser entry.
+- `resolveConfig` turns a config *name* into an id once and caches it. A name matching nothing
+  stored is passed through, because it is then either an id or a mistake the router can report
+  better than a guess here.
+
+## Dispatch
+
+The worker connects out and the router pushes work down the connection, so nothing the customer
+runs has to be publicly reachable.
+
+- `capacity` is a promise about what this process can answer: the router passes over a full
+  worker rather than queueing behind it.
+- Handlers run on their own, never awaited in the read loop. Answering one caller in line
+  leaves the next listening to a ringing phone.
+- Every call and message is reported `done` with its `work_id`, with an `error` when it failed
+  or had no handler: that is what gives the worker its room back. `active` and `handles` go on
+  the handshake.
+- A message with a `sessionId` was written to a running session whose agent leaves text to
+  dispatch; `answer` has the model reply there, as the server acting for the writer. Any other
+  message only arrives when no agent is running on its channel. `sessionFor` keeps one
+  session per channel for the same reason: the session that answered the last message is the
+  one that knows what has been said.
+- `load` reports only `active_agents` and a round trip this side measured. Host CPU and memory
+  are not portable across runtimes, and an invented figure would be read as a real one.
+- A signal that aborts *while the socket is still opening* must still stop it: a listener added
+  to an already-aborted signal is never called, so `run` checks `signal.aborted` after the
+  upgrade. This was a real bug; keep the check.
+- `run` drains work in flight before returning. Dropping it would hang up on whoever is talking.
+
+## Tests
+
+`node --test`, no test framework. Never mock.
+
+**A real HTTP server and a real WebSocket upgrade**, not a stubbed `fetch`. `tests/router.ts` is
+a `node:http` server plus a `ws` upgrade that records what arrived and lets a test script frames
+and read the ones the SDK sent. What the suite exercises is the request this SDK actually puts
+on the wire, which is the only way a header, a query parameter or an encoded path is really
+checked.
+
+- Assert on outputs, state and **what reached the far end**. Never that a method was called.
+- Name a test after the behaviour and why it matters: "tells the model a tool did not work,
+  since it is mid-sentence waiting".
+- Injecting `fetch` into `Edge` is the documented seam for a test, since the URL is Stream's
+  and not a local server's. That is the one place it is acceptable.
+- Wait on a condition, not a fixed sleep, wherever the thing waited for is observable.
+- `--test-timeout` is set, because a socket bug otherwise hangs CI instead of failing it.
+
+## Style
+
+- British-flavoured prose in doc comments, lower case after a colon, no marketing. Explain
+  *why*, and what would go wrong otherwise. Match the surrounding tone.
+- Private members are TypeScript `private`, not `#`. `#` breaks structural typing in ways the
+  generated shapes trip over.
+- `export function` helpers at the bottom of the module, not a `utils.ts`.
+- `unknown` over `any`, always. There is no `any` in this package and no `// @ts-ignore`.
+- One error type per failure kind: `RouterError` (status, operation, what the router said),
+  `SocketClosedError`, `ConfigurationError`. A request that never arrived is `status: 0`,
+  because a caller retrying a network failure and one retrying a 500 are different.
+- Every non-2xx response becomes a `RouterError` through `errorOf`, which reads the envelope
+  into `type` (the generated `ErrorType`, open to one it does not know), `code` and `docUrl`,
+  and `X-Request-Id` into `requestId`. A body that is not the envelope keeps its text as the
+  message and leaves those three undefined rather than throwing a JSON error. A refused socket
+  upgrade is still a `SocketClosedError`: the WebSocket API, in a browser and in Node 22,
+  exposes neither the status nor the body.
+- Do not add a logger. A library that logs is a library deciding where a customer's transcripts
+  go.
+
+## Reviewing a change
+
+Reject it if it:
+
+- adds a runtime dependency, or reaches for `node:` anything outside `folder.ts`;
+- shows `client.get/post/put/patch/delete("/v1/...")` in an example, the README or the docs
+  instead of a resource method, or re-declares a generated schema;
+- copies a schema default into a request, or sends a field the caller did not set;
+- handles a tool call anywhere a caller must be iterating for it to run;
+- treats an unknown frame as fatal, or drops its payload;
+- adds reconnection, a `stream-auth-type` query parameter naming anything but `jwt` or
+  `anonymous`, or a `typeof window` branch;
+- opens two readers on one socket;
+- asserts that a method was called, or replaces the test server with a stubbed `fetch`;
+- hand-edits `src/generated/api.ts`.
+
+## Pagination
+
+`sessions.query`, `sessions.search`, `responses.list` and `items.list` take a `cursor` and return
+the page, `{items, has_more, next_cursor}`. `items.unwind` follows `next_cursor` until `has_more`
+is false. See the `pagination` skill.
+
+## Releasing
+
+Only a commit scoped `sdk-js` releases this package: `feat(sdk-js):` a minor, `fix(sdk-js):` or
+`perf(sdk-js):` a patch, and a breaking one a minor while it is 0.x. A JS change under any other
+scope (`feat(router):`, `AI-1234: …`) is in the next release but never causes one, so scope it
+`sdk-js` if it should ship. The rules are in `sdks/js/release.config.mjs`; the workflow is
+`.github/workflows/release-sdk-js.yml`, dispatched by hand. See "Releasing" in the README.
+
+## Production hardening follow-up
+
+JS selects an Agent's synced config by name unless `pipeline.config` is explicit. Watcher
+attachment failures preserve existing sessions; only a newly created session is stopped on a
+failed watch. HTTP shutdown reports errors, and a lost socket does not prove the remote
+session stopped. Pending socket upgrades and tool holds can be cancelled; unread socket
+queues are bounded. Stream token refresh stays with the original user, guest refresh is
+shared per store, and a local sync stamp is trusted only with the same remote `sync_hash`.
+Other SDKs also need to audit these behaviours, empty skill overrides, non-JSON responses,
+truncated-body failures and folder parsing; update them separately.

@@ -1,0 +1,58 @@
+[
+  {
+    "name": "restaurant_card",
+    "description": "Venue header card with rating and price tier.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The venue's name." },
+        "cuisine": { "type": "string" },
+        "rating": { "type": "number", "format": "float" },
+        "price_tier": { "type": "string", "enum": ["$", "$$", "$$$"] }
+      },
+      "required": ["name", "cuisine", "rating"],
+      "x-order": ["name", "cuisine", "rating", "price_tier"]
+    },
+    "events": [{ "name": "inspect", "description": "Tapping shows the tasting menu." }]
+  },
+  {
+    "name": "availability_gauge",
+    "description": "Radial occupancy and wait-time gauge.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "occupancy_pct": { "type": "number" },
+        "wait_label": { "type": "string" }
+      },
+      "required": ["occupancy_pct", "wait_label"],
+      "x-order": ["occupancy_pct", "wait_label"]
+    },
+    "events": [{ "name": "refresh", "description": "" }]
+  },
+  {
+    "name": "seat_selector",
+    "description": "Pick a table by zone.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": { "id": { "type": "string" }, "seats": { "type": "number" } },
+            "required": ["id", "seats"],
+            "x-order": ["id", "seats"]
+          }
+        }
+      },
+      "required": ["tables"],
+      "x-order": ["tables"]
+    },
+    "events": [{ "name": "select_table", "description": "Tapping a table asks for it." }],
+    "slots": ["footer"]
+  },
+  {
+    "name": "loyalty_badge",
+    "description": "The guest's loyalty tier, read from their profile."
+  }
+]

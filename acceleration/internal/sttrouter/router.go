@@ -1,0 +1,183 @@
+// Package sttrouter routes speech-to-text traffic and records what each turn cost.
+//
+// Resolving a target, ranking candidates and failing over are generic and live in
+// internal/routing. What this package adds is the speech-to-text shape: which providers
+// exist, what a session does with audio, and which events count as a unit of work.
+package sttrouter
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
+)
+
+var tracer = tracing.Tracer("sttrouter")
+
+// Registry is the set of speech-to-text providers a build can construct.
+type Registry = routing.Registry[stt.STT]
+
+// streaming is what this router's half of the provider list is, for a priority list that
+// names a vendor rather than one of their models. A socket wants the streaming model.
+var streaming = true
+
+// Options configures a Router. Store and Live are optional: without them the router still
+// routes, it just stops recording.
+type Options struct {
+	Config   routing.ModalityConfig
+	Registry *Registry
+	// Transcribers is the batch half, for NewRecordings. The two registries are separate
+	// because a vendor's recording model is not its streaming one.
+	Transcribers *Transcribers
+	Store        *store.Store
+	Live         *live.Client
+	Gate         routing.Gate
+	Writer       *routing.Writer
+	// Pricer prices every row recorded. Nil is routing.Prices of Config.
+	Pricer pricing.Pricer
+	Logger *slog.Logger
+}
+
+// Request is what a caller wants transcribed.
+type Request struct {
+	// CustomerID owns the request. It is what every statistic is keyed by.
+	CustomerID string
+	// AgentID is the agent the work is for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the work happens in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty is the region
+	// Options.DataPolicy asks for, else pricing.DefaultRegion.
+	Region string
+	// Tags are the customer's own cost labels, recorded on every row this session writes.
+	Tags routing.Tags
+	// Target is a "provider/model" name or a capability shortcut.
+	Target string
+	// LanguageHints narrow multilingual models.
+	LanguageHints []string
+	// Keyterms are the business-specific words the transcriber should expect. A provider
+	// that cannot be told about vocabulary ignores them.
+	Keyterms []string
+	// Options is the rest of what the caller asked for: partials, endpointing,
+	// diarization, redaction. A term named here narrows the candidates to the models that
+	// declared it, so it is either honoured or the request is refused.
+	Options options.STT
+}
+
+// Router selects a speech-to-text provider and opens transcription sessions.
+type Router struct {
+	*routing.Router[stt.STT]
+}
+
+// New validates the options and returns a Router.
+func New(options Options) (*Router, error) {
+	core, err := routing.New(routing.Options[stt.STT]{
+		Modality: routing.STT,
+		Config:   options.Config,
+		Registry: options.Registry,
+		Store:    options.Store,
+		Live:     options.Live,
+		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
+		Logger:   options.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Router{Router: core}, nil
+}
+
+// Start selects a provider and opens a session, falling back to the next candidate when
+// one fails to start, and again when one refuses the session part way through.
+func (r *Router) Start(ctx context.Context, request Request) (_ *Session, err error) {
+	ctx, span := tracer.Start(ctx, "stt.start")
+	defer func() {
+		tracing.Fail(span, err)
+		span.End()
+	}()
+	request.Options = routeDefaults(request.Target, request.Options)
+	if err := r.Live(request); err != nil {
+		return nil, err
+	}
+	core := routing.Request{
+		CustomerID:    request.CustomerID,
+		Attribution:   routing.AttributionFrom(ctx),
+		Spent:         routing.SpentFrom(ctx),
+		AgentID:       request.AgentID,
+		CallID:        request.CallID,
+		Region:        request.Region,
+		Tags:          request.Tags,
+		Target:        request.Target,
+		Providers:     request.Options.Providers,
+		Realtime:      &streaming,
+		LanguageHints: request.LanguageHints,
+		Keyterms:      request.Keyterms,
+		Terms:         request.Options.Terms(),
+		DataPolicy:    request.Options.DataPolicy,
+		STT:           request.Options,
+	}
+	provider, config, err := r.Select(ctx, core)
+	if err != nil {
+		return nil, err
+	}
+	// The next candidate opens under the context the first one did, so it lasts as long
+	// as the first would have: the socket's lives as long as the socket
+	// (api/streamws.go, streamModality), the agent's as long as the agent (a.ctx). Closing
+	// the session ends it too, so a socket closed while the next candidate dials does not
+	// wait out that candidate's handshake: the socket's context ends only after the session's
+	// events do.
+	reopenCtx, cancel := context.WithCancel(ctx)
+	reopen := func(refused []string) (stt.STT, routing.ProviderConfig, error) {
+		next := core
+		next.Exclude = refused
+		return r.Select(reopenCtx, next)
+	}
+	// The session takes its lease's first minute as it opens, after the provider has
+	// answered, so the trace shows what the hold costs.
+	_, leased := tracer.Start(ctx, "stt.lease")
+	session := newSession(provider, config, core.Owner(), r.Recorder(), reopen, cancel)
+	leased.End()
+	return session, nil
+}
+
+// Live refuses a session pinned only to batch models before any vendor is dialled: a
+// single provider/model or batch-only shortcut, or a priority list holding nothing else.
+// A list with one live entry passes, and Realtime keeps it to that half. Start checks it,
+// and so can a caller that opens sessions later, to refuse once rather than on each.
+func (r *Router) Live(request Request) error {
+	pinned := request.Options.Providers
+	if len(pinned) == 0 {
+		pinned = []string{request.Target}
+	}
+	var refusals []error
+	for _, target := range pinned {
+		err := r.Config().Live(target)
+		if err == nil {
+			return nil
+		}
+		refusals = append(refusals, err)
+	}
+	return errors.Join(refusals...)
+}
+
+// eagerRoutes are the shortcuts for a live conversation, where a reply started on a guess
+// that the turn is over is worth the occasional one taken back.
+var eagerRoutes = map[string]bool{"en-low-latency": true, "multilingual-low-latency": true}
+
+// routeDefaults fills in what a request to target leaves unsaid. A caller who said
+// eager_end_of_turn either way keeps what they said.
+func routeDefaults(target string, asked options.STT) options.STT {
+	if asked.EagerEndOfTurn == nil && eagerRoutes[target] {
+		eager := true
+		asked.EagerEndOfTurn = &eager
+	}
+	return asked
+}

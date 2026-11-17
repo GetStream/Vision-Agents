@@ -1,0 +1,15 @@
+go 1.27.0
+
+use (
+	./acceleration
+	./acceleration/cmd/phonecheck
+	./examples/routers/chorus_asr_example
+	./examples/routers/stt_realtime_example
+	./examples/voice_agents/swift_assistant/backend
+	./examples/voice_agents/swift_assistant/configure
+	./examples/voice_agents/swift_demo/backend
+	./examples/voice_agents/swift_demo/configure
+	./performance_benchmark
+	./sdks/go
+	./tui
+)

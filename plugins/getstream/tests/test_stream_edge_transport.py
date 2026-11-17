@@ -11,6 +11,7 @@ from vision_agents.core.edge.types import User
 from vision_agents.plugins.getstream.stream_edge_transport import (
     StreamConnection,
     StreamEdge,
+    _to_core_participant,
 )
 
 
@@ -24,6 +25,13 @@ async def stream_edge(monkeypatch):
 @pytest.fixture
 def connection_manager():
     return ConnectionManager(user_id=str(uuid4()), call=Mock())
+
+
+class TestToCoreParticipant:
+    def test_the_call_participants_name_is_kept(self):
+        sfu = Participant(user_id="alice", track_lookup_prefix="abc", name="Alice")
+        participant = _to_core_participant(sfu)
+        assert participant is not None and participant.name == "Alice"
 
 
 class TestStreamConnection:

@@ -1,0 +1,28 @@
+# Instacart's public remote MCP server, on the Instacart Developer Platform. Its tools make
+# recipe and shopping list pages on Instacart Marketplace that a person opens to shop. The
+# Enterprise MCP server (stores, product search, carts) logs in with OAuth at a URL an
+# Instacart representative provisions per partner, so it is not here.
+# Instacart's pages, opened October 11, 2026:
+#   [mcp]        https://docs.instacart.com/developer_platform_api/guide/tutorials/mcp
+#   [enterprise] https://docs.instacart.com/mcp_servers/get-started/use-instacarts-mcp-server
+# And the server itself, at 2026-10-11T15:28Z: no /.well-known/oauth-protected-resource at
+# either path (404); initialize and tools/list answer without a credential (serverInfo
+# InstacartRecipeServer 1.0.0; tools create-recipe and create-shopping-list), and
+# tools/call without one answers «Authorization header is required».
+id: instacart
+# A new revision for any change to what this file says; see AGENTS.md.
+revision: 1
+name: Instacart
+category: Commerce
+description: Turn recipes and grocery lists into Instacart pages a person opens to shop.
+endpoints:
+  # [mcp]: «Production. https://mcp.instacart.com/mcp». Development is
+  # https://mcp.dev.instacart.tools/mcp, which takes a development key.
+  mcp: https://mcp.instacart.com/mcp
+# [mcp]: «pass your API key as an authorization header», «Header name to Authorization»,
+# «Bearer Token»: the bearer scheme (RFC 6750 section 2.1). A Developer Platform API key
+# has no OAuth client, scopes or refresh, and names no account.
+schemes: [bearer]
+sources:
+  - kind: mcp
+    endpoint: mcp

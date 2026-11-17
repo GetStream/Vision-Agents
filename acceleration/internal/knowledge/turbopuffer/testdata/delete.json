@@ -1,0 +1,10 @@
+{
+  "rows_affected": 2,
+  "rows_deleted": 2,
+  "billing": {
+    "billable_logical_bytes_written": 26
+  },
+  "performance": {
+    "server_total_ms": 9
+  }
+}

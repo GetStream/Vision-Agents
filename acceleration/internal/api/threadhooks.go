@@ -1,0 +1,465 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// threadTurnPoll is how often a turn in a thread channel is checked for being over, and a
+// follow-up refused because a reply is still running is tried again. A choice, not a
+// measurement: short against a model reply of seconds, long against a Postgres-free check.
+const threadTurnPoll = 50 * time.Millisecond
+
+// threadTurnWait is how often a router waiting for a thread's turn asks Postgres again. A
+// choice: a reply takes seconds, and a waiter asking every quarter second costs one indexed
+// update per ask.
+const threadTurnWait = 250 * time.Millisecond
+
+// threadTurnLease is how long a turn's lease holds: the turn's own budget, askTimeout, and a
+// margin for closing its session, so a lease outlives the turn that holds it and a router
+// that stopped mid-turn holds the thread no longer than that.
+const threadTurnLease = askTimeout + 30*time.Second
+
+// A thread channel holds one external thread, such as a Slack thread, which the channel bridge
+// (internal/channelbridge) writes into as the people in it write. The Router answers it
+// itself, with a persistent text session held on the thread channel, so the reply is written
+// there too and leaves for the external thread once its final text is stored
+// (conversation.Service.OnFinishedReply).
+//
+//	the bridge's inbound worker wrote it               AnswerQueued, on the worker's attempt
+//	  claim (thread channel, turn, Stream message id)    claimed before: nothing
+//	  the rest below, off the worker's slot
+//	message.new, no source, in agent:thread-<uuid>     receiveMessageEvent
+//	  linkedThread: channel_threads row, this app's
+//	  bridged (channelbridge.BridgedField): nothing      the worker answers it
+//	  answerThread, off the request
+//	    claim (thread channel, turn, Stream message id)    a repeat delivery: nothing
+//	    lease the thread's turn in Postgres                another router's turn: wait
+//	    the session on the channel (ByConversationWhere), else
+//	      FromConfig(the config binding the line now), Text, PersistConversation,
+//	      ConversationID agent:thread-<uuid>               reply lands in the thread channel
+//	    Session.FollowUp(text, photos), its author         the person's message is already
+//	      (WithAuthor); a photo the agent cannot see       in the channel: none is written
+//	      or that cannot be fetched is dropped, with a
+//	      note to the turn (threadPhotos)
+//	    wait until the turn is over; close the session it opened; let go of the lease
+
+// linkedThread is the external thread a channel holds, when it is a thread channel of the
+// app the hook came from. An error is a channel nobody can tell is one or not: the hook
+// answers it nowhere, rather than hand the thread's message to a session under its id.
+func (s *Server) linkedThread(ctx context.Context, origin hookOrigin, channelID string) (store.ChannelThread, bool, error) {
+	if s.store == nil || s.sessions == nil || !strings.HasPrefix(channelID, conversation.ThreadChannelPrefix) {
+		return store.ChannelThread{}, false, nil
+	}
+	thread, err := s.store.ChannelThread(ctx, channelID)
+	if errors.Is(err, store.ErrNoChannelThread) {
+		return store.ChannelThread{}, false, nil
+	}
+	if err != nil {
+		return store.ChannelThread{}, false, err
+	}
+	if !origin.owns(thread.CustomerID, thread.StreamAppPK) {
+		s.logger.Info("ignoring a message in a thread channel of another app", "channel", channelID, "stream_app", origin.app)
+		return store.ChannelThread{}, false, nil
+	}
+	return thread, true, nil
+}
+
+// answerThread has a session on a thread channel answer a person's message there. One turn
+// of a thread at a time across every router: the turn's lease is a row in Postgres
+// (store.TakeChannelThreadTurn), and a message that arrives while another router answers
+// waits for it. A session this router opens for the turn is closed after it, so the next
+// turn, on whichever router, opens the conversation again from the channel, with every reply
+// in it.
+func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, event messageEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
+	defer cancel()
+
+	// Stream may deliver one message.new more than once, and each would be another reply.
+	fresh, err := s.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimTurn, event.Message.ID)
+	if err != nil || !fresh {
+		if err != nil {
+			s.logger.Error("could not claim a message of a thread channel", "channel", thread.ChannelID, "error", err)
+		}
+		return
+	}
+	s.answerClaimed(ctx, origin, thread, event)
+}
+
+// AnswerQueued hands the agent a person's message the channel bridge's inbound worker wrote
+// into thread (channelbridge.Answer), as the message.new Stream Chat sends about it would,
+// which the hook leaves to the worker (bridged). It claims the message's turn on the worker's
+// attempt and returns the turn: answerThread past its claim. A message the hook would not
+// answer (addressed) returns no turn. The origin is the thread's own customer and app, which
+// the worker's write was just let into (channelbridge openThread, streamapp.Clients.ForApp), so
+// the turn asks mayWrite nothing it did not.
+func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
+	// A router with no LLM router has no sessions (cmd/router buildSessions): its hook answers
+	// no thread channel (linkedThread), and neither does the worker.
+	if s.sessions == nil {
+		return nil, nil
+	}
+	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: thread.ChannelID}
+	event.Message.ID, event.Message.Text, event.Message.User.ID = written.ID, written.Text, written.Author
+	attachments, err := json.Marshal(written.Attachments)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	event.Message.Attachments = attachments
+	// As the hook would: a message with no text, photo or voice recording, such as a video
+	// alone, is not answered (addressed). Of a message's files the bridge writes only its photos
+	// (channelbridge photos), so a thread is answered from the text and photos, as before.
+	if !addressed(event) {
+		return nil, nil
+	}
+	fresh, err := s.store.ClaimChannelThreadMessage(ctx, thread.ChannelID, store.ClaimTurn, written.ID)
+	if err != nil || !fresh {
+		return nil, err
+	}
+	origin := hookOrigin{customer: thread.CustomerID, app: thread.StreamAppPK}
+	return func() {
+		turn, cancel := context.WithTimeout(context.Background(), askTimeout)
+		defer cancel()
+		s.answerClaimed(turn, origin, thread, event)
+	}, nil
+}
+
+// answerClaimed is answerThread past the claim of the message's turn, within ctx.
+func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread store.ChannelThread, event messageEvent) {
+	holder := uuid.NewString()
+	if err := s.takeThreadTurn(ctx, thread.ChannelID, holder); err != nil {
+		s.logger.Error("a message in a thread channel waited too long for the thread's turn", "channel", thread.ChannelID, "error", err)
+		return
+	}
+	// A context of its own: the lease is not let go of because the wait used the budget.
+	defer func() {
+		releasing, done := context.WithTimeout(context.WithoutCancel(ctx), threadTurnPoll*20)
+		defer done()
+		if err := s.store.ReleaseChannelThreadTurn(releasing, thread.ChannelID, holder); err != nil {
+			s.logger.Error("could not let go of a thread's turn; it runs out instead", "channel", thread.ChannelID, "error", err)
+		}
+	}()
+	s.answerHosted(origin, chatlog.ChannelType+":"+thread.ChannelID, thread.CustomerID, event,
+		func(turn context.Context) (*session.Session, error) {
+			return s.threadSession(turn, origin, thread, event)
+		})
+}
+
+// answerHosted has the Router's own session on the channel cid, the customer's, answer a
+// person's message there: a thread channel's (answerClaimed), or a channel of a type an agent
+// config answers in (answerChatChannel). open opens the session when none runs on the channel.
+func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event messageEvent,
+	open func(context.Context) (*session.Session, error)) {
+	// A thread's author is told to the agent by their Stream user alone: the bridge names that
+	// user after the provider's id for them (channelbridge openThread), a phone number on a
+	// texting line, which no model is told. So each person goes under "Speaker N". The people in
+	// a channel of a type an agent config answers in are the customer's own Stream users, whom a
+	// tool may need to name: each goes under their name and user id (agent.WithWriter).
+	attributed := routing.WithAttribution(context.Background(), chatHookAttribution(customer, event))
+	written := agent.WithAuthor(attributed, event.Message.User.ID)
+	if event.ChannelType != chatlog.ChannelType {
+		written = agent.WithWriter(attributed, event.Message.User.ID, conversation.AuthorName(event.Message.User.Name))
+	}
+	turn, cancelTurn := context.WithTimeout(written, askTimeout)
+	defer cancelTurn()
+
+	// A session a caller opened on the channel through the API answers there; otherwise this
+	// router opens one for the turn. It is found by its conversation, not by its agent id,
+	// which any caller may name (threadConversation).
+	found, running := s.sessions.ByConversationWhere(cid, origin.owns)
+	opened := false
+	var err error
+	if !running || !found.Spec().PersistConversation {
+		if found, err = open(turn); err != nil {
+			if errors.Is(err, errNoConfigBindsLine) {
+				s.logger.Warn("could not open the conversation of a thread channel: no agent config binds its line", "channel", cid, "error", err)
+				return
+			}
+			s.logger.Error("could not open the conversation of a channel the Router answers in", "channel", cid, "error", err)
+			return
+		}
+		opened = true
+	}
+	if opened {
+		defer func() {
+			if _, err := s.sessions.Close(found.ID(), session.OwnerOf(found.Spec())); err != nil {
+				s.logger.Error("could not close the session of a channel the Router answers in", "channel", cid, "session", found.ID(), "error", err)
+			}
+		}()
+	}
+
+	// One id for the message, kept across the retries below: an attempt that
+	// started the reply before the wait gave up makes the next a duplicate
+	// rather than a second answer. Only a reply another way into the session is
+	// still writing is waited out; any other failure ends the message, as each
+	// attempt whose turn did not start leaves a cancelled reply in the channel.
+	text, images := s.messagePhotos(turn, found.SeesImages(), event.Message.Text, event)
+	followUpID := "thread_" + store.NewID()
+	for {
+		err = found.FollowUp(turn, followUpID, text, images)
+		if !errors.Is(err, conversation.ErrResponseRunning) || turn.Err() != nil {
+			break
+		}
+		time.Sleep(threadTurnPoll)
+	}
+	if err != nil {
+		s.logger.Error("could not answer a message in a channel the Router answers in", "channel", cid, "session", found.ID(), "error", err)
+		return
+	}
+	for found.Busy() && turn.Err() == nil {
+		time.Sleep(threadTurnPoll)
+	}
+}
+
+// messagePhotos is what a message tells the model: text, which is what was written with it,
+// and the photos sent with it, read into bytes (fetchImages). A photo the model is not handed, as sees says the agent has
+// nothing that looks at one (the turn would be refused with ErrCannotSeeImages) or it could
+// not be fetched, is dropped and the turn is told of it, so the reply says so rather than the
+// person hearing nothing.
+func (s *Server) messagePhotos(ctx context.Context, sees bool, text string, event messageEvent) (string, []llm.ImagePart) {
+	sent := event.photos()
+	if len(sent) == 0 {
+		return text, nil
+	}
+	if !sees {
+		return withPhotoNote(text, nil, unseenPhoto, unseenPhotoWithText), nil
+	}
+	if fetchImages(ctx, s.imageHTTP, sent) == nil {
+		return text, sent
+	}
+	var images []llm.ImagePart
+	for index, photo := range sent {
+		if photo.Data != nil {
+			images = append(images, photo)
+			continue
+		}
+		// The host alone: a photo's URL may carry the signature that lets anyone fetch it.
+		s.logger.Warn("could not fetch a photo of a message", "channel", event.ChannelID, "photo", index, "host", hostOf(photo.URL))
+	}
+	return withPhotoNote(text, images, unfetchedPhoto, unfetchedPhotoWithMore), images
+}
+
+// hostOf is the host of the URL raw, or nothing for one that does not parse.
+func hostOf(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil {
+		return parsed.Host
+	}
+	return ""
+}
+
+// withPhotoNote is text with the note that says a photo was dropped: alone, the note for a
+// message with nothing else left in it, else the note for one with text or photos left.
+func withPhotoNote(text string, images []llm.ImagePart, alone, withMore string) string {
+	switch {
+	case text != "":
+		return text + "\n\n" + withMore
+	case len(images) == 0:
+		return alone
+	default:
+		return withMore
+	}
+}
+
+// The turn of a message whose photos are dropped: unseenPhoto and unseenPhotoWithText for an
+// agent that cannot see, unfetchedPhoto and unfetchedPhotoWithMore for a photo that could not
+// be fetched; each for a photo sent alone and one sent with text or other photos.
+const (
+	unseenPhoto            = "(The person sent a photo, which you cannot see. Reply in one short sentence that you cannot look at photos.)"
+	unseenPhotoWithText    = "(The person also sent a photo, which you cannot see. Answer their message, and say in your reply that you cannot see the photo.)"
+	unfetchedPhoto         = "(The person sent a photo, which could not be opened. Reply in one short sentence that you could not open it.)"
+	unfetchedPhotoWithMore = "(The person also sent a photo that could not be opened. Answer the rest of their message, and say in your reply that you could not open that photo.)"
+)
+
+// The turn of a message whose voice recording could not be heard (heardText): sent alone, and
+// sent with text or photos.
+const (
+	unheardRecording         = "(The person sent a voice recording, which could not be heard. Reply in one short sentence that you could not listen to it.)"
+	unheardRecordingWithMore = "(The person also sent a voice recording that could not be heard. Answer the rest of their message, and say in your reply that you could not listen to that recording.)"
+)
+
+// takeThreadTurn waits for a thread channel's turn and leases it to holder for threadTurnLease.
+func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) error {
+	return takeTurn(ctx, func(ctx context.Context, until time.Time) (bool, error) {
+		return s.store.TakeChannelThreadTurn(ctx, channelID, holder, until)
+	})
+}
+
+// takeTurn waits for a channel's turn, asking take for a lease until threadTurnLease from now
+// every threadTurnWait: a thread channel's (takeThreadTurn) or a chat channel's
+// (answerChatChannel).
+func takeTurn(ctx context.Context, take func(context.Context, time.Time) (bool, error)) error {
+	for {
+		taken, err := take(ctx, time.Now().Add(threadTurnLease))
+		if err != nil || taken {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(threadTurnWait):
+		}
+	}
+}
+
+// threadSession opens the persistent conversation held on a thread channel, as the Router's
+// own session: no end user owns a thread several people write in. Its agent config is the one
+// binding the thread's line now, the oldest when several do, as the bridge picks it for the
+// message (channelbridge take), not the one the thread's earlier turns ran on: a binding moved
+// to another config moves the thread with it, and the history in the channel goes along. On an
+// SMS or WhatsApp thread or a 1:1 iMessage chat the tasks it schedules are the person the
+// thread belongs to, when they are the one who wrote (personalThreads).
+func (s *Server) threadSession(ctx context.Context, origin hookOrigin, thread store.ChannelThread, event messageEvent) (*session.Session, error) {
+	configs, err := s.store.AgentConfigsBindingConnection(ctx, thread.CustomerID, thread.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(configs) == 0 {
+		return nil, errNoConfigBindsLine
+	}
+	if !s.mayWrite(ctx, origin, thread.CustomerID) {
+		return nil, errors.New("the customer no longer writes in the app the hook came from")
+	}
+	spec := threadSpec(configs[0], thread)
+	spec.Attribution = chatHookAttribution(thread.CustomerID, event)
+	if person, personal := threadPerson(thread); personal && event.Message.User.ID == person {
+		spec.ThreadPerson, spec.ThreadChannel, spec.ThreadDelivery = person, thread.ChannelID, personalThreads[thread.ConnectorID]
+	}
+	return s.sessions.Create(conversation.RouterOpensThread(ctx, spec.ConversationID), spec)
+}
+
+// errNoConfigBindsLine is a thread whose line no agent config of its customer binds: the
+// customer's to fix, as the bridge's own drop of such a message is.
+var errNoConfigBindsLine = errors.New("no agent config of the thread's customer binds its line")
+
+// threadSpec is the persistent text session held on a thread channel, as the Router's own.
+func threadSpec(config store.AgentConfig, thread store.ChannelThread) session.Spec {
+	spec := session.FromConfig(config)
+	spec.Text = true
+	spec.CallID, spec.STSTarget, spec.Greeting = "", "", ""
+	spec.PersistConversation = true
+	spec.ConversationID = chatlog.ChannelType + ":" + thread.ChannelID
+	spec.Thread = true
+	return spec
+}
+
+// threadPerson is the Stream user the person a thread belongs to writes as, when the thread
+// is one person's (personalThreads).
+func threadPerson(thread store.ChannelThread) (string, bool) {
+	person := thread.ThreadKey
+	if thread.ConnectorID == "linq" {
+		person = thread.ChatPerson
+	}
+	if personalThreads[thread.ConnectorID] == "" || person == "" {
+		return "", false
+	}
+	return channelbridge.AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, person), true
+}
+
+// personalThreads are the connectors whose thread can be one person's, so its session schedules
+// tasks for the person the thread belongs to (session.Spec.ThreadPerson), and the channel a
+// task delivered back to such a thread is recorded as: an SMS or WhatsApp thread's key is the
+// person's number (channelbridge.replyTo), so the thread names them. A Linq thread key is the
+// chat id, which names nobody, so a Linq thread is one person's only while its latest message
+// says the chat is no group, and its person is that message's author (ChatPerson): a group
+// chat, or one whose message does not say, schedules nothing. A Slack thread is shared by
+// everyone in the channel, so it schedules nothing either.
+var personalThreads = map[string]string{"telnyx": "sms", "whatsapp": "whatsapp", "linq": "imessage"}
+
+// heldOnThread is whether a session's conversation is held on a thread channel: a live one
+// says so (Spec.Thread), and an ended one's channel has a channel_threads row.
+func (s *Server) heldOnThread(ctx context.Context, found session.Found) (bool, error) {
+	if found.Live != nil {
+		return found.Live.Spec().Thread, nil
+	}
+	if found.Stored == nil || s.store == nil {
+		return false, nil
+	}
+	channel, held := strings.CutPrefix(found.Stored.ConversationID, chatlog.ChannelType+":")
+	if !held || !strings.HasPrefix(channel, conversation.ThreadChannelPrefix) {
+		return false, nil
+	}
+	_, err := s.store.ChannelThread(ctx, channel)
+	if errors.Is(err, store.ErrNoChannelThread) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// threadConversation holds a text session asked for on a thread channel, by its agent id, on
+// that channel: an agent id that names one of the customer's thread channels keeps the
+// session's conversation there, so its replies land in the thread, not in a support channel
+// of its own. It returns ctx carrying the Router's word for that one channel
+// (conversation.RouterOpensThread), the only way a thread channel opens. Anything else is
+// left as it is: a conversation_id the request named opens no thread channel.
+//
+// Only the customer's backend names a thread channel: the people in the thread are not the
+// device's to read or write as. A device naming one is answered as for an agent id no
+// thread channel has: its text session keeps a support channel of its own, and ctx bars its
+// voice transcript from the thread channel (conversation.BarThread), so nothing it is told
+// says the thread exists.
+//
+// The agent id is the one the session is keyed under (Spec.KeyedAgentID): a voice session
+// that names none is keyed under its call id, which Normalize gives it later.
+//
+//	caller    agent id                        session
+//	backend   the customer's thread channel   conversation in the thread channel
+//	device    the customer's thread channel   as for an unknown id; no transcript there
+//	device    unreadable: channel_threads     barred, as if it were one
+//	device    a thread channel in other case  barred, as if it were the channel
+//	anyone    anything else                   as it was
+//
+// The id is compared trimmed and case-folded. Whether Stream Chat treats channel ids that
+// differ in case, or in spaces around them, as one channel is unverified, so a device naming
+// THREAD-<uuid> or " thread-<uuid>" as its agent id is kept out as if it named the thread
+// channel: fail closed. (A call id is trimmed by Normalize itself, through KeyedAgentID.)
+// Thread channel ids are always lower case (channelbridge: thread- and uuid.NewString), so
+// the row is read by the folded id. The bar is on the id exactly as the session is keyed
+// under it, which is where its transcript goes.
+func (s *Server) threadConversation(ctx context.Context, customerID string, spec *session.Spec) context.Context {
+	keyed := spec.KeyedAgentID()
+	folded := strings.ToLower(strings.TrimSpace(keyed))
+	if s.store == nil || spec.ConversationID != "" || !strings.HasPrefix(folded, conversation.ThreadChannelPrefix) {
+		return ctx
+	}
+	cid := chatlog.ChannelType + ":" + keyed
+	thread, err := s.store.ChannelThread(ctx, folded)
+	if err != nil && !errors.Is(err, store.ErrNoChannelThread) {
+		// Whether it is a thread channel is not known, so a device is kept out of it.
+		s.logger.Error("could not tell whether an agent id names a thread channel", "channel", keyed, "error", err)
+		if !ServerSideFrom(ctx) {
+			return conversation.BarThread(ctx, cid)
+		}
+		return ctx
+	}
+	if err != nil || thread.CustomerID != customerID {
+		return ctx
+	}
+	if !ServerSideFrom(ctx) {
+		return conversation.BarThread(ctx, cid)
+	}
+	// The backend opens the thread channel by its exact id, as at base.
+	if !spec.Text || !spec.PersistConversation || keyed != thread.ChannelID {
+		return ctx
+	}
+	spec.ConversationID = cid
+	spec.Thread = true
+	// A resumed conversation names its own agent (Spec.Normalize).
+	spec.AgentID = ""
+	return conversation.RouterOpensThread(ctx, spec.ConversationID)
+}

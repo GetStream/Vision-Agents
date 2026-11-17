@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+from typing_extensions import Self
+
+from ..models.tier import Tier
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.provider_benchmark import ProviderBenchmark
+    from ..models.provider_health import ProviderHealth
+    from ..models.provider_price import ProviderPrice
+
+
+T = TypeVar("T", bound="Provider")
+
+
+@_attrs_define
+class Provider:
+    """
+    Attributes:
+        health (ProviderHealth):
+        languages (list[str]):
+        model (str):  Example: eleven_flash_v2_5.
+        provider (str):  Example: elevenlabs.
+        realtime (bool):
+        region (str): Where this instance of the model runs its work: us or eu for now. A model the deployment runs in
+            more than one region is listed once per region, and a request is served by the instance in the region its data
+            policy names (us when none does). Health is the model's, shared by its instances. Example: us.
+        tier (Tier): What the model optimises for.
+        benchmark (ProviderBenchmark | Unset): What Artificial Analysis measured for this model, refreshed by hand
+            rather than live. A field is absent when the model was not measured on it.
+        description (str | Unset): What the model is good at, and what that costs in speed or money. Empty if the
+            deployment wrote none.
+        price (ProviderPrice | Unset): What this deployment is billed for the model, in US dollars. A rate is absent
+            when the model is not billed by that unit.
+        supports (list[str] | Unset): The options this model can be asked for, as the terms a request's options turn on:
+            keyterms, diarize, similarity, semantic_turns and the like. A request whose options ask for one the model does
+            not list is never routed to it, and is refused when nothing else could serve it. Left out when the model takes
+            none. Example: ['keyterms', 'diarize'].
+        usage_share (float | Unset): This model's share of the modality's requests over the last seven days, across
+            every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment
+            keeps no statistics.
+    """
+
+    health: ProviderHealth
+    languages: list[str]
+    model: str
+    provider: str
+    realtime: bool
+    region: str
+    tier: Tier
+    benchmark: ProviderBenchmark | Unset = UNSET
+    description: str | Unset = UNSET
+    price: ProviderPrice | Unset = UNSET
+    supports: list[str] | Unset = UNSET
+    usage_share: float | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        health = self.health.to_dict()
+
+        languages = self.languages
+
+        model = self.model
+
+        provider = self.provider
+
+        realtime = self.realtime
+
+        region = self.region
+
+        tier = self.tier.value
+
+        benchmark: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.benchmark, Unset):
+            benchmark = self.benchmark.to_dict()
+
+        description = self.description
+
+        price: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.price, Unset):
+            price = self.price.to_dict()
+
+        supports: list[str] | Unset = UNSET
+        if not isinstance(self.supports, Unset):
+            supports = self.supports
+
+        usage_share = self.usage_share
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "health": health,
+                "languages": languages,
+                "model": model,
+                "provider": provider,
+                "realtime": realtime,
+                "region": region,
+                "tier": tier,
+            }
+        )
+        if benchmark is not UNSET:
+            field_dict["benchmark"] = benchmark
+        if description is not UNSET:
+            field_dict["description"] = description
+        if price is not UNSET:
+            field_dict["price"] = price
+        if supports is not UNSET:
+            field_dict["supports"] = supports
+        if usage_share is not UNSET:
+            field_dict["usage_share"] = usage_share
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.provider_benchmark import ProviderBenchmark
+        from ..models.provider_health import ProviderHealth
+        from ..models.provider_price import ProviderPrice
+
+        d = dict(src_dict)
+        health = ProviderHealth.from_dict(d.pop("health"))
+
+        languages = cast(list[str], d.pop("languages"))
+
+        model = d.pop("model")
+
+        provider = d.pop("provider")
+
+        realtime = d.pop("realtime")
+
+        region = d.pop("region")
+
+        tier = Tier._decode(d.pop("tier"))
+
+        _benchmark = d.pop("benchmark", UNSET)
+        benchmark: ProviderBenchmark | Unset
+        if isinstance(_benchmark, Unset):
+            benchmark = UNSET
+        else:
+            benchmark = ProviderBenchmark.from_dict(_benchmark)
+
+        description = d.pop("description", UNSET)
+
+        _price = d.pop("price", UNSET)
+        price: ProviderPrice | Unset
+        if isinstance(_price, Unset):
+            price = UNSET
+        else:
+            price = ProviderPrice.from_dict(_price)
+
+        supports = cast(list[str], d.pop("supports", UNSET))
+
+        usage_share = d.pop("usage_share", UNSET)
+
+        provider = cls(
+            health=health,
+            languages=languages,
+            model=model,
+            provider=provider,
+            realtime=realtime,
+            region=region,
+            tier=tier,
+            benchmark=benchmark,
+            description=description,
+            price=price,
+            supports=supports,
+            usage_share=usage_share,
+        )
+
+        provider.additional_properties = d
+        return provider
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

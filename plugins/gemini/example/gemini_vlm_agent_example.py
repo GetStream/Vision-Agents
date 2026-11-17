@@ -33,7 +33,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
         if event.participant.user.id != "gemini-vision-agent":
             await asyncio.sleep(2)
-            await agent.simple_response("Describe the scene.")
+            await agent.responses.create("Describe the scene.")
 
     async with agent.join(call):
         await agent.finish()

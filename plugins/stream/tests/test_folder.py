@@ -1,0 +1,1230 @@
+import re
+from pathlib import Path
+
+import pytest
+from vision_agents.plugins.stream.folder import (
+    ChannelSettings,
+    ConnectorSettings,
+    FloorControlSettings,
+    GreetingSettings,
+    ToolSettings,
+    SandboxSettings,
+    find,
+    load,
+    resolve,
+)
+
+
+def write(root: Path, name: str, content: str) -> None:
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+class TestFolder:
+    def test_a_skill_that_captures_video_round_trips(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
+        write(
+            tmp_path,
+            "skills/vision.md",
+            "---\nname: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
+        )
+        folder = load(tmp_path)
+        assert folder.settings.subagent == "vlm"
+        assert folder.skills[0].capture_video
+
+    def test_named_subagents_are_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagents:\n  vision: vlm\n")
+        with pytest.raises(ValueError, match="subagents"):
+            load(tmp_path)
+
+    def test_the_old_thinking_llm_key_is_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nthinking_llm: vlm\n")
+        with pytest.raises(ValueError, match="thinking_llm"):
+            load(tmp_path)
+
+    def test_a_directory_is_read_as_instructions_skills_and_knowledge(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        write(
+            root,
+            "skills/think.md",
+            "---\ndescription: Work something out before answering\ndeadline: 30s\n---\n"
+            "Take your time and reason it through.\n",
+        )
+        write(root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+
+        folder = load(root)
+
+        assert folder.name == "jean"
+        assert folder.instructions == "You are Jean."
+        assert len(folder.skills) == 1
+        assert folder.skills[0].name == "think"
+        assert folder.skills[0].description == "Work something out before answering"
+        assert folder.skills[0].deadline_seconds == 30
+        assert folder.skills[0].instructions == "Take your time and reason it through."
+        assert folder.knowledge[0].source == "pricing.md"
+        assert folder.knowledge_namespace() == "jean"
+
+    def test_a_skill_folder_brings_its_nested_files(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        write(tmp_path, "skills/pdf/reference/forms.md", "# Forms\n")
+        write(tmp_path, "skills/pdf/scripts/lib/fill.py", "print('filled')\n")
+
+        skill = load(tmp_path).skills[0]
+
+        assert skill.name == "pdf"
+        assert skill.instructions == "Fill it."
+        assert skill.files == {
+            "reference/forms.md": "# Forms\n",
+            "scripts/lib/fill.py": "print('filled')\n",
+        }
+
+    def test_a_skill_folder_without_skill_md_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf/fill.py", "print('filled')\n")
+        with pytest.raises(ValueError, match="SKILL.md"):
+            load(tmp_path)
+
+    def test_a_skill_both_a_file_and_a_folder_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf.md", "---\ndescription: fill PDFs\n---\nFill it.")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        with pytest.raises(ValueError, match="both"):
+            load(tmp_path)
+
+    def test_a_skill_file_that_is_not_text_is_refused(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        (tmp_path / "skills/pdf/logo.png").write_bytes(b"\x89PNG\xff\xfe")
+        with pytest.raises(ValueError, match="not text"):
+            load(tmp_path)
+
+    def test_a_folder_skill_hashes_the_way_every_sdk_hashes_it(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        write(
+            root,
+            "skills/think.md",
+            "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n",
+        )
+        write(
+            root,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n",
+        )
+        write(root, "skills/pdf/reference/forms.md", "# Forms\n")
+        write(root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        write(root, "skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+        pycache = root / "skills/pdf/scripts/__pycache__"
+        pycache.mkdir()
+        (pycache / "fill.cpython-313.pyc").write_bytes(b"\xcb\x0d\xff")
+        (root / "skills/pdf/.DS_Store").write_bytes(b"\x00\xff")
+        write(root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+        assert load(root).hash() == "e47f7807b97bbcbdee683c6c481d1d36"
+
+    def test_hidden_files_and_pycache_are_left_out_of_a_skill(self, tmp_path: Path):
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(
+            tmp_path,
+            "skills/pdf/SKILL.md",
+            "---\ndescription: fill PDFs\n---\nFill it.",
+        )
+        write(tmp_path, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        pycache = tmp_path / "skills/pdf/scripts/__pycache__"
+        pycache.mkdir()
+        (pycache / "fill.cpython-313.pyc").write_bytes(b"\xcb\x0d\xff")
+        (tmp_path / "skills/pdf/.DS_Store").write_bytes(b"\x00\xff")
+
+        assert load(tmp_path).skills[0].files == {
+            "scripts/fill.py": "print('filled')\n"
+        }
+
+    def test_moving_a_skill_into_a_folder_keeps_its_hash(self, tmp_path: Path):
+        skill = "---\ndescription: fill PDFs\n---\nFill it."
+        write(tmp_path, "agent.yaml", "name: jean\n")
+        write(tmp_path, "skills/pdf.md", skill)
+        flat = load(tmp_path).hash()
+
+        (tmp_path / "skills/pdf.md").unlink()
+        write(tmp_path, "skills/pdf/SKILL.md", skill)
+        assert load(tmp_path).hash() == flat
+
+        write(tmp_path, "skills/pdf/scripts/fill.py", "print('filled')\n")
+        assert load(tmp_path).hash() != flat
+
+    def test_the_same_files_hash_the_same(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        write(root, "knowledge/pricing.md", "# Pricing\n")
+
+        first = load(root).hash()
+        second = load(root).hash()
+        assert first == second
+
+        write(root, "instructions.md", "You are someone else.\n")
+        assert load(root).hash() != first
+
+    def test_editing_the_declaration_changes_the_hash(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        first = load(root).hash()
+
+        write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
+        assert load(root).hash() != first
+
+    def test_the_declaration_names_the_agent(self, tmp_path: Path):
+        root = tmp_path / "jean-the-agent"
+        write(root, "agent.yaml", "name: jean\n")
+
+        assert load(root).name == "jean"
+
+    def test_the_declaration_says_what_the_agent_runs_on(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(
+            root,
+            "agent.yaml",
+            "name: jean\n"
+            "mode: voice\n"
+            "llm: llm-fast\n"
+            "subagent: llm-thinking\n"
+            "sandbox: daytona\n"
+            "greeting:\n  text: Hello.\n  mode: variation\n"
+            "keyterms:\n  - Vision Agents\n  - ''\n"
+            "tags:\n  team: support\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.mode == "voice"
+        assert settings.llm == "llm-fast"
+        assert settings.subagent == "llm-thinking"
+        assert settings.sandbox == "daytona"
+        assert settings.greeting == GreetingSettings(text="Hello.", mode="variation")
+        assert settings.keyterms == ["Vision Agents"]
+        assert settings.tags == {"team": "support"}
+
+    @pytest.mark.parametrize(
+        ("declared", "key"),
+        [
+            ("plugins:\n  - sentry\n", "plugins"),
+            ("plugins:\n  - name: google_calendar\n    user: true\n", "plugins"),
+            ("plugins: sentry\n", "plugins"),
+            ("plugins: {}\n", "plugins"),
+            ('plugin_events: ""\n', "plugin_events"),
+            ("plugin_events:\n  - plugin: linear\n    event: issue\n", "plugin_events"),
+            ("plugin_events: linear\n", "plugin_events"),
+        ],
+    )
+    def test_plugins_are_refused_with_a_pointer_to_connectors(
+        self, tmp_path: Path, declared: str, key: str
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\n" + declared)
+
+        with pytest.raises(
+            ValueError,
+            match=f"agent.yaml: `{key}` is no longer supported: use `connectors`",
+        ):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared",
+        ["plugins: []\n", "plugins:\n", "plugin_events: []\n", "plugin_events:\n"],
+    )
+    def test_an_empty_plugins_key_names_nothing_and_loads(
+        self, tmp_path: Path, declared: str
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n" + declared)
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "agent_plugins: [sentry]\n",
+            "user_plugins: [linear]\n",
+            "plugin_options:\n  - plugin: linear\n    readonly: true\n",
+            "progressive_tools: true\n",
+        ],
+    )
+    def test_the_old_plugin_keys_are_refused(self, tmp_path: Path, declared: str):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\n" + declared)
+
+        with pytest.raises(ValueError, match="not something an agent has"):
+            load(root)
+
+    def test_a_connector_named_by_its_id_is_a_session_binding(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n")
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
+
+    def test_an_empty_connector_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", 'name: triage\nconnectors:\n  - ""\n')
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_connector_name_is_kept_as_written(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", 'name: triage\nconnectors:\n  - " linear "\n')
+
+        assert load(root).settings.connectors == [ConnectorSettings(name=" linear ")]
+
+    def test_an_object_name_and_connector_are_kept_as_written(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            '  - name: " github "\n    connector: " linear "\n    connection: company\n',
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(
+                name=" github ", connector=" linear ", connection="company"
+            )
+        ]
+
+    def test_a_whitespace_only_object_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            'name: triage\nconnectors:\n  - name: "   "\n    connection: company\n',
+        )
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_null_connector_entry_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - ~\n")
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_commented_out_connector_entry_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - # linear\n")
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_connector_mapping_without_a_name_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - connector: linear\n",
+        )
+
+        with pytest.raises(ValueError, match="a connector needs a name"):
+            load(root)
+
+    def test_a_null_connection_is_a_session_binding(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    connection: null\n",
+        )
+
+        assert load(root).settings.connectors == [ConnectorSettings(name="github")]
+
+    def test_a_null_connector_is_the_alias(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: issues\n    connector: null\n",
+        )
+
+        assert load(root).settings.connectors == [ConnectorSettings(name="issues")]
+
+    def test_a_null_required_is_left_unset(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    required: null\n",
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(name="github", required=None)
+        ]
+
+    def test_a_required_that_is_not_true_or_false_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    required: 1\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors required as true or false"
+        ):
+            load(root)
+
+    def test_a_tool_that_is_not_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    tools: [1]\n",
+        )
+
+        with pytest.raises(ValueError, match="should give connectors.tools as a list"):
+            load(root)
+
+    def test_a_connector_id_that_is_not_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    connector: 123\n",
+        )
+
+        with pytest.raises(ValueError, match="connector must be a connector id"):
+            load(root)
+
+    def test_an_object_names_the_connector_patterns_connection_and_required(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            "  - name: issues\n    connector: linear\n"
+            "    tools: [list_*, get_issue]\n    connection: desk\n    required: true\n"
+            "  - name: mail\n    tools:\n    required: false\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.connectors == [
+            ConnectorSettings(
+                name="issues",
+                connector="linear",
+                tools=["list_*", "get_issue"],
+                connection="desk",
+                required=True,
+            ),
+            ConnectorSettings(name="mail", tools=None, required=False),
+        ]
+
+    def test_an_object_reads_sandbox_and_require_approval(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n"
+            "  - name: github\n    sandbox: true\n"
+            "  - name: issues\n    require_approval: [create_*, merge_pull_request]\n"
+            "  - name: mail\n    sandbox: false\n    require_approval: []\n"
+            "  - name: notes\n    sandbox: null\n    require_approval: null\n",
+        )
+
+        assert load(root).settings.connectors == [
+            ConnectorSettings(name="github", sandbox=True),
+            ConnectorSettings(
+                name="issues", require_approval=["create_*", "merge_pull_request"]
+            ),
+            ConnectorSettings(name="mail", require_approval=[]),
+            ConnectorSettings(name="notes"),
+        ]
+
+    @pytest.mark.parametrize("sandbox", ["github", '"true"', "1", "[true]"])
+    def test_a_sandbox_that_is_not_true_or_false_is_refused(
+        self, tmp_path: Path, sandbox: str
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            f"name: triage\nconnectors:\n  - name: github\n    sandbox: {sandbox}\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors sandbox as true or false"
+        ):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "require_approval",
+        ["create_*", "[1]", "[[create_*]]", "{create_*: true}", "true"],
+    )
+    def test_a_require_approval_that_is_not_a_list_of_names_is_refused(
+        self, tmp_path: Path, require_approval: str
+    ):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n"
+            f"    require_approval: {require_approval}\n",
+        )
+
+        with pytest.raises(
+            ValueError, match="should give connectors.require_approval as a list"
+        ):
+            load(root)
+
+    def test_tools_left_out_offers_every_tool_and_an_empty_list_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - name: github\n")
+        assert load(root).settings.connectors == [ConnectorSettings(name="github")]
+
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    tools: []\n",
+        )
+        with pytest.raises(
+            ValueError,
+            match=r'connector "github": tools: \[\] grants nothing; leave tools out for every tool',
+        ):
+            load(root)
+
+    def test_an_empty_connection_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            'name: triage\nconnectors:\n  - name: github\n    connection: ""\n',
+        )
+
+        with pytest.raises(
+            ValueError,
+            match='connector "github": connection must be a connection id or label',
+        ):
+            load(root)
+
+    def test_a_connector_setting_nobody_knows_is_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\nconnectors:\n  - name: github\n    plugin: github\n",
+        )
+
+        with pytest.raises(ValueError, match="unknown connectors setting: plugin"):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "mcp_servers:\n  - name: notes\n    url: https://notes.example.com/mcp\n",
+            "mcp_servers:\n  - name: notes\n    url: https://notes.example.com/mcp\n"
+            "    user: true\n",
+            "mcp_servers:\n  - name: notes\n    user: alice\n",
+            "mcp_servers: https://notes.example.com/mcp\n",
+            "mcp_servers: {}\n",
+            'mcp_servers: ""\n',
+            "mcp_servers: [notes]\n",
+        ],
+    )
+    def test_mcp_servers_are_refused_with_a_pointer_to_a_custom_connector(
+        self, tmp_path: Path, declared: str
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n" + declared)
+
+        with pytest.raises(ValueError) as refused:
+            load(root)
+
+        assert str(refused.value) == (
+            f"{root / 'agent.yaml'}: `mcp_servers` is no longer supported: create a"
+            " custom connector for the server's URL and name it under `connectors`"
+        )
+
+    @pytest.mark.parametrize("declared", ["mcp_servers: []\n", "mcp_servers:\n"])
+    def test_an_empty_mcp_servers_key_names_nothing_and_loads(
+        self, tmp_path: Path, declared: str
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n" + declared)
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
+
+    def test_connectors_that_are_not_a_list_are_refused(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors: linear\n")
+
+        with pytest.raises(ValueError, match="should give connectors as a list"):
+            load(root)
+
+    def test_a_connector_that_is_neither_an_id_nor_a_mapping_is_refused(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - [linear]\n")
+
+        with pytest.raises(ValueError, match="connectors"):
+            load(root)
+
+    def test_the_mcp_plugins_example_loads_its_connectors(self):
+        root = (
+            Path(__file__).resolve().parents[3]
+            / "examples"
+            / "text_agents"
+            / "mcp_plugins"
+        )
+
+        settings = load(root).settings
+
+        assert settings.connectors is not None
+        by_name = {entry.name: entry for entry in settings.connectors}
+        assert by_name["github"].tools is None
+        assert by_name["github"].connector == ""
+        for company in ("sentry", "github", "hubspot", "salesforce"):
+            assert by_name[company].connection == "company"
+        for person in (
+            "linear",
+            "google_calendar",
+            "google_drive",
+            "google_docs",
+            "calendly",
+            "calcom",
+            "slack",
+        ):
+            assert by_name[person].connection == ""
+        assert "tablejourney" not in by_name
+        readme = (root / "README.md").read_text()
+        assert "    connector: custom_tablejourney\n" in readme
+        source = (root / "mcp_plugins.py").read_text()
+        assert "mcp_servers" not in readme
+        assert "plugins:" not in readme
+        assert "/v1/agents/connectors/oauth/callback" in readme
+        assert "/v1/agents/plugins/callback" not in readme
+        assert "/plugins" not in readme
+        assert "Set up" not in readme
+        assert "connector_authorization" in source
+        assert "plugin_authorization" not in source
+        assert by_name["sentry"].tools == [
+            "find_organizations",
+            "find_projects",
+            "search_issues",
+            "search_errors",
+            "get_sentry_resource",
+            "analyze_issue_with_seer",
+            "update_issue",
+        ]
+        assert by_name["linear"].tools == [
+            "list_issues",
+            "get_issue",
+            "save_issue",
+            "list_comments",
+            "save_comment",
+            "list_projects",
+            "get_project",
+            "list_cycles",
+            "list_teams",
+            "list_users",
+            "list_issue_statuses",
+        ]
+
+    def test_progressive_tools_are_read(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\ntools:\n  progressive: true\n")
+
+        assert load(root).settings.tools == ToolSettings(progressive=True)
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "tools: true\n",
+            "tools:\n  progressive: sometimes\n",
+            "tools:\n  lazy: true\n",
+        ],
+    )
+    def test_tools_that_cannot_be_read_are_refused(self, tmp_path: Path, declared: str):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\n" + declared)
+
+        with pytest.raises(ValueError, match="tools"):
+            load(root)
+
+    def test_the_declaration_names_the_region_the_agents_work_is_done_in(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nregion: eu\n")
+
+        assert load(root).settings.region == "eu"
+
+    def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
+
+        settings = load(root).settings
+
+        assert settings.llm == ""
+        assert settings.region == ""
+        assert settings.sandbox == ""
+        assert settings.tools is None
+        assert settings.tags == {}
+
+    def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):
+        # A misspelled llm that went quietly would leave the agent running on a model the
+        # file does not name.
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nlmm: llm-fast\n")
+
+        with pytest.raises(ValueError, match="lmm"):
+            load(root)
+
+    def test_the_applications_own_section_is_left_to_it(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n")
+
+        assert load(root).settings.app == {"sandbox_profile": "support"}
+
+    def test_video_selection_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(
+            root,
+            "agent.yaml",
+            "name: jean\nvideo:\n  source: roboflow\n  max_frames: 2\n",
+        )
+
+        assert load(root).settings.video_source == "roboflow"
+        assert load(root).settings.video_max_frames == 2
+
+    def test_dispatch_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndispatch:\n  text: enabled\n")
+
+        assert load(root).settings.dispatch == {"text": "enabled"}
+
+    def test_an_unknown_dispatch_setting_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndispatch:\n  txet: enabled\n")
+
+        with pytest.raises(ValueError, match="txet"):
+            load(root)
+
+    def test_how_the_sandbox_is_built_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "artist"
+        write(
+            root,
+            "agent.yaml",
+            "name: artist\nsandbox: daytona\nsandbox_options:\n"
+            "  image: python:3.13-slim-bookworm\n"
+            "  setup:\n    - pip install bpy==5.2.2\n"
+            "  timeout: 5m\n  cpu: 2\n  memory_gb: 4\n",
+        )
+
+        options = load(root).settings.sandbox_options
+
+        assert options == SandboxSettings(
+            image="python:3.13-slim-bookworm",
+            setup=["pip install bpy==5.2.2"],
+            timeout_seconds=300,
+            cpu=2,
+            memory_gb=4,
+        )
+
+    def test_what_the_sandbox_may_reach_is_read(self, tmp_path: Path):
+        root = tmp_path / "researcher"
+        write(
+            root,
+            "agent.yaml",
+            "name: researcher\nsandbox: daytona\nsandbox_options:\n"
+            "  network: true\n  allowed_domains: [api.example.com]\n"
+            "  network_allow_list: [10.0.0.0/8]\n",
+        )
+
+        options = load(root).settings.sandbox_options
+
+        assert options == SandboxSettings(
+            network=True,
+            allowed_domains=["api.example.com"],
+            network_allow_list=["10.0.0.0/8"],
+        )
+
+    def test_a_declaration_without_sandbox_options_has_none(self, tmp_path: Path):
+        root = tmp_path / "analyst"
+        write(root, "agent.yaml", "name: analyst\nsandbox: daytona\n")
+
+        assert load(root).settings.sandbox_options is None
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            "  timeout: 2h\n",
+            "  timeout: soon\n",
+            "  memory: 4\n",
+            "  cpu: two\n",
+            "  network: maybe\n",
+        ],
+    )
+    def test_sandbox_options_nobody_can_honour_are_refused(
+        self, tmp_path: Path, options: str
+    ):
+        root = tmp_path / "artist"
+        write(root, "agent.yaml", "name: artist\nsandbox_options:\n" + options)
+
+        with pytest.raises(ValueError, match="sandbox_options"):
+            load(root)
+
+    def test_the_channels_an_agent_answers_on_round_trip(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            "name: support\nchannels:\n"
+            '  whatsapp:\n    number: "+15556325550"\n'
+            "  identity: link\n",
+        )
+
+        channels = load(root).settings.channels
+
+        assert channels is not None
+        assert channels.whatsapp == ChannelSettings(number="+15556325550")
+        assert channels.sms is None
+        assert channels.identity == "link"
+
+    def test_a_file_saying_nothing_about_channels_names_none(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(root, "agent.yaml", "name: support\nllm: llm-fast\n")
+
+        assert load(root).settings.channels is None
+
+    def test_a_channel_nobody_carries_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  telegram:\n    number: "+1555"\n',
+        )
+
+        with pytest.raises(ValueError, match="unknown channels setting: telegram"):
+            load(root)
+
+    def test_identifying_a_sender_any_other_way_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  whatsapp:\n    number: "+1555"\n'
+            "  identity: whoever\n",
+        )
+
+        with pytest.raises(ValueError, match="channels.identity is phone or link"):
+            load(root)
+
+    def test_a_channel_with_no_number_is_refused(self, tmp_path: Path):
+        root = tmp_path / "support"
+        write(
+            root,
+            "agent.yaml",
+            'name: support\nchannels:\n  whatsapp:\n    number: ""\n',
+        )
+
+        with pytest.raises(ValueError, match="channels.whatsapp needs a number"):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared, chosen",
+        [
+            (
+                "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+                FloorControlSettings(model="stream/chorus-asr", max_wait_ms=800),
+            ),
+            (
+                "floor_control: {model: stream/chorus-asr}\n",
+                FloorControlSettings(model="stream/chorus-asr"),
+            ),
+            # Which models there are, and whether a wait needs one, is the router's to say.
+            ("floor_control: {model: other}\n", FloorControlSettings(model="other")),
+            (
+                "floor_control: {max_wait_ms: 800}\n",
+                FloorControlSettings(max_wait_ms=800),
+            ),
+            ("floor_control: {model: ~, max_wait_ms: ~}\n", FloorControlSettings()),
+            ("floor_control: {}\n", FloorControlSettings()),
+            ("floor_control:\n", None),
+            ("floor_control: ~\n", None),
+            ("llm: llm-fast\n", None),
+        ],
+    )
+    def test_the_floor_control_is_read_as_written(
+        self, tmp_path: Path, declared: str, chosen: FloorControlSettings | None
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        assert load(root).settings.floor_control == chosen
+
+    @pytest.mark.parametrize(
+        "declared, reason",
+        [
+            # The string it once was.
+            (
+                "floor_control: stream/chorus-asr\n",
+                "floor_control is a mapping of model and, optionally, max_wait_ms",
+            ),
+            ("floor_control: [stream/chorus-asr]\n", "floor_control is a mapping"),
+            ("floor_control: true\n", "floor_control is a mapping"),
+            ("floor_control: 1\n", "floor_control is a mapping"),
+            (
+                "floor_control: {model: stream/chorus-asr, mode: act}\n",
+                "unknown floor_control setting: mode",
+            ),
+            (
+                "floor_control: {model: stream/chorus-asr, preset: fast}\n",
+                "unknown floor_control setting: preset",
+            ),
+            (
+                "floor_control: {model: [stream/chorus-asr]}\n",
+                "floor_control.model must be a string",
+            ),
+            ("floor_control: {model: 1}\n", "floor_control.model must be a string"),
+            (
+                "floor_control: {model: stream/chorus-asr, max_wait_ms: soon}\n",
+                "floor_control.max_wait_ms must be a whole number",
+            ),
+            (
+                "floor_control: {model: stream/chorus-asr, max_wait_ms: 800.5}\n",
+                "floor_control.max_wait_ms must be a whole number",
+            ),
+            # What max_wait_ms replaced.
+            (
+                "end_of_turn:\n  max_wait_ms: 900\n",
+                "declares 'end_of_turn', which is not something an agent has",
+            ),
+        ],
+    )
+    def test_a_floor_control_that_cannot_be_read_is_refused(
+        self, tmp_path: Path, declared: str, reason: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        with pytest.raises(ValueError, match=re.escape(reason)):
+            load(root)
+
+    def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nkeyterms: Vision Agents\n")
+
+        with pytest.raises(ValueError, match="keyterms"):
+            load(root)
+
+    def test_a_directory_without_a_name_is_called_after_itself(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "description: the receptionist\n")
+
+        assert load(root).name == "jean"
+
+    def test_a_skill_without_a_description_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "skills/think.md",
+            "Just a body, with nothing saying when to use it.\n",
+        )
+
+        with pytest.raises(ValueError, match="description"):
+            load(root)
+
+    def test_nested_knowledge_keeps_the_path_it_was_found_at(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/reference/api.md", "# API\n\nthe endpoints\n")
+        write(root, "knowledge/logo.png", "not a document")
+        write(root, "knowledge/empty.md", "   \n")
+
+        folder = load(root)
+
+        assert [document.source for document in folder.knowledge] == [
+            "reference/api.md"
+        ]
+
+    def test_declared_pages_are_read_without_being_ingested(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- https://example.com/pricing\n"
+            "- url: https://example.com/plans\n"
+            "  title: Plans\n"
+            "  description: What each plan includes.\n",
+        )
+        write(root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
+
+        folder = load(root)
+
+        assert [document.source for document in folder.knowledge] == [
+            "reference/urls.yaml"
+        ]
+        assert [(page.url, page.title) for page in folder.knowledge_urls] == [
+            ("https://example.com/pricing", ""),
+            ("https://example.com/plans", "Plans"),
+        ]
+        assert folder.knowledge_urls[1].description == "What each plan includes."
+        assert folder.knowledge_namespace() == "jean"
+
+    @pytest.mark.parametrize(
+        "declaration",
+        [
+            "- example.com/pricing\n",
+            "- url: https://example.com/plans\n  heading: Plans\n",
+            "- [https://example.com/plans]\n",
+        ],
+    )
+    def test_a_page_that_cannot_be_fetched_or_described_is_refused(
+        self, tmp_path: Path, declaration: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/urls.yaml", declaration)
+
+        with pytest.raises(ValueError):
+            load(root)
+
+    def test_declaring_a_page_changes_the_hash(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        before = load(root).hash()
+
+        write(root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+
+        assert load(root).hash() != before
+
+    def test_the_harness_is_read_from_the_declaration(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nharness: default\n")
+
+        assert load(root).settings.harness == "default"
+
+    def test_speed_is_not_something_an_agent_has(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nspeed: 0.9\n")
+
+        with pytest.raises(ValueError, match="speed"):
+            load(root)
+
+    def test_a_greeting_given_as_text_alone_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ngreeting: Hello.\n")
+
+        with pytest.raises(ValueError, match="greeting"):
+            load(root)
+
+    def test_a_greeting_without_text_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ngreeting:\n  mode: exact\n")
+
+        with pytest.raises(ValueError, match="greeting"):
+            load(root)
+
+    def test_a_page_may_be_read_again_on_a_schedule(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- url: https://example.com/plans\n  refresh_hours: 24\n"
+            "- https://example.com/pricing\n",
+        )
+
+        pages = load(root).knowledge_urls
+
+        assert [page.refresh_hours for page in pages] == [24, 0]
+
+    @pytest.mark.parametrize("hours", ["0", "1.5", "daily"])
+    def test_a_schedule_that_is_not_a_whole_number_of_hours_is_refused(
+        self, tmp_path: Path, hours: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            f"- url: https://example.com/plans\n  refresh_hours: {hours}\n",
+        )
+
+        with pytest.raises(ValueError, match="refresh_hours"):
+            load(root)
+
+    def test_simulations_are_read_from_every_file_in_name_order(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "simulations/b.yml",
+            "- name: refund\n  scenario: Ask for a refund.\n  assertion: None is promised.\n"
+            "  mode: audio\n  variations: 3\n  tags:\n    team: support\n",
+        )
+        write(
+            root,
+            "simulations/a.yaml",
+            "- name: lunch\n  scenario: Order lunch.\n  assertion: One wrap.\n",
+        )
+        write(root, "simulations/notes.md", "not a simulation\n")
+
+        simulations = load(root).simulations
+
+        assert simulations is not None
+        assert [simulation.name for simulation in simulations] == ["lunch", "refund"]
+        assert simulations[1].mode == "audio"
+        assert simulations[1].variations == 3
+        assert simulations[1].tags == {"team": "support"}
+
+    def test_no_simulations_directory_is_none_and_an_empty_one_is_empty(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        assert load(root).simulations is None
+
+        (root / "simulations").mkdir()
+        assert load(root).simulations == []
+
+    @pytest.mark.parametrize(
+        "declaration, refused",
+        [
+            ("- name: a\n  scenario: s\n  assertion: x\n  judge: me\n", "judge"),
+            ("- name: a\n  assertion: x\n", "scenario"),
+            ("- name: a\n  scenario: s\n", "assertion"),
+            ("- name: a\n  scenario: s\n  assertion: x\n  mode: video\n", "video"),
+            (
+                "- name: a\n  scenario: s\n  assertion: x\n  variations: many\n",
+                "variations",
+            ),
+            ("name: a\n", "list"),
+        ],
+    )
+    def test_a_simulation_that_cannot_be_run_is_refused(
+        self, tmp_path: Path, declaration: str, refused: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "simulations/a.yaml", declaration)
+
+        with pytest.raises(ValueError, match=refused):
+            load(root)
+
+    def test_two_simulations_cannot_share_a_name(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        simulation = "- name: lunch\n  scenario: s\n  assertion: a\n"
+        write(root, "simulations/a.yaml", simulation)
+        write(root, "simulations/b.yaml", simulation)
+
+        with pytest.raises(ValueError, match="also declared in a.yaml"):
+            load(root)
+
+    def test_a_directory_without_schedules_or_simulations_keeps_its_hash(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+
+        # What every SDK took this directory to be before either was declared.
+        assert load(root).hash() == "bb5804bc853eaac855a30ec02037106a"
+
+    def test_schedules_and_simulations_hash_the_way_the_go_sdk_does(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(
+            root,
+            "knowledge/urls.yaml",
+            "- url: https://example.com/plans\n  refresh_hours: 24\n",
+        )
+        write(
+            root,
+            "simulations/lunch.yaml",
+            "- name: lunch <order> & change\n"
+            "  scenario: |\n    Order a turkey club, then swap it.\n"
+            "  assertion: One veggie wrap.\n"
+            "  variations: 3\n"
+            "  tags:\n    b: two\n    a: one\n",
+        )
+
+        # What the Go SDK's agents.Load(...).Hash() gives the same files.
+        assert load(root).hash() == "c55bc13d9e0e146d7facbe1db9e67774"
+
+    def test_a_directory_without_a_declaration_cannot_be_loaded(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "instructions.md", "You are Jean.\n")
+
+        with pytest.raises(ValueError, match="agent.yaml"):
+            load(root)
+
+    def test_resolve_finds_examples_voice_agents(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        agent = tmp_path / "examples" / "voice_agents" / "support"
+        write(agent, "agent.yaml", "name: support\n")
+        write(agent, "instructions.md", "Help.\n")
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve("support") == agent.resolve()
+
+    def test_resolve_finds_an_agent_filed_under_another_kind_of_example(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        agent = tmp_path / "examples" / "text_agents" / "docs_agent"
+        write(agent, "agent.yaml", "name: docs_agent\n")
+        write(agent, "instructions.md", "Answer from the docs.\n")
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve("docs_agent") == agent.resolve()
+
+    def test_a_directory_without_a_declaration_is_not_an_agent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Instructions alone no longer make a directory an agent: agent.yaml is what says
+        # so, and without it a name belongs to whatever is stored on the router.
+        write(
+            tmp_path / "examples" / "voice_agents" / "support",
+            "instructions.md",
+            "Help.\n",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert find("support") is None
+        with pytest.raises(FileNotFoundError, match="agent.yaml"):
+            resolve("support")

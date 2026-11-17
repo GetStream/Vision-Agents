@@ -1,0 +1,1 @@
+{"code":400,"error_type":"invalid_config","message":"turn_detection.silence_timeout_ms must be between 3000 and 60000 in auto mode","recoverable":false,"request_id":"7f0d9b48-8bc7-478a-bf88-cf27b5a74fbd","seq":0,"type":"error"}

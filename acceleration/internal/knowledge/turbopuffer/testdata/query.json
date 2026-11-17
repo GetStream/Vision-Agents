@@ -1,0 +1,18 @@
+{
+  "rows": [
+    {"$dist": 4.2, "id": "shipping.md#0", "text": "Delivery is free over $50.", "source": "shipping.md"},
+    {"$dist": 1.1, "id": "shipping.md#1", "text": "Next-day costs $9.", "source": "shipping.md"}
+  ],
+  "billing": {
+    "billable_logical_bytes_queried": 1280000000,
+    "billable_logical_bytes_returned": 112
+  },
+  "performance": {
+    "cache_hit_ratio": 1.0,
+    "cache_temperature": "hot",
+    "server_total_ms": 7,
+    "query_execution_ms": 5,
+    "exhaustive_search_count": 0,
+    "approx_namespace_size": 2
+  }
+}

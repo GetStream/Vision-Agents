@@ -273,8 +273,8 @@ class ChatCompletionsLLM(LLM):
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
         # Add Agent's instructions as system prompt.
-        if self._instructions:
-            messages.append({"role": "system", "content": self._instructions})
+        if self.instructions:
+            messages.append({"role": "system", "content": self.instructions})
 
         # Add all messages from the conversation to the prompt. Skip any
         # with empty content — providers like Inworld reject requests
@@ -283,7 +283,9 @@ class ChatCompletionsLLM(LLM):
             for message in self._conversation.messages:
                 if not message.content:
                     continue
-                messages.append({"role": message.role, "content": message.content})
+                messages.append(
+                    {"role": message.role, "content": message.named_content}
+                )
         return messages
 
     def _reset_think_filter(self) -> None:

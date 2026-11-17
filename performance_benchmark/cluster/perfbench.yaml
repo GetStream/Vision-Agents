@@ -1,0 +1,71 @@
+# The load benchmark's callers, in the benchmark cluster beside the router: a 16-core pod
+# off the api compute class, allowed to read the router's pods and their CPU. Apply, then
+# setup.sh. Delete the namespace and the Role after a session: the pod holds a node.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: perfbench
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: perfbench
+  namespace: perfbench
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: perfbench-read
+  namespace: accelerate-benchmark
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: perfbench-read
+  namespace: accelerate-benchmark
+subjects:
+  - kind: ServiceAccount
+    name: perfbench
+    namespace: perfbench
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: perfbench-read
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: perfbench
+  namespace: perfbench
+  annotations:
+    cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+spec:
+  serviceAccountName: perfbench
+  restartPolicy: Never
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: cloud.google.com/compute-class
+                operator: DoesNotExist
+  containers:
+    - name: perfbench
+      image: golang:1.26-bookworm
+      command: ["sleep", "infinity"]
+      env:
+        - name: GOTOOLCHAIN
+          value: auto
+      resources:
+        requests:
+          cpu: "14"
+          memory: 16Gi
+        limits:
+          memory: 24Gi

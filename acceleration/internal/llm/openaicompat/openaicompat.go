@@ -1,0 +1,855 @@
+// Package openaicompat implements the llm contract over an OpenAI-compatible chat
+// completions endpoint.
+//
+// Baseten's Model APIs, a vLLM deployment and Google's compatibility shim all speak the
+// same protocol, so they share one implementation and differ only in base URL, credentials
+// and whatever extra request fields they understand. Each provider package wraps this one
+// with its own name, defaults and environment variables.
+//
+// The contract above this is shaped like the Responses API, and chat completions is the
+// older and smaller of the two. What it cannot express -- a stored response to continue
+// from, a cache key the provider has no field for, a conversation held by the provider --
+// is dropped rather than approximated, and the capabilities this reports say so.
+package openaicompat
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/packages/respjson"
+	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/openai/openai-go/v3/shared"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// defaultTimeout bounds one response. A conversational turn that takes this long has
+// already failed as far as the listener is concerned.
+const defaultTimeout = 2 * time.Minute
+
+// reasoningField is where models that think stream it. It is not part of the OpenAI
+// schema, so it arrives as an extra field rather than on the delta struct.
+const reasoningField = "reasoning_content"
+
+// replayedReasoningField is where vLLM's chat templates read an earlier turn's thinking.
+const replayedReasoningField = "reasoning"
+
+// costTicksField is where xAI puts what a completion cost it, beside the token counts, in
+// ticks of which ticksPerMicro make a millionth of a dollar.
+const (
+	costTicksField = "cost_in_usd_ticks"
+	ticksPerMicro  = 10_000
+)
+
+// A signing provider nests its signature under extra_content, keyed by vendor. Gemini is
+// the one that does, and it refuses a replayed call that comes back without it.
+const (
+	signatureField  = "extra_content"
+	signatureVendor = "google"
+	signatureName   = "thought_signature"
+)
+
+// Options configures a provider served over an OpenAI-compatible endpoint.
+type Options struct {
+	// Provider is the stable name used in stats, e.g. "deepseek".
+	Provider string
+	// Model is the identifier sent upstream, e.g. "deepseek-ai/DeepSeek-V4-Flash-0731".
+	Model string
+	// StatsModel is the shorter name recorded in stats. It defaults to Model, which is
+	// what a provider serving one model per name wants.
+	StatsModel string
+	APIKey     string
+	// BaseURL is the endpoint root, up to and including /v1.
+	BaseURL string
+	// Capabilities is what this model accepts. Store and Conversations are forced off,
+	// because chat completions has nowhere to put them, and so is PromptCacheKey unless
+	// CacheKeyField or CacheKeyHeader says where this provider takes it.
+	Capabilities llm.Capabilities
+	// CacheKeyField is the body field a request's PromptCacheKey is sent in, for a provider
+	// that caches by a key outside the chat completions schema, such as xAI's
+	// prompt_cache_key.
+	CacheKeyField string
+	// CacheKeyHeader is the header a request's PromptCacheKey is sent in, for a provider
+	// that routes by it, such as Baseten's x-session-affinity. Such a header pins every
+	// request sharing the key to one replica, so the key has to name one conversation.
+	CacheKeyHeader string
+	// RequestFields builds the request fields outside the OpenAI schema, such as a vLLM
+	// chat template's arguments or a reasoning effort the endpoint spells its own way.
+	// It is given the effort already resolved against the model's capabilities.
+	RequestFields func(params llm.ResponseParams, effort string) map[string]any
+	// UnsignedCall is the signature sent with a replayed turn of calls the provider never
+	// signed, such as calls another model made before a fallback, for a provider that
+	// refuses them unsigned.
+	UnsignedCall string
+	// ThoughtChannel is set for a model that writes its thinking into the answer as
+	// Gemma's thought channel, so it is reported as thinking and never spoken.
+	ThoughtChannel bool
+	// ToolCallText is set for a model whose server can hand its native tool-call syntax back
+	// as text, as vLLM does with Gemma 4, so a call written as text is still made and never
+	// spoken.
+	ToolCallText bool
+	// ReplayReasoning sends each earlier assistant turn's thinking back with it, for a model
+	// trained on conversations that kept it.
+	ReplayReasoning bool
+	// SystemTurnsAsUser sends a system message that comes after the conversation has started
+	// as a user message, for a server whose chat template refuses a system turn anywhere but
+	// first, or lifts it into the system prompt, which would change the prefix every turn.
+	SystemTurnsAsUser bool
+	// ResultsFollowCalls is set for a server that refuses a conversation in which anything
+	// comes between a tool call and its results, as MiniMax's does with a 400: what the
+	// caller said while a tool ran is moved after the results (StrictToolOrder).
+	ResultsFollowCalls bool
+	// Prefill opens every reply with these words, which the model continues rather than
+	// repeats, such as an empty thinking block for a model that cannot be told not to
+	// think. It needs a vLLM-style server that takes continue_final_message. It is asked
+	// per request, and empty is none.
+	Prefill func(llm.ResponseParams) string
+	// Headers are sent with every request, for an endpoint that needs more than the key.
+	Headers map[string]string
+	// Timeout bounds one response.
+	Timeout time.Duration
+	// HTTPClient replaces the default transport.
+	HTTPClient option.HTTPClient
+	Logger     *slog.Logger
+}
+
+// LLM is a provider reached over an OpenAI-compatible endpoint.
+type LLM struct {
+	options Options
+	client  openai.Client
+	logger  *slog.Logger
+
+	mu sync.Mutex
+	// inFlight cancels the responses that have not settled, so closing the provider
+	// abandons them rather than leaving them to their own timeouts.
+	inFlight map[uint64]context.CancelFunc
+	nextID   atomic.Uint64
+	closed   bool
+}
+
+// New builds a provider. It performs no network access.
+func New(options Options) (*LLM, error) {
+	if options.Provider == "" {
+		return nil, stack.Wrap(errors.New("openaicompat: provider name is required"))
+	}
+	if options.Model == "" {
+		return nil, stack.Wrap(errors.New("openaicompat: model is required"))
+	}
+	keys := keypool.FromEnv(options.APIKey)
+	if keys.Len() == 0 {
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: api key is required", options.Provider))
+	}
+	options.APIKey = keys.Peek()
+	if options.BaseURL == "" {
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: base url is required", options.Provider))
+	}
+	if options.StatsModel == "" {
+		options.StatsModel = options.Model
+	}
+	if options.Timeout == 0 {
+		options.Timeout = defaultTimeout
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+	options.Capabilities.Store = false
+	options.Capabilities.Conversations = false
+	options.Capabilities.PromptCacheKey = options.CacheKeyField != "" || options.CacheKeyHeader != ""
+	options.Capabilities.CacheTTLs = nil
+
+	clientOptions := []option.RequestOption{
+		option.WithAPIKey(options.APIKey),
+		option.WithBaseURL(options.BaseURL),
+		option.WithHTTPClient(keys.WrapDoer(options.HTTPClient, keypool.Bearer)),
+	}
+	for name, value := range options.Headers {
+		clientOptions = append(clientOptions, option.WithHeader(name, value))
+	}
+
+	return &LLM{
+		options:  options,
+		client:   openai.NewClient(clientOptions...),
+		logger:   options.Logger.With("provider", options.Provider, "model", options.StatsModel),
+		inFlight: map[uint64]context.CancelFunc{},
+	}, nil
+}
+
+// Client exposes the underlying SDK client, so anything this package does not standardise
+// -- embeddings, moderation, the responses endpoint itself -- is still one call away.
+func (l *LLM) Client() *openai.Client { return &l.client }
+
+// Create asks for one response and returns the stream it arrives on.
+func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if len(params.Input) == 0 {
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: a request needs at least one input message", l.options.Provider))
+	}
+	if err := l.options.Capabilities.Validate(params); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: %w", l.options.Provider, err))
+	}
+
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, stack.Wrap(fmt.Errorf("openaicompat: %s: provider is closed", l.options.Provider))
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, l.options.Timeout)
+	id := l.nextID.Add(1)
+	l.inFlight[id] = cancel
+	l.mu.Unlock()
+
+	upstream := l.client.Chat.Completions.NewStreaming(
+		requestCtx, l.params(params), l.requestOptions(params)...,
+	)
+	if err := upstream.Err(); err != nil {
+		_ = upstream.Close()
+		cancel()
+		l.forget(id)
+		return nil, stack.Wrap(withBody(err))
+	}
+	return llm.NewStream(
+		llm.StreamOptions{
+			ResponseID: params.ID,
+			Provider:   l.options.Provider,
+			Model:      l.options.StatsModel,
+		},
+		&puller{
+			llm: l, id: id, turn: params.ID, upstream: upstream, cancel: cancel,
+			channel: l.channelSplitter(), toolText: l.toolCallSplitter(params),
+		},
+	), nil
+}
+
+// named keeps what a provider said about a failure it sent inside a stream, as an `error`
+// object in an event. Providers on this API fill it in differently, so only two readings are
+// trusted: an HTTP status given as its code, and the names OpenAI's own API gives its side's
+// failures. A number outside the status range is the provider's own code, which TransientStatus
+// does not count.
+func named(err error) error {
+	sent, ok := errors.AsType[*ssestream.StreamError](err)
+	if !ok {
+		return err
+	}
+	var event struct {
+		Error struct {
+			Code json.RawMessage `json:"code"`
+			Type string          `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(sent.Event.Data, &event) != nil {
+		return err
+	}
+	var number int
+	var code string
+	if json.Unmarshal(event.Error.Code, &number) != nil {
+		_ = json.Unmarshal(event.Error.Code, &code)
+	}
+	switch {
+	case number != 0:
+		return &llm.ProviderFailure{Err: err, Transient: llm.TransientStatus(number)}
+	case code == "server_error" || code == "rate_limit_exceeded" || event.Error.Type == "server_error":
+		return &llm.ProviderFailure{Err: err, Transient: true}
+	case code != "" || event.Error.Type != "":
+		return &llm.ProviderFailure{Err: err}
+	}
+	return err
+}
+
+// withBody adds the provider's own words to an API error the client could not read them
+// from. Gemini answers a streaming request's error as a list, `[{"error": ...}]`, and the
+// client only looks for an `error` at the top, so all it would say is the status.
+func withBody(err error) error {
+	var apiError *openai.Error
+	if !errors.As(err, &apiError) || apiError.RawJSON() != "" || apiError.Response == nil ||
+		apiError.Response.Body == nil {
+		return err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(apiError.Response.Body, 2048))
+	if readErr != nil || len(bytes.TrimSpace(body)) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, bytes.TrimSpace(body))
+}
+
+// Close abandons everything in flight.
+func (l *LLM) Close() error {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil
+	}
+	l.closed = true
+	cancels := make([]context.CancelFunc, 0, len(l.inFlight))
+	for _, cancel := range l.inFlight {
+		cancels = append(cancels, cancel)
+	}
+	l.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	return nil
+}
+
+// Provider is the stable provider name used in stats.
+func (l *LLM) Provider() string { return l.options.Provider }
+
+// Model is the model identifier used in stats.
+func (l *LLM) Model() string { return l.options.StatsModel }
+
+// Capabilities is what this model accepts.
+func (l *LLM) Capabilities() llm.Capabilities { return l.options.Capabilities }
+
+// channelSplitter is what separates the thought channel from one reply, or nil for a model
+// that keeps its thinking out of the answer.
+func (l *LLM) channelSplitter() *channelSplitter {
+	if !l.options.ThoughtChannel {
+		return nil
+	}
+	return &channelSplitter{}
+}
+
+// toolCallSplitter is what takes tool calls written as text out of one reply, or nil for a
+// model that never writes them or a request that offers no tools.
+func (l *LLM) toolCallSplitter(params llm.ResponseParams) *toolCallSplitter {
+	if !l.options.ToolCallText || len(params.Tools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(params.Tools))
+	for _, tool := range params.Tools {
+		names = append(names, tool.Name)
+	}
+	return newToolCallSplitter(names)
+}
+
+// forget releases a response that has settled.
+func (l *LLM) forget(id uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.inFlight, id)
+}
+
+// puller turns the chat completion chunks into what a Stream reports.
+type puller struct {
+	llm      *LLM
+	id       uint64
+	turn     string
+	upstream *ssestream.Stream[openai.ChatCompletionChunk]
+	cancel   context.CancelFunc
+	// channel takes the thought channel out of the answer, when the model writes one.
+	channel *channelSplitter
+	// toolText takes tool calls written as text out of the answer, and textCalls counts them.
+	toolText  *toolCallSplitter
+	textCalls int
+
+	err  error
+	done bool
+	// raw is everything the model streamed, before any splitting, for the debug log.
+	raw strings.Builder
+
+	// slots maps the index a provider streamed a call under to where it is recorded, and
+	// ids the call recorded at each slot.
+	slots map[int64]int64
+	ids   map[int64]string
+}
+
+// Advance reads one chunk and records what it carried.
+func (p *puller) Advance(w *llm.ResponseWriter) bool {
+	if p.done {
+		return false
+	}
+	if !p.upstream.Next() {
+		p.finish(w)
+		return false
+	}
+
+	chunk := p.upstream.Current()
+	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+		// Some providers repeat a cumulative usage frame on every chunk rather than
+		// sending one at the end, so the writer keeps the last one it is told.
+		w.Usage(usageOf(chunk.Usage))
+	}
+
+	for _, choice := range chunk.Choices {
+		p.raw.WriteString(choice.Delta.Content)
+		for _, call := range choice.Delta.ToolCalls {
+			p.raw.WriteString(call.Function.Name + call.Function.Arguments)
+		}
+		p.text(w, choice.Delta.Content)
+		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
+		for _, call := range choice.Delta.ToolCalls {
+			w.FunctionCall(
+				p.slot(call.Index, call.ID),
+				call.ID,
+				call.Function.Name,
+				call.Function.Arguments,
+				signature(call.JSON.ExtraFields),
+			)
+		}
+		if reason := incomplete(choice.FinishReason); reason != "" {
+			w.Incomplete(reason)
+		}
+	}
+	return true
+}
+
+// text records a piece of the answer, as thinking when it is inside the thought channel.
+func (p *puller) text(w *llm.ResponseWriter, delta string) {
+	if p.channel == nil {
+		p.answer(w, delta)
+		return
+	}
+	answer, thought := p.channel.Write(delta)
+	w.ReasoningText(thought)
+	p.answer(w, answer)
+}
+
+// answer records a piece of what the model said, making any tool call written in it.
+func (p *puller) answer(w *llm.ResponseWriter, text string) {
+	if p.toolText == nil {
+		w.OutputText(p.speakable(text))
+		return
+	}
+	text, calls := p.toolText.Write(text)
+	w.OutputText(p.speakable(text))
+	for _, call := range calls {
+		p.textCall(w, call)
+	}
+}
+
+// speakable drops what a model that writes tool calls as text leaves of its control syntax
+// outside a call. Gemma 4 sent a lone `<|"|>` beside a real call, and a lone U+FFFD where
+// a character was cut between tokens, and both reached the caller as a turn of their own.
+// Each control token is one token, so it never arrives split across deltas.
+// A closing channel marker with no opening one, "<channel|> I found your appointment", got past
+// the channel splitter the same way.
+func (p *puller) speakable(text string) string {
+	if !p.llm.options.ToolCallText && !p.llm.options.ThoughtChannel {
+		return text
+	}
+	return gemmaControl.Replace(text)
+}
+
+var gemmaControl = strings.NewReplacer(
+	toolCallOpen, "", toolCallClose, "", gemmaQuote, "",
+	"<|tool_response>", "", "<tool_response|>", "", channelOpen, "", channelClose, "", "\ufffd", "",
+)
+
+// textCall makes a tool call the model wrote as text. One that does not read whole is kept
+// as thinking: it is not something to say to the caller either.
+func (p *puller) textCall(w *llm.ResponseWriter, call string) {
+	name, arguments, ok := parseGemmaCall(call)
+	if !ok {
+		p.llm.logger.Warn("a tool call written as text could not be read", "text", call)
+		w.ReasoningText(call)
+		return
+	}
+	// A random id: a provider can be built per request, so nothing it counts is unique across
+	// the conversation the call is replayed in.
+	id := "call_" + strings.ToLower(rand.Text())
+	// Real calls stream under indexes from 0, so these take negative ones.
+	index := -1 - int64(p.textCalls)
+	p.textCalls++
+	w.FunctionCall(p.slot(index, id), id, name, arguments, "")
+}
+
+// slot is where a tool call fragment is recorded. Gemini streams every parallel call under
+// index 0 and tells them apart only by id, so a new id under a known index is a new call.
+func (p *puller) slot(index int64, id string) int64 {
+	if p.slots == nil {
+		p.slots, p.ids = map[int64]int64{}, map[int64]string{}
+	}
+	slot, known := p.slots[index]
+	if !known || (id != "" && p.ids[slot] != "" && p.ids[slot] != id) {
+		slot = int64(len(p.ids))
+		p.slots[index] = slot
+		p.ids[slot] = ""
+	}
+	if id != "" {
+		p.ids[slot] = id
+	}
+	return slot
+}
+
+// Err is the provider failure that ended the stream, if there was one.
+func (p *puller) Err() error { return stack.Wrap(p.err) }
+
+// Close abandons the response. It only cancels: the upstream is released by the goroutine
+// reading it, once the cancellation has unblocked it.
+func (p *puller) Close() error {
+	p.cancel()
+	return nil
+}
+
+// finish releases the upstream and works out what ended it.
+func (p *puller) finish(w *llm.ResponseWriter) {
+	p.done = true
+	p.llm.logger.Debug("the model streamed", "turn", p.turn, "raw", p.raw.String())
+	if p.channel != nil {
+		answer, thought := p.channel.Flush()
+		w.ReasoningText(thought)
+		p.answer(w, answer)
+	}
+	if p.toolText != nil {
+		answer, calls, unfinished := p.toolText.Flush()
+		w.OutputText(p.speakable(answer))
+		for _, call := range calls {
+			p.textCall(w, call)
+		}
+		if unfinished != "" {
+			p.textCall(w, unfinished)
+		}
+	}
+
+	switch err := p.upstream.Err(); {
+	case err == nil:
+	case errors.Is(err, context.Canceled):
+		// A cancelled stream is barge-in or shutdown, not a provider failure.
+		w.Cancelled()
+	case errors.Is(err, context.DeadlineExceeded):
+		// Ours or the caller's: the provider billed what it generated until then.
+		w.TimedOut()
+		p.err = err
+	default:
+		p.err = named(err)
+	}
+
+	p.upstream.Close()
+	p.cancel()
+	p.llm.forget(p.id)
+}
+
+// params builds the upstream request from what the Responses-shaped one asked for.
+func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams {
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(request.Input)+1)
+	if request.Instructions != "" {
+		messages = append(messages, openai.SystemMessage(request.Instructions))
+	}
+	input := request.Input
+	if l.options.ResultsFollowCalls {
+		input = StrictToolOrder(input)
+	}
+	var pendingImages []openai.ChatCompletionContentPartUnionParam
+	started := false
+	for _, message := range input {
+		if message.Role != llm.ToolResult && len(pendingImages) > 0 {
+			messages = append(messages, openai.UserMessage(pendingImages))
+			pendingImages = nil
+		}
+		if message.Role != llm.System {
+			started = true
+		}
+		switch message.Role {
+		case llm.System:
+			if started && l.options.SystemTurnsAsUser {
+				messages = append(messages, openai.UserMessage(messageText(message)))
+				continue
+			}
+			messages = append(messages, openai.SystemMessage(messageText(message)))
+		case llm.Assistant:
+			assistant := assistantMessage(message, l.options.UnsignedCall)
+			if l.options.ReplayReasoning && message.Reasoning != "" && assistant.OfAssistant != nil {
+				assistant.OfAssistant.SetExtraFields(map[string]any{replayedReasoningField: message.Reasoning})
+			}
+			messages = append(messages, assistant)
+		case llm.ToolResult:
+			messages = append(messages, openai.ToolMessage(messageText(message), message.ToolCallID))
+			if message.HasImage() {
+				pendingImages = append(pendingImages, openai.TextContentPart("Images from tool result "+message.ToolCallID))
+				pendingImages = append(pendingImages, chatImages(message.Parts)...)
+			}
+		default:
+			messages = append(messages, userMessage(message))
+		}
+	}
+
+	if len(pendingImages) > 0 {
+		messages = append(messages, openai.UserMessage(pendingImages))
+	}
+	if prefill := l.prefill(request); prefill != "" {
+		messages = append(messages, openai.AssistantMessage(prefill))
+	}
+	params := openai.ChatCompletionNewParams{
+		Model:    l.options.Model,
+		Messages: messages,
+		// Usage is asked for explicitly, because without it there is nothing to bill.
+		StreamOptions: openai.ChatCompletionStreamOptionsParam{
+			IncludeUsage: param.NewOpt(true),
+		},
+	}
+	if len(request.Tools) > 0 {
+		params.Tools = tools(request.Tools)
+	}
+	if request.ToolChoice != "" {
+		params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: param.NewOpt(request.ToolChoice),
+		}
+	}
+	if schema := l.options.Capabilities.Schema(request.Text); schema != nil {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   schema.Name,
+					Schema: schema.Schema,
+					Strict: param.NewOpt(true),
+				},
+			},
+		}
+	} else if request.Text.Format.JSON() {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+		}
+	}
+	if request.MaxOutputTokens > 0 {
+		params.MaxCompletionTokens = param.NewOpt(int64(request.MaxOutputTokens))
+	}
+	if request.Temperature != nil {
+		params.Temperature = param.NewOpt(*request.Temperature)
+	}
+	return params
+}
+
+// tools renders the tools a request offers. A tool with no parameters is sent without a
+// schema, which is how the protocol spells "this one takes no arguments".
+func tools(offered []llm.Tool) []openai.ChatCompletionToolUnionParam {
+	rendered := make([]openai.ChatCompletionToolUnionParam, 0, len(offered))
+	for _, tool := range offered {
+		definition := shared.FunctionDefinitionParam{Name: tool.Name}
+		if tool.Description != "" {
+			definition.Description = param.NewOpt(tool.Description)
+		}
+		if len(tool.Parameters) > 0 {
+			definition.Parameters = shared.FunctionParameters(tool.Parameters)
+		}
+		rendered = append(rendered, openai.ChatCompletionFunctionTool(definition))
+	}
+	return rendered
+}
+
+// assistantMessage replays a turn the model took.
+//
+// A turn that called a tool has to carry the calls it made, because the provider matches
+// each tool result against one and rejects a conversation where a result answers nothing.
+// A signing provider signs only the first of the calls in a turn, so a turn with no
+// signature at all carries unsigned on its first call.
+func assistantMessage(message llm.Message, unsigned string) openai.ChatCompletionMessageParamUnion {
+	if len(message.ToolCalls) == 0 {
+		return openai.AssistantMessage(message.Content)
+	}
+
+	signed := slices.ContainsFunc(message.ToolCalls, func(call llm.ToolCall) bool { return call.Signature != "" })
+	calls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(message.ToolCalls))
+	for i, call := range message.ToolCalls {
+		function := &openai.ChatCompletionMessageFunctionToolCallParam{
+			ID: call.ID,
+			Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+				Name:      call.Name,
+				Arguments: call.Arguments,
+			},
+		}
+		signature := call.Signature
+		if i == 0 && !signed {
+			signature = unsigned
+		}
+		if signature != "" {
+			function.SetExtraFields(map[string]any{
+				signatureField: map[string]any{
+					signatureVendor: map[string]any{
+						signatureName: signature,
+					},
+				},
+			})
+		}
+		calls = append(calls, openai.ChatCompletionMessageToolCallUnionParam{OfFunction: function})
+	}
+
+	assistant := openai.ChatCompletionAssistantMessageParam{ToolCalls: calls}
+	if text := messageText(message); text != "" {
+		assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+			OfString: param.NewOpt(text),
+		}
+	}
+	return openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}
+}
+
+func userMessage(message llm.Message) openai.ChatCompletionMessageParamUnion {
+	if len(message.Parts) == 0 {
+		return openai.UserMessage(message.Content)
+	}
+	return openai.UserMessage(chatParts(message.Parts))
+}
+
+func chatParts(parts []llm.ContentPart) []openai.ChatCompletionContentPartUnionParam {
+	rendered := make([]openai.ChatCompletionContentPartUnionParam, 0, len(parts))
+	for _, part := range parts {
+		if part.Image != nil {
+			rendered = append(rendered, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+				URL:    part.Image.DataURI(),
+				Detail: part.Image.Detail,
+			}))
+			continue
+		}
+		if part.Text != "" {
+			rendered = append(rendered, openai.TextContentPart(part.Text))
+		}
+	}
+	return rendered
+}
+
+func chatImages(parts []llm.ContentPart) []openai.ChatCompletionContentPartUnionParam {
+	var images []openai.ChatCompletionContentPartUnionParam
+	for _, part := range parts {
+		if part.Image == nil {
+			continue
+		}
+		images = append(images, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+			URL:    part.Image.DataURI(),
+			Detail: part.Image.Detail,
+		}))
+	}
+	return images
+}
+
+func messageText(message llm.Message) string {
+	if message.Content != "" {
+		return message.Content
+	}
+	return llm.TextOf(message.Parts)
+}
+
+// prefill is what this request's reply opens with, or empty for none.
+func (l *LLM) prefill(request llm.ResponseParams) string {
+	if l.options.Prefill == nil {
+		return ""
+	}
+	return l.options.Prefill(request)
+}
+
+// requestOptions applies the request fields outside the OpenAI schema.
+func (l *LLM) requestOptions(request llm.ResponseParams) []option.RequestOption {
+	fields := map[string]any{}
+	if l.options.RequestFields != nil {
+		fields = l.options.RequestFields(request, l.options.Capabilities.Effort(request))
+	}
+	if l.prefill(request) != "" {
+		fields["continue_final_message"] = true
+		fields["add_generation_prompt"] = false
+	}
+	if request.PromptCacheKey != "" && l.options.CacheKeyField != "" {
+		fields[l.options.CacheKeyField] = request.PromptCacheKey
+	}
+	options := make([]option.RequestOption, 0, len(fields)+1)
+	for key, value := range fields {
+		options = append(options, option.WithJSONSet(key, value))
+	}
+	if request.PromptCacheKey != "" && l.options.CacheKeyHeader != "" {
+		options = append(options, option.WithHeader(l.options.CacheKeyHeader, request.PromptCacheKey))
+	}
+	return options
+}
+
+// incomplete translates a finish reason into why a response stopped early, returning empty
+// for the model simply having finished.
+func incomplete(reason string) string {
+	switch reason {
+	case "length":
+		return llm.ReasonMaxOutputTokens
+	case "content_filter":
+		return llm.ReasonContentFilter
+	default:
+		return ""
+	}
+}
+
+// usageOf is what a usage frame says the completion consumed.
+//
+// xAI and Gemini count their thinking in total_tokens and not in completion_tokens, so the
+// output is what the total holds beyond the prompt whenever that is more. xAI also reports the
+// thinking as reasoning_tokens and Gemini does not, so the reasoning is the larger of the two
+// rather than their sum, which would count xAI's twice. Baseten's rejected_prediction_tokens
+// are never added: its bill is completion_tokens alone.
+func usageOf(usage openai.CompletionUsage) llm.Usage {
+	return llm.Usage{
+		InputTokens: usage.PromptTokens,
+		InputTokensDetails: llm.InputTokensDetails{
+			CachedTokens: usage.PromptTokensDetails.CachedTokens,
+		},
+		OutputTokens: max(usage.CompletionTokens, usage.TotalTokens-usage.PromptTokens),
+		OutputTokensDetails: llm.OutputTokensDetails{
+			ReasoningTokens: max(usage.CompletionTokensDetails.ReasoningTokens,
+				usage.TotalTokens-usage.PromptTokens-usage.CompletionTokens),
+		},
+		TotalTokens:      usage.TotalTokens,
+		VendorCostMicros: costTicksMicros(usage.JSON.ExtraFields),
+	}
+}
+
+// costTicksMicros reads xAI's own cost off a usage frame, in ticks of a ten-billionth of a
+// dollar, as millionths rounded half up. Zero for the providers that send none.
+func costTicksMicros(extra map[string]respjson.Field) int64 {
+	field, ok := extra[costTicksField]
+	if !ok {
+		return 0
+	}
+	var ticks int64
+	if err := json.Unmarshal([]byte(field.Raw()), &ticks); err != nil || ticks <= 0 {
+		return 0
+	}
+	return (ticks + ticksPerMicro/2) / ticksPerMicro
+}
+
+// reasoning reads the non-standard thinking field off a delta, returning empty when the
+// provider did not send one.
+//
+// Valid is deliberately not consulted: it tracks the presence of fields the SDK declares,
+// and an extra field is by definition not one of those, so it always reports false here.
+func reasoning(extra map[string]respjson.Field) string {
+	field, ok := extra[reasoningField]
+	if !ok {
+		// vLLM 0.31 streams it as "reasoning", a thought only a sentence long included.
+		field, ok = extra[replayedReasoningField]
+	}
+	if !ok {
+		return ""
+	}
+
+	var text string
+	if err := json.Unmarshal([]byte(field.Raw()), &text); err != nil {
+		return ""
+	}
+	return text
+}
+
+// signature reads the state a signing provider attached to a tool call, returning empty
+// for the providers that do not sign.
+func signature(extra map[string]respjson.Field) string {
+	field, ok := extra[signatureField]
+	if !ok {
+		return ""
+	}
+
+	var content struct {
+		Google struct {
+			ThoughtSignature string `json:"thought_signature"`
+		} `json:"google"`
+	}
+	if err := json.Unmarshal([]byte(field.Raw()), &content); err != nil {
+		return ""
+	}
+	return content.Google.ThoughtSignature
+}

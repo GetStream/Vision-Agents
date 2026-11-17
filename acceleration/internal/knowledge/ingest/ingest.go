@@ -1,0 +1,412 @@
+// Package ingest cuts documents into the passages a knowledge base is filled with.
+//
+// It is the writing half of internal/knowledge, which only ever reads. Both the command
+// that reads a docs tree off disk and the endpoint an SDK posts one to go through here, so
+// the same file is cut the same way whichever way it arrives.
+package ingest
+
+import (
+	"crypto/sha256"
+	"encoding/base64"
+	"io/fs"
+	"math"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+)
+
+// DefaultChunk is how much of a document goes in one passage. It is small enough that
+// several can be put in front of a model without crowding out the conversation, and large
+// enough that a passage still answers the question on its own.
+const DefaultChunk = 1200
+
+// Limits bound how much larger a document's passages can be than the document.
+type Limits struct {
+	// MinChunk is the smallest size Split cuts at. Every passage carries its source and its
+	// id whatever its size, so tiny passages turn a document into mostly those:
+	// one-character paragraphs cut one to a passage grew a document thousands of times.
+	// Zero is no minimum.
+	MinChunk int
+	// MaxHeading is how many bytes of a heading are repeated in each later passage of its
+	// section and in every passage's source. A heading of any length repeated in every
+	// passage is the other half of what multiplied a document. It is counted in bytes, as
+	// passages are: 128 four-byte characters repeated in a 500-byte passage would leave no
+	// room for anything else. Zero repeats no heading.
+	MaxHeading int
+}
+
+// maxSource is the longest source the API takes, in characters.
+const maxSource = 256
+
+// maxPageLabel is the longest a passage's pages make its source: " > p. " and a range of
+// two five-digit pages.
+const maxPageLabel = len(" > p. 99999-99999")
+
+// SizeMultiple is how many times larger than a document its passages can be: a passage, its
+// source and its id over what is left of the passage once the repeated heading is in. With
+// no minimum chunk, or no room under the heading, nothing bounds it, and it is +Inf.
+func (l Limits) SizeMultiple() float64 {
+	room := l.MinChunk - l.MaxHeading
+	if l.MinChunk == 0 || room <= 0 {
+		return math.Inf(1)
+	}
+	return float64(l.MinChunk+maxSource+maxPageLabel+len(" > ")+l.MaxHeading+maxID) / float64(room)
+}
+
+// DefaultLimits are the limits a router has unless configured otherwise. With them, a
+// document's passages are at most about (500 + name + 17 + 3 + 128 + 63) / (500 - 133) times
+// its size: the passage, its source and its id over what is left once the repeated
+// heading line is in. A name is at most 256 characters, which is about 2.6 for 256 bytes
+// and 4.7 for 1,024.
+var DefaultLimits = Limits{MinChunk: 500, MaxHeading: 128}
+
+// IDSeparator divides the file a passage came from from its place in that file. Keeping
+// the path in the id is what makes ingesting the same documentation twice an update
+// rather than a second copy of it.
+const IDSeparator = "#"
+
+// maxID is the longest id a passage is stored under. turbopuffer lists a max id size of 64
+// bytes (https://turbopuffer.com/docs/limits, fetched 2026-10-19) and its write refuses a
+// 64-byte one with "id string should be less than 64 bytes", so 63 is the longest kept.
+//
+// A hashed id always fits: the 43 characters of a SHA-256 in unpadded base64url
+// (RFC 4648 section 5), the separator, and at most the 19 digits of the largest int.
+const maxID = 63
+
+// readable are the files worth putting in front of a model. Anything else in a docs tree
+// is an image, a lockfile or a build artefact, none of which answer a question.
+var readable = map[string]struct{}{
+	".md":   {},
+	".mdx":  {},
+	".txt":  {},
+	".rst":  {},
+	".yaml": {},
+	".yml":  {},
+}
+
+// Read turns the named files and directories into passages, ready to be written.
+func Read(paths []string, size int, limits Limits) ([]knowledge.Document, error) {
+	var documents []knowledge.Document
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			found, err := readFile(path, filepath.Base(path), size, limits)
+			if err != nil {
+				return nil, err
+			}
+			documents = append(documents, found...)
+			continue
+		}
+
+		err = filepath.WalkDir(path, func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			// A dot directory is version control, tooling or a build, none of which is
+			// documentation somebody wrote to be read.
+			if entry.IsDir() {
+				if name != path && strings.HasPrefix(entry.Name(), ".") {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if _, ok := readable[strings.ToLower(filepath.Ext(name))]; !ok {
+				return nil
+			}
+
+			relative, err := filepath.Rel(path, name)
+			if err != nil {
+				relative = filepath.Base(name)
+			}
+			found, err := readFile(name, filepath.ToSlash(relative), size, limits)
+			if err != nil {
+				return err
+			}
+			documents = append(documents, found...)
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return documents, nil
+}
+
+// readFile cuts one file into passages. The name is what a passage says it came from, so
+// it is the path as a reader would recognise it rather than wherever the command was run.
+func readFile(path, name string, size int, limits Limits) ([]knowledge.Document, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return Split(name, string(content), size, limits), nil
+}
+
+// Split cuts one document into the passages it will be stored as.
+//
+// The name is what a passage says it came from and what its id is keyed by, so it is the
+// path as a reader would recognise it rather than wherever the file happened to be. A size
+// under limits.MinChunk is raised to it.
+func Split(name, content string, size int, limits Limits) []knowledge.Document {
+	pieces := split(name, content, max(size, limits.MinChunk), limits)
+	documents := make([]knowledge.Document, 0, len(pieces))
+	for index, piece := range pieces {
+		documents = append(documents, knowledge.Document{
+			ID:     passageID(name, index),
+			Text:   piece.text,
+			Source: piece.source,
+		})
+	}
+	return documents
+}
+
+// IDs are what Split keyed the passages of a document in [from, to) by.
+func IDs(name string, from, to int) []string {
+	if to <= from {
+		return nil
+	}
+	ids := make([]string, 0, to-from)
+	for index := from; index < to; index++ {
+		ids = append(ids, passageID(name, index))
+	}
+	return ids
+}
+
+// Files is how many documents a set of passages came from. Every document's passages
+// start at index 0, so those are counted rather than the keys before the separator, which
+// can differ between the passages of one document (see passageID).
+func Files(documents []knowledge.Document) int {
+	files := 0
+	for _, document := range documents {
+		if strings.HasSuffix(document.ID, IDSeparator+"0") {
+			files++
+		}
+	}
+	return files
+}
+
+// passageID is the one place a passage's id is built, so writing, reading back, removing a
+// shorter version's tail and deleting a document all name the same passages.
+//
+// It is the name, IDSeparator and the index while that fits in maxID, which is every id
+// turbopuffer ever took, so a base filled before needs no re-index. A longer
+// one keys the passage by a hash of the whole name instead: two long urls that only differ
+// past their first 60 bytes stay apart.
+func passageID(name string, index int) string {
+	suffix := IDSeparator + strconv.Itoa(index)
+	if len(name)+len(suffix) <= maxID {
+		return name + suffix
+	}
+	sum := sha256.Sum256([]byte(name))
+	return base64.RawURLEncoding.EncodeToString(sum[:]) + suffix
+}
+
+// passage is one piece of a document: what it says, and where a reader would find it.
+type passage struct {
+	source string
+	text   string
+}
+
+// split cuts a document at its headings, and cuts long sections again at paragraph
+// boundaries so no passage is longer than a model should be handed at once.
+//
+// A document read from a PDF or an office file marks where each page starts
+// (extract.PageMarker), and a passage's source says which pages it is from, so an answer
+// can say where in a manual to look. A new page ends a passage once it holds as much as
+// one cut for its size would, so one passage is mostly one page; a page of a few words
+// is kept with the next rather than stored alone, which would multiply the document as
+// tiny paragraphs do.
+//
+// The heading is repeated at the top of every piece of a section it was cut from. Without
+// it the second half of a long section is prose with nothing saying what it is about,
+// which is exactly what full-text search needs to match on. Only its first
+// limits.MaxHeading bytes are repeated; the first piece keeps the heading line as it was
+// written, so a heading is never cut away from the paragraph under it.
+func split(name, content string, size int, limits Limits) []passage {
+	var passages []passage
+	var heading string
+	var current strings.Builder
+	// held says current has something under its heading. A passage of only the heading
+	// would not be stored, so one that is not held is never flushed to make room.
+	held := false
+	// first and last are the pages current is from, zero when the document has none.
+	first, last := 0, 0
+	room := limits.MinChunk - limits.MaxHeading
+
+	flush := func() {
+		text := strings.TrimSpace(current.String())
+		current.Reset()
+		pages := pageLabel(first, last)
+		first = last
+		if !prose(text) {
+			return
+		}
+		source := name + pages
+		if heading != "" {
+			source += " > " + heading
+		}
+		passages = append(passages, passage{source: source, text: text})
+	}
+
+	for _, block := range blocks(content) {
+		if page, ok := extract.PageOf(block); ok {
+			if held && current.Len() >= room {
+				flush()
+				if heading != "" {
+					current.WriteString("## " + heading + "\n\n")
+				}
+				held = false
+				first = page
+			}
+			if first == 0 {
+				first = page
+			}
+			last = page
+			continue
+		}
+		if title, ok := headingOf(block); ok {
+			flush()
+			heading = clip(title, limits.MaxHeading)
+			current.WriteString(block + "\n\n")
+			held = prose(block)
+			continue
+		}
+		for _, piece := range rows(block, size) {
+			if held && current.Len()+len(piece) > size {
+				flush()
+				if heading != "" {
+					current.WriteString("## " + heading + "\n\n")
+				}
+			}
+			current.WriteString(piece + "\n\n")
+			held = true
+		}
+	}
+	flush()
+	return passages
+}
+
+// pageLabel is what a passage from pages first to last adds to its source.
+func pageLabel(first, last int) string {
+	switch {
+	case first == 0:
+		return ""
+	case last == first:
+		return " > p. " + strconv.Itoa(first)
+	}
+	return " > p. " + strconv.Itoa(first) + "-" + strconv.Itoa(last)
+}
+
+// rows cuts a paragraph too long to be a passage on its own at its line breaks. A table
+// or a long list has no blank line to cut at, so without this a section written as one
+// runs back whole however long it is. Fenced code is left alone, because half a code
+// block answers nothing.
+//
+// Every piece of a table opens with its header, so the rows of a later piece still say
+// which column is the price.
+func rows(block string, size int) []string {
+	if len(block) <= size || strings.HasPrefix(strings.TrimSpace(block), "```") {
+		return []string{block}
+	}
+
+	lines := strings.Split(block, "\n")
+	var header []string
+	if len(lines) > 2 && strings.HasPrefix(lines[0], "|") && tableRule.MatchString(lines[1]) && len(lines[0])+len(lines[1]) < size/2 {
+		header = lines[:2]
+	}
+	var pieces []string
+	var current []string
+	length := 0
+	for i, line := range lines {
+		if length > 0 && length+len(line) > size {
+			pieces = append(pieces, strings.Join(current, "\n"))
+			current, length = nil, 0
+			if header != nil && i > len(header) {
+				current = append(current, header...)
+				length = len(header[0]) + len(header[1]) + 2
+			}
+		}
+		current = append(current, line)
+		length += len(line) + 1
+	}
+	if len(current) > 0 {
+		pieces = append(pieces, strings.Join(current, "\n"))
+	}
+	return pieces
+}
+
+// tableRule is the line under a Markdown table's header.
+var tableRule = regexp.MustCompile(`^\|( *:?-+:? *\|)+ *$`)
+
+// blocks cuts a document into paragraphs. Fenced code is kept whole: a blank line inside
+// a code block is part of the code rather than a break in the prose.
+func blocks(content string) []string {
+	var found []string
+	var current []string
+	fenced := false
+
+	flush := func() {
+		if text := strings.TrimSpace(strings.Join(current, "\n")); text != "" {
+			found = append(found, text)
+		}
+		current = nil
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			current = append(current, line)
+			continue
+		}
+		if !fenced && strings.TrimSpace(line) == "" {
+			flush()
+			continue
+		}
+		current = append(current, line)
+	}
+	flush()
+	return found
+}
+
+// prose reports whether a passage says anything beyond the headings it opens with. A
+// heading with nothing under it is a section that is only a name, and handing one back as
+// an answer gives the model a title where it needed something to read.
+func prose(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			return true
+		}
+	}
+	return false
+}
+
+// clip is at most the first n bytes of text, cut between characters rather than inside one.
+func clip(text string, n int) string {
+	if len(text) <= n {
+		return text
+	}
+	for n > 0 && !utf8.RuneStart(text[n]) {
+		n--
+	}
+	return text[:n]
+}
+
+// headingOf reports the title a block opens with, when it opens with one.
+func headingOf(block string) (string, bool) {
+	first, _, _ := strings.Cut(block, "\n")
+	trimmed := strings.TrimSpace(first)
+	if !strings.HasPrefix(trimmed, "#") {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimLeft(trimmed, "#")), true
+}

@@ -1,0 +1,191 @@
+package ttsrouter
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/breeze"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/gemini"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/mock"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/speechify"
+)
+
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry { return routing.NewRegistry[tts.TTS]() }
+
+// DefaultRegistry returns a registry with every text-to-speech provider this build
+// supports.
+func DefaultRegistry() *Registry {
+	registry := NewRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
+
+	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		settings := elevenlabsSettings{}
+		err := spec.Settings(&settings)
+		if err != nil {
+			return nil, err
+		}
+
+		options := elevenlabs.Options{
+			Model:      spec.Model,
+			VoiceID:    voiceOr(settings.VoiceID, spec.Voice),
+			Language:   firstLanguage(spec.LanguageHints),
+			Speed:      number(spec.TTS.Speed),
+			Stability:  spec.TTS.Stability,
+			Similarity: spec.TTS.Similarity,
+			Style:      settings.VoiceSettings.Style,
+			Logger:     spec.Logger,
+		}
+		// The v3 models are served on a different socket, so which endpoint to open is
+		// decided by the model the router picked rather than by a second provider name.
+		var provider tts.TTS
+		if elevenlabs.Performs(spec.Model) {
+			provider, err = elevenlabs.NewDialogue(options)
+		} else {
+			provider, err = elevenlabs.New(options)
+		}
+		if err != nil {
+			return nil, elevenlabsRefusal(spec.Model, err)
+		}
+		return provider, nil
+	})
+
+	registry.Register(cartesia.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		// sonic-preview declares format for its recordings, and a live voice streams raw
+		// audio into the call, so a format here would be dropped in silence.
+		if spec.TTS.Format != "" {
+			return nil, routing.Refused(stack.Wrap(errors.New("a format is taken only when recording, not by a live voice")))
+		}
+		return cartesia.New(cartesia.Options{
+			Model:    spec.Model,
+			VoiceID:  spec.Voice,
+			Language: firstLanguage(spec.LanguageHints),
+			Logger:   spec.Logger,
+		})
+	})
+
+	registry.Register(fish.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return fish.New(fish.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(speechify.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return speechify.New(speechify.Options{Model: spec.Model, VoiceID: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(s2pro.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return s2pro.New(s2pro.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(breeze.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return breeze.New(breeze.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(gemini.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return gemini.New(gemini.Options{
+			Model:    spec.Model,
+			Voice:    spec.Voice,
+			Language: firstLanguage(spec.LanguageHints),
+			Logger:   spec.Logger,
+		})
+	})
+
+	registry.Register(inworld.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		// Its models declare format for their recordings, and a live voice streams raw
+		// audio into the call, so a format here would be dropped in silence.
+		if spec.TTS.Format != "" {
+			return nil, routing.Refused(stack.Wrap(errors.New("a format is taken only when recording, not by a live voice")))
+		}
+		settings := inworldSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+
+		return inworld.New(inworld.Options{
+			Model:        spec.Model,
+			VoiceID:      voiceOr(settings.VoiceID, spec.Voice),
+			DeliveryMode: settings.DeliveryMode,
+			Logger:       spec.Logger,
+		})
+	})
+
+	return registry
+}
+
+// RegisterMock adds the load-test voice, which reaches no vendor and says nothing. A
+// deployment that has not asked for mocks never calls this, so mock/mock-tts is a target
+// nothing can be built for.
+func RegisterMock(registry *Registry) {
+	registry.Register(mock.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return mock.New(mock.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+}
+
+// elevenlabsSettings is what a caller can reach at ElevenLabs through overwrites.
+//
+// A voice id is here as well as in the shared vocabulary because it is the one setting
+// that cannot be shared: an id from one vendor's library means nothing at another. A
+// config that routes between vendors and wants a named voice at each says so once per
+// vendor, and the one the router picks is the one that is read.
+type elevenlabsSettings struct {
+	VoiceID       string                  `json:"voice_id"`
+	VoiceSettings elevenlabsVoiceSettings `json:"voice_settings"`
+}
+
+// elevenlabsVoiceSettings is the part of voice_settings the shared vocabulary has no word
+// for. Style is a number from 0 to 1 at ElevenLabs, where the shared style is a word to
+// sound like, so the two are not one setting. Stability and similarity are shared options,
+// and speed too, so they are not here and an overwrite naming one is refused.
+type elevenlabsVoiceSettings struct {
+	Style *float64 `json:"style"`
+}
+
+// elevenlabsRefusal marks a value ElevenLabs will not take as the caller's mistake, which
+// the router neither counts against the model nor routes around. A refused style is the
+// overwrite block's, so it is refused as one: the router then tries only ElevenLabs' other
+// models, where a vendor that never reads the block would drop the style in silence.
+func elevenlabsRefusal(model string, err error) error {
+	if errors.Is(err, elevenlabs.ErrStyle) {
+		return routing.Refused(stack.Wrap(fmt.Errorf("%w for %s: %w", routing.ErrOverwrite, model, err)))
+	}
+	if errors.Is(err, elevenlabs.ErrRefused) {
+		return routing.Refused(err)
+	}
+	return err
+}
+
+// inworldSettings is what a caller can reach at Inworld through overwrites. DeliveryMode
+// is not in the shared vocabulary because it is three named modes rather than the
+// continuous stability the others have, so there is nothing to standardise it against.
+type inworldSettings struct {
+	VoiceID      string `json:"voice_id"`
+	DeliveryMode string `json:"delivery_mode"`
+}
+
+// voiceOr prefers a voice named for this vendor over the one the request asked of
+// whoever answered. An overwrite is the more specific of the two: it was written knowing
+// which vendor it is for.
+func voiceOr(overwritten, asked string) string {
+	if overwritten != "" {
+		return overwritten
+	}
+	return asked
+}
+
+// firstLanguage picks the language to synthesise in. Speech is in one language at a time,
+// so a list of hints only has one useful answer in it.
+func firstLanguage(hints []string) string {
+	if len(hints) == 0 {
+		return ""
+	}
+	return hints[0]
+}

@@ -1,0 +1,1 @@
+{"ok":true,"access_token":"synthetic-bot-token","token_type":"bot","scope":"channels:history,chat:write,users:read","bot_user_id":"U0000BOT","app_id":"A0000APP","team":{"name":"Example","id":"T0000TEAM"},"enterprise":null,"authed_user":{"id":"U0000USER"},"refresh_token":"synthetic-refresh-token","expires_in":43200}

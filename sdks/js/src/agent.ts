@@ -1,0 +1,852 @@
+import type { BackendOptions } from "./backend.js";
+import { Client, type Schemas } from "./client.js";
+import { Dispatch } from "./dispatch.js";
+import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
+import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
+import { Session, type SessionOptions } from "./session.js";
+import { Tools } from "./tools.js";
+import type { UIDeclaration } from "./ui-catalog.js";
+import type { InboundCall, InboundMessage } from "./inbound.js";
+
+/** The memory filter key naming who the memories are about. Everything else narrows recall. */
+export const USER_KEY = "user_id";
+
+/** Where code the agent writes gets run. */
+export interface Sandbox {
+  provider: Schemas["Sandbox"];
+}
+
+/** A Daytona sandbox. The backend needs `DAYTONA_API_KEY` for it to do anything. */
+export function daytona(): Sandbox {
+  return { provider: "daytona" };
+}
+
+/**
+ * A kind of work worth handing to the slower model.
+ *
+ * There is nothing behind a skill but a better model and more time. What it declares is the
+ * description the fast model chooses by, and the instructions the slow one answers under.
+ */
+export interface Skill {
+  name: string;
+  /** The one line the fast model sees. */
+  description: string;
+  /** The full prompt, which only the subagent sees. */
+  instructions: string;
+  captureVideo?: boolean;
+  /** How long the work may run before it is abandoned. Zero leaves the backend's default. */
+  deadlineMs?: number;
+  /** The rest of a skill folder beside its SKILL.md, each file's text by its slash path. */
+  files?: Record<string, string>;
+}
+
+/**
+ * What stands between what a caller said and the model that answers them.
+ *
+ * The loop runs in the backend and is part of the agent's stored config, never of a
+ * session: `sync` writes it, and every session created from the config runs it.
+ */
+export interface Harness {
+  /** Which harness the backend runs. Left out is `default`, the only one there is. */
+  name?: Schemas["Harness"];
+  /** Model targets for the work handed over. The one under `default` runs the skills. */
+  subagents?: Record<string, string>;
+  /** Where delegated code runs. */
+  vm?: Sandbox;
+  /** Skills of your own, stored and named by the config in place of the built-in set. */
+  skills?: Skill[];
+}
+
+/**
+ * Which models hold the conversation.
+ *
+ * Every target is a provider/model name or a capability shortcut such as `llm-fast`;
+ * leaving one out takes the backend's default for that modality.
+ */
+export interface Pipeline {
+  /** A stored agent config to start from, named either by its id or by its name. */
+  config?: string;
+  llm?: string;
+  stt?: string;
+  tts?: string;
+  /** A speech-to-speech target. Naming one means no transcriber or voice is opened. */
+  sts?: string;
+  /**
+   * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+   * the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+   * the vendor's own voice name instead.
+   */
+  voice?: string;
+  /** A language hint, which narrows the candidates in every modality. */
+  language?: string;
+  /** Said on joining without going through the model. Empty waits to be spoken to. */
+  greeting?: string;
+  /** `exact`, the default, or `variation`, which has the model reword the greeting each call. */
+  greetingMode?: Schemas["GreetingMode"];
+  /** Murmur while a caller is still talking, the way a person does. */
+  backchannel?: boolean;
+  maxTokens?: number;
+  /**
+   * How long the model waits for one of your tools, in milliseconds. Left out, the router waits
+   * 30 seconds. A tool's own `timeoutMs` replaces it for that tool.
+   */
+  toolTimeoutMs?: number;
+  video?: Schemas["SessionVideo"];
+}
+
+/**
+ * What an agent directory's agent.yaml declares: what the agent is called and what it runs
+ * on. A setting left out leaves whatever the stored config has.
+ */
+export interface Declaration {
+  name?: string;
+  description?: string;
+  mode?: Schemas["AgentMode"];
+  /**
+   * Where the agent's work is done: `us` or `eu` for now. Every model it names needs an instance
+   * there, and its knowledge base and sandbox are kept there; the router refuses a sync naming
+   * one that has none. Left out, the stored region stays, and a new agent is in `us`.
+   */
+  region?: string;
+  stt?: string;
+  tts?: string;
+  /** An empty string turns speech-to-speech off, which is different from saying nothing. */
+  sts?: string;
+  /**
+   * The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+   * the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent takes
+   * the vendor's own voice name instead.
+   */
+  voice?: string;
+  llm?: string;
+  harness?: Schemas["Harness"];
+  /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
+  subagent?: string;
+  search?: string;
+  /**
+   * What the agent draws pictures with, such as `image-fast`, which offers it `generate_image`.
+   * An empty string turns drawing off; left out, the stored one stays.
+   */
+  image?: string;
+  greeting?: Schemas["Greeting"];
+  sandbox?: Schemas["Sandbox"];
+  /**
+   * How the sandbox is built and what code in it may reach. Outbound network is blocked
+   * unless `network` or an allow list opens it.
+   */
+  sandboxOptions?: Schemas["SandboxOptions"];
+  keyterms?: string[];
+  tags?: Record<string, string>;
+  video?: Schemas["SessionVideo"];
+  /**
+   * What the agent leaves to this application's own dispatch worker. With `text` enabled
+   * the model does not answer what end users write: the worker is handed it, and answers
+   * with `dispatch.answer`.
+   */
+  dispatch?: Schemas["AgentDispatch"];
+  /**
+   * The connectors whose tools the agent may call. Undefined when agent.yaml says nothing,
+   * which leaves the stored bindings; empty when it lists none, which removes them.
+   */
+  connectors?: ConnectorDeclaration[];
+  /**
+   * The lines the agent answers on besides its Stream Chat channel, each a number the app
+   * connected on the router.
+   */
+  channels?: Schemas["AgentChannels"];
+  /** Whether the agent may schedule tasks for its users, and the bounds on that. */
+  scheduling?: Schemas["AgentScheduling"];
+  /**
+   * The model that controls the agent's floor, and how long a caller may wait once they stop:
+   * `model` and `max_wait_ms`, as written. Undefined leaves the stored choice; an empty object
+   * is no choice again, which the router's default rules; `{model: "flow-controller"}` keeps
+   * the flow controller whatever that default.
+   */
+  floorControl?: Schemas["FloorControl"];
+  /** Declarative UI catalog, component allowlist, portable components, and layout blueprints. */
+  ui?: UIDeclaration;
+}
+
+/** One connector an agent binds, as agent.yaml names it. */
+export interface ConnectorDeclaration {
+  /** The alias the model sees its tools under. */
+  name: string;
+  /** The connector id. Left out means the name. */
+  connector?: string;
+  /** Tool names or `path.Match` patterns. Left out means every tool. */
+  tools?: string[];
+  /**
+   * The id, or the one label, of an app connection to always use. Left out, each session
+   * uses the caller's own.
+   */
+  connection?: string;
+  required?: boolean;
+  /**
+   * Whether code in the agent's sandbox may call the connector's API with the binding's
+   * connection. Left out sends no sandbox key.
+   */
+  sandbox?: boolean;
+  /**
+   * Tool names or `path.Match` patterns whose every call waits for the session's user to
+   * allow it. Left out sends no require_approval key.
+   */
+  requireApproval?: string[];
+}
+
+/**
+ * Where a directory records the fingerprint it was last synced under.
+ *
+ * Handed over by whatever read the directory, so writing `.agent_sync` stays with the code
+ * that can reach a filesystem and `sync` stays runnable wherever `fetch` is.
+ */
+export interface SyncStamp {
+  /** The fingerprint last synced, or empty when there is none. */
+  read(): Promise<string>;
+  write(hash: string): Promise<void>;
+}
+
+/** An agent directory, as `loadFolder` from `@stream-io/stream-agents/node` reads one. */
+export interface Folder {
+  path: string;
+  name: string;
+  /** What agent.yaml declares. */
+  settings?: Declaration;
+  instructions: string;
+  guardrail: string;
+  skills: Skill[];
+  knowledge: { source: string; text: string }[];
+  knowledgeURLs: { url: string; title?: string; description?: string; refresh_hours?: number }[];
+  /**
+   * What simulations/*.yaml declare, by file name and then as listed. Undefined when there is
+   * no simulations/, which leaves the stored ones alone; empty when it has none, which
+   * deletes them.
+   */
+  simulations?: Schemas["SimulationDeclaration"][];
+  /** `.agent_sync`, so a sync of a directory nothing has touched asks the router nothing. */
+  stamp?: SyncStamp;
+}
+
+export interface AgentOptions {
+  /** What the agent is called. It names the stored config and is who it appears as. */
+  name?: string;
+  /** The system prompt. It reaches the backend with `sync`: a session runs on the stored config's. */
+  instructions?: string;
+  /**
+   * A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose.
+   *
+   * It is enforced in the backend, so a turn the policy refuses never reaches the model.
+   */
+  guardrail?: string;
+  /** An agent directory, whose contents fill in whatever is left out here. */
+  folder?: Folder;
+  /** Which models hold the conversation. */
+  pipeline?: Pipeline;
+  harness?: Harness;
+  /** Labels every request the session makes, so spend can be attributed. */
+  costTracking?: Record<string, string>;
+  /** Who the memories are about, under `user_id`, and what narrows recall. */
+  memoryFilter?: Record<string, string>;
+  /**
+   * The IANA zone the agent's sessions are in, such as `Europe/Lisbon`, unless a call names
+   * its own: `join`, `chat`, `answer`, `reply`, `startCall` and `waitForCall` each take one
+   * for the person on that call, since one agent serves callers in many zones. The agent
+   * tells the date and the hour in it, so a time a caller gives is theirs. Empty sends none,
+   * which leaves the user's stored zone, then the agent config's default, to decide. Nothing
+   * is read from the machine the agent runs on, whose zone is not the caller's.
+   */
+  timezone?: string;
+  /** Who the agent joins a call as. Empty is derived from the name. */
+  userId?: string;
+  /** The caller's own functions. One is created when none is passed. */
+  tools?: Tools;
+  /** The router this agent talks to. */
+  client?: Client | BackendOptions;
+  /** Signs the link a person opens to join a session's call. Built from the environment when needed. */
+  edge?: Edge;
+}
+
+/** How a session the agent opens is watched, and whose zone it is in. */
+export interface CallOptions extends SessionOptions {
+  /**
+   * The IANA zone of the person on this call, when the app knows it, over the agent's own
+   * `timezone`. Empty uses the agent's. A zone the router does not know is refused with a 400
+   * `invalid_timezone`, and the session is not opened.
+   */
+  timezone?: string;
+}
+
+/** How a conversation is held. */
+export interface ChatOptions extends CallOptions {
+  /**
+   * The conversation being answered, which names the channel replies are written into.
+   *
+   * A worker answering several conversations has to set it. Left empty they all join under
+   * the agent's user id, and a message arriving for one reaches whichever started last.
+   */
+  agentId?: string;
+}
+
+/**
+ * A configured agent, before and between the calls it holds.
+ *
+ * An agent here is configuration and function calling. The conversation itself — joining
+ * the call, hearing the caller, answering and speaking — happens in the backend, and what
+ * arrives here are the events saying so.
+ */
+export class Agent {
+  readonly name: string;
+  readonly instructions: string;
+  readonly userId: string;
+  readonly tools: Tools;
+  readonly client: Client;
+
+  private readonly options: AgentOptions;
+  private readonly folder: Folder | undefined;
+  private readonly harness: Harness | undefined;
+  private edgeImpl: Edge | undefined;
+  /** `pipeline.config` resolved to the id the backend wants, looked up once. */
+  private configId: string | undefined;
+
+  constructor(options: AgentOptions = {}) {
+    this.options = options;
+    this.folder = options.folder;
+
+    this.name = options.name || this.folder?.name || "";
+    if (!this.name) {
+      throw new ConfigurationError("an agent needs a name");
+    }
+    this.instructions = options.instructions || this.folder?.instructions || "";
+
+    // A directory's skills are folded in here, so everything downstream reads one harness.
+    const declared = options.harness;
+    const fromFolder = this.folder?.skills ?? [];
+    if (declared && declared.skills === undefined && fromFolder.length > 0) {
+      this.harness = { ...declared, skills: fromFolder };
+    } else if (!declared && fromFolder.length > 0) {
+      this.harness = { skills: fromFolder };
+    } else {
+      this.harness = declared;
+    }
+    validate(this.harness);
+
+    this.userId = options.userId || userIdOf(this.name);
+    this.tools = options.tools ?? new Tools();
+    this.client =
+      options.client instanceof Client ? options.client : new Client(options.client ?? {});
+    this.edgeImpl = options.edge;
+  }
+
+  /** The guardrail policy the backend screens turns against. */
+  get guardrail(): string {
+    return this.options.guardrail || this.folder?.guardrail || "";
+  }
+
+  /** Signs the link a person opens to join a session's call, built from the environment when needed. */
+  get edge(): Edge {
+    this.edgeImpl ??= new Edge();
+    return this.edgeImpl;
+  }
+
+  /**
+   * Holds a conversation on the session's own call, `agent:<session id>`.
+   *
+   * It resolves once the backend is in the call, so an agent that has joined is one that is
+   * already listening. `session.voice.stop()` carries the conversation on in writing.
+   */
+  join(options: ChatOptions = {}): Promise<Session> {
+    const { agentId, ...rest } = options;
+    return this.open({ start_voice: true, ...(agentId ? { agent_id: agentId } : {}) }, rest);
+  }
+
+  /**
+   * A link a person can open to join this session's call from a browser and hear the agent.
+   *
+   * They join as a listener of their own rather than as the agent, so opening it twice puts
+   * two people in the call instead of taking the first one's place.
+   */
+  async monitorURL(session: Session): Promise<string> {
+    if (!session.voice.started) {
+      throw new ConfigurationError("a conversation held in writing has no call to watch");
+    }
+    return this.edge.monitorURLFor(
+      { id: session.id, type: DEFAULT_CALL_TYPE },
+      { id: `monitor-${session.id}`, name: "Monitor" },
+    );
+  }
+
+  /**
+   * Holds the conversation in writing rather than on a call.
+   *
+   * No call is joined, nothing is transcribed and nothing is spoken until
+   * `session.voice.start()`. Everything between hearing a question and answering it is
+   * unchanged: the same instructions, the same skills handed to the same slower model, the
+   * same knowledge base.
+   */
+  chat(options: ChatOptions = {}): Promise<Session> {
+    const { agentId, ...rest } = options;
+    return this.open(agentId ? { agent_id: agentId } : {}, rest);
+  }
+
+  /**
+   * Carries on a conversation held in writing, by the id of the session it was held in, and
+   * starts watching it. One that ended is reopened with what was said in it.
+   */
+  resume(id: string, options: SessionOptions = {}): Promise<Session> {
+    return this.client.agent(this.name).sessions.resume(id, { tools: this.tools, ...options });
+  }
+
+  /**
+   * Answers a call that arrived on the dispatch socket.
+   *
+   * Somebody rang a number and the router put them in the call of the session it names, so
+   * that session is opened here with voice on. The number they reached is carried into it,
+   * which is what lets the agent transfer them.
+   */
+  async answer(call: InboundCall, options: CallOptions = {}): Promise<Session> {
+    if (!call.sessionId) {
+      throw new ConfigurationError("the call names no session; attach its number again");
+    }
+    return this.open(
+      {
+        id: call.sessionId,
+        start_voice: true,
+        ...(call.calledNumber ? { phone: { number: call.calledNumber } } : {}),
+      },
+      options,
+    );
+  }
+
+  /**
+   * Answers a message written to an agent that is not running.
+   *
+   * The reply is written as the agent the message was addressed to, so whoever wrote it is
+   * already reading the answer as it is generated.
+   */
+  reply(message: InboundMessage, options: CallOptions = {}): Promise<Session> {
+    return this.chat({ ...options, agentId: message.agentId });
+  }
+
+  /**
+   * Rings somebody and holds the conversation when they answer.
+   *
+   * The agent placed this call, so it is told it is navigating: recordings are let finish
+   * and menus are answered rather than talked over.
+   */
+  async startCall(from: string, to: string, options: CallOptions = {}): Promise<Session> {
+    if (!from || !to) {
+      throw new ConfigurationError("a call needs a number to ring from and one to ring");
+    }
+
+    // Placing the call makes its own routing rule pinned to the call of the session it names,
+    // so the answered leg arrives in the call this agent is about to join. Attaching the
+    // number first would be a second rule for the same number.
+    const placed = await this.client.post("/v1/phone/calls", {
+      body: {
+        from,
+        to,
+        ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
+      },
+    });
+    if (!placed.session_id) {
+      throw new RouterError(0, "startCall", "the router placed the call for no session");
+    }
+
+    return this.open(
+      {
+        id: placed.session_id,
+        start_voice: true,
+        navigating: true,
+        phone: { number: from, vendor_call_id: placed.vendor_call_id },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Answers the next call to a number.
+   *
+   * The number is attached, so every caller lands in a call of their own, and this waits for
+   * the router to hand the next one over, then until the caller says something. The session
+   * it returns is the conversation with whoever that was, from their second sentence: the
+   * one that unblocked this is read here and does not arrive again on `events`.
+   *
+   * For more than one call at a time, wait on the dispatch socket instead.
+   */
+  async waitForCall(number: string, options: CallOptions = {}): Promise<Session> {
+    if (!number) {
+      throw new ConfigurationError("there is no number to answer on");
+    }
+
+    await this.client.post("/v1/phone/numbers/{e164}/attach", {
+      path: { e164: number },
+      body: {},
+    });
+
+    const dispatch = new Dispatch({ client: this.client, capacity: 1 });
+    let arrived: (call: InboundCall) => void = () => undefined;
+    const ringing = new Promise<InboundCall>((resolve) => {
+      arrived = resolve;
+    });
+    let taken = false;
+    dispatch.onCall((call) => {
+      if (call.calledNumber !== number) {
+        throw new Error(`this agent is waiting on ${number}, not ${call.calledNumber}`);
+      }
+      if (taken) {
+        throw new Error("this agent is already answering a call");
+      }
+      taken = true;
+      arrived(call);
+    });
+    const running = dispatch.run();
+    const stopped = running.then(() => {
+      throw new SocketClosedError("the router stopped handing over calls before anybody rang");
+    });
+    // Stopping after the call arrived ends `run` too, which is not a failure.
+    stopped.catch(() => undefined);
+    let call: InboundCall;
+    try {
+      call = await Promise.race([ringing, stopped]);
+    } finally {
+      dispatch.stop();
+    }
+    await running;
+
+    const session = await this.answer(call, options);
+    for await (const event of session.events()) {
+      if (event.kind === "heard") {
+        return session;
+      }
+    }
+    await session.close();
+    throw new SocketClosedError("the call ended before the caller said anything");
+  }
+
+  /**
+   * Stores the agent in the backend: its instructions, guardrail, harness, skills,
+   * knowledge and simulations, and the models it was declared with.
+   *
+   * A config is what a session can be created from by name, so the things worth deciding
+   * once are decided once. It is one request, and it carries a fingerprint of everything
+   * in it, so syncing on every startup does nothing when nothing has changed. A setting
+   * left out leaves whatever is stored, so a model chosen in the dashboard survives a sync
+   * that says nothing about it.
+   *
+   * What the directory's agent.yaml declares goes with it, under whatever the code set.
+   * A directory read by `loadFolder` records the fingerprint in `.agent_sync`, and a sync of
+   * one nothing has touched since only reads the stored config back.
+   *
+   * Server side only: how an agent is configured is not a browser's to rewrite.
+   */
+  async sync(): Promise<Schemas["SyncAgentResult"]> {
+    const pipeline = this.options.pipeline ?? {};
+    const declared = this.folder?.settings ?? {};
+    const skills = this.harness?.skills ?? this.folder?.skills ?? [];
+    const harness = this.harness?.name ?? declared.harness;
+    const thinking = this.harness?.subagents?.["default"] ?? declared.subagent;
+    const sandbox = this.harness?.vm?.provider ?? declared.sandbox;
+    const simulations = this.folder?.simulations;
+    const tags = { ...declared.tags, ...this.options.costTracking };
+    const pages = this.folder?.knowledgeURLs ?? [];
+
+    const body: Omit<Schemas["SyncAgentRequest"], "hash"> = {
+      name: this.name,
+      ...(this.instructions ? { instructions: this.instructions } : {}),
+      ...(this.guardrail ? { guardrail: this.guardrail } : {}),
+      // config_id is the config these belong to, and the config is written by this same
+      // request, so the router fills it in from what it just stored.
+      ...(skills.length > 0
+        ? { skills: skills.map((skill) => ({ ...skillRequest(skill), config_id: "" })) }
+        : {}),
+      ...(this.folder?.knowledge.length ? { knowledge: this.folder.knowledge } : {}),
+      ...(pages.length > 0 ? { knowledge_urls: pages } : {}),
+      // Sent whenever there is a simulations/, empty included, since the router makes the
+      // stored ones exactly this list.
+      ...(simulations ? { simulations } : {}),
+      ...declaredRequest(declared),
+      ...(pipeline.llm ? { llm: pipeline.llm } : {}),
+      ...(pipeline.stt ? { stt: pipeline.stt } : {}),
+      ...(pipeline.tts ? { tts: pipeline.tts } : {}),
+      ...(pipeline.sts ? { sts: pipeline.sts } : {}),
+      ...(pipeline.voice ? { voice: pipeline.voice } : {}),
+      ...greetingOf(pipeline),
+      ...(pipeline.video ? { video: pipeline.video } : {}),
+      ...(harness ? { harness } : {}),
+      ...(thinking ? { subagent: thinking } : {}),
+      ...(sandbox ? { sandbox } : {}),
+      ...(Object.keys(tags).length > 0 ? { tags } : {}),
+    };
+
+    // The connectors as declared rather than as resolved, so an unchanged directory lists no
+    // connections.
+    const hash = await fingerprint(
+      declared.connectors ? { ...body, connectors: declared.connectors } : body,
+    );
+    const stamp = this.folder?.stamp;
+    if (stamp && (await stamp.read()) === hash) {
+      const [stored] = await this.client.get("/v1/agents/configs", {
+        query: { name: this.name },
+      });
+      // A config deleted since the stamp was written is synced again rather than trusted.
+      if (stored?.name === this.name && stored.sync_hash === hash) {
+        return { unchanged: true, config: stored };
+      }
+    }
+
+    const connectors = declared.connectors && (await this.bindings(declared.connectors));
+    const result = await this.client.post("/v1/agents/sync", {
+      body: { ...body, ...(connectors ? { connectors } : {}), hash },
+    });
+    await stamp?.write(hash);
+    return result;
+  }
+
+  /** The connectors agent.yaml names, in the shape the sync takes. */
+  private async bindings(
+    declared: ConnectorDeclaration[],
+  ): Promise<Schemas["AgentConnectorBinding"][]> {
+    const bindings: Schemas["AgentConnectorBinding"][] = [];
+    for (const entry of declared) {
+      const connectorId = entry.connector || entry.name;
+      bindings.push({
+        name: entry.name,
+        connector_id: connectorId,
+        tools: [],
+        tool_patterns: entry.tools ?? ["*"],
+        ...(entry.required === undefined ? {} : { required: entry.required }),
+        ...(entry.sandbox ? { sandbox: true } : {}),
+        ...(entry.requireApproval === undefined ? {} : { require_approval: entry.requireApproval }),
+        connection:
+          entry.connection === undefined
+            ? { type: "session" }
+            : {
+                type: "fixed",
+                connection_id: await this.fixedConnection(entry.name, connectorId, entry.connection),
+              },
+      });
+    }
+    return bindings;
+  }
+
+  /**
+   * The app connection a connector entry names, by id or by the one label that matches. An
+   * id wins over a label, so every page is read first: a label is only unique once the list
+   * ends.
+   */
+  private async fixedConnection(name: string, connectorId: string, token: string): Promise<string> {
+    const connections: Schemas["Connection"][] = [];
+    const asked = new Set<string>();
+    let cursor = "";
+    while (!asked.has(cursor)) {
+      asked.add(cursor);
+      const page = await this.client.get("/v1/agents/connections", {
+        query: { owner_type: "app", connector_id: connectorId, ...(cursor ? { cursor } : {}) },
+      });
+      connections.push(...(page.items ?? []));
+      if (!page.next_cursor) {
+        break;
+      }
+      cursor = page.next_cursor;
+    }
+
+    const byId = connections.find((connection) => connection.id === token);
+    if (byId?.id) {
+      return byId.id;
+    }
+    const labelled = connections.filter((connection) => connection.id && connection.label === token);
+    if (labelled.length === 1) {
+      return labelled[0]?.id as string;
+    }
+    throw new ConfigurationError(
+      labelled.length === 0
+        ? `connector ${JSON.stringify(name)}: no app connection with id or label ${JSON.stringify(token)}`
+        : `connector ${JSON.stringify(name)}: ${JSON.stringify(token)} matches ${labelled.length} app connections`,
+    );
+  }
+
+  /**
+   * Renders the agent's configuration into a session and opens it. The call's own zone wins
+   * over the agent's, and neither set sends none.
+   */
+  private async open(
+    call: Schemas["CreateSessionRequest"],
+    options: CallOptions,
+  ): Promise<Session> {
+    const { timezone, ...watching } = options;
+    const pipeline = this.options.pipeline ?? {};
+    const zone = timezone || this.options.timezone;
+    const request: Schemas["CreateSessionRequest"] = {
+      user_id: this.userId,
+      user_name: this.name,
+      agent_id: this.userId,
+      ...(await this.pipelineRequest(pipeline)),
+      ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
+      ...(this.memoryRequest()),
+      ...(zone ? { timezone: zone } : {}),
+      ...call,
+    };
+
+    return Session.open(this.client, request, { tools: this.tools, ...watching });
+  }
+
+  private async pipelineRequest(
+    pipeline: Pipeline,
+  ): Promise<Partial<Schemas["CreateSessionRequest"]>> {
+    return {
+      ...(pipeline.llm ? { llm: pipeline.llm } : {}),
+      ...(pipeline.stt ? { stt: pipeline.stt } : {}),
+      ...(pipeline.tts ? { tts: pipeline.tts } : {}),
+      ...(pipeline.sts ? { sts: pipeline.sts } : {}),
+      ...(pipeline.voice ? { voice: pipeline.voice } : {}),
+      ...greetingOf(pipeline),
+      ...(pipeline.language ? { languages: [pipeline.language] } : {}),
+      ...(pipeline.backchannel === undefined ? {} : { backchannel: pipeline.backchannel }),
+      ...(pipeline.maxTokens ? { max_tokens: pipeline.maxTokens } : {}),
+      ...(pipeline.toolTimeoutMs ? { tool_timeout_ms: pipeline.toolTimeoutMs } : {}),
+      ...(pipeline.video ? { video: pipeline.video } : {}),
+      ...(pipeline.config
+        ? { config_id: await this.resolveConfig(pipeline.config) }
+        : { agent: this.name }),
+    };
+  }
+
+  /** Splits the filter into who the memories are about and what narrows them. */
+  private memoryRequest(): Partial<Schemas["CreateSessionRequest"]> {
+    const filter = this.options.memoryFilter;
+    if (!filter || Object.keys(filter).length === 0) {
+      return {};
+    }
+
+    const narrowing: Record<string, string> = {};
+    let userId = "";
+    for (const [key, value] of Object.entries(filter)) {
+      if (key === USER_KEY) {
+        userId = value;
+        continue;
+      }
+      narrowing[key] = value;
+    }
+    return {
+      memory: {
+        ...(userId ? { user_id: userId } : {}),
+        ...(Object.keys(narrowing).length > 0 ? { filter: narrowing } : {}),
+      },
+    };
+  }
+
+  /**
+   * Turns a config name into the id the backend looks one up by.
+   *
+   * A name that matches nothing stored is passed through untouched: it is then either an
+   * id, or a mistake the backend is better placed to report than a guess here would be.
+   */
+  private async resolveConfig(named: string): Promise<string> {
+    if (this.configId) {
+      return this.configId;
+    }
+    const stored = await this.client.get("/v1/agents/configs");
+    this.configId = stored.find((config) => config.name === named)?.id ?? named;
+    return this.configId;
+  }
+
+}
+
+/** Renders a skill the way the sync request takes it. */
+function skillRequest(skill: Skill): Omit<Schemas["SkillRequest"], "config_id"> {
+  return {
+    name: skill.name,
+    description: skill.description,
+    instructions: skill.instructions,
+    ...(skill.captureVideo === undefined ? {} : { capture_video: skill.captureVideo }),
+    ...(skill.deadlineMs ? { deadline_ms: skill.deadlineMs } : {}),
+    ...(skill.files && Object.keys(skill.files).length > 0 ? { files: skill.files } : {}),
+  };
+}
+
+/**
+ * Renders what agent.yaml declared into a sync request. Only what it names is sent, so the
+ * router leaves whatever is stored for the rest.
+ */
+function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentRequest"]> {
+  return {
+    ...(declared.mode ? { mode: declared.mode } : {}),
+    ...(declared.region ? { region: declared.region } : {}),
+    ...(declared.stt ? { stt: declared.stt } : {}),
+    ...(declared.tts ? { tts: declared.tts } : {}),
+    ...(declared.sts === undefined ? {} : { sts: declared.sts }),
+    ...(declared.voice ? { voice: declared.voice } : {}),
+    ...(declared.llm ? { llm: declared.llm } : {}),
+    ...(declared.harness ? { harness: declared.harness } : {}),
+    ...(declared.search ? { search: declared.search } : {}),
+    ...(declared.image === undefined ? {} : { image: declared.image }),
+    ...(declared.greeting ? { greeting: declared.greeting } : {}),
+    ...(declared.channels ? { channels: declared.channels } : {}),
+    ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
+    ...(declared.floorControl ? { floor_control: declared.floorControl } : {}),
+    ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
+    ...(declared.video ? { video: declared.video } : {}),
+    ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
+    ...(declared.sandboxOptions ? { sandbox_options: declared.sandboxOptions } : {}),
+  };
+}
+
+/** The pipeline's greeting as the wire takes it, or nothing when it has none. */
+function greetingOf(pipeline: Pipeline): { greeting?: Schemas["Greeting"] } {
+  if (!pipeline.greeting) {
+    return {};
+  }
+  return {
+    greeting: {
+      text: pipeline.greeting,
+      ...(pipeline.greetingMode ? { mode: pipeline.greetingMode } : {}),
+    },
+  };
+}
+
+/**
+ * A fingerprint of everything a sync would write.
+ *
+ * The router does nothing when it has seen the same one, so what goes into it has to be
+ * everything that could change: keys are sorted so the same directory hashes the same way
+ * twice regardless of the order the request was built in.
+ */
+async function fingerprint(body: unknown): Promise<string> {
+  const canonical = JSON.stringify(body, (_, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([one], [other]) => one.localeCompare(other)))
+      : value,
+  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Refuses a harness that would mean something different on every run. */
+function validate(harness: Harness | undefined): void {
+  if (!harness) {
+    return;
+  }
+  for (const skill of harness.skills ?? []) {
+    if (!skill.name) {
+      throw new ConfigurationError("a skill needs a name");
+    }
+    if (!skill.description) {
+      throw new ConfigurationError(
+        `${skill.name} needs a description, since it is all the fast model sees`,
+      );
+    }
+    if (!skill.instructions) {
+      throw new ConfigurationError(
+        `${skill.name} needs instructions, since they are what the subagent answers under`,
+      );
+    }
+  }
+}
+
+/** Turns a name into something a call can be joined under. */
+export function userIdOf(name: string): string {
+  const id = name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return id || "vision-agent";
+}

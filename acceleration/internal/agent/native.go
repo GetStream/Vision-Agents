@@ -1,0 +1,856 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// ErrPlaybackFull is a speech-to-speech model's audio arriving faster than the call plays it,
+// which the agent leaves the call for: a failure of the router's own, not the model's.
+var ErrPlaybackFull = errors.New("agent: speech-to-speech playback queue is full")
+
+const (
+	maxNativeRetries        = 3
+	nativeRetrySetupTimeout = 5 * time.Second
+	nativeRetryToolTimeout  = 5 * time.Second
+	nativeRetryBackoff      = 100 * time.Millisecond
+)
+
+// The native agent: one speech-to-speech model in place of a transcriber, a conversation
+// model and a voice.
+//
+// The model owns endpointing, transcription, synthesis and barge-in, so the cascade's
+// flow controller, cadence and chunker do not run. The harness still runs delegated work.
+// What is left for the agent to
+// do is carry audio in and out of the call, keep the history and the timings, report the
+// same events the cascade reports so nothing downstream can tell the two apart, and run
+// the tools the model asks for.
+
+// native reports whether this agent is held by one speech-to-speech model.
+func (a *Agent) native() bool { return a.nativeMode.Load() }
+
+// speech returns the native session, or nil when the agent has not joined or is a cascade.
+func (a *Agent) speech() *stsrouter.Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sts
+}
+
+// Prompt asks a native model to speak now, guided by the text. It is what a greeting is
+// on a native call: the model says what it makes of the words rather than the words.
+func (a *Agent) Prompt(ctx context.Context, text string) error {
+	session := a.speech()
+	if session == nil {
+		if a.native() {
+			return stack.Wrap(errors.New("agent: not joined"))
+		}
+		return stack.Wrap(errors.New("agent: only a speech-to-speech agent takes a prompt; use Say"))
+	}
+	return session.Prompt(text)
+}
+
+// errNativeTakesNoImages is a typed turn with images for a speech-to-speech agent.
+var errNativeTakesNoImages = errors.New("agent: a speech-to-speech agent takes no images on a typed turn")
+
+// errNotJoined is a typed turn for an agent that has not joined, or has left.
+var errNotJoined = errors.New("agent: not joined")
+
+// respondNative injects a typed turn. The model answers it as it would a spoken one, and
+// the reply arrives on the same events. Images are refused: what a native model sees is
+// its own business, and a typed turn is words. Whether a scheduled task fired it is kept
+// for the work the model hands over until the caller is next heard.
+func (a *Agent) respondNative(ctx context.Context, text string, images []llm.ImagePart) error {
+	if len(images) > 0 {
+		return stack.Wrap(errNativeTakesNoImages)
+	}
+	session := a.speech()
+	if session == nil {
+		return stack.Wrap(errNotJoined)
+	}
+	caller := stt.Participant{ID: "caller"}
+	// A typed turn is not transcribed, so it is written into the history here, where a
+	// spoken one is written when the model reports having heard it.
+	a.mu.Lock()
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: harness.Defang(text)})
+	a.heardText = text
+	a.lastParticipant = caller
+	a.scheduled = routing.ScheduledTurn(ctx)
+	a.mu.Unlock()
+	a.turns.typedTurn()
+	return session.SendText(text, caller)
+}
+
+// hear feeds one participant's audio to the model.
+//
+// A speech-to-speech model takes one stream, so the first participant heard is bound to
+// the session and everybody else is dropped until that participant leaves. Two people
+// interleaved into one stream would be neither of them at half speed. A room of people
+// needs a mixer, which this is not.
+func (a *Agent) hear(inbound InboundAudio) {
+	a.mu.Lock()
+	if a.bound.ID == "" {
+		a.bound = inbound.Participant
+		a.lastParticipant = inbound.Participant
+		a.logger.Debug("bound the speech-to-speech session to a participant",
+			"participant", inbound.Participant.ID)
+	}
+	if _, known := a.arrivals[inbound.Participant.ID]; !known {
+		a.arrivals[inbound.Participant.ID] = struct{}{}
+		if inbound.Participant.ID != a.bound.ID {
+			a.logger.Info("dropping a second participant's audio: the model hears one stream",
+				"participant", inbound.Participant.ID, "bound", a.bound.ID)
+		}
+	}
+	bound := a.bound.ID
+	session := a.sts
+	a.mu.Unlock()
+
+	if inbound.Participant.ID != bound || session == nil {
+		return
+	}
+	if err := session.ProcessAudio(inbound.Audio, inbound.Participant); err != nil {
+		if invalid := inbound.Audio.Validate(sts.InputSampleRate); invalid != nil {
+			a.fail(err, "sts")
+			return
+		}
+		if session.Capabilities().Resumable {
+			a.logger.Warn("could not send audio to the speech-to-speech session", "error", err)
+		} else {
+			a.loseNativeWrite(session, err)
+		}
+	}
+}
+
+func (a *Agent) loseNativeWrite(session *stsrouter.Session, err error) {
+	a.logger.Warn("could not send data to the speech-to-speech session", "error", err)
+	a.mu.Lock()
+	if a.sts != session || a.pipe == nil || a.closed {
+		a.mu.Unlock()
+		return
+	}
+	a.pipe.writeFailed.Store(true)
+	a.mu.Unlock()
+	_ = session.Close()
+}
+
+// unbind frees the session for the next speaker when the bound participant leaves.
+func (a *Agent) unbind(participant stt.Participant) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.bound.ID == participant.ID {
+		a.bound = stt.Participant{}
+	}
+	delete(a.arrivals, participant.ID)
+}
+
+// receiveSTS stops interrupted playback before queuing the remaining ordered events.
+func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- sts.Event) {
+	defer p.running.Done()
+	defer close(events)
+	for event := range source {
+		switch typed := event.(type) {
+		case sts.ToolCall:
+			a.mu.Lock()
+			if a.nativeCalls == nil {
+				a.nativeCalls = map[string]llm.ToolCall{}
+			}
+			_, duplicate := a.nativeCalls[typed.CallID]
+			if a.closed || duplicate {
+				a.mu.Unlock()
+				continue
+			}
+			call := llm.ToolCall{ID: typed.CallID, Name: typed.Name, Arguments: typed.Arguments}
+			a.nativeCalls[typed.CallID] = call
+			a.pendingTools++
+			a.running.Add(1)
+			a.mu.Unlock()
+			requested := harness.ToolRequested{
+				TurnID: typed.ResponseID,
+				Call:   call,
+			}
+			ctx, cancel := a.prepareTool(requested)
+			go func() {
+				defer a.running.Done()
+				a.executeTool(ctx, cancel, requested)
+			}()
+			continue
+		case sts.ToolCancel:
+			a.mu.Lock()
+			for _, id := range typed.CallIDs {
+				if cancel := a.toolCancels[id]; cancel != nil {
+					cancel()
+				}
+			}
+			a.mu.Unlock()
+			continue
+		case sts.ResponseStarted:
+			// Kept here, in order with the tool calls and the caller's speech, so a call of
+			// this reply that arrives after the caller is heard is still the task's.
+			// The first reply after the caller stopped answers them, even when a scheduled
+			// turn was typed in before it began: the server answers that turn after it.
+			a.mu.Lock()
+			if a.nativeAnswerDue {
+				a.answerReply = typed.ResponseID
+			} else if a.scheduled {
+				a.scheduledReply = typed.ResponseID
+			}
+			a.nativeAnswerDue = false
+			a.mu.Unlock()
+			a.goodbyeBegan(typed.ResponseID)
+		case sts.SpeechStarted:
+			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
+			// here rather than in consumeSTS: a tool call that follows runs at once, ahead
+			// of the queue. A call already asked keeps the mark it arrived with.
+			a.mu.Lock()
+			a.nativeListening = true
+			a.scheduled = false
+			if a.goodbye != nil {
+				a.goodbye.cancel()
+			}
+			a.mu.Unlock()
+		case sts.SpeechStopped:
+			// A stop is answered by the next reply: the one the server opens for it, or,
+			// when a reply was still open, the one asked for after that reply ends
+			// (openairealtime's owe). On Gemini the open reply takes it, and none follows.
+			a.mu.Lock()
+			a.nativeListening = false
+			a.nativeAnswerDue = !typed.Answered
+			a.mu.Unlock()
+		case sts.AudioChunk:
+			a.goodbyeBegan(typed.ResponseID)
+		}
+		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
+			a.mu.Lock()
+			cut := a.cutShortLocked(complete.ResponseID, time.Now())
+			_, abandoned := a.abandoned[complete.ResponseID]
+			a.abandoned[complete.ResponseID] = struct{}{}
+			playing := a.speakingTurn == complete.ResponseID
+			participant := a.lastParticipant
+			a.mu.Unlock()
+			if playing {
+				a.dropSpeech()
+			}
+			if !abandoned {
+				// The model heard the caller itself: the router has no words of theirs to report.
+				a.interrupted(complete.ResponseID, participant, interruption{cause: causeProvider})
+				a.emitter.Send(cut.cut(Interrupted{TurnID: complete.ResponseID, Participant: participant}))
+			}
+		}
+		select {
+		case events <- event:
+		case <-p.ctx.Done():
+			return
+		default:
+			a.fail(ErrPlaybackFull, "sts")
+			go a.Close()
+			return
+		}
+	}
+}
+
+// consumeSTS keeps transcripts and playback in provider order. Interruption is handled
+// separately by receiveSTS because PublishAudio can block until queued audio plays.
+func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan sts.Event) {
+	defer p.running.Done()
+	// A reply the session dropped before completing will never be heard from it. A session
+	// replaced by another leaves the new one's alone.
+	defer func() {
+		a.mu.Lock()
+		if a.pipe == p {
+			a.forgetUtterancesLocked()
+		}
+		a.mu.Unlock()
+	}()
+	retry := false
+	cleanTerminal := false
+	var retryErr error
+
+	for event := range events {
+		switch typed := event.(type) {
+		case sts.Connected:
+			a.logger.Info("conversing", "provider", typed.Provider, "model", typed.Model)
+
+		case sts.SpeechStarted:
+			a.mu.Lock()
+			a.lastParticipant = a.participantOr(typed.Participant)
+			a.lastHeardAt = typed.At
+			a.mu.Unlock()
+
+		case sts.SpeechStopped:
+			// The moment the caller stopped is when their wait begins. The event's own time
+			// rather than now: a model that had no stop event of its own reports the time
+			// of the last words it heard, which is nearer the truth than when it said so.
+			// A stop heard while a reply is in flight belongs to that reply, which the
+			// provider times: kept here, it would time the next reply from a wait long
+			// over, and hold back the background follow-up until one starts.
+			a.mu.Lock()
+			if a.speakingTurn == "" {
+				a.waitingSince = typed.At
+			}
+			a.lastHeardAt = typed.At
+			a.mu.Unlock()
+
+		case sts.InputTranscript:
+			a.heardNative(typed)
+
+		case sts.OutputTranscript:
+			a.saidNative(typed)
+
+		case sts.ResponseStarted:
+			a.replyStarted(typed)
+
+		case sts.AudioChunk:
+			a.replyAudio(typed)
+
+		case sts.ResponseComplete:
+			a.replyComplete(typed)
+
+		case sts.SessionExpiring:
+			a.logger.Warn("the speech-to-speech session is about to be cut off",
+				"time_left", typed.TimeLeft)
+
+		case sts.Disconnected:
+			if typed.Clean && typed.Reason == "resuming" {
+				continue
+			}
+			if typed.Clean {
+				cleanTerminal = true
+				a.logger.Debug("the speech-to-speech session closed",
+					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			} else {
+				retry = true
+				a.logger.Warn("the speech-to-speech session dropped",
+					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			}
+			if speech != nil {
+				_ = speech.Close()
+			}
+
+		case sts.Error:
+			if typed.Fatal {
+				retry = true
+				retryErr = typed.Err
+				a.logger.Warn("the speech-to-speech session failed",
+					"provider", typed.Provider, "model", typed.Model, "error", typed.Err)
+				if speech != nil {
+					_ = speech.Close()
+				}
+			} else {
+				a.fail(typed.Err, "sts", "provider", typed.Provider, "model", typed.Model)
+			}
+		}
+	}
+
+	go a.recoverNative(p, retry || (p.writeFailed.Load() && !cleanTerminal), retryErr)
+}
+
+// recoverNative replaces a failed native session while keeping the call and its harness.
+func (a *Agent) recoverNative(p *pipeline, retry bool, failure error) {
+	a.swapping.Lock()
+	leave := false
+	defer func() {
+		if leave {
+			a.mu.Lock()
+			if a.closed {
+				failure = nil
+			}
+			a.closed = true
+			a.mu.Unlock()
+		}
+		a.swapping.Unlock()
+		if leave {
+			if a.ctx.Err() == nil {
+				a.fail(failure, "sts")
+			}
+			if err := a.Close(); err != nil {
+				a.logger.Error("could not leave after the speech-to-speech session ended", "error", err)
+			}
+		}
+	}()
+
+	a.mu.Lock()
+	if a.pipe != p || a.closed || p.ctx.Err() != nil || a.ctx.Err() != nil {
+		a.mu.Unlock()
+		return
+	}
+	leave = true
+	a.switching.Store(true)
+	if !retry {
+		a.mu.Unlock()
+		return
+	}
+	p.cancel()
+	a.mu.Unlock()
+	a.dropSpeech()
+	p.running.Wait()
+
+	a.mu.Lock()
+	partial := strings.TrimSpace(a.hearing.String())
+	a.hearing.Reset()
+	a.mu.Unlock()
+	if partial != "" {
+		a.heardNative(sts.InputTranscript{Mode: stt.ModeFinal, Text: partial})
+	}
+
+	if !a.waitNativeTools() {
+		failure = errors.New("agent: native tools did not finish before the retry deadline")
+		return
+	}
+
+	a.mu.Lock()
+	// The goodbye was dropped with the session, so it is as heard as it will ever be.
+	if a.goodbye != nil {
+		a.goodbye.finishLocked()
+	}
+	a.generating = false
+	a.utterances = 0
+	a.speakingTurn = ""
+	a.saying = ""
+	a.nativeListening = false
+	a.nativeAwaiting = false
+	a.waitingSince = time.Time{}
+	a.spoken.Reset()
+	settings := a.settingsLocked()
+	delegating := a.harness != nil
+	a.mu.Unlock()
+
+	for a.nativeRetries < maxNativeRetries {
+		a.nativeRetries++
+		attempt := a.nativeRetries
+
+		timer := time.NewTimer(time.Duration(attempt) * nativeRetryBackoff)
+		select {
+		case <-timer.C:
+		case <-a.ctx.Done():
+			timer.Stop()
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(a.ctx, nativeRetrySetupTimeout)
+		next, err := a.openSpeech(ctx, settings, delegating)
+		cancel()
+		if err != nil {
+			failure = err
+			a.logger.Warn("could not reopen the speech-to-speech session", "attempt", attempt, "error", err)
+			continue
+		}
+
+		if a.ctx.Err() != nil {
+			_ = next.Close()
+			return
+		}
+		for _, err := range a.stopPipeline(true) {
+			a.logger.Warn("closing the failed speech-to-speech session failed", "error", err)
+		}
+		a.startNative(&prepared{sts: next})
+		a.switching.Store(false)
+		leave = false
+		return
+	}
+	if failure == nil {
+		failure = errors.New("agent: native speech-to-speech session could not be restored")
+	}
+}
+
+func (a *Agent) waitNativeTools() bool {
+	timer := time.NewTimer(nativeRetryToolTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		a.mu.Lock()
+		settled := len(a.toolCancels) == 0
+		a.mu.Unlock()
+		if settled {
+			return true
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return false
+		case <-a.ctx.Done():
+			return false
+		}
+	}
+}
+
+// participantOr is the participant an event names, or whoever the session is bound to
+// when it names nobody. The caller holds the lock.
+func (a *Agent) participantOr(named stt.Participant) stt.Participant {
+	if named.ID != "" {
+		return named
+	}
+	if a.bound.ID != "" {
+		return a.bound
+	}
+	return a.lastParticipant
+}
+
+// heardNative reports what the model wrote down of the caller. A settled turn goes into
+// the history and is Heard; anything before that is Hearing, the words still changing.
+func (a *Agent) heardNative(transcript sts.InputTranscript) {
+	a.mu.Lock()
+	participant := a.participantOr(transcript.Participant)
+	if transcript.Mode != stt.ModeFinal {
+		if transcript.Mode == stt.ModeReplacement {
+			a.hearing.Reset()
+		}
+		a.hearing.WriteString(transcript.Text)
+		text := a.hearing.String()
+		a.mu.Unlock()
+		a.emitter.Send(Hearing{Participant: participant, Text: text, Language: transcript.Language})
+		return
+	}
+
+	text := strings.TrimSpace(transcript.Text)
+	a.hearing.Reset()
+	if text == "" {
+		a.mu.Unlock()
+		return
+	}
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: harness.Defang(text)})
+	a.heardText = text
+	a.lastParticipant = participant
+	a.lastHeardAt = time.Now()
+	a.scheduled = false
+	// SpeechStopped starts the wait. Transcription can finish after the reply, so it
+	// must not open another wait for a turn the model has already answered.
+	a.mu.Unlock()
+
+	a.logger.Debug("heard", "participant", participant.ID, "text", text)
+	sendHeard(a.emitter, a.options.OnHeard, Heard{Participant: participant, Text: text, Language: transcript.Language})
+}
+
+// saidNative reports what the model wrote down of itself. Deltas are what a watcher reads
+// as the reply streams; a settled transcript restates the whole and is kept for the
+// history without being reported again.
+func (a *Agent) saidNative(transcript sts.OutputTranscript) {
+	switch transcript.Mode {
+	case stt.ModeFinal, stt.ModeReplacement:
+		a.spoken.Reset()
+		a.spoken.WriteString(transcript.Text)
+		if transcript.Mode == stt.ModeFinal {
+			return
+		}
+	default:
+		a.spoken.WriteString(transcript.Text)
+	}
+	a.mu.Lock()
+	a.saying = a.spoken.String()
+	if heard := a.heard[transcript.ResponseID]; heard != nil {
+		// The message is the transcript, trimmed once the reply settles.
+		heard.text = a.saying
+		heard.message.End = utf8.RuneCountInString(strings.TrimSpace(a.saying))
+	}
+	a.mu.Unlock()
+	a.emitter.Send(ResponseDelta{TurnID: transcript.ResponseID, Text: transcript.Text})
+}
+
+// goodbyeBegan notes the reply a native model gives after end_call ran. It is read in
+// provider order, where everything after the call is the model answering it: a new reply, or
+// more audio from the one that made the call, which is how a model that carries on in the
+// same reply says goodbye.
+func (a *Agent) goodbyeBegan(responseID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	bye := a.goodbye
+	if bye == nil || bye.reply != "" || bye.finished {
+		return
+	}
+	bye.reply = responseID
+	close(bye.started)
+}
+
+// replyStarted opens a turn for a reply the model began.
+//
+// The turn is only measured when somebody was waiting for it: a reply to a prompt, a
+// typed turn or a tool result answers nobody's silence, so timing it from the last time
+// the caller stopped would measure the wrong wait. The cascade skips the same replies.
+func (a *Agent) replyStarted(started sts.ResponseStarted) {
+	a.spoken.Reset()
+	a.mu.Lock()
+	a.nativeAwaiting = false
+	a.speakingTurn = started.ResponseID
+	a.generating = true
+	a.utterances++
+	participant := a.lastParticipant
+	waiting := a.waitingSince
+	a.waitingSince = time.Time{}
+	prompt := a.heardText
+	a.mu.Unlock()
+	a.sending(started.ResponseID, started.ResponseID, "", MessageSpan{})
+
+	if !waiting.IsZero() {
+		a.turns.started(started.ResponseID, kindCaller)
+		a.turns.begin(started.ResponseID, participant, waiting, waiting, 0)
+	} else {
+		// A reply nobody's silence opened, such as what a tool or the subagent came back with,
+		// ends the wait of a caller turn that said nothing and handed work on. The model does
+		// not say what opened it, so it is recorded as the work that turn handed on.
+		a.turns.answering(started.ResponseID)
+	}
+	a.emitter.Send(Responding{TurnID: started.ResponseID, Participant: participant, Prompt: prompt})
+}
+
+// replyAudio publishes a piece of the model's voice, unless the reply was abandoned.
+func (a *Agent) replyAudio(chunk sts.AudioChunk) {
+	a.mu.Lock()
+	_, gone := a.abandoned[chunk.ResponseID]
+	heard := a.utteranceLocked(chunk.ResponseID)
+	a.mu.Unlock()
+	if gone {
+		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
+		return
+	}
+	queued := time.Now()
+	var err error
+	marked, marks := a.options.Edge.(MarkedPlayout)
+	if marks {
+		err = marked.PublishAudioMarked(chunk.Audio, a.carried.marked(withUtterance(a.turns.marksFor(chunk.ResponseID), heard)))
+	} else {
+		err = a.options.Edge.PublishAudio(chunk.Audio)
+	}
+	if errors.Is(err, ErrCallLeft) {
+		if a.leftNoted != chunk.ResponseID {
+			a.leftNoted = chunk.ResponseID
+			a.logger.Debug("dropping audio for a call that has been left", "response", chunk.ResponseID)
+		}
+		return
+	}
+	if err != nil {
+		a.fail(err, "edge")
+	}
+	if a.abandonedTurn(chunk.ResponseID) {
+		a.dropSpeech()
+		return
+	}
+	if heard.sent(chunk.Audio.DurationMs()) && !marks {
+		heard.FirstAudiblePulled(time.Now())
+	}
+	a.spoke(queued, time.Now(), chunk.Audio)
+	// The wait ends when the participant can hear something, so this is timed after the
+	// publish rather than before it.
+	a.turns.firstAudio(chunk.ResponseID, time.Now())
+}
+
+// replyComplete settles a reply. Interrupted is the one signal that the caller cut in.
+//
+// A turn has three legs on a cascade and one here: the model heard, thought and spoke
+// without a seam to time, so only the roundtrip is recorded and the tracker leaves the
+// rest empty rather than zero.
+func (a *Agent) replyComplete(complete sts.ResponseComplete) {
+	said := strings.TrimSpace(a.spoken.String())
+	a.spoken.Reset()
+	heard := a.takeUtterance(complete.ResponseID)
+
+	a.mu.Lock()
+	_, alreadyAbandoned := a.abandoned[complete.ResponseID]
+	complete.Interrupted = complete.Interrupted || alreadyAbandoned
+	if complete.Interrupted {
+		a.abandoned[complete.ResponseID] = struct{}{}
+	}
+	if a.speakingTurn == complete.ResponseID {
+		a.speakingTurn = ""
+	}
+	a.generating = false
+	a.saying = ""
+	// A goodbye cut short is either the caller talking, which SpeechStarted cancels, or a
+	// lost session, which recoverNative finishes: providers report both as interrupted.
+	if bye := a.goodbye; bye != nil && bye.reply == complete.ResponseID && !complete.Interrupted {
+		bye.finishLocked()
+	}
+	if said != "" {
+		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
+		a.keptReply = complete.ResponseID
+	}
+	exchange := lastExchange(a.history)
+	pending := a.pendingTools
+	// A delegate_skill call still running is work for the subagent the harness does not know of yet.
+	delegating := slices.Contains(slices.Collect(maps.Values(a.toolsRunning)), delegateSkill)
+	current := a.harness
+	a.mu.Unlock()
+	a.settle()
+
+	// An interrupted reply was reported by receiveSTS, or by whoever abandoned it first.
+	if !complete.Interrupted {
+		// A reply that handed work on and said nothing leaves the caller waiting for the reply
+		// that delivers it: a tool's answer, or a follow-up for work the subagent does, as the
+		// cascade names the same lines.
+		if delegating || current != nil && (current.Delegating() || current.Pending()) {
+			a.turns.owes(complete.ResponseID, kindFollowUp)
+		} else if pending > 0 {
+			a.turns.owes(complete.ResponseID, kindTool)
+		}
+		a.turns.completed(complete.ResponseID, 0, 1)
+		a.turns.spoke(complete.ResponseID, 0, complete.AudioDurationMs)
+		// Remembering happens off the turn path: extraction takes longer than a turn and
+		// the next thing the participant says must not wait for it.
+		if a.memory != nil {
+			a.memory.Remember(exchange)
+		}
+	}
+
+	a.emitter.Send(Responded{TurnID: complete.ResponseID, Text: said, PendingWork: pending > 0 || a.Busy()})
+	if !complete.Interrupted {
+		a.heardBefore(heard, func() float64 { return a.queuedAheadOf(complete.AudioDurationMs) })
+		a.emitter.Send(Spoke{
+			TurnID:            complete.ResponseID,
+			SynthesisID:       complete.ResponseID,
+			Characters:        int64(utf8.RuneCountInString(said)),
+			Message:           &MessageSpan{End: utf8.RuneCountInString(said)},
+			AudioDurationMs:   complete.AudioDurationMs,
+			TimeToFirstByteMs: complete.TimeToFirstByteMs,
+		})
+	}
+	a.followUp()
+}
+
+const (
+	delegateSkill = "delegate_skill"
+	cancelSkill   = "cancel_skill"
+)
+
+// nativeInstructions is what a speech-to-speech model is told, including how to hand work
+// over when it has a subagent to hand it to. The caller holds the lock.
+func (a *Agent) nativeInstructions(delegating bool) string {
+	if !delegating || len(a.options.Skills.Skills) == 0 {
+		return a.instructions()
+	}
+	return a.instructions() + "\n\nUse delegate_skill for work that needs a subagent. " +
+		"It returns a task ID immediately; the task is still running. Keep conversing while it runs. " +
+		"The findings will arrive later. Never invent the result or delegate the same completed work again. " +
+		"Use cancel_skill when the caller no longer needs that work. Interrupting speech alone does not cancel it."
+}
+
+func (a *Agent) nativeTools(delegating bool) ([]llm.Tool, error) {
+	tools := a.availableTools()
+	if !delegating || len(a.options.Skills.Skills) == 0 {
+		return tools.Requests(), nil
+	}
+	for _, name := range []string{delegateSkill, cancelSkill} {
+		if _, exists := tools.Lookup(name); exists {
+			return nil, stack.Wrap(fmt.Errorf("agent: %s is reserved for native delegation", name))
+		}
+	}
+	names := make([]string, 0, len(a.options.Skills.Skills))
+	var descriptions strings.Builder
+	for _, skill := range a.options.Skills.Skills {
+		names = append(names, skill.Name)
+		fmt.Fprintf(&descriptions, "\n%s: %s", skill.Name, skill.Description)
+	}
+	return append(tools.Requests(), llm.Tool{
+		Name: delegateSkill, Description: "Start background work and return its task ID without waiting for the answer." + descriptions.String(),
+		Parameters: map[string]any{
+			"type": "object", "required": []string{"skill", "prompt"},
+			"properties": map[string]any{
+				"skill":  map[string]any{"type": "string", "enum": names},
+				"prompt": map[string]any{"type": "string", "description": "The question or work to hand over."},
+			},
+		},
+	}, llm.Tool{
+		Name: cancelSkill, Description: "Cancel a skill's background work when it is no longer relevant.",
+		Parameters: map[string]any{
+			"type": "object", "required": []string{"skill"},
+			"properties": map[string]any{"skill": map[string]any{"type": "string", "enum": names}},
+		},
+	}), nil
+}
+
+func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, error) {
+	var arguments struct {
+		Skill  string `json:"skill"`
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
+		return nil, false, err
+	}
+	if a.harness == nil {
+		return nil, false, errors.New("agent: no subagent configured")
+	}
+	if call.Name == cancelSkill {
+		err := a.harness.CancelSkill(arguments.Skill)
+		return llm.TextParts("Cancelled the skill's pending work."), false, err
+	}
+	a.mu.Lock()
+	history := make([]llm.Message, 0, len(a.history))
+	for _, message := range a.history {
+		if message.Role == llm.User || message.Role == llm.Assistant {
+			history = append(history, message)
+		}
+	}
+	charged := a.chargedLocked(context.Background(), a.toolScheduled[call.ID])
+	a.mu.Unlock()
+	id, err := a.harness.Delegate(charged, arguments.Skill, arguments.Prompt, call.ID, nil, history)
+	if err != nil {
+		return nil, false, err
+	}
+	result, err := json.Marshal(map[string]string{"task_id": id, "status": "running"})
+	return llm.TextParts(string(result)), false, err
+}
+
+func (a *Agent) followNative() error {
+	a.following.Lock()
+	defer a.following.Unlock()
+	if a.waitingForPlayout() {
+		return nil
+	}
+	a.mu.Lock()
+	if a.closed || a.switching.Load() || a.interrupting || a.sts == nil || a.harness == nil || a.generating || a.utterances > 0 || a.pendingTools > 0 || a.nativeAwaiting || a.nativeListening || !a.waitingSince.IsZero() || !a.harness.Pending() {
+		a.mu.Unlock()
+		return nil
+	}
+	a.generating = true
+	prompt := a.instructions() + "\n\nThis reply must deliver the following background task update to the caller. " +
+		"The update supersedes the earlier running acknowledgement. Do not delegate again or say you are still waiting.\n" + a.harness.TakeNotes()
+	model := a.sts
+	a.mu.Unlock()
+	if err := model.Prompt(prompt); err != nil {
+		a.mu.Lock()
+		a.generating = false
+		a.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (a *Agent) consumeNativePresence(p *pipeline) {
+	defer p.running.Done()
+	ticker := time.NewTicker(presenceTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.followUp()
+			a.sayNativeToolUpdate()
+			a.tickApprovals()
+		case <-p.ctx.Done():
+			return
+		}
+	}
+}
+
+// queuedAheadOf is how many milliseconds of speech are queued at the edge ahead of the last
+// ownMs of it. A speech-to-speech model has no voice reading the queue's counts, so this is
+// their one reader.
+func (a *Agent) queuedAheadOf(ownMs float64) float64 {
+	counter, ok := a.options.Edge.(PlayoutCounter)
+	if !ok {
+		return 0
+	}
+	return queuedAhead(counter.PlayoutStats(), true, ownMs)
+}

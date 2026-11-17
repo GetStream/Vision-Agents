@@ -96,7 +96,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs: Any) -
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent) -> None:
         if event.participant.user.id != "gemini-live-agent":
             await asyncio.sleep(2)
-            await agent.simple_response(
+            await agent.responses.create(
                 text="Say hello and let the user know you can answer questions or check the weather."
             )
 

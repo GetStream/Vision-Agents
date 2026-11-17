@@ -13,8 +13,9 @@ To run only unit tests (no model loading):
 
 import asyncio
 import os
+import re
 from pathlib import Path
-from typing import Iterator
+from typing import AsyncIterator, Iterator
 
 import numpy as np
 import pytest
@@ -27,6 +28,26 @@ from vision_agents.plugins.moondream.moondream_utils import annotate_detections
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class TestLocalDetectionProcessor:
+    @pytest.fixture
+    async def default_processor(self) -> AsyncIterator[LocalDetectionProcessor]:
+        """Create LocalDetectionProcessor with default arguments, without loading the model."""
+        processor = LocalDetectionProcessor()
+        try:
+            yield processor
+        finally:
+            await processor.close()
+
+    async def test_default_model_is_pinned_to_a_commit(
+        self, default_processor: LocalDetectionProcessor
+    ):
+        assert re.fullmatch(r"[0-9a-f]{40}", default_processor.revision)
+
+    async def test_custom_model_without_revision_raises(self):
+        with pytest.raises(ValueError, match="revision"):
+            LocalDetectionProcessor(model_name="example/moondream-finetune")
 
 
 @pytest.mark.skip("Skip Moondream local tests because they take too long to run")

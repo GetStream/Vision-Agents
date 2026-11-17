@@ -1,0 +1,476 @@
+package simulation
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// script is what the models in a test are going to say. The caller, the judge and the
+// rewriter all reach the same router and are told apart by what they were told to be, which
+// is also how a test says which of them it is answering for.
+type script struct {
+	mu sync.Mutex
+	// caller is answered in order, one per turn.
+	caller   []string
+	judge    string
+	rewrites string
+	asked    []llm.ResponseParams
+}
+
+func (s *script) next(params llm.ResponseParams) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asked = append(s.asked, params)
+
+	switch {
+	case strings.HasPrefix(params.Instructions, judgeInstructions):
+		return s.judge
+	case strings.HasPrefix(params.Instructions, expandInstructions):
+		return s.rewrites
+	case len(s.caller) > 0:
+		said := s.caller[0]
+		s.caller = s.caller[1:]
+		return said
+	default:
+		return `{"say": "", "done": true}`
+	}
+}
+
+func (s *script) requests() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.ResponseParams(nil), s.asked...)
+}
+
+// scriptedModel is one model reading from the script. Each is its own because a router
+// hands out a session per Start.
+type scriptedModel struct{ script *script }
+
+func (m *scriptedModel) Start(context.Context) error { return nil }
+
+func (m *scriptedModel) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   m.Provider(),
+		Model:      m.Model(),
+	})
+	script.OutputText(m.script.next(params))
+	script.Done()
+	return script.Stream(), nil
+}
+
+func (m *scriptedModel) Provider() string               { return "scripted" }
+func (m *scriptedModel) Model() string                  { return "scripted-model" }
+func (m *scriptedModel) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (m *scriptedModel) Close() error                   { return nil }
+
+// scriptedTransport is an agent that has already decided what it is going to say, which is
+// what testing the loop above it needs rather than an agent.
+type scriptedTransport struct {
+	replies  []string
+	greeting string
+	fail     error
+
+	mu    sync.Mutex
+	heard []string
+}
+
+func (t *scriptedTransport) Session() *session.Session { return nil }
+
+func (t *scriptedTransport) Opening() string { return t.greeting }
+
+func (t *scriptedTransport) Say(_ context.Context, text string) (store.SimulationLine, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.heard = append(t.heard, text)
+
+	if len(t.replies) == 0 {
+		if t.fail != nil {
+			return store.SimulationLine{}, t.fail
+		}
+		return store.SimulationLine{Text: "I see."}, nil
+	}
+	reply := t.replies[0]
+	t.replies = t.replies[1:]
+	return store.SimulationLine{Text: reply}, nil
+}
+
+func (t *scriptedTransport) Close() error { return nil }
+
+func (t *scriptedTransport) said() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.heard...)
+}
+
+type SimulationSuite struct {
+	suite.Suite
+	ctx    context.Context
+	script *script
+	router *llmrouter.Router
+}
+
+func TestSimulationSuite(t *testing.T) {
+	suite.Run(t, new(SimulationSuite))
+}
+
+func (s *SimulationSuite) SetupTest() {
+	s.ctx = context.Background()
+	s.script = &script{}
+
+	registry := llmrouter.NewRegistry()
+	registry.Register("scripted", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedModel{script: s.script}, nil
+	})
+	router, err := llmrouter.New(llmrouter.Options{
+		Config:   scriptedConfig(),
+		Registry: registry,
+		Logger:   slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	s.router = router
+}
+
+// judged is what the judge was last handed to rule on.
+func (s *SimulationSuite) judged() string {
+	asked := s.script.requests()
+	s.Require().NotEmpty(asked)
+	return asked[len(asked)-1].Input[0].Content
+}
+
+// caller opens a persona over the scripted router.
+func (s *SimulationSuite) caller(brief string) *caller {
+	persona, err := newCaller(s.ctx, s.router, llmrouter.Request{
+		CustomerID: "customer-1", Target: "scripted/scripted-model",
+	}, brief)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = persona.Close() })
+	return persona
+}
+
+func (s *SimulationSuite) TestTheConversationEndsWhenTheCallerHasAskedEverythingItCameToAsk() {
+	s.script.caller = []string{
+		`{"say": "I would like a pasta bolognese.", "done": false}`,
+		`{"say": "Actually make it a pepperoni pizza.", "done": false}`,
+		`{"say": "", "done": true}`,
+	}
+	over := &scriptedTransport{replies: []string{"One bolognese.", "Changed to pepperoni."}}
+
+	so, why, err := exchange(s.ctx, s.caller("order some food"), over, 12)
+
+	s.Require().NoError(err)
+	s.Equal(store.EndedComplete, why)
+	s.Equal(2, so.turns())
+	s.Len(so, 4)
+	s.Equal("I would like a pasta bolognese.", so[0].Text)
+	s.True(so[0].Caller)
+	s.Equal("One bolognese.", so[1].Text)
+	s.False(so[1].Caller)
+	s.Equal([]string{"I would like a pasta bolognese.", "Actually make it a pepperoni pizza."}, over.said())
+}
+
+func (s *SimulationSuite) TestAConversationStopsAtTheTurnLimitWhenTheCallerNeverFinishes() {
+	s.script.caller = []string{
+		`{"say": "One.", "done": false}`,
+		`{"say": "Two.", "done": false}`,
+		`{"say": "Three.", "done": false}`,
+		`{"say": "Four.", "done": false}`,
+	}
+	over := &scriptedTransport{}
+
+	so, why, err := exchange(s.ctx, s.caller("keep talking"), over, 3)
+
+	s.Require().NoError(err)
+	s.Equal(store.EndedTurns, why)
+	s.Equal(3, so.turns())
+}
+
+func (s *SimulationSuite) TestAConversationThatFailedPartWayThroughKeepsWhatWasSaidBeforeIt() {
+	s.script.caller = []string{
+		`{"say": "Is anyone there?", "done": false}`,
+		`{"say": "Hello?", "done": false}`,
+	}
+	over := &scriptedTransport{replies: []string{"Hello."}, fail: errors.New("the agent did not answer")}
+
+	so, why, err := exchange(s.ctx, s.caller("say hello"), over, 12)
+
+	s.Require().Error(err)
+	s.Equal(store.EndedFailed, why)
+	// The failed turn is still in the transcript: what the caller said before nobody
+	// answered is exactly what makes the failure readable.
+	s.Len(so, 3)
+	s.Equal("Hello?", so[2].Text)
+}
+
+func (s *SimulationSuite) TestACallerWithNothingLeftToSayHasFinishedRatherThanFailed() {
+	s.script.caller = []string{`{"say": "   ", "done": false}`}
+
+	so, why, err := exchange(s.ctx, s.caller("ask nothing"), &scriptedTransport{}, 12)
+
+	s.Require().NoError(err)
+	s.Equal(store.EndedComplete, why)
+	s.Empty(so)
+}
+
+func (s *SimulationSuite) TestTheCallerIsNeverToldItIsTalkingToAnAgent() {
+	s.script.caller = []string{`{"say": "", "done": true}`}
+
+	_, _, err := exchange(s.ctx, s.caller("order a pizza"), &scriptedTransport{}, 12)
+	s.Require().NoError(err)
+
+	asked := s.script.requests()
+	s.Require().NotEmpty(asked)
+	s.Contains(asked[0].Instructions, "order a pizza")
+	s.Contains(asked[0].Instructions, "Never mention that this is a test")
+	s.Equal(llm.FormatJSONObject, asked[0].Text.Format,
+		"the caller is asked for a decision, so it has to answer in JSON")
+}
+
+func (s *SimulationSuite) TestTheCallerAnswersTheGreetingRatherThanTalkingOverIt() {
+	s.script.caller = []string{`{"say": "Hi, one pizza please.", "done": false}`, `{"say": "", "done": true}`}
+	over := &scriptedTransport{greeting: "Northwind, how can I help?", replies: []string{"Certainly."}}
+
+	so, why, err := exchange(s.ctx, s.caller("order a pizza"), over, 12)
+
+	s.Require().NoError(err)
+	s.Equal(store.EndedComplete, why)
+	s.Require().Len(so, 3)
+	s.Equal("Northwind, how can I help?", so[0].Text)
+	s.False(so[0].Caller)
+
+	// The caller was handed the greeting before it decided what to say, which is the whole
+	// reason a greeting is in the transcript rather than only on the wire.
+	asked := s.script.requests()
+	s.Require().NotEmpty(asked)
+	s.Contains(asked[0].Input[0].Content, "Northwind, how can I help?")
+}
+
+func (s *SimulationSuite) TestAFencedRulingIsStillUnderstood() {
+	ruled, err := parseVerdict("```json\n{\"passed\": true, \"reason\": \"They ordered it.\", \"score\": 5}\n```")
+
+	s.Require().NoError(err)
+	s.True(ruled.Passed)
+	s.Equal(5, ruled.Score)
+}
+
+func (s *SimulationSuite) TestARulingWithNoReasonIsRefusedRatherThanBelieved() {
+	_, err := parseVerdict(`{"passed": true, "reason": "  "}`)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "without saying why")
+}
+
+func (s *SimulationSuite) TestTheJudgeIsAskedOnlyTheQuestionItWasGiven() {
+	s.script.judge = `{"passed": false, "reason": "No delivery time was agreed.", "score": 4}`
+
+	ruled, err := rule(s.ctx, s.router, llmrouter.Request{
+		CustomerID: "customer-1", Target: "scripted/scripted-model",
+	}, "judge-1", "was an order placed for 8pm?", nil, said{
+		{Caller: true, Text: "One pizza please."},
+		{Text: "Certainly."},
+	})
+
+	s.Require().NoError(err)
+	s.False(ruled.Passed)
+	s.Equal(4, ruled.Score)
+
+	content := s.judged()
+	s.Contains(content, "was an order placed for 8pm?")
+	s.Contains(content, "Caller: One pizza please.")
+	s.Contains(content, "Agent: Certainly.")
+	s.NotContains(content, "tools", "an agent with no tools can only act in words")
+}
+
+func (s *SimulationSuite) TestTheJudgeReadsWhatTheAgentsToolsDidAndNotOnlyWhatItSaid() {
+	s.script.judge = `{"passed": true, "reason": "place_order was called for a pizza hawaii.", "score": 5}`
+
+	_, err := rule(s.ctx, s.router, llmrouter.Request{
+		CustomerID: "customer-1", Target: "scripted/scripted-model",
+	}, "judge-1", "Verify that an order was placed for pizza hawaii.", []string{"place_order"}, said{
+		{Caller: true, Text: "I'd like a pasta bolognese."},
+		{Text: "One bolognese, noted.", Tools: []store.SimulationTool{
+			{Name: "place_order", Arguments: `{"item":"pasta bolognese"}`, Result: "order 7 placed"},
+		}},
+		{Caller: true, Text: "How long is the wait?"},
+		{Text: "About twenty minutes."},
+		{Caller: true, Text: "Actually, make it a pizza hawaii."},
+		{Text: "Done, one pizza hawaii.", Tools: []store.SimulationTool{
+			{Name: "place_order", Arguments: `{"item":"pizza hawaii"}`, Error: "the kitchen is closed"},
+		}},
+	})
+	s.Require().NoError(err)
+
+	content := s.judged()
+	s.Contains(content, "The agent could act through these tools: place_order.")
+	s.Contains(content, `Agent used place_order with {"item":"pasta bolognese"}, which answered: order 7 placed`)
+	// A failed order reads as one, whatever the agent went on to say about it.
+	s.Contains(content, `Agent used place_order with {"item":"pizza hawaii"}, which failed: the kitchen is closed`+
+		"\nAgent: Done, one pizza hawaii.")
+}
+
+func (s *SimulationSuite) TestRewritingKeepsAtMostAsManyWaysOfAskingAsWereWanted() {
+	s.script.rewrites = `{"variations": ["one", "two", "three", "four"]}`
+
+	rewrites, err := expand(s.ctx, s.router, llmrouter.Request{
+		CustomerID: "customer-1", Target: "scripted/scripted-model",
+	}, "expand-1", "order a pizza", 2)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"one", "two"}, rewrites)
+}
+
+func (s *SimulationSuite) TestFewerWaysOfAskingThanWereWantedIsWhatTheRunUses() {
+	s.script.rewrites = `{"variations": ["one", "  ", "two"]}`
+
+	rewrites, err := expand(s.ctx, s.router, llmrouter.Request{
+		CustomerID: "customer-1", Target: "scripted/scripted-model",
+	}, "expand-1", "order a pizza", 9)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"one", "two"}, rewrites)
+}
+
+func (s *SimulationSuite) TestARunnerNeedsSomewhereToWriteAModelAndAnAgentToTest() {
+	_, err := New(Options{})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "database")
+
+	_, err = New(Options{Store: &store.Store{}})
+	s.Require().Error(err)
+	s.Contains(err.Error(), "session manager")
+}
+
+func (s *SimulationSuite) TestARunPassesOnlyIfEveryOneOfItsConversationsDid() {
+	done := context.Background()
+
+	s.Equal(store.SimulationPassed, ended(done, store.SimulationRun{Cases: 3, Passed: 3}))
+	s.Equal(store.SimulationFailed, ended(done, store.SimulationRun{Cases: 3, Passed: 2, Failed: 1}))
+	// A conversation that never got as far as a ruling is not a conversation that failed,
+	// so a run missing one of them is neither passed nor failed.
+	s.Equal(store.SimulationErrored, ended(done, store.SimulationRun{Cases: 3, Passed: 2}))
+
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.Equal(store.SimulationCancelled, ended(stopped, store.SimulationRun{Cases: 3, Passed: 1}))
+}
+
+// scriptedConfig is one provider, which is all these tests need from routing.
+func scriptedConfig() routing.ModalityConfig {
+	return routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{{
+			Provider:  "scripted",
+			Model:     "scripted-model",
+			Languages: []string{"en"},
+			Realtime:  true,
+		}},
+		Aliases: map[string]routing.Alias{
+			"llm-fast":            {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-flow":            {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-scenario-runner": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-judge":           {Languages: []string{"en"}},
+		},
+	}
+}
+
+// ruling is a whole ruling, as long as the judge is asked for.
+const ruling = `{"passed": true, "reason": "The agent confirmed the order: \"Your pizza is on its way for 8pm.\"", "score": 5}`
+
+// ruledBy is what a judge whose model is thinker ruled on a short conversation.
+func (s *SimulationSuite) ruledBy(thinker *llmtest.Thinker) (verdict, error) {
+	registry := llmrouter.NewRegistry()
+	registry.Register("scripted", func(routing.Spec) (llmrouter.Provider, error) { return thinker, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: scriptedConfig(), Registry: registry, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return rule(s.ctx, router, llmrouter.Request{CustomerID: "customer-1"}, "judge-thought-over",
+		"was an order placed for 8pm?", nil, said{
+			{Caller: true, Text: "One pizza for 8pm please."},
+			{Text: "Your pizza is on its way for 8pm."},
+		})
+}
+
+// The most Claude Opus 5.5 was seen thinking on one turn on staging, all of it out of the
+// same cap as the ruling.
+func (s *SimulationSuite) TestAJudgeThatThinksBeforeItRulesStillWritesTheWholeRuling() {
+	ruled, err := s.ruledBy(&llmtest.Thinker{Thinks: 1300, Answer: ruling})
+
+	s.Require().NoError(err)
+	s.True(ruled.Passed)
+	s.Contains(ruled.Reason, "on its way for 8pm")
+}
+
+// thinkingRouter is a router whose every model is thinker.
+func (s *SimulationSuite) thinkingRouter(thinker *llmtest.Thinker) *llmrouter.Router {
+	registry := llmrouter.NewRegistry()
+	registry.Register("scripted", func(routing.Spec) (llmrouter.Provider, error) { return thinker, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: scriptedConfig(), Registry: registry, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+func (s *SimulationSuite) TestACallerThatThinksBeforeItSpeaksStillSaysTheWholeTurn() {
+	router := s.thinkingRouter(&llmtest.Thinker{Thinks: 1300, Answer: `{"say": "One pizza for 8pm please.", "done": false}`})
+	person, err := newCaller(s.ctx, router, llmrouter.Request{CustomerID: "customer-1"}, "order a pizza")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = person.Close() })
+
+	next, err := person.next(s.ctx, said{})
+
+	s.Require().NoError(err)
+	s.Equal("One pizza for 8pm please.", next.Say)
+}
+
+func (s *SimulationSuite) TestARewriterThatThinksBeforeItWritesStillWritesAllTheRewrites() {
+	// The thinking alone is past the rewrite's own 1,500 tokens.
+	router := s.thinkingRouter(&llmtest.Thinker{Thinks: expandTokens + 500, Answer: `{"variations": ["Order a pizza, bluntly.", "Order a pizza, chattily."]}`})
+
+	rewrites, err := expand(s.ctx, router, llmrouter.Request{CustomerID: "customer-1"}, "rewrite-thought-over", "order a pizza", 2)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Order a pizza, bluntly.", "Order a pizza, chattily."}, rewrites)
+}
+
+func (s *SimulationSuite) TestARulingTheCapCutOffSaysSo() {
+	// The cap ends the ruling 20 tokens short of its closing brace.
+	_, err := s.ruledBy(&llmtest.Thinker{Thinks: judgeTokens + llm.ThinkingRoom - len(ruling) + 20, Answer: ruling})
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "decode the ruling")
+	// 4,500 tokens were written, the last 20 of them short of the ruling's end; the rest was thinking.
+	s.Contains(err.Error(), fmt.Sprintf("the ruling stopped early (max_output_tokens) after 4500 output tokens, %d of them thinking",
+		4500-len(ruling)+20))
+}
+
+// A ruling that is whole but is not JSON was not cut off, so the cap is not what to blame.
+func (s *SimulationSuite) TestARulingThatIsNotJSONKeepsItsOwnError() {
+	_, err := s.ruledBy(&llmtest.Thinker{Thinks: 100, Answer: "The agent placed the order."})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "decode the ruling")
+	s.NotContains(err.Error(), "stopped early")
+}
+
+func (s *SimulationSuite) TestAWholeRulingIsReadEvenWhenTheCapCutWhatFollowedIt() {
+	// The cap ends the answer in the blank lines after the ruling, so the ruling is whole.
+	trailed := ruling + strings.Repeat("\n", 40)
+	ruled, err := s.ruledBy(&llmtest.Thinker{Thinks: judgeTokens + llm.ThinkingRoom - len(ruling) - 20, Answer: trailed})
+
+	s.Require().NoError(err)
+	s.True(ruled.Passed)
+}

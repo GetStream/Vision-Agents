@@ -1,0 +1,197 @@
+package agent
+
+import (
+	"log/slog"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+func TestTurnTracingSuite(t *testing.T) { suite.Run(t, new(TurnTracingSuite)) }
+
+type TurnTracingSuite struct {
+	suite.Suite
+
+	recorded *tracetest.SpanRecorder
+	owner    routing.Owner
+}
+
+// turnSpans is the provider the package's tracer records into, installed once per process.
+// tracer is taken at package initialisation, and the global provider hands a tracer taken
+// that early to the first provider installed and to no later one (delegateTraceOnce in
+// otel's internal/global/state.go). A provider per suite run would leave every run after
+// the first, as with -count=2, recording into the first one's recorder.
+var turnSpans = sync.OnceValue(func() *sdktrace.TracerProvider {
+	provider := sdktrace.NewTracerProvider()
+	otel.SetTracerProvider(provider)
+	return provider
+})
+
+// SetupSuite gives this run a recorder of its own on the one provider.
+func (s *TurnTracingSuite) SetupSuite() {
+	s.recorded = tracetest.NewSpanRecorder()
+	turnSpans().RegisterSpanProcessor(s.recorded)
+	s.owner = routing.Owner{AgentID: "agent-1", CallID: "call-1"}
+}
+
+// TearDownSuite stops this run's recorder from receiving the spans of the runs after it.
+func (s *TurnTracingSuite) TearDownSuite() { turnSpans().UnregisterSpanProcessor(s.recorded) }
+
+func (s *TurnTracingSuite) SetupTest() { s.recorded.Reset() }
+
+// turn is one exchange whose stages each took 100ms, starting from the transcript.
+func (s *TurnTracingSuite) turn() *openTurn {
+	at := time.Now().Add(-time.Second)
+	step := func(n int) time.Time { return at.Add(time.Duration(n) * 100 * time.Millisecond) }
+	return &openTurn{
+		participant:  stt.Participant{ID: "caller"},
+		transcriptAt: at,
+		readyAt:      step(1),
+		modelAt:      step(2),
+		firstTextAt:  step(3),
+		ttsAt:        step(4),
+		firstAudioAt: step(5),
+		queuedAt:     step(5),
+		pulledAt:     step(6),
+		sttLatencyMs: 50,
+	}
+}
+
+// spans returns what was recorded, by name.
+func (s *TurnTracingSuite) spans() map[string]sdktrace.ReadOnlySpan {
+	byName := map[string]sdktrace.ReadOnlySpan{}
+	for _, span := range s.recorded.Ended() {
+		byName[span.Name()] = span
+	}
+	return byName
+}
+
+func (s *TurnTracingSuite) TestEveryStageOfATurnIsASpanOfItsOwnLength() {
+	current := s.turn()
+
+	traceTurn(s.owner, "turn-1", current)
+
+	spans := s.spans()
+	s.Require().Contains(spans, "agent.turn")
+	for _, name := range []string{"turn.stt", "turn.cadence", "turn.decision", "turn.llm", "turn.tts", "turn.playout"} {
+		s.Require().Containsf(spans, name, "%s should be a stage of the turn", name)
+		s.Equal(spans["agent.turn"].SpanContext().SpanID(), spans[name].Parent().SpanID(),
+			"%s belongs to the turn it was part of", name)
+	}
+
+	s.Equal(50*time.Millisecond, spans["turn.stt"].EndTime().Sub(spans["turn.stt"].StartTime()))
+	s.Equal(100*time.Millisecond, spans["turn.decision"].EndTime().Sub(spans["turn.decision"].StartTime()))
+	s.Equal(200*time.Millisecond, spans["turn.tts"].EndTime().Sub(spans["turn.tts"].StartTime()),
+		"the voice stage runs from the first words to the first audio")
+	s.Equal(600*time.Millisecond, spans["agent.turn"].EndTime().Sub(spans["agent.turn"].StartTime()))
+}
+
+func (s *TurnTracingSuite) TestTheTurnSaysWhoItWasFor() {
+	traceTurn(s.owner, "turn-1", s.turn())
+
+	var attributes []string
+	for _, attribute := range s.spans()["agent.turn"].Attributes() {
+		attributes = append(attributes, string(attribute.Key)+"="+attribute.Value.Emit())
+	}
+	s.Subset(attributes, []string{"turn.id=turn-1", "agent.id=agent-1", "call.id=call-1", "participant.id=caller"})
+}
+
+// attributes is the agent.turn span's attributes, as key=value.
+func (s *TurnTracingSuite) attributes() []string {
+	var attributes []string
+	for _, attribute := range s.spans()["agent.turn"].Attributes() {
+		attributes = append(attributes, string(attribute.Key)+"="+attribute.Value.Emit())
+	}
+	return attributes
+}
+
+func (s *TurnTracingSuite) TestAnInterruptedTurnSaysWhy() {
+	tracker := newTurnTracker(s.owner, nil)
+	at := time.Now().Add(-time.Second)
+	tracker.begin("turn-1", stt.Participant{ID: "caller"}, at.Add(100*time.Millisecond), at, 0)
+	tracker.firstAudio("turn-1", at.Add(200*time.Millisecond))
+
+	played := tracker.interrupt("turn-1", interruption{cause: causeTalking, ruler: harness.Deadline, echo: echoMost})
+
+	s.Subset(s.attributes(), []string{"turn.interrupted=true", "turn.interrupt.cause=talking",
+		"turn.interrupt.ruler=deadline", "turn.interrupt.echo=most"})
+	s.GreaterOrEqual(played, 800.0, "the reply went out 800 ms before it was cut")
+}
+
+func (s *TurnTracingSuite) TestAnInterruptionNoModelRuledOnSaysNone() {
+	tracker := newTurnTracker(s.owner, nil)
+	at := time.Now().Add(-time.Second)
+	tracker.begin("turn-1", stt.Participant{ID: "caller"}, at.Add(100*time.Millisecond), at, 0)
+
+	played := tracker.interrupt("turn-1", interruption{cause: causeAPI, echo: echoNoWords})
+
+	s.Subset(s.attributes(), []string{"turn.interrupt.cause=api", "turn.interrupt.ruler=none"})
+	s.Zero(played, "none of the reply went out")
+}
+
+func (s *TurnTracingSuite) TestATurnTheFirstReportToldTakesNoOtherCauseInItsSpan() {
+	tracker := newTurnTracker(s.owner, nil)
+	agent := &Agent{logger: slog.New(slog.DiscardHandler), turns: tracker,
+		toldInterrupts: map[string]struct{}{"turn-1": {}}}
+	at := time.Now().Add(-time.Second)
+	tracker.begin("turn-1", stt.Participant{ID: "caller"}, at.Add(100*time.Millisecond), at, 0)
+
+	// The first report has claimed the turn and is about to close it with its own cause.
+	agent.interrupted("turn-1", stt.Participant{ID: "caller"}, interruption{cause: causeAPI})
+	s.Empty(s.recorded.Ended(), "the second report does not close the turn with its cause")
+
+	tracker.interrupt("turn-1", interruption{cause: causeTalking})
+	s.Subset(s.attributes(), []string{"turn.interrupt.cause=talking"})
+}
+
+func (s *TurnTracingSuite) TestATurnNobodyInterruptedSaysNoCause() {
+	traceTurn(s.owner, "turn-1", s.turn())
+
+	for _, attribute := range s.attributes() {
+		s.NotContains(attribute, "turn.interrupt.")
+	}
+}
+
+func (s *TurnTracingSuite) TestAStageThatNeverRanIsNotRecorded() {
+	cut := s.turn()
+	cut.modelAt, cut.firstTextAt, cut.ttsAt = time.Time{}, time.Time{}, time.Time{}
+	cut.firstAudioAt, cut.queuedAt, cut.pulledAt = time.Time{}, time.Time{}, time.Time{}
+	cut.interrupted = true
+
+	traceTurn(s.owner, "turn-1", cut)
+
+	spans := s.spans()
+	s.Contains(spans, "turn.cadence")
+	s.NotContains(spans, "turn.llm", "a turn cut off before the model answered has no reply to show")
+	s.NotContains(spans, "turn.playout")
+}
+
+func (s *TurnTracingSuite) TestATurnThatNeverStartedIsNotRecorded() {
+	traceTurn(s.owner, "turn-1", &openTurn{})
+
+	s.Empty(s.recorded.Ended())
+}
+
+// Catches a caller turn answered by a later line traced under the line's id (AI-2969 R1.4).
+func (s *TurnTracingSuite) TestACallerTurnAnsweredByALaterLineIsTracedUnderItsOwnID() {
+	tracker := newTurnTracker(s.owner, nil)
+	at := time.Now()
+	tracker.started("turn-caller", kindCaller)
+	tracker.begin("turn-caller", stt.Participant{ID: "alice"}, at, at, 50)
+	tracker.owes("turn-caller", "")
+	tracker.completed("turn-caller", 0, 0)
+	tracker.started("reply-follow", kindFollowUp)
+
+	tracker.firstAudio("reply-follow", at.Add(400*time.Millisecond))
+
+	s.Contains(s.attributes(), "turn.id=turn-caller")
+}

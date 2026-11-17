@@ -1,0 +1,213 @@
+//go:build integration
+
+package mem0
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+)
+
+// extractionGrace is how long mem0 is given to turn a handed-over conversation into
+// memories, since it does that on its own side rather than while the call waits.
+const extractionGrace = 30 * time.Second
+
+// extractionBound is how long mem0 may take to finish a conversation it was handed. It starts
+// one its worker lost again ten minutes after queueing it: of 775 adds read back from mem0's
+// events on 2026-10-28, four started 10m00s late and were done within 10m10s (AI-2162).
+const extractionBound = 12 * time.Minute
+
+type Mem0IntegrationSuite struct {
+	suite.Suite
+	store *Store
+	scope memory.Scope
+	// log is the store's log, which names the event each conversation was queued as.
+	log queueLog
+}
+
+func TestMem0IntegrationSuite(t *testing.T) {
+	suite.Run(t, new(Mem0IntegrationSuite))
+}
+
+// SetupSuite runs the suite only when asked: RUN_MEM0_SUITE=1 as well as MEM0_API_KEY. It
+// writes and searches real memories on mem0's quota, and a key in the repo's .env alone is
+// not asking.
+func (s *Mem0IntegrationSuite) SetupSuite() {
+	if os.Getenv("RUN_MEM0_SUITE") != "1" {
+		s.T().Skip("RUN_MEM0_SUITE=1 runs this suite against the real mem0")
+	}
+	if os.Getenv(apiKeyEnvVar) == "" {
+		s.T().Skip(apiKeyEnvVar + " not set")
+	}
+
+	store, err := New(Options{Logger: slog.New(slog.NewJSONHandler(&s.log.Buffer, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	s.Require().NoError(err)
+	s.store = store
+
+	// A fresh user per run, so one run's memories are not another's.
+	s.scope = memory.Scope{
+		AppID:   "acceleration-test",
+		UserID:  fmt.Sprintf("test-%d", time.Now().UnixNano()),
+		AgentID: "acceleration-test-agent",
+		RunID:   fmt.Sprintf("run-%d", time.Now().UnixNano()),
+		Extra:   map[string]string{"company_id": "12312"},
+	}
+}
+
+func (s *Mem0IntegrationSuite) TestWhatIsToldToMem0CanBeRecalledAfterwards() {
+	ctx, cancel := context.WithTimeout(context.Background(), extractionBound+2*time.Minute)
+	defer cancel()
+
+	err := s.remember(ctx, s.scope, []llm.Message{
+		{Role: llm.User, Content: "I am allergic to peanuts and I live in Amsterdam."},
+		{Role: llm.Assistant, Content: "Noted, no peanuts."},
+	})
+	s.Require().NoError(err)
+	s.extracted(ctx)
+
+	// Extraction is asynchronous, so this polls rather than asserting straight away.
+	deadline := time.Now().Add(extractionGrace)
+	var recalled []memory.Memory
+	for time.Now().Before(deadline) {
+		recalled, err = s.recall(ctx, memory.Query{
+			Scope: s.scope,
+			Text:  "what should I not feed them",
+			Limit: 5,
+		})
+		s.Require().NoError(err)
+		if len(recalled) > 0 {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	s.Require().NotEmpty(recalled, "mem0 never produced a memory from the conversation")
+	for _, remembered := range recalled {
+		s.NotEmpty(remembered.Text)
+		s.NotEmpty(remembered.ID, "a memory has to be identifiable to be corrected later")
+	}
+
+	// A later session is a different run and still knows what this one learned.
+	later := s.scope
+	later.RunID += "-later"
+	recalled, err = s.recall(ctx, memory.Query{Scope: later, Text: "what should I not feed them"})
+	s.Require().NoError(err)
+	s.NotEmpty(recalled, "memories are carried from one session into the next")
+
+	otherCompany := s.scope
+	otherCompany.Extra = map[string]string{"company_id": "99999"}
+	recalled, err = s.recall(ctx, memory.Query{Scope: otherCompany, Text: "what should I not feed them"})
+	s.Require().NoError(err)
+	s.Empty(recalled, "a label narrows recall to what was written under it")
+}
+
+func (s *Mem0IntegrationSuite) TestForgettingASessionKeepsTheOthersAndTruncatingKeepsNone() {
+	ctx, cancel := context.WithTimeout(context.Background(), extractionBound+3*time.Minute)
+	defer cancel()
+
+	user := s.scope
+	user.UserID += "-forgets"
+	first, second := user, user
+	first.RunID += "-first"
+	second.RunID += "-second"
+	s.Require().NoError(s.remember(ctx, first, []llm.Message{
+		{Role: llm.User, Content: "I am allergic to peanuts."}, {Role: llm.Assistant, Content: "Noted."},
+	}))
+	s.Require().NoError(s.remember(ctx, second, []llm.Message{
+		{Role: llm.User, Content: "My dog is called Rex."}, {Role: llm.Assistant, Content: "Noted."},
+	}))
+	s.extracted(ctx)
+	recalled := s.recallsAtLeast(ctx, user, 2)
+
+	_, err := s.store.ForgetRun(ctx, user.AppID, first.RunID)
+	s.Require().NoError(err)
+	recalled, err = s.recall(ctx, memory.Query{Scope: user, Text: "what do you know about me", Limit: 10})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(recalled, "the other session's memories are kept")
+	for _, remembered := range recalled {
+		s.NotContains(remembered.Text, "peanut", "the forgotten session's memories are gone")
+	}
+
+	_, err = s.store.Truncate(ctx, user.AppID, user.UserID)
+	s.Require().NoError(err)
+	recalled, err = s.recall(ctx, memory.Query{Scope: user, Text: "what do you know about me", Limit: 10})
+	s.Require().NoError(err)
+	s.Empty(recalled, "nothing is left about a truncated user")
+}
+
+// recall is what mem0 recalls, checking the search was billed as one request.
+func (s *Mem0IntegrationSuite) recall(ctx context.Context, query memory.Query) ([]memory.Memory, error) {
+	recalled, err := s.store.Recall(ctx, query)
+	if err == nil {
+		s.Equal(memory.Billed{Requests: 1}, recalled.Billed)
+	}
+	return recalled.Memories, err
+}
+
+// remember hands a conversation to mem0, checking it was billed as one add request.
+func (s *Mem0IntegrationSuite) remember(ctx context.Context, scope memory.Scope, messages []llm.Message) error {
+	billed, err := s.store.Remember(ctx, scope, messages)
+	if err == nil {
+		s.Equal(memory.Billed{Requests: 1}, billed)
+	}
+	return err
+}
+
+// recallsAtLeast waits for mem0 to have extracted at least n memories about the scope.
+func (s *Mem0IntegrationSuite) recallsAtLeast(ctx context.Context, scope memory.Scope, n int) []memory.Memory {
+	deadline := time.Now().Add(extractionGrace)
+	var recalled []memory.Memory
+	for time.Now().Before(deadline) {
+		var err error
+		recalled, err = s.recall(ctx, memory.Query{Scope: scope, Text: "what do you know about me", Limit: 10})
+		s.Require().NoError(err)
+		if len(recalled) >= n {
+			return recalled
+		}
+		time.Sleep(2 * time.Second)
+	}
+	s.Require().GreaterOrEqual(len(recalled), n, "mem0 never produced the memories")
+	return recalled
+}
+
+// extracted waits until mem0 has finished every conversation handed to it since the last
+// wait: the log lines before that belong to tests that have waited for theirs already.
+func (s *Mem0IntegrationSuite) extracted(ctx context.Context) {
+	events := s.log.unread()
+	wait := extractionWait{
+		client: s.store.client, baseURL: s.store.baseURL, apiKey: s.store.apiKey,
+		bound: extractionBound, every: 2 * time.Second,
+	}
+	s.Require().NoError(wait.until(ctx, events))
+}
+
+func (s *Mem0IntegrationSuite) TestAnotherUsersMemoriesAreNotRecalled() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	stranger := s.scope
+	stranger.UserID += "-stranger"
+
+	recalled, err := s.recall(ctx, memory.Query{Scope: stranger, Text: "peanuts"})
+	s.Require().NoError(err)
+
+	s.Empty(recalled, "memories are personal")
+}
+
+func (s *Mem0IntegrationSuite) TestAScopeWithoutAUserIsRefusedBeforeTheNetwork() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := s.recall(ctx, memory.Query{Scope: memory.Scope{AppID: "acceleration-test"}})
+
+	s.ErrorContains(err, "user id is required")
+}

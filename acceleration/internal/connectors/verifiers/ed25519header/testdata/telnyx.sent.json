@@ -1,0 +1,1 @@
+{"data":{"event_type":"message.sent","id":"00000000-0000-4000-8000-0000000000a2","occurred_at":"2026-10-08T20:16:08.100+00:00","payload":{"id":"00000000-0000-4000-8000-0000000000b2","direction":"outbound","from":{"phone_number":"+17735550002"},"to":[{"phone_number":"+13125550001","status":"sent"}],"text":"Noted."},"record_type":"event"}}

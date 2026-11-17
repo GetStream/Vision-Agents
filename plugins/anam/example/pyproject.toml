@@ -17,4 +17,4 @@ dependencies = [
 "vision-agents-plugins-getstream" = { path = "../../getstream", editable = true }
 "vision-agents-plugins-gemini" = { path = "../../gemini", editable = true }
 "vision-agents-plugins-deepgram" = { path = "../../deepgram", editable = true }
-"vision-agents" = { path = "../../../agents-core", editable = true }
+"vision-agents" = { path = "../../../sdks/python", editable = true }

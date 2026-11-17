@@ -1,0 +1,46 @@
+model_name: s2-pro-streaming
+description: >
+  Fish Audio S2 Pro served over a WebSocket for realtime text-to-speech. Accepts text
+  deltas and emits binary PCM16 frames as they are generated, so playback can start
+  before the sentence is finished.
+python_version: py312
+model_metadata:
+  repo_id: fishaudio/s2-pro
+resources:
+  # S2 Pro is a 4B Slow AR plus a 400M Fast AR, and the inference engine forces the
+  # FlashAttention 3 backend, which needs Hopper. An L4 is both too small and the wrong
+  # architecture, so H100 is the floor rather than an optimisation.
+  accelerator: H100
+  use_gpu: true
+runtime:
+  transport:
+    kind: websocket
+  predict_concurrency: 8
+model_cache:
+  - repo_id: fishaudio/s2-pro
+    revision: main
+    use_volume: true
+    volume_folder: s2-pro
+    kind: hf
+build_commands:
+  # The serving config lives in the engine's repository rather than its wheel, so the
+  # matching tag is fetched at build time instead of being copied and left to drift.
+  - git clone --depth 1 --branch 0.1.1 https://github.com/sgl-project/sglang-omni /opt/sglang-omni
+requirements:
+  # Pinned because the engine's config schema and CLI move between releases, and the
+  # config above is fetched from the matching tag.
+  - sglang-omni==0.1.1
+  # S2 Pro decodes through the Descript codec, which the base engine leaves out.
+  - descript-audiotools==0.7.2
+  - descript-audio-codec==1.0.0
+  - httpx
+environment_variables:
+  # Where the local inference engine listens. Nothing outside the container reaches it.
+  ENGINE_PORT: "8000"
+  ENGINE_CONFIG: /opt/sglang-omni/examples/configs/s2pro_tts.yaml
+  # How long to wait for the engine to load the weights before giving up.
+  ENGINE_STARTUP_S: "900"
+  # S2 Pro's Descript codec reconstructs at 44.1 kHz. The engine reports the rate it
+  # actually used on every stream, and the handshake is checked against it, so a codec
+  # change fails loudly instead of quietly playing back at the wrong speed.
+  SAMPLE_RATE: "44100"

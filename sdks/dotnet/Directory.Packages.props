@@ -1,0 +1,17 @@
+<Project>
+
+  <ItemGroup>
+    <!-- The SDK itself. -->
+    <PackageVersion Include="getstream-net" Version="16.0.1" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
+
+    <!-- Generation. -->
+    <PackageVersion Include="NSwag.CodeGeneration.CSharp" Version="14.7.1" />
+    <PackageVersion Include="NSwag.Core.Yaml" Version="14.7.1" />
+
+    <!-- Tests. -->
+    <PackageVersion Include="xunit.v3" Version="4.0.1" />
+  </ItemGroup>
+
+</Project>

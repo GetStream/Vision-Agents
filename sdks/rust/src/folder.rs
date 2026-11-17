@@ -1,0 +1,1242 @@
+//! An agent written down as a directory, read the way the Go and Python SDKs read one, so a
+//! stamp any of them wrote is understood by the others.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use md5::{Digest, Md5};
+use serde_json::json;
+use yaml_rust2::{Yaml, YamlLoader};
+
+use crate::error::{Error, Result};
+use crate::harness::Skill;
+use crate::types;
+
+/// What makes a directory an agent: it names it and says what it runs on.
+pub const AGENT_FILE: &str = "agent.yaml";
+/// Where a directory records the fingerprint it was last synced under.
+pub const AGENT_STAMP: &str = ".agent_sync";
+pub const INSTRUCTIONS_FILE: &str = "instructions.md";
+pub const GUARDRAIL_FILE: &str = "guardrail.md";
+pub const SKILLS_DIR: &str = "skills";
+/// What a skill kept as a folder calls its frontmatter and instructions.
+pub const SKILL_FILE: &str = "SKILL.md";
+pub const KNOWLEDGE_DIR: &str = "knowledge";
+pub const SIMULATIONS_DIR: &str = "simulations";
+/// The pages a knowledge directory is kept filled from, as opposed to the files it is
+/// filled from directly.
+pub const KNOWLEDGE_URLS_FILE: &str = "urls.yaml";
+
+/// The extensions a knowledge directory is read from. A model looks things up in prose.
+const READABLE: [&str; 6] = ["md", "mdx", "txt", "rst", "yaml", "yml"];
+
+/// One file from an agent's knowledge directory, as it will be ingested.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Document {
+    /// The path relative to the knowledge directory, with `/` between parts, which is what
+    /// a passage is keyed and cited by.
+    pub source: String,
+    pub text: String,
+}
+
+/// One page from `knowledge/urls.yaml`. A page is a subscription rather than a copy.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnowledgeUrl {
+    pub url: String,
+    pub title: String,
+    pub description: String,
+    /// How often the backend reads the page again on its own. Zero is never.
+    pub refresh_hours: i64,
+}
+
+/// One conversation a `simulations/*.yaml` file declares, run against the agent the
+/// directory is. A file holds a list of them.
+///
+/// The fields are in the Go SDK's order and all serialized, since the fingerprint is taken
+/// over this as JSON.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Simulation {
+    pub name: String,
+    pub scenario: String,
+    pub assertion: String,
+    /// `text` or `audio`, empty for the router's default.
+    pub mode: String,
+    pub variations: i64,
+    pub max_turns: i64,
+    pub caller_target: String,
+    pub judge_target: String,
+    pub caller_stt: String,
+    pub caller_tts: String,
+    pub caller_voice: String,
+    /// `None` when the file says nothing, which serializes differently from an empty map.
+    pub tags: Option<BTreeMap<String, String>>,
+}
+
+impl Simulation {
+    pub(crate) fn declaration(&self) -> types::SimulationDeclaration {
+        let text = |value: &str| (!value.is_empty()).then(|| value.to_string());
+        types::SimulationDeclaration {
+            name: self.name.clone(),
+            scenario: self.scenario.clone(),
+            assertion: self.assertion.clone(),
+            mode: match self.mode.as_str() {
+                "text" => Some(types::SimulationDeclarationMode::Text),
+                "audio" => Some(types::SimulationDeclarationMode::Audio),
+                _ => None,
+            },
+            variations: (self.variations > 0).then_some(self.variations),
+            max_turns: (self.max_turns > 0).then_some(self.max_turns),
+            caller_target: text(&self.caller_target),
+            judge_target: text(&self.judge_target),
+            caller_stt: text(&self.caller_stt),
+            caller_tts: text(&self.caller_tts),
+            caller_voice: text(&self.caller_voice),
+            tags: self.tags.clone().unwrap_or_default(),
+        }
+    }
+}
+
+/// Which video a skill that captures it sees.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VideoSettings {
+    pub source: String,
+    /// How many recent frames are captured, from 1 to 8.
+    pub max_frames: i64,
+}
+
+/// One connector `agent.yaml` binds. It is written as the alias alone, or as a mapping
+/// naming it with the connector, the tools and a connection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConnectorSettings {
+    /// The alias the model sees tools under.
+    pub name: String,
+    /// The connector id. Empty means the name.
+    pub connector: String,
+    /// Names or path.Match patterns, sent as `tool_patterns`. `None`, whether the key was left
+    /// out or null, means every tool. An empty list is refused: it would grant nothing.
+    pub tools: Option<Vec<String>>,
+    /// An id or a label of one of the app's connections to the connector. `None` is a session
+    /// binding; set, it is fixed to the connection it names.
+    pub connection: Option<String>,
+    /// Whether a session needs this connector. `None` leaves it optional.
+    pub required: Option<bool>,
+}
+
+/// What `agent.yaml` declares.
+///
+/// A field left out leaves whatever the stored config has, so a model chosen in the
+/// dashboard survives a sync that says nothing about it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Settings {
+    pub name: String,
+    pub description: String,
+    pub mode: Option<types::AgentMode>,
+    pub stt: String,
+    pub tts: String,
+    /// `None` when the declaration says nothing, and empty when it turns it off.
+    pub sts: Option<String>,
+    /// The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
+    /// the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent
+    /// takes the vendor's own voice name instead.
+    pub voice: String,
+    pub llm: String,
+    pub harness: Option<types::Harness>,
+    /// The slower model a voice agent hands its skills to. A text agent names none.
+    pub subagent: String,
+    pub search: String,
+    /// What the agent opens the call with. `None` leaves the stored one.
+    pub greeting: Option<types::Greeting>,
+    pub sandbox: Option<types::Sandbox>,
+    /// How the sandbox is built and what code in it may reach. Outbound network is blocked
+    /// unless `network` or an allow list opens it. `None` leaves the stored options.
+    pub sandbox_options: Option<types::SandboxOptions>,
+    /// The connectors whose tools the agent may call. `None` when the declaration says
+    /// nothing, which leaves the bindings stored; empty when the file lists none, which
+    /// removes them.
+    pub connectors: Option<Vec<ConnectorSettings>>,
+    pub keyterms: Vec<String>,
+    pub tags: BTreeMap<String, String>,
+    pub video: Option<VideoSettings>,
+    /// What the agent leaves to this application's own dispatch worker. With `text`
+    /// enabled the model does not answer what end users write; a worker is handed it.
+    pub dispatch: Option<types::AgentDispatch>,
+    /// The model that controls the agent's floor, and how long a caller may wait once they stop
+    /// (`max_wait_ms`), sent as written. `None` leaves the stored choice; an empty mapping
+    /// (`{}`) is no choice again, which the router's default rules; `{model: flow-controller}`
+    /// keeps the flow controller whatever that default. Which models there are, and whether a wait
+    /// names one, is the router's to say.
+    pub floor_control: Option<types::FloorControl>,
+}
+
+/// An agent written down as a directory.
+///
+/// ```text
+/// agents/jean/
+///   agent.yaml
+///   instructions.md
+///   guardrail.md
+///   skills/think.md
+///   skills/pdf/SKILL.md
+///   skills/pdf/scripts/fill.py
+///   knowledge/pricing.md
+///   knowledge/urls.yaml
+///   simulations/lunch.yaml
+/// ```
+///
+/// A skill kept as a folder has its SKILL.md for frontmatter and instructions, and brings
+/// the text files beside it; scripts among them run in the sandbox.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Folder {
+    /// The directory this was read from.
+    pub path: PathBuf,
+    /// What agent.yaml calls the agent, or the directory's own name if it does not.
+    pub name: String,
+    /// agent.yaml as written, which is what its fingerprint is taken over.
+    pub declaration: String,
+    pub settings: Settings,
+    pub instructions: String,
+    /// guardrail.md, whole and unparsed: the backend parses it, so a policy this SDK has
+    /// never heard of still reaches it.
+    pub guardrail: String,
+    /// The files in skills/, in name order.
+    pub skills: Vec<Skill>,
+    /// The readable files under knowledge/, in path order.
+    pub knowledge: Vec<Document>,
+    /// The pages knowledge/urls.yaml declares, in the order it lists them.
+    pub knowledge_urls: Vec<KnowledgeUrl>,
+    /// What simulations/*.yaml declare, by file name and then as listed. `None` when there
+    /// is no simulations/, which leaves the stored ones alone; empty when it has none, which
+    /// deletes them.
+    pub simulations: Option<Vec<Simulation>>,
+}
+
+impl Folder {
+    /// Reads an agent directory.
+    ///
+    /// agent.yaml is what makes a directory an agent, so it is required; everything else is
+    /// optional.
+    pub fn load(path: impl AsRef<Path>) -> Result<Folder> {
+        let path = path.as_ref();
+        let info = std::fs::metadata(path).map_err(|error| Error::io(path, error))?;
+        if !info.is_dir() {
+            return Err(Error::folder(path, "not an agent directory"));
+        }
+
+        let declaration = match std::fs::read_to_string(path.join(AGENT_FILE)) {
+            Ok(declaration) => declaration,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::folder(
+                    path,
+                    format!("there is no {AGENT_FILE}, so it is not an agent directory"),
+                ));
+            }
+            Err(error) => return Err(Error::io(path.join(AGENT_FILE), error)),
+        };
+        let settings = declare(&declaration)
+            .map_err(|message| Error::folder(path.join(AGENT_FILE), message))?;
+        let name = if settings.name.is_empty() {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            settings.name.clone()
+        };
+
+        Ok(Folder {
+            name,
+            declaration: declaration.trim().to_string(),
+            settings,
+            instructions: optional(&path.join(INSTRUCTIONS_FILE))?.trim().to_string(),
+            guardrail: optional(&path.join(GUARDRAIL_FILE))?.trim().to_string(),
+            skills: load_skills(&path.join(SKILLS_DIR))?,
+            knowledge: load_knowledge(&path.join(KNOWLEDGE_DIR))?,
+            knowledge_urls: load_knowledge_urls(
+                &path.join(KNOWLEDGE_DIR).join(KNOWLEDGE_URLS_FILE),
+            )?,
+            simulations: load_simulations(&path.join(SIMULATIONS_DIR))?,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Finds the directory an agent named `name` lives in: `name` itself when it is a path to
+    /// one, `start` when that is it, or else `examples/*/<name>`, `agents/<name>` or
+    /// `<name>`, looking from `start` up to the filesystem root.
+    ///
+    /// What makes a directory an agent is agent.yaml, so a config that lives only on the
+    /// router is simply not found rather than mistaken for a directory sharing its name.
+    pub fn find(name: &str, start: impl AsRef<Path>) -> Option<PathBuf> {
+        let start = start.as_ref();
+        if Path::new(name).join(AGENT_FILE).is_file() {
+            return Some(PathBuf::from(name));
+        }
+        if start.file_name().is_some_and(|here| here == name) && start.join(AGENT_FILE).is_file() {
+            return Some(start.to_path_buf());
+        }
+        for directory in start.ancestors() {
+            let mut candidates = vec![directory.join("agents").join(name), directory.join(name)];
+            if let Ok(examples) = std::fs::read_dir(directory.join("examples")) {
+                let mut grouped: Vec<PathBuf> = examples
+                    .flatten()
+                    .map(|entry| entry.path().join(name))
+                    .collect();
+                grouped.sort();
+                candidates.splice(0..0, grouped);
+            }
+            if let Some(found) = candidates
+                .into_iter()
+                .find(|candidate| candidate.join(AGENT_FILE).is_file())
+            {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Where the directory's knowledge is looked up: the agent's own name, so two agents
+    /// never read each other's. Empty when it has none.
+    pub fn knowledge_namespace(&self) -> &str {
+        if self.knowledge.is_empty() && self.knowledge_urls.is_empty() {
+            ""
+        } else {
+            &self.name
+        }
+    }
+
+    /// A fingerprint of the directory. The same files produce the same hash in every SDK.
+    pub fn hash(&self) -> String {
+        fingerprint(
+            &self.declaration,
+            &self.instructions,
+            &self.guardrail,
+            &self.skills,
+            &self.knowledge,
+            &self.knowledge_urls,
+            self.simulations.as_deref(),
+        )
+    }
+}
+
+pub(crate) fn fingerprint(
+    declaration: &str,
+    instructions: &str,
+    guardrail: &str,
+    skills: &[Skill],
+    knowledge: &[Document],
+    pages: &[KnowledgeUrl],
+    simulations: Option<&[Simulation]>,
+) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(format!("{declaration}\n{instructions}\n{guardrail}"));
+
+    let mut sorted: Vec<&Skill> = skills.iter().collect();
+    sorted.sort_by(|one, other| one.name.cmp(&other.name));
+    for skill in sorted {
+        // Written the way Python prints a bool and a float, which is what keeps the SDKs'
+        // fingerprints of one directory the same.
+        let captured = if skill.capture_video { "True" } else { "False" };
+        hasher.update(format!(
+            "\nskill:{}\n{}\n{}{captured}\n",
+            skill.name, skill.description, skill.instructions
+        ));
+        if !skill.deadline.is_zero() {
+            let mut seconds = skill.deadline.as_secs_f64().to_string();
+            if !seconds.contains('.') {
+                seconds.push_str(".0");
+            }
+            hasher.update(seconds);
+        }
+        // Written only when there are some, so a skill without files keeps its fingerprint.
+        for (path, content) in &skill.files {
+            hasher.update(format!("\nfile:{path}\n{content}"));
+        }
+    }
+
+    let mut documents: Vec<&Document> = knowledge.iter().collect();
+    documents.sort_by(|one, other| one.source.cmp(&other.source));
+    for document in documents {
+        hasher.update(format!(
+            "\nknowledge:{}\n{}",
+            document.source, document.text
+        ));
+    }
+    for page in pages {
+        hasher.update(format!(
+            "\nurl:{}\n{}\n{}",
+            page.url, page.title, page.description
+        ));
+        // Written only when there is one, so a page without keeps its fingerprint.
+        if page.refresh_hours > 0 {
+            hasher.update(format!("\nrefresh_hours:{}", page.refresh_hours));
+        }
+    }
+    // Written only when there is a simulations/, so a directory without one keeps its
+    // fingerprint.
+    if let Some(simulations) = simulations {
+        hasher.update("\nsimulations:");
+        for simulation in simulations {
+            hasher.update(go_json(simulation));
+        }
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// JSON the way Go's `encoding/json` writes it, which escapes `<`, `>`, `&` and the two line
+/// separators that serde_json leaves as they are.
+fn go_json(value: &impl serde::Serialize) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
+/// The fingerprint a directory was last synced under, or empty when it never was or the
+/// stamp cannot be read.
+pub fn read_stamp(path: impl AsRef<Path>) -> String {
+    std::fs::read(path.as_ref().join(AGENT_STAMP))
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
+        .and_then(|stamp| {
+            stamp
+                .get("hash")
+                .and_then(|hash| hash.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+/// Records what was synced and when, so a second sync can do nothing.
+pub fn write_stamp(path: impl AsRef<Path>, hash: &str) -> Result<()> {
+    let file = path.as_ref().join(AGENT_STAMP);
+    let stamp = json!({"hash": hash, "synced_at": utc_now()});
+    std::fs::write(&file, format!("{stamp}\n")).map_err(|error| Error::io(file, error))
+}
+
+/// Now, as `2006-01-02T15:04:05+00:00`.
+fn utc_now() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let (days, clock) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    // Howard Hinnant's days-to-civil.
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}+00:00",
+        clock / 3600,
+        clock % 3600 / 60,
+        clock % 60
+    )
+}
+
+fn optional(path: &Path) -> Result<String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(Error::io(path, error)),
+    }
+}
+
+/// Reads agent.yaml. A key nobody knows is refused rather than dropped, since a misspelled
+/// llm that goes quietly is a config running on a model the file does not name.
+fn declare(raw: &str) -> std::result::Result<Settings, String> {
+    let mut settings = Settings::default();
+    let document = YamlLoader::load_from_str(raw).map_err(|error| error.to_string())?;
+    let root = match document.into_iter().next() {
+        None | Some(Yaml::Null) => return Ok(settings),
+        Some(Yaml::Hash(root)) => root,
+        Some(_) => return Err("agent.yaml is a mapping of settings".into()),
+    };
+
+    for (key, value) in root {
+        let key = scalar(&key).ok_or("a setting is named by a string")?;
+        let text = || scalar(&value).ok_or(format!("{key} is a string"));
+        match key.as_str() {
+            "name" => settings.name = text()?,
+            "description" => settings.description = text()?,
+            "stt" => settings.stt = text()?,
+            "tts" => settings.tts = text()?,
+            "sts" => settings.sts = if value.is_null() { None } else { Some(text()?) },
+            "voice" => settings.voice = text()?,
+            "llm" => settings.llm = text()?,
+            "harness" => settings.harness = named(&text()?, "harness")?,
+            "subagent" => settings.subagent = text()?,
+            "search" => settings.search = text()?,
+            "greeting" => settings.greeting = greeting(&value)?,
+            "mode" => settings.mode = named(&text()?, "mode")?,
+            "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
+            "sandbox_options" => settings.sandbox_options = sandbox_options(&value)?,
+            "plugins" | "plugin_events" => refuse_replaced(&key, &value)?,
+            "connectors" => settings.connectors = connectors(&value)?,
+            "keyterms" => settings.keyterms = strings(&value, &key)?,
+            "tags" => settings.tags = mapping(&value, &key)?,
+            "video" => settings.video = video(&value)?,
+            "dispatch" => settings.dispatch = dispatch(&value)?,
+            "floor_control" => settings.floor_control = floor_control(&value)?,
+            _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
+        }
+    }
+    Ok(settings)
+}
+
+/// Refuses a key connectors replaced, unless it declares nothing: an empty or null list was
+/// never sent, so the file syncs as it did.
+fn refuse_replaced(key: &str, value: &Yaml) -> std::result::Result<(), String> {
+    match value {
+        Yaml::Null => Ok(()),
+        Yaml::Array(items) if items.is_empty() => Ok(()),
+        _ => Err(format!(
+            "{key} is no longer read: plugins were replaced by connectors, so name the provider under connectors"
+        )),
+    }
+}
+
+fn connectors(value: &Yaml) -> std::result::Result<Option<Vec<ConnectorSettings>>, String> {
+    let items = match value {
+        Yaml::Null => return Ok(None),
+        Yaml::Array(items) => items,
+        _ => return Err("connectors must be a list".into()),
+    };
+    items
+        .iter()
+        .map(connector)
+        .collect::<std::result::Result<_, _>>()
+        .map(Some)
+}
+
+fn connector(item: &Yaml) -> std::result::Result<ConnectorSettings, String> {
+    let mut connector = ConnectorSettings::default();
+    match item {
+        Yaml::Hash(fields) => {
+            for (key, value) in fields {
+                let key = scalar(key).unwrap_or_default();
+                let text = || scalar(value).ok_or(format!("connectors.{key} is a string"));
+                match key.as_str() {
+                    "name" => connector.name = text()?,
+                    "connector" => connector.connector = text()?,
+                    "tools" => {
+                        connector.tools = match value {
+                            Yaml::Null => None,
+                            _ => Some(strings(value, "connectors.tools")?),
+                        }
+                    }
+                    "connection" => {
+                        connector.connection = match value {
+                            Yaml::Null => None,
+                            // Refused below by name, with the rest of the entry's checks.
+                            _ => Some(scalar(value).unwrap_or_default()),
+                        }
+                    }
+                    "required" => {
+                        connector.required = match value {
+                            Yaml::Null => None,
+                            Yaml::Boolean(required) => Some(*required),
+                            _ => return Err("connectors.required is a boolean".into()),
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "{key:?} is not a connector setting; name, connector, tools, connection and required are"
+                        ));
+                    }
+                }
+            }
+        }
+        Yaml::Null | Yaml::String(_) | Yaml::Integer(_) | Yaml::Real(_) | Yaml::Boolean(_) => {
+            connector.name = scalar(item).unwrap_or_default()
+        }
+        _ => return Err("a connector is a name or a mapping".into()),
+    }
+    if connector.name.is_empty() {
+        return Err("a connector needs a name".into());
+    }
+    if connector.tools.as_ref().is_some_and(Vec::is_empty) {
+        return Err(format!(
+            "connector {:?}: tools: [] grants nothing; leave tools out for every tool",
+            connector.name
+        ));
+    }
+    if connector.connection.as_ref().is_some_and(String::is_empty) {
+        return Err(format!(
+            "connector {:?}: connection must be a connection id or label",
+            connector.name
+        ));
+    }
+    Ok(connector)
+}
+
+/// A string enum as the spec spells it, or `None` for an empty value.
+///
+/// Read with `FromStr`, which refuses a value the spec does not list: decoding would keep one
+/// as `Unlisted`, which is for an answer from a newer router, not for a typo in a file.
+fn named<T: std::str::FromStr>(value: &str, key: &str) -> std::result::Result<Option<T>, String> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value
+        .parse()
+        .map(Some)
+        .map_err(|_| format!("{value:?} is not a {key}"))
+}
+
+fn greeting(value: &Yaml) -> std::result::Result<Option<types::Greeting>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("greeting is a mapping of text and mode".into())
+        };
+    };
+    let mut greeting = types::Greeting::default();
+    for (key, value) in fields {
+        match scalar(key).as_deref() {
+            Some("text") => greeting.text = scalar(value).ok_or("greeting.text is a string")?,
+            Some("mode") => {
+                let mode = scalar(value).ok_or("greeting.mode is a string")?;
+                greeting.mode = named(&mode, "greeting mode; exact or variation is")?;
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a greeting setting; text and mode are"
+                ));
+            }
+        }
+    }
+    Ok(Some(greeting))
+}
+
+fn video(value: &Yaml) -> std::result::Result<Option<VideoSettings>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("video is a mapping".into())
+        };
+    };
+    let mut video = VideoSettings::default();
+    for (key, value) in fields {
+        match scalar(key).as_deref() {
+            Some("source") => video.source = scalar(value).ok_or("video.source is a string")?,
+            Some("max_frames") => {
+                video.max_frames = match value {
+                    Yaml::Integer(frames) => *frames,
+                    Yaml::Null => 0,
+                    _ => return Err("video.max_frames must be an integer from 1 to 8".into()),
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a video setting; source and max_frames are"
+                ));
+            }
+        }
+    }
+    if video.max_frames == 0 {
+        video.max_frames = 1;
+    }
+    if !(1..=8).contains(&video.max_frames) {
+        return Err("video.max_frames must be an integer from 1 to 8".into());
+    }
+    Ok(Some(video))
+}
+
+fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("dispatch is a mapping".into())
+        };
+    };
+    let mut dispatch = types::AgentDispatch::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        let setting = match key.as_str() {
+            "incoming_call" => &mut dispatch.incoming_call,
+            "text" => &mut dispatch.text,
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a dispatch setting; incoming_call and text are"
+                ));
+            }
+        };
+        let text = scalar(value).ok_or(format!("dispatch.{key} is a string"))?;
+        *setting = named(&text, "dispatch setting; enabled or disabled is")?;
+    }
+    Ok(Some(dispatch))
+}
+
+/// floor_control as written: the model and, optionally, `max_wait_ms`, a key whose value is
+/// null left out, and `{}` no choice again, which the router's default rules. Only its shape is read here; the
+/// router refuses a model it does not have, or a wait without one.
+fn floor_control(value: &Yaml) -> std::result::Result<Option<types::FloorControl>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("floor_control is a mapping of model and, optionally, max_wait_ms".into())
+        };
+    };
+    let mut floor_control = types::FloorControl::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        match key.as_str() {
+            "model" => {
+                floor_control.model = match value {
+                    Yaml::String(model) => Some(model.clone()),
+                    Yaml::Null => None,
+                    _ => return Err("floor_control.model must be a string".into()),
+                }
+            }
+            "max_wait_ms" => {
+                floor_control.max_wait_ms = match value {
+                    Yaml::Integer(wait) => Some(*wait),
+                    Yaml::Null => None,
+                    _ => return Err("floor_control.max_wait_ms must be an integer".into()),
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a floor_control setting; model and max_wait_ms are"
+                ));
+            }
+        }
+    }
+    Ok(Some(floor_control))
+}
+
+fn sandbox_options(value: &Yaml) -> std::result::Result<Option<types::SandboxOptions>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("sandbox_options is a mapping".into())
+        };
+    };
+    let mut options = types::SandboxOptions::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        let name = format!("sandbox_options.{key}");
+        match key.as_str() {
+            "image" => options.image = Some(scalar(value).ok_or(format!("{name} is a string"))?),
+            "setup" => options.setup = Some(strings(value, &name)?),
+            "allowed_domains" => options.allowed_domains = Some(strings(value, &name)?),
+            "network_allow_list" => options.network_allow_list = Some(strings(value, &name)?),
+            "network" => {
+                options.network = match value {
+                    Yaml::Boolean(network) => Some(*network),
+                    _ => return Err(format!("{name} must be true or false")),
+                }
+            }
+            "timeout" => {
+                let timeout = scalar(value)
+                    .and_then(|text| parse_deadline(&text).ok())
+                    .filter(|timeout| {
+                        !timeout.is_zero() && *timeout <= Duration::from_secs(30 * 60)
+                    })
+                    .ok_or(format!("{name} must be a duration up to 30m"))?;
+                options.timeout_ms = Some(timeout.as_millis() as i64);
+            }
+            "cpu" | "memory_gb" | "disk_gb" => {
+                let size = match value {
+                    Yaml::Integer(size) if *size >= 0 => Some(*size),
+                    _ => return Err(format!("{name} must be a whole number")),
+                };
+                match key.as_str() {
+                    "cpu" => options.cpu = size,
+                    "memory_gb" => options.memory_gb = size,
+                    _ => options.disk_gb = size,
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a sandbox_options setting; image, setup, timeout, cpu, memory_gb, disk_gb, network, allowed_domains and network_allow_list are"
+                ));
+            }
+        }
+    }
+    Ok(Some(options))
+}
+
+fn strings(value: &Yaml, key: &str) -> std::result::Result<Vec<String>, String> {
+    match value {
+        Yaml::Null => Ok(Vec::new()),
+        Yaml::Array(items) => items
+            .iter()
+            .map(|item| scalar(item).ok_or(format!("{key} is a list of strings")))
+            .collect(),
+        _ => Err(format!("{key} is a list of strings")),
+    }
+}
+
+fn mapping(value: &Yaml, key: &str) -> std::result::Result<BTreeMap<String, String>, String> {
+    match value {
+        Yaml::Null => Ok(BTreeMap::new()),
+        Yaml::Hash(pairs) => pairs
+            .iter()
+            .map(|(name, value)| match (scalar(name), scalar(value)) {
+                (Some(name), Some(value)) => Ok((name, value)),
+                _ => Err(format!("{key} is a mapping of strings")),
+            })
+            .collect(),
+        _ => Err(format!("{key} is a mapping of strings")),
+    }
+}
+
+/// A scalar's text, the way YAML wrote it. A null reads as empty.
+fn scalar(value: &Yaml) -> Option<String> {
+    match value {
+        Yaml::String(text) | Yaml::Real(text) => Some(text.clone()),
+        Yaml::Integer(number) => Some(number.to_string()),
+        Yaml::Boolean(flag) => Some(flag.to_string()),
+        Yaml::Null => Some(String::new()),
+        _ => None,
+    }
+}
+
+/// Reads skills/: a skill is either a markdown file, or a folder holding a SKILL.md and
+/// whatever files it comes with, nested as deep as they are.
+fn load_skills(path: &Path) -> Result<Vec<Skill>> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(Error::io(path, error)),
+    };
+    let mut entries: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    entries.sort();
+
+    let mut skills = Vec::new();
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    for entry in entries {
+        let entry_name = entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (name, file) = if entry.is_dir() {
+            let file = entry.join(SKILL_FILE);
+            if !file.is_file() {
+                return Err(Error::folder(
+                    &entry,
+                    format!("has no {SKILL_FILE}, so it is not a skill"),
+                ));
+            }
+            (entry_name.clone(), file)
+        } else if entry.is_file() && entry.extension().is_some_and(|extension| extension == "md") {
+            let stem = entry
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (stem, entry.clone())
+        } else {
+            continue;
+        };
+        if let Some(first) = declared.get(&name) {
+            return Err(Error::folder(
+                path,
+                format!("skill {name:?} is both {first} and {entry_name}"),
+            ));
+        }
+        declared.insert(name.clone(), entry_name);
+
+        let content = std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
+        let mut skill =
+            parse_skill(name, &content).map_err(|message| Error::folder(&file, message))?;
+        if entry.is_dir() {
+            load_skill_files(&entry, &entry, &mut skill.files)?;
+        }
+        skills.push(skill);
+    }
+    Ok(skills)
+}
+
+/// Reads every file in a skill folder but its SKILL.md, by `/` path relative to the folder.
+fn load_skill_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let entries = std::fs::read_dir(directory).map_err(|error| Error::io(directory, error))?;
+    for entry in entries.flatten() {
+        let file = entry.path();
+        if skipped(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        if file.is_dir() {
+            load_skill_files(root, &file, files)?;
+            continue;
+        }
+        if file == root.join(SKILL_FILE) {
+            continue;
+        }
+        let content = std::fs::read(&file).map_err(|error| Error::io(&file, error))?;
+        let text = String::from_utf8(content)
+            .map_err(|_| Error::folder(&file, "not text, and a skill brings only text files"))?;
+        let relative = file.strip_prefix(root).unwrap_or(&file);
+        let relative = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        files.insert(relative, text);
+    }
+    Ok(())
+}
+
+/// Whether a file or folder in a skill folder is left behind: hidden ones such as
+/// .DS_Store, and the __pycache__ running a skill's Python scripts locally leaves.
+fn skipped(name: &str) -> bool {
+    name.starts_with('.') || name == "__pycache__"
+}
+
+/// Reads a skill file: frontmatter between `---` lines, then the instructions.
+fn parse_skill(name: String, content: &str) -> std::result::Result<Skill, String> {
+    let mut skill = Skill {
+        name,
+        ..Skill::default()
+    };
+    let (frontmatter, body) = cut_frontmatter(content);
+    for line in frontmatter.unwrap_or("").split('\n') {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = line
+            .split_once(':')
+            .ok_or(format!("{line:?} is not a key and a value"))?;
+        let value = value.trim().trim_matches(['"', '\'']);
+        match key.trim() {
+            "name" => skill.name = value.to_string(),
+            "description" => skill.description = value.to_string(),
+            "capture_video" => {
+                skill.capture_video = match value {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err("capture_video must be true or false".into()),
+                }
+            }
+            "deadline" => skill.deadline = parse_deadline(value)?,
+            _ => {}
+        }
+    }
+
+    skill.instructions = body.trim().to_string();
+    if skill.description.is_empty() {
+        return Err("a skill needs a description, since it is all the fast model sees".into());
+    }
+    if skill.instructions.is_empty() {
+        return Err(
+            "a skill needs instructions, since they are what the subagent answers under".into(),
+        );
+    }
+    Ok(skill)
+}
+
+fn cut_frontmatter(content: &str) -> (Option<&str>, &str) {
+    let trimmed = content.trim_start_matches(['\u{feff}', ' ', '\t', '\r', '\n']);
+    let Some(rest) = trimmed.strip_prefix("---") else {
+        return (None, content);
+    };
+    let rest = rest.trim_start_matches(['\r', '\n']);
+    match rest.split_once("\n---") {
+        Some((frontmatter, body)) => (
+            Some(frontmatter),
+            body.trim_start_matches(['-', '\r', '\n']),
+        ),
+        None => (None, content),
+    }
+}
+
+/// A Go duration (`30s`, `1m30s`, `250ms`), or a bare number of seconds.
+fn parse_deadline(value: &str) -> std::result::Result<Duration, String> {
+    let refused = || format!("{value:?} is not a deadline");
+    if let Ok(seconds) = value.parse::<f64>() {
+        return Ok(Duration::from_nanos((seconds * 1e9).max(0.0) as u64));
+    }
+
+    let mut rest = value.strip_prefix('+').unwrap_or(value);
+    if rest.is_empty() {
+        return Err(refused());
+    }
+    let mut nanos: u64 = 0;
+    while !rest.is_empty() {
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let (whole, after) = rest.split_at(digits);
+        let (fraction, after) = match after.strip_prefix('.') {
+            Some(after) => {
+                let digits = after
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(after.len());
+                after.split_at(digits)
+            }
+            None => ("", after),
+        };
+        if whole.is_empty() && fraction.is_empty() {
+            return Err(refused());
+        }
+        let unit_length = after
+            .find(|c: char| c == '.' || c.is_ascii_digit())
+            .unwrap_or(after.len());
+        let (unit, after) = after.split_at(unit_length);
+        let scale: u64 = match unit {
+            "ns" => 1,
+            "us" | "µs" | "μs" => 1_000,
+            "ms" => 1_000_000,
+            "s" => 1_000_000_000,
+            "m" => 60_000_000_000,
+            "h" => 3_600_000_000_000,
+            _ => return Err(refused()),
+        };
+        let whole: u64 = if whole.is_empty() {
+            0
+        } else {
+            whole.parse().map_err(|_| refused())?
+        };
+        nanos += whole * scale;
+        if !fraction.is_empty() {
+            let digits: u64 = fraction.parse().map_err(|_| refused())?;
+            nanos += (digits as f64 * (scale as f64 / 10f64.powi(fraction.len() as i32))) as u64;
+        }
+        rest = after;
+    }
+    Ok(Duration::from_nanos(nanos))
+}
+
+fn load_knowledge(path: &Path) -> Result<Vec<Document>> {
+    match std::fs::metadata(path) {
+        Ok(info) if info.is_dir() => {}
+        Ok(_) => return Err(Error::folder(path, "not a directory")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(Error::io(path, error)),
+    }
+    let mut documents = Vec::new();
+    walk(path, path, &mut documents)?;
+    Ok(documents)
+}
+
+/// Reads a directory depth first in name order, which is the order Go's WalkDir takes.
+fn walk(root: &Path, directory: &Path, documents: &mut Vec<Document>) -> Result<()> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(directory)
+        .map_err(|error| Error::io(directory, error))?
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    entries.sort();
+
+    for file in entries {
+        if file.is_dir() {
+            walk(root, &file, documents)?;
+            continue;
+        }
+        let readable = file.extension().is_some_and(|extension| {
+            READABLE.contains(&extension.to_string_lossy().to_lowercase().as_str())
+        });
+        // Only the declaration at the root is not a document; deeper, urls.yaml is one.
+        if !readable || file == root.join(KNOWLEDGE_URLS_FILE) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
+        if text.trim().is_empty() {
+            continue;
+        }
+        let source = file.strip_prefix(root).unwrap_or(&file);
+        let source = source
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        documents.push(Document { source, text });
+    }
+    Ok(())
+}
+
+/// Reads the pages a knowledge base is kept filled from. A bad url is refused here, before
+/// anything is written.
+fn load_knowledge_urls(path: &Path) -> Result<Vec<KnowledgeUrl>> {
+    let raw = optional(path)?;
+    let refused = |message: String| Error::folder(path, message);
+    let document = YamlLoader::load_from_str(&raw).map_err(|error| refused(error.to_string()))?;
+    let items = match document.into_iter().next() {
+        None | Some(Yaml::Null) => return Ok(Vec::new()),
+        Some(Yaml::Array(items)) => items,
+        Some(_) => return Err(refused("urls.yaml is a list of pages".into())),
+    };
+
+    let mut pages = Vec::new();
+    for item in items {
+        let mut page = KnowledgeUrl::default();
+        match &item {
+            Yaml::Hash(fields) => {
+                for (key, value) in fields {
+                    let key = scalar(key).unwrap_or_default();
+                    let field = match key.as_str() {
+                        "url" => &mut page.url,
+                        "title" => &mut page.title,
+                        "description" => &mut page.description,
+                        "refresh_hours" => {
+                            page.refresh_hours = match value {
+                                Yaml::Integer(hours) if *hours >= 1 => *hours,
+                                _ => {
+                                    return Err(refused(
+                                        "refresh_hours is how many hours between reads, so it is \
+                                         at least 1; leave it out for never"
+                                            .into(),
+                                    ));
+                                }
+                            };
+                            continue;
+                        }
+                        _ => {
+                            return Err(refused(format!(
+                                "{key:?} is not something a page says; url, title, description and refresh_hours are"
+                            )));
+                        }
+                    };
+                    *field = scalar(value).ok_or_else(|| refused(format!("{key} is a string")))?;
+                }
+            }
+            other => {
+                page.url = scalar(other)
+                    .ok_or_else(|| refused("a page is a url, or a mapping naming one".into()))?
+            }
+        }
+        if !page.url.starts_with("http://") && !page.url.starts_with("https://") {
+            return Err(refused(format!(
+                "{:?} is not an http or https url",
+                page.url
+            )));
+        }
+        pages.push(page);
+    }
+    Ok(pages)
+}
+
+/// Reads every .yaml and .yml file in simulations/, each a list of simulations. A key
+/// nobody knows is refused, as in agent.yaml, and so is a name two simulations share, since
+/// a sync finds a simulation by its name.
+fn load_simulations(path: &Path) -> Result<Option<Vec<Simulation>>> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(Error::io(path, error)),
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|file| {
+            file.is_file()
+                && file.extension().is_some_and(|extension| {
+                    matches!(
+                        extension.to_string_lossy().to_lowercase().as_str(),
+                        "yaml" | "yml"
+                    )
+                })
+        })
+        .collect();
+    files.sort();
+
+    let mut simulations = Vec::new();
+    let mut named: BTreeMap<String, String> = BTreeMap::new();
+    for file in files {
+        let raw = std::fs::read_to_string(&file).map_err(|error| Error::io(&file, error))?;
+        let refused = |message: String| Error::folder(&file, message);
+        let document =
+            YamlLoader::load_from_str(&raw).map_err(|error| refused(error.to_string()))?;
+        let items = match document.into_iter().next() {
+            None | Some(Yaml::Null) => Vec::new(),
+            Some(Yaml::Array(items)) => items,
+            Some(_) => return Err(refused("a simulations file is a list".into())),
+        };
+        let listed = file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        for item in items {
+            let simulation = simulation(&item).map_err(refused)?;
+            if let Some(first) = named.get(&simulation.name) {
+                return Err(refused(format!(
+                    "simulation {:?} is also declared in {first}",
+                    simulation.name
+                )));
+            }
+            named.insert(simulation.name.clone(), listed.clone());
+            simulations.push(simulation);
+        }
+    }
+    Ok(Some(simulations))
+}
+
+fn simulation(item: &Yaml) -> std::result::Result<Simulation, String> {
+    let Yaml::Hash(fields) = item else {
+        return Err("a simulation is a mapping".into());
+    };
+    let mut simulation = Simulation::default();
+    for (key, value) in fields {
+        let key = scalar(key).ok_or("a simulation's keys are strings")?;
+        let text = || scalar(value).ok_or(format!("{key} is a string"));
+        let count = || match value {
+            Yaml::Integer(number) => Ok(*number),
+            Yaml::Null => Ok(0),
+            _ => Err(format!("{key} is an integer")),
+        };
+        match key.as_str() {
+            "name" => simulation.name = text()?,
+            "scenario" => simulation.scenario = text()?,
+            "assertion" => simulation.assertion = text()?,
+            "mode" => simulation.mode = text()?,
+            "variations" => simulation.variations = count()?,
+            "max_turns" => simulation.max_turns = count()?,
+            "caller_target" => simulation.caller_target = text()?,
+            "judge_target" => simulation.judge_target = text()?,
+            "caller_stt" => simulation.caller_stt = text()?,
+            "caller_tts" => simulation.caller_tts = text()?,
+            "caller_voice" => simulation.caller_voice = text()?,
+            "tags" => {
+                simulation.tags = (!value.is_null())
+                    .then(|| mapping(value, &key))
+                    .transpose()?
+            }
+            _ => return Err(format!("{key:?} is not something a simulation says")),
+        }
+    }
+    if simulation.name.is_empty() {
+        return Err("a simulation needs a name".into());
+    }
+    if simulation.scenario.is_empty() {
+        return Err(format!("simulation {:?} needs a scenario", simulation.name));
+    }
+    if simulation.assertion.is_empty() {
+        return Err(format!(
+            "simulation {:?} needs an assertion",
+            simulation.name
+        ));
+    }
+    if !matches!(simulation.mode.as_str(), "" | "text" | "audio") {
+        return Err(format!(
+            "simulation {:?} is text or audio, not {:?}",
+            simulation.name, simulation.mode
+        ));
+    }
+    Ok(simulation)
+}

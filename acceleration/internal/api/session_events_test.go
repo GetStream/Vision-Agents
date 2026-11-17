@@ -1,0 +1,318 @@
+//go:build integration
+
+package api
+
+import (
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+// lookupOrder is the tool the caller runs itself, which the tooling model reaches for on
+// its first turn.
+const lookupOrder = "lookup_order"
+
+// SessionEventsSuite covers the socket a caller watches a session on: what the conversation
+// did, the tools it asks the caller to run, and what it may be told to do back.
+type SessionEventsSuite struct {
+	RouterSuite
+}
+
+func TestSessionEventsSuite(t *testing.T) {
+	runSuite(t, new(SessionEventsSuite))
+}
+
+func (s *SessionEventsSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *SessionEventsSuite) TestTheSocketCarriesWhatTheConversationAnswered() {
+	answer := s.utils.uuid()
+	opened := s.inWriting(CreateSessionRequest{
+		Llm: pointerTo("echo/echo-model"), ConfigId: s.data.instructedAgent(answer),
+	})
+	watching := s.watch(opened.Id)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "hello"}, nil))
+
+	answered := s.await(watching, "responded")
+	s.Contains(answered["text"], answer)
+	s.NotEmpty(answered["turn_id"])
+}
+
+func (s *SessionEventsSuite) TestTheSocketAsksTheCallerToRunItsOwnToolAndUsesTheAnswer() {
+	opened := s.withATool()
+	watching := s.watch(opened.Id)
+	s.respond(opened.Id)
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(lookupOrder, asked["name"])
+	s.Equal(`{"order":"12"}`, asked["arguments"])
+	s.Require().NoError(watching.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": asked["id"], "output": "it ships tomorrow",
+	}))
+
+	ran := s.await(watching, "tool_ran")
+	s.Equal(lookupOrder, ran["tool"])
+	s.Equal("it ships tomorrow", ran["result"])
+	s.Empty(ran["error"])
+}
+
+func (s *SessionEventsSuite) TestAToolCallSaysWhoAskedAndInWhichConversation() {
+	owner := s.data.createUser()
+	request := s.askingForATool()
+	request.Custom = &map[string]any{"plan": "gold"}
+	opened := s.inWriting(request)
+	watching := s.watch(opened.Id)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.actingFor(owner).do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(opened.Id, asked["session_id"])
+	user, _ := asked["user"].(map[string]any)
+	s.Equal(owner.userID, user["id"], "the call names the person whose turn asked for it")
+	conversation, _ := asked["conversation"].(map[string]any)
+	s.Equal(map[string]any{"plan": "gold"}, conversation["custom"])
+}
+
+func (s *SessionEventsSuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {
+	opened := s.withATool()
+	watching := s.watch(opened.Id)
+	s.respond(opened.Id)
+	asked := s.await(watching, "tool_call")
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": asked["id"],
+		"error": "the orders service is down",
+	}))
+
+	ran := s.await(watching, "tool_ran")
+	s.Contains(ran["error"], "the orders service is down")
+	s.Contains(ran["result"], "did not work",
+		"the model has to be told in words it can repeat to the caller")
+}
+
+func (s *SessionEventsSuite) TestATurnLeftWaitingOnAToolIsHandedToTheNextSocketThatAsksForIt() {
+	// A page that reloaded mid-answer has to be able to pick the tool call back up, and
+	// asking for it is what says the new socket can run it. It is a call, because a turn
+	// is only left waiting where the person is still on the line.
+	opened := s.serverClient.createSession(s.callWithATool())
+	first := s.watch(opened.Id)
+	s.callerSays("where is my order")
+	asked := s.await(first, "tool_call")
+	s.Require().NoError(first.Close())
+
+	again := s.serverClient.opens(
+		"/v1/agents/sessions/" + opened.Id + "/events?replay_pending_tools=true")
+	replayed := s.await(again, "tool_call")
+
+	s.Equal(asked, replayed)
+	s.Require().NoError(again.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": replayed["id"],
+		"turn_id": replayed["turn_id"], "output": "saved receipt",
+	}))
+	s.Equal("saved receipt", s.await(again, "tool_ran")["result"])
+}
+
+func (s *SessionEventsSuite) TestTheSocketCanMakeTheAgentSpeak() {
+	said := "one moment, " + s.utils.uuid()
+	opened := s.onACall()
+	watching := s.watch(opened.Id)
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{"type": "say", "text": said}))
+
+	s.Require().Eventually(func() bool {
+		for _, spoken := range s.voice.spoken() {
+			if spoken == said {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 5*time.Millisecond, "the socket could not make the agent talk")
+}
+
+func (s *SessionEventsSuite) TestTheCallDoesNotOutliveASocketThatEndsIt() {
+	opened := s.onACall()
+	watching := s.watch(opened.Id)
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{"type": "close"}))
+
+	// The agent is given a moment to finish what it is saying before the session ends.
+	s.Require().Eventually(func() bool {
+		var read Session
+		status := s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id, nil, &read)
+		return status == http.StatusNotFound || read.State == Ended
+	}, 2*settleFor, 50*time.Millisecond, "the call outlived the socket that closed it")
+}
+
+// The socket's own close command ends the session, and the socket after it with 1000. It is
+// tried 20 times because the end raced the session's own: 10 of 40 ended 1006 on base 291f2e34c.
+func (s *SessionEventsSuite) TestASocketThatClosesTheSessionIsClosedNormally() {
+	for range 20 {
+		watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+		s.Require().NoError(watching.WriteJSON(map[string]any{"type": "close"}))
+
+		_, ended := s.socketEnd(watching)
+
+		s.Equal("the session ended", s.closedWith(ended, websocket.CloseNormalClosure).Text)
+	}
+}
+
+// A session ended from outside the socket closes it with 1000, and the router waits for the
+// caller's answer before it hangs up.
+func (s *SessionEventsSuite) TestASessionEndedElsewhereClosesTheSocketAndWaitsForTheAnswer() {
+	opened := s.inWriting(CreateSessionRequest{})
+	watching := s.watch(opened.Id)
+
+	s.serverClient.stopSession(opened.Id)
+
+	closed, held := s.unanswered(watching)
+	s.Equal(websocket.CloseNormalClosure, closed.Code)
+	s.Equal("the session ended", closed.Text)
+	s.heldUntilAnswered(held)
+}
+
+func (s *SessionEventsSuite) TestAFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("not json")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// JSON that is not an object is no command either, and is refused as a frame that is not
+// JSON is.
+func (s *SessionEventsSuite) TestJSONThatIsNotACommandIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte("[1]")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+func (s *SessionEventsSuite) TestABinaryFrameThatIsNotJSONIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.BinaryMessage, []byte("not json")))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// The control: a command of a type the router does not know is reported and the socket
+// stays open, as on base 8705bbaf9.
+func (s *SessionEventsSuite) TestACommandOfAnUnknownTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// A command in a binary frame is read as one in a text frame.
+func (s *SessionEventsSuite) TestACommandInABinaryFrameIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.BinaryMessage, `{"type":"nope"}`, `unknown command "nope"`)
+}
+
+// An object with no type is a command of no type: reported, not refused.
+func (s *SessionEventsSuite) TestAnObjectWithNoTypeIsReportedAndTheSocketStaysOpen() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+
+	s.unknownCommandLeavesTheSocketOpen(watching, websocket.TextMessage, `{}`, `unknown command ""`)
+}
+
+// An object whose type is not a string cannot be read as a command and is refused.
+func (s *SessionEventsSuite) TestACommandWhoseTypeIsNotAStringIsRefusedWithPolicyViolation() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.TextMessage, []byte(`{"type":1}`)))
+
+	s.refusedAsUnreadable(watching)
+}
+
+// The control: a caller that closes first is answered with its own close, as on base
+// 291f2e34c.
+func (s *SessionEventsSuite) TestACallerThatClosesTheSocketIsAnsweredWithItsOwnClose() {
+	watching := s.watch(s.inWriting(CreateSessionRequest{}).Id)
+	s.Require().NoError(watching.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseGoingAway, "")))
+
+	read, ended := s.socketEnd(watching)
+
+	s.Empty(read)
+	s.closedWith(ended, websocket.CloseGoingAway)
+}
+
+func (s *SessionEventsSuite) TestAnotherAppCannotWatchASession() {
+	opened := s.inWriting(CreateSessionRequest{})
+
+	_, status := s.data.backendOfAnotherApp().watch(
+		"/v1/agents/sessions/" + opened.Id + "/events")
+
+	s.Equal(http.StatusNotFound, status, "a stranger is not told the id is real")
+}
+
+func (s *SessionEventsSuite) TestASessionNobodyOpenedHasNothingToWatch() {
+	_, status := s.serverClient.watch("/v1/agents/sessions/" + s.utils.uuid() + "/events")
+
+	s.Equal(http.StatusNotFound, status)
+}
+
+// inWriting opens a conversation that keeps no transcript, which is the cheapest session
+// with an events socket: nothing is recorded and no agent is holding a line open.
+func (s *SessionEventsSuite) inWriting(request CreateSessionRequest) Session {
+	request.Incognito = pointerTo(true)
+	if request.Llm == nil {
+		request.Llm = pointerTo("llm-flow")
+	}
+	return s.serverClient.createSession(request)
+}
+
+// onACall opens a session with an agent in a call of its own, for what only a call does.
+func (s *SessionEventsSuite) onACall() Session {
+	return s.serverClient.createSession(CreateSessionRequest{StartVoice: pointerTo(true)})
+}
+
+// withATool is a session on the model that reaches for the caller's own tool.
+func (s *SessionEventsSuite) withATool() Session {
+	return s.inWriting(s.askingForATool())
+}
+
+// callWithATool is the same conversation held on a call.
+func (s *SessionEventsSuite) callWithATool() CreateSessionRequest {
+	request := s.askingForATool()
+	request.StartVoice = pointerTo(true)
+	return request
+}
+
+func (s *SessionEventsSuite) askingForATool() CreateSessionRequest {
+	return CreateSessionRequest{
+		Llm: pointerTo("tooling/tool-model"),
+		Tools: &[]SessionTool{{
+			Name: lookupOrder, Description: "find an order by its number",
+			Parameters: &map[string]any{"type": "object"},
+		}},
+	}
+}
+
+func (s *SessionEventsSuite) watch(id string) *websocket.Conn {
+	return s.serverClient.opens("/v1/agents/sessions/" + id + "/events")
+}
+
+func (s *SessionEventsSuite) respond(id string) {
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+id+"/respond", SayRequest{Text: "where is my order"}, nil))
+}
+
+// await reads frames until one of the wanted type arrives.
+func (s *SessionEventsSuite) await(connection *websocket.Conn, wanted string) map[string]any {
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(settleFor)))
+	for {
+		var received map[string]any
+		if err := connection.ReadJSON(&received); err != nil {
+			s.Require().FailNow("the socket closed before " + wanted + " arrived: " + err.Error())
+		}
+		if received["type"] == wanted {
+			return received
+		}
+	}
+}

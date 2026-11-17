@@ -1,0 +1,7 @@
+.dart_tool/
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+# Libraries leave resolving to the app that depends on them.
+pubspec.lock

@@ -1,0 +1,38 @@
+model_name: parakeet-tdt-0.6b-v3-streaming
+description: >
+  NVIDIA Parakeet TDT 0.6B V3 served over a WebSocket for realtime speech-to-text.
+  Accepts 16 kHz mono PCM16 frames and emits incremental (replacement) transcripts
+  plus a final transcript per utterance.
+python_version: py312
+model_metadata:
+  repo_id: nvidia/parakeet-tdt-0.6b-v3
+resources:
+  accelerator: L4
+  use_gpu: true
+runtime:
+  transport:
+    kind: websocket
+  predict_concurrency: 8
+model_cache:
+  - repo_id: nvidia/parakeet-tdt-0.6b-v3
+    revision: main
+    use_volume: true
+    volume_folder: parakeet-tdt-0.6b-v3
+    kind: hf
+requirements:
+  - nemo_toolkit[asr]
+  - torch>=2.6.0,<2.8.0
+  - torchaudio>=2.6.0,<2.8.0
+  - numpy<=2.3
+  - pyarrow==20.0.0
+  - cuda-python
+environment_variables:
+  # Emit an incremental transcript at most this often.
+  WINDOW_MS: "480"
+  # Trailing silence that ends an utterance.
+  SILENCE_MS: "700"
+  # Force a final transcript on utterances that never hit silence.
+  MAX_UTTERANCE_S: "30"
+  # RMS below this (int16 scale) counts as silence.
+  SILENCE_RMS: "300"
+  CUDA_GRAPHS: "true"

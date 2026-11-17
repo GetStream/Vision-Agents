@@ -1,0 +1,124 @@
+# Salesforce's hosted MCP server (internal/mcp/connectors.yaml:95-109 on codex/connector-support
+# at cf62af0d, «[proto]:N» below), written from the core's fixture
+# testdata/manifests/salesforce.yaml and stress-test row 1 of «Stress test: 12 awkward
+# providers» in acceleration/docs/connectors/architecture.md on connectors/planning («row 1»).
+# Salesforce's developer pages answered 403 to every fetch on October 2, 2026, so the vendor
+# sources are what its servers publish and its own SDK:
+#   [prm]  GET https://api.salesforce.com/.well-known/oauth-protected-resource/platform/mcp/v1/platform/sobject-all
+#          at 2026-10-02T21:06:36Z: that URL as resource, authorization_servers
+#          [https://login.salesforce.com], scopes_supported [mcp_api, refresh_token]. The
+#          sandbox path at 2026-10-02T21:10:21Z: the same with /sandbox, and
+#          https://test.salesforce.com.
+#   [oidc] GET https://login.salesforce.com/.well-known/openid-configuration at
+#          2026-10-02T21:06:36Z (and test.salesforce.com at 2026-10-02T21:10:21Z): authorize,
+#          token and revocation at /services/oauth2/authorize, /token and /revoke on that host,
+#          token_endpoint_auth_methods_supported [client_secret_post, client_secret_basic,
+#          private_key_jwt], code_challenge_methods_supported [S256].
+#   [sdk]  SalesforceMobileSDK-Android libs/SalesforceSDK/src/com/salesforce/androidsdk/auth/OAuth2.java
+#          at 863835e9a4e4c92bf0080b7152f06ecc94f0a108, opened October 2, 2026.
+id: salesforce
+# A new revision for any change to what this file says; see AGENTS.md. 2 renames
+# client.policy to client.registration; 3 adds oauth2_client_credentials and
+# refresh.access_ttl.
+revision: 3
+# [proto]:96-98
+name: Salesforce
+category: Customers
+description: Read and update CRM records through Salesforce's hosted MCP server.
+inputs:
+  # Production vs sandbox: row 1; [proto]:109 and internal/mcp/catalog.go:111-120 there.
+  - name: environment
+    enum: [production, sandbox]
+    default: production
+vars:
+  login_host:
+    from: environment
+    values:
+      # [prm]'s authorization server for each path; [oidc]; [proto]:102-103 and
+      # internal/mcp/oauth.go:826-827 there.
+      production: login.salesforce.com
+      sandbox: test.salesforce.com
+  mcp_path:
+    from: environment
+    values:
+      # [prm]; internal/mcp/catalog.go:114-116 at cf62af0d. [proto]:99 wrote
+      # platform/mcp/v1/{instance}/platform/sobject-all, which [prm] does not have for
+      # production: the vendor's path wins.
+      production: platform/mcp/v1/platform/sobject-all
+      sandbox: platform/mcp/v1/sandbox/platform/sobject-all
+endpoints:
+  # [oidc]; [sdk] OAuth2.java:167,180,181 (OAUTH_AUTH_PATH, OAUTH_TOKEN_PATH,
+  # OAUTH_REVOKE_PATH); [proto]:102-103.
+  authorize: https://{login_host}/services/oauth2/authorize
+  token: https://{login_host}/services/oauth2/token
+  revoke: https://{login_host}/services/oauth2/revoke
+  # [prm]
+  mcp: https://api.salesforce.com/{mcp_path}
+  # The RFC 8707 resource indicator: [prm]'s resource, which is the MCP endpoint. The
+  # endpoints above are pinned, so oauth2_code discovers nothing and needs it here. Whether
+  # Salesforce's authorization server reads it is not on any source above. # unverified
+  resource: https://api.salesforce.com/{mcp_path}
+# Authorization code with PKCE S256: [oidc]. Client credentials, for a connection the app
+# owns, with no person to consent: row 1 («client credentials with a "Run As" user»), and
+# Salesforce's own description of the flow, a connected app's consumer key and secret as
+# client id and secret, with a «Run As» user the tokens act for («Configuring the flow»,
+# developer.salesforce.com/blogs/2023/03/using-the-client-credentials-flow-for-easier-api-
+# authentication, read 2026-10-06). That app lives in the customer's org, so its id and
+# secret are supplied per connection, not an operator or customer client record. Row 1
+# also lists oauth2_jwt_bearer, which is not a registered scheme yet; it joins with it.
+#
+# oauth2_client_credentials posts to endpoints.token below, the login host. The blog's
+# example URL is login.salesforce.com; [oidc]'s grant_types_supported lists only
+# authorization_code and refresh_token (2026-10-06T19:21:49Z), and third-party guides say
+# the flow needs the org's My Domain token URL. Which is right is not checked: Salesforce's
+# help page on the flow renders client-side and could not be read. # unverified
+schemes: [oauth2_code, oauth2_client_credentials]
+client:
+  # An External Client App the operator or the customer registers in Salesforce: the core
+  # fixture and the architecture doc's «A manifest, for scale» (our policy, not a vendor
+  # fact); docs/connector-design.md:150 at cf62af0d. [oidc] has a registration_endpoint, but
+  # whether it registers a client without an initial access token is not checked. # unverified
+  registration: [operator, customer]
+  # No auth_method: [oidc] lists client_secret_basic and client_secret_post, so oauth2_code
+  # takes basic for a client with a secret and none for one without, which PKCE allows
+  # (docs/connector-design.md:150 at cf62af0d). [proto]:104 pinned client_secret_post.
+  # [proto]:105
+  env: SALESFORCE
+scopes:
+  # [prm]; [proto]:106-108. No separator, so a space (RFC 6749 section 3.3).
+  list: [mcp_api, refresh_token]
+capture:
+  # The identity URL, id in the code exchange's response: [sdk] OAuth2.java:1332 reads it
+  # (with instance_url, :1328) from every token endpoint response; row 1 («identity URL id»).
+  # It is the account id and a URL a later request may fetch, so it stays a Salesforce host:
+  # login.salesforce.com and test.salesforce.com are both under .salesforce.com. Which host
+  # issues it for a My Domain org is not checked. # unverified
+  - name: identity_url
+    from: token_response
+    path: $.id
+    host_suffixes: [.salesforce.com]
+    keep_path: true
+# The identity URL whole, as the core fixture does: it carries the org and the user
+# (internal/mcp/oauth.go:874-887 at cf62af0d read them from its path).
+identity: [identity_url]
+# No instance_url capture or api_base: the MCP server is on api.salesforce.com ([prm]), and
+# no HTTP source exists yet to call the org's own host.
+refresh:
+  # Not rotating, a one-minute margin: the core fixture and the doc's «A manifest, for
+  # scale»; the margin is the prototype's (row 15 of «Axes where providers differ»).
+  margin: 60s
+  # The token response has no expires_in ([sdk] reads none), and a token lives as long as
+  # the org's session timeout, which each org sets. Without an access_ttl no scheme knows
+  # when to renew, and oauth2_client_credentials refuses such a token (ErrNoLifetime). 15
+  # minutes is the shortest timeout an org can set, so a token is renewed before any org
+  # ends it: «Modify Session Security Settings» in Salesforce's Security Guide gives the
+  # range 15 minutes to 24 hours, as search results quote it on 2026-10-06; the page itself
+  # answered 403 and was not read. The cost is one token request per 14 minutes per
+  # connection under either scheme. # unverified
+  access_ttl: 15m
+rate_limit:
+  # Per org: row 16 of «Axes where providers differ», here the tenant.
+  per: tenant
+sources:
+  - kind: mcp
+    endpoint: mcp

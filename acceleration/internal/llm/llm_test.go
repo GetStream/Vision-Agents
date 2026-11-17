@@ -1,0 +1,816 @@
+package llm
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+)
+
+var errUnauthorized = errors.New("unauthorized")
+
+func (s *LLMSuite) TestAPromptIsSplitByWhatItCarried() {
+	composed := Compose(ResponseParams{
+		Instructions: "Be brief.",
+		Tools:        []Tool{{Name: "lookup_order", Description: "Finds an order by its number."}},
+		Input: []Message{
+			{Role: User, Parts: []ContentPart{{Text: "What is this?"}, {Image: &ImagePart{Detail: "low"}}}},
+			{Role: Assistant, ToolCalls: []ToolCall{{Name: "get_video_frames", Arguments: `{"limit":1}`}}},
+			{Role: ToolResult, Parts: []ContentPart{{Text: "one frame"}, {Image: &ImagePart{Video: true}}}},
+		},
+	})
+
+	s.Positive(composed.Instructions)
+	s.Positive(composed.Messages)
+	s.Positive(composed.ToolDefinitions)
+	s.Positive(composed.ToolUse)
+	s.Equal(int64(lowDetailImageTokens), composed.Images)
+	s.Equal(int64(imageTokens), composed.Video)
+}
+
+func (s *LLMSuite) TestAScaledPromptSumsToWhatTheProviderCounted() {
+	scaled := Composition{Instructions: 3, Messages: 3, Images: 3}.Scaled(100)
+
+	s.Equal(int64(100), scaled.Total())
+	s.Equal(int64(33), scaled.Messages)
+	s.Equal(Composition{}, Composition{}.Scaled(100), "nothing estimated has nothing to share out")
+}
+
+// chunk is one thing a scripted provider does when its stream is advanced.
+type chunk func(w *ResponseWriter)
+
+// scripted stands in for a provider, playing chunks back one Advance at a time.
+type scripted struct {
+	chunks []chunk
+	err    error
+	// closed is atomic because a screen closes a stream from its own goroutine.
+	closed atomic.Bool
+}
+
+func (s *scripted) Advance(w *ResponseWriter) bool {
+	if s.closed.Load() {
+		// As every provider does: closing cancels the request, which it reports as a cancel.
+		w.Cancelled()
+		return false
+	}
+	if len(s.chunks) == 0 {
+		return false
+	}
+	next := s.chunks[0]
+	s.chunks = s.chunks[1:]
+	next(w)
+	return true
+}
+
+func (s *scripted) Err() error { return s.err }
+
+func (s *scripted) Close() error {
+	s.closed.Store(true)
+	return nil
+}
+
+type LLMSuite struct {
+	suite.Suite
+}
+
+func TestLLMSuite(t *testing.T) {
+	suite.Run(t, new(LLMSuite))
+}
+
+// stream is a scripted provider's stream, named as the tests want to talk about it.
+func (s *LLMSuite) stream(chunks ...chunk) *Stream {
+	return NewStream(
+		StreamOptions{ResponseID: "r1", Provider: "openai", Model: "gpt-5.6-luna"},
+		&scripted{chunks: chunks},
+	)
+}
+
+// drain advances a stream to the end and returns everything it produced.
+func (s *LLMSuite) drain(stream *Stream) []Event {
+	var events []Event
+	for stream.Next() {
+		events = append(events, stream.Current())
+	}
+	return events
+}
+
+func (s *LLMSuite) TestStreamGeneratesAResponseIDWhenTheCallerHasNone() {
+	first := NewStream(StreamOptions{}, &scripted{})
+	second := NewStream(StreamOptions{}, &scripted{})
+
+	s.Require().True(first.Next())
+	s.Require().True(second.Next())
+
+	firstCreated := first.Current().(ResponseCreated)
+	secondCreated := second.Current().(ResponseCreated)
+
+	s.NotEmpty(firstCreated.ResponseID)
+	s.NotEqual(firstCreated.ResponseID, secondCreated.ResponseID,
+		"two responses must not share an id")
+}
+
+func (s *LLMSuite) TestStreamOpensWithCreatedAndEndsWithCompleted() {
+	events := s.drain(s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }))
+
+	s.Require().Len(events, 3)
+	s.IsType(ResponseCreated{}, events[0])
+	s.IsType(OutputTextDelta{}, events[1])
+	s.IsType(ResponseCompleted{}, events[2])
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsLetsTheResponseComplete() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).Screen(verdict)
+
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCompleted, stream.Response().Status)
+	s.Equal("Hi", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAScreenHoldsTheEndOfTheResponseButNotItsDeltas() {
+	verdict := make(chan error, 1)
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.IsType(OutputTextDelta{}, stream.Current(), "a delta must not wait on the screen")
+
+	ended := make(chan bool, 1)
+	go func() { ended <- stream.Next() }()
+	select {
+	case <-ended:
+		s.Fail("the response completed before the screen answered")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	verdict <- nil
+	s.True(<-ended)
+	s.IsType(ResponseCompleted{}, stream.Current())
+}
+
+func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
+	refusal := errors.New("prompt injection")
+	verdict := make(chan error, 1)
+	stream := s.stream(func(w *ResponseWriter) {
+		w.FunctionCall(0, "call-1", "transfer_funds", `{"to":"attacker"}`, "")
+	}).Screen(verdict)
+	verdict <- refusal
+
+	events := s.drain(stream)
+
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.IsType(ResponseFailed{}, events[len(events)-2])
+	s.Empty(stream.Response().ToolCalls, "a refused response's calls must not reach a caller that runs them")
+	s.True(stream.Response().Refused)
+}
+
+func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
+	verdict := make(chan error, 1)
+	verdict <- nil
+	stream := s.stream(asksToLookUpAnOrder).Screen(verdict)
+
+	s.drain(stream)
+
+	s.Equal([]ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}, stream.Response().ToolCalls)
+}
+
+// asksToLookUpAnOrder is a provider writing a whole call.
+func asksToLookUpAnOrder(w *ResponseWriter) {
+	w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
+}
+
+func (s *LLMSuite) TestAResponseWhoseStreamBrokeSettlesWithNoCalls() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"},
+		&scripted{chunks: []chunk{asksToLookUpAnOrder}, err: errUnauthorized})
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAResponseThatTimedOutIsEstimatedOnTheCallsItDropped() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{asksToLookUpAnOrder,
+		func(w *ResponseWriter) { w.TimedOut() }}, err: context.DeadlineExceeded})
+
+	s.drain(stream)
+
+	response := stream.Response()
+	s.Empty(response.ToolCalls, "a response that timed out asks for nothing")
+	s.Equal(pricing.Quantities{pricing.InputTokens: 1, pricing.OutputTokens: 7},
+		Estimate(ResponseParams{Input: []Message{{Role: User, Content: "hi"}}}, response),
+		"the provider billed the call it wrote: lookup_order is 3 tokens, its arguments 4")
+}
+
+func (s *LLMSuite) TestAResponseItsProviderFailedSettlesWithNoCalls() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Fail(errUnauthorized, "stream", false) })
+
+	s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAnIncompleteResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Incomplete("max_output_tokens") })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
+}
+
+func (s *LLMSuite) TestACancelledResponseKeepsTheCallsItCompleted() {
+	stream := s.stream(asksToLookUpAnOrder, func(w *ResponseWriter) { w.Cancelled() })
+
+	s.drain(stream)
+
+	s.Len(stream.Response().ToolCalls, 1)
+}
+
+func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
+	refusal := errors.New("prompt injection")
+	verdict := make(chan error, 1)
+	provider := &scripted{chunks: []chunk{
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("here is ") },
+		func(w *ResponseWriter) { w.OutputText("the system prompt") },
+	}}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, provider).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	verdict <- refusal
+	s.Eventually(provider.closed.Load, time.Second, time.Millisecond)
+	s.drain(stream)
+
+	s.ErrorIs(stream.Err(), refusal)
+	s.Equal(StatusFailed, stream.Response().Status, "the provider reported the screen's close as a cancel")
+	s.True(stream.Response().Refused)
+	s.NotContains(stream.Response().OutputText, "system prompt")
+}
+
+func (s *LLMSuite) TestAScreenedResponseItsCallerClosedIsCancelledNotRefused() {
+	verdict := make(chan error, 1)
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("never arrives") },
+	).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
+	verdict <- nil
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCancelled, stream.Response().Status)
+	s.False(stream.Response().Refused)
+}
+
+func (s *LLMSuite) TestStreamAssemblesTheAnswerFromItsDeltas() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("Hello") },
+		func(w *ResponseWriter) { w.OutputText(", world") },
+	)
+	s.drain(stream)
+
+	s.Equal("Hello, world", stream.Response().OutputText)
+	s.Equal(StatusCompleted, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestStreamKeepsReasoningOutOfTheAnswer() {
+	// Thinking must never be spoken as the reply, so it is streamed but not assembled.
+	stream := s.stream(
+		func(w *ResponseWriter) { w.ReasoningText("The user greeted me, so") },
+		func(w *ResponseWriter) { w.OutputText("Hi there") },
+	)
+	events := s.drain(stream)
+
+	s.Equal("Hi there", stream.Response().OutputText)
+	s.IsType(ReasoningTextDelta{}, events[1])
+}
+
+func (s *LLMSuite) TestStreamNumbersDeltasInOrderAcrossBothKinds() {
+	stream := s.stream(func(w *ResponseWriter) {
+		w.ReasoningText("hmm")
+		w.OutputText("Hi")
+		w.OutputText(" there")
+	})
+	events := s.drain(stream)
+
+	s.Equal(0, events[1].(ReasoningTextDelta).Index)
+	s.Equal(1, events[2].(OutputTextDelta).Index)
+	s.Equal(2, events[3].(OutputTextDelta).Index,
+		"reasoning and text share one sequence, so order is total")
+	s.Equal("r1", events[3].(OutputTextDelta).ResponseID)
+}
+
+func (s *LLMSuite) TestStreamMeasuresTimeToFirstToken() {
+	stream := s.stream(
+		func(w *ResponseWriter) { time.Sleep(20 * time.Millisecond); w.OutputText("Hi") },
+		func(w *ResponseWriter) { time.Sleep(20 * time.Millisecond); w.OutputText(" there") },
+	)
+	s.drain(stream)
+
+	response := stream.Response()
+	s.GreaterOrEqual(response.TimeToFirstTokenMs, 15.0, "the wait for the first token")
+	s.Less(response.TimeToFirstTokenMs, response.DurationMs,
+		"the first token arrives before the last one")
+}
+
+func (s *LLMSuite) TestReasoningCountsTowardsTimeToFirstToken() {
+	// A reasoning model is working while it thinks, so the caller's wait ends there.
+	stream := s.stream(
+		func(w *ResponseWriter) { time.Sleep(20 * time.Millisecond); w.ReasoningText("thinking") },
+		func(w *ResponseWriter) { time.Sleep(20 * time.Millisecond); w.OutputText("Hi") },
+	)
+	s.drain(stream)
+
+	s.Less(stream.Response().TimeToFirstTokenMs, 35.0,
+		"thinking is the first sign of life, not the answer")
+}
+
+func (s *LLMSuite) TestResponseWithNoOutputReportsNoTimeToFirstToken() {
+	stream := s.stream()
+	s.drain(stream)
+
+	s.Zero(stream.Response().TimeToFirstTokenMs, "nothing came back, so there was no first token")
+	s.Empty(stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestStreamKeepsTheLastUsageItWasTold() {
+	// Providers repeat a cumulative usage frame on every chunk, so the last one is right.
+	stream := s.stream(
+		func(w *ResponseWriter) {
+			w.Usage(Usage{InputTokens: 15, OutputTokens: 43,
+				OutputTokensDetails: OutputTokensDetails{ReasoningTokens: 43}})
+		},
+		func(w *ResponseWriter) {
+			w.Usage(Usage{
+				InputTokens:         15,
+				InputTokensDetails:  InputTokensDetails{CachedTokens: 8, CacheWriteTokens: 4},
+				OutputTokens:        64,
+				OutputTokensDetails: OutputTokensDetails{ReasoningTokens: 47},
+			})
+		},
+	)
+	s.drain(stream)
+
+	usage := stream.Response().Usage
+	s.EqualValues(15, usage.InputTokens)
+	s.EqualValues(8, usage.InputTokensDetails.CachedTokens)
+	s.EqualValues(4, usage.InputTokensDetails.CacheWriteTokens)
+	s.EqualValues(64, usage.OutputTokens)
+	s.EqualValues(47, usage.OutputTokensDetails.ReasoningTokens)
+	s.EqualValues(79, usage.TotalTokens, "a provider that reports no total gets one")
+}
+
+func (s *LLMSuite) TestClosingAStreamAbandonsTheResponseButStillReportsWhatItCost() {
+	stream := s.stream(
+		func(w *ResponseWriter) {
+			w.OutputText("this will be cut ")
+			w.Usage(Usage{InputTokens: 10, OutputTokens: 4})
+		},
+		func(w *ResponseWriter) { w.OutputText("but this never arrives") },
+	)
+
+	s.Require().True(stream.Next()) // created
+	s.Require().True(stream.Next()) // the delta that did arrive
+	s.Require().NoError(stream.Close())
+	s.drain(stream)
+
+	response := stream.Response()
+	s.Equal(StatusCancelled, response.Status)
+	s.Equal("this will be cut ", response.OutputText, "the text that did arrive still counts")
+	s.EqualValues(4, response.Usage.OutputTokens, "the tokens already generated are still billed")
+	s.True(response.UsageReported, "a count that arrived before the cut is the provider's")
+}
+
+func (s *LLMSuite) TestAResponseSaysWhetherItsProviderReportedUsage() {
+	silent := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") })
+	zero := s.stream(func(w *ResponseWriter) {
+		w.OutputText("Hi")
+		w.Usage(Usage{})
+	})
+	s.drain(silent)
+	s.drain(zero)
+
+	s.False(silent.Response().UsageReported)
+	s.True(zero.Response().UsageReported, "a provider that said nothing was used has said")
+}
+
+func (s *LLMSuite) TestAResponseIsPricedByItsFreshCachedAndWrittenTokens() {
+	response := Response{Usage: Usage{
+		InputTokens:        2_400,
+		InputTokensDetails: InputTokensDetails{CachedTokens: 11, CacheWriteTokens: 2_386},
+		OutputTokens:       22,
+	}}
+
+	s.Equal(pricing.Quantities{
+		pricing.InputTokens:           3,
+		pricing.CachedInputTokens:     11,
+		pricing.CacheWriteInputTokens: 2_386,
+		pricing.OutputTokens:          22,
+	}, response.Used())
+}
+
+func (s *LLMSuite) TestAnEstimateCountsThePromptAndEverythingThatCameBack() {
+	params := ResponseParams{
+		Instructions: "Be brief.",                                          // 3 tokens
+		Input:        []Message{{Role: User, Content: "Weather in Rome?"}}, // 4
+	}
+	response := Response{
+		OutputText:    "Sunny.",                                                    // 2
+		ReasoningText: "The user wants the weather.",                               // 7
+		ToolCalls:     []ToolCall{{Name: "weather", Arguments: `{"city":"Rome"}`}}, // 2 and 4
+	}
+
+	s.Equal(pricing.Quantities{pricing.InputTokens: 7, pricing.OutputTokens: 15}, Estimate(params, response))
+}
+
+func (s *LLMSuite) TestStreamReportsWhyTheModelStoppedEarly() {
+	stream := s.stream(func(w *ResponseWriter) {
+		w.OutputText("truncated")
+		w.Incomplete(ReasonMaxOutputTokens)
+	})
+	s.drain(stream)
+
+	s.Equal(StatusIncomplete, stream.Response().Status)
+	s.Equal(ReasonMaxOutputTokens, stream.Response().IncompleteReason)
+}
+
+func (s *LLMSuite) TestStreamAssemblesToolCallsInTheOrderTheModelAskedForThem() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "transfer", `{"to":`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(1, "call_2", "press", `{"digit"`, "sig") },
+		func(w *ResponseWriter) { w.FunctionCall(0, "", "", `"sales"}`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(1, "", "", `:"1"}`, "") },
+	)
+	s.drain(stream)
+
+	calls := stream.Response().ToolCalls
+	s.Require().Len(calls, 2)
+	s.Equal(ToolCall{ID: "call_1", Name: "transfer", Arguments: `{"to":"sales"}`}, calls[0])
+	s.Equal(ToolCall{ID: "call_2", Name: "press", Arguments: `{"digit":"1"}`, Signature: "sig"},
+		calls[1])
+}
+
+func (s *LLMSuite) TestAToolCallCutOffMidArgumentsIsDropped() {
+	// Shortening a reply stopped Gemma inside find_room{"guests": 4, and the
+	// call kept in the history had Baseten refuse every later turn of the call.
+	stream := s.stream(
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "find_room", `{"guests": 4`, "") },
+		func(w *ResponseWriter) { w.Cancelled() },
+	)
+	s.drain(stream)
+
+	s.Empty(stream.Response().ToolCalls)
+}
+
+func (s *LLMSuite) TestAToolCallTheProviderDidNotIdentifyGetsAnID() {
+	stream := s.stream(func(w *ResponseWriter) { w.FunctionCall(0, "", "transfer", "{}", "") })
+	s.drain(stream)
+
+	s.Equal("r1-tool-0", stream.Response().ToolCalls[0].ID)
+}
+
+func (s *LLMSuite) TestAwaitStopsAtTheFirstTextAndLeavesEveryEventToNext() {
+	provider := &scripted{chunks: []chunk{
+		func(w *ResponseWriter) { w.ReasoningText("hmm") },
+		func(w *ResponseWriter) { w.OutputText("Hi") },
+		func(w *ResponseWriter) { w.OutputText(" there") },
+	}}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, provider)
+
+	s.True(stream.Await())
+	s.Len(provider.chunks, 1, "the wait ended with the first text, without reading on")
+
+	events := s.drain(stream)
+	s.Require().Len(events, 5)
+	s.IsType(ResponseCreated{}, events[0])
+	s.IsType(ReasoningTextDelta{}, events[1])
+	s.Equal("Hi", events[2].(OutputTextDelta).Delta)
+	s.Equal("Hi there", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAwaitStopsAtTheFirstToolCall() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.FunctionCall(0, "call_1", "transfer", `{"to":`, "") },
+		func(w *ResponseWriter) { w.FunctionCall(0, "", "", `"sales"}`, "") },
+	)
+
+	s.True(stream.Await())
+
+	s.drain(stream)
+	s.Equal(`{"to":"sales"}`, stream.Response().ToolCalls[0].Arguments)
+}
+
+func (s *LLMSuite) TestAwaitSaysSoWhenTheResponseEndsWithoutAnything() {
+	stream := s.stream(func(w *ResponseWriter) { w.ReasoningText("thinking, then nothing") })
+
+	s.False(stream.Await(), "thinking is not part of the answer")
+	s.False(stream.Await())
+
+	events := s.drain(stream)
+	s.IsType(ResponseCompleted{}, events[len(events)-1])
+	s.Equal(StatusCompleted, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestAwaitLeavesAFailureForNextToSettle() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{err: errUnauthorized})
+
+	s.False(stream.Await())
+
+	s.drain(stream)
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.ErrorIs(stream.Err(), errUnauthorized)
+}
+
+func (s *LLMSuite) TestAFailedResponseStillSettles() {
+	stream := NewStream(
+		StreamOptions{ResponseID: "r1", Provider: "deepseek", Model: "DeepSeek-V4-Flash-0731"},
+		&scripted{err: errUnauthorized},
+	)
+	events := s.drain(stream)
+
+	s.Require().Len(events, 3)
+	s.IsType(ResponseFailed{}, events[1])
+	s.Equal(StatusFailed, stream.Response().Status,
+		"a caller counting responses still sees this one end")
+	s.ErrorIs(stream.Err(), errUnauthorized)
+}
+
+func (s *LLMSuite) TestFailedResponseUnwrapsToTheProviderFailure() {
+	failure := ResponseFailed{Provider: "deepseek", Err: errUnauthorized, Context: "request"}
+
+	s.ErrorIs(failure, errUnauthorized)
+	s.Equal("unauthorized", failure.Error())
+}
+
+func (s *LLMSuite) TestCollectReturnsTheWholeAnswer() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("half ") },
+		func(w *ResponseWriter) { w.OutputText("an answer") },
+	)
+
+	response, err := Collect(stream)
+
+	s.Require().NoError(err)
+	s.Equal("half an answer", response.OutputText)
+}
+
+func (s *LLMSuite) TestCollectReportsAProviderFailure() {
+	stream := NewStream(StreamOptions{}, &scripted{err: errUnauthorized})
+
+	_, err := Collect(stream)
+
+	s.ErrorIs(err, errUnauthorized)
+}
+
+func (s *LLMSuite) TestReplayStandsInForAProvider() {
+	stream := Replay(
+		ResponseCreated{ResponseID: "r1"},
+		OutputTextDelta{ResponseID: "r1", Delta: "canned"},
+		ResponseCompleted{Response: Response{ID: "r1", OutputText: "canned",
+			Status: StatusCompleted}},
+	)
+
+	response, err := Collect(stream)
+
+	s.Require().NoError(err)
+	s.Equal("canned", response.OutputText)
+}
+
+func (s *LLMSuite) TestCapabilitiesRefuseAnEffortTheModelDoesNotAccept() {
+	model := Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}}
+
+	err := model.Validate(ResponseParams{Reasoning: ReasoningParams{Effort: "xhigh"}})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "none, low, medium", "the caller is told what is valid")
+	s.NoError(model.Validate(ResponseParams{Reasoning: ReasoningParams{Effort: "low"}}))
+}
+
+func (s *LLMSuite) TestASchemaIsSentOnlyToAModelThatTakesOne() {
+	schema := &JSONSchema{Name: "ruling", Schema: map[string]any{"type": "object"}}
+	text := TextParams{Format: FormatJSONSchema, Schema: schema}
+
+	s.Same(schema, Capabilities{JSONSchema: true}.Schema(text))
+	s.Nil(Capabilities{}.Schema(text), "a model that cannot hold to a schema is asked for a JSON object")
+}
+
+func (s *LLMSuite) TestASchemaIsSentOnlyWhenTheFormatAsksForIt() {
+	schema := &JSONSchema{Name: "ruling", Schema: map[string]any{"type": "object"}}
+
+	s.Nil(Capabilities{JSONSchema: true}.Schema(TextParams{Format: FormatJSONObject, Schema: schema}))
+}
+
+func (s *LLMSuite) TestCapabilitiesRefuseReasoningFromAModelThatDoesNotReason() {
+	err := Capabilities{}.Validate(ResponseParams{Reasoning: ReasoningParams{Effort: "low"}})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "does not reason")
+}
+
+func (s *LLMSuite) TestCapabilitiesRefuseAToolChoiceTheModelWouldNotHonour() {
+	model := Capabilities{ToolChoices: []string{"auto"}}
+
+	err := model.Validate(ResponseParams{ToolChoice: "required"})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), `"required" is not one of auto`)
+	s.NoError(model.Validate(ResponseParams{ToolChoice: "auto"}))
+	s.NoError(model.Validate(ResponseParams{}))
+	s.NoError(Capabilities{}.Validate(ResponseParams{ToolChoice: "required"}), "a model that lists none honours them all")
+}
+
+func (s *LLMSuite) TestCapabilitiesRefuseAConversationAndAPreviousResponseTogether() {
+	err := Capabilities{}.Validate(ResponseParams{
+		Conversation:       "conv_1",
+		PreviousResponseID: "resp_1",
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "not both")
+}
+
+func (s *LLMSuite) TestAPreviousResponseIsRefusedByAModelThatKeepsNone() {
+	// Answered anyway, the reply would be made from only the newest messages.
+	err := Capabilities{}.Validate(ResponseParams{
+		Input:              []Message{{Role: User, Content: "and tomorrow?"}},
+		PreviousResponseID: "resp_1",
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "keeps no response")
+	s.NoError(Capabilities{Store: true}.Validate(ResponseParams{PreviousResponseID: "resp_1"}))
+}
+
+func (s *LLMSuite) TestAConversationIsRefusedByAModelThatHoldsNone() {
+	err := Capabilities{}.Validate(ResponseParams{
+		Input:        []Message{{Role: User, Content: "and tomorrow?"}},
+		Conversation: "conv_1",
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "holds no conversation")
+	s.NoError(Capabilities{Conversations: true}.Validate(ResponseParams{Conversation: "conv_1"}))
+}
+
+func (s *LLMSuite) TestEffortFallsBackToTheModelsOwnDefault() {
+	model := Capabilities{ReasoningEfforts: []string{"none", "medium"}, DefaultEffort: "none"}
+
+	s.Equal("none", model.Effort(ResponseParams{}))
+	s.Equal("medium", model.Effort(ResponseParams{Reasoning: ReasoningParams{Effort: "medium"}}))
+	s.Empty(Capabilities{}.Effort(ResponseParams{}), "a model that does not reason sends nothing")
+}
+
+func (s *LLMSuite) TestUnfenceReadsJSONAModelWrappedInACodeFence() {
+	s.Equal(`{"ok":true}`, Unfence("```json\n{\"ok\":true}\n```"))
+	s.Equal(`{"ok":true}`, Unfence(`{"ok":true}`))
+}
+
+func (s *LLMSuite) TestCapabilitiesRefuseAnImageAModelCannotSee() {
+	image := ResponseParams{Input: []Message{{
+		Role:  User,
+		Parts: []ContentPart{{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1}}}},
+	}}}
+
+	err := Capabilities{}.Validate(image)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "does not accept image input")
+	s.NoError(Capabilities{InputModalities: []string{ModalityImage}}.Validate(image))
+	s.NoError(Capabilities{}.Validate(ResponseParams{Input: []Message{{Role: User, Content: "hi"}}}))
+}
+
+func (s *LLMSuite) TestOmitImagesLeavesAPlaceholderATextModelCanRead() {
+	message := Message{Role: User, Parts: []ContentPart{
+		{Text: "what is this"},
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1}}},
+	}}
+
+	omitted := OmitImages([]Message{message})
+
+	s.Equal(OmittedImage, omitted[0].Parts[1].Text)
+	s.Nil(omitted[0].Parts[1].Image)
+}
+
+func (s *LLMSuite) TestSameMessageComparesImageBytes() {
+	first := Message{Role: User, Parts: []ContentPart{
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1, 2}}},
+	}}
+	same := Message{Role: User, Parts: []ContentPart{
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1, 2}}},
+	}}
+	different := Message{Role: User, Parts: []ContentPart{
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1, 3}}},
+	}}
+
+	s.True(SameMessage(first, same))
+	s.False(SameMessage(first, different))
+}
+
+func (s *LLMSuite) TestParseDataURIReadsBytesBack() {
+	part := ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	parsed, err := ParseDataURI(part.DataURI())
+
+	s.Require().NoError(err)
+	s.Equal(part, parsed)
+}
+
+func (s *LLMSuite) TestParseDataURIRefusesAURL() {
+	_, err := ParseDataURI("https://example.com/flower.jpg")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "data URI")
+}
+
+func (s *LLMSuite) TestALeadingTagIsTrimmedFromTheDeltasAndTheResponse() {
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("[res") },
+		func(w *ResponseWriter) { w.OutputText("pond] Sure") },
+		func(w *ResponseWriter) { w.OutputText(", what time?") },
+	)
+
+	lead := stream.Lead(func(text string) bool { return len(text) >= len("[respond]") })
+	s.Equal("[respond] Sure", lead)
+	stream.Cut(0, len("[respond] "))
+
+	var spoken string
+	for _, event := range s.drain(stream) {
+		if delta, ok := event.(OutputTextDelta); ok {
+			spoken += delta.Delta
+		}
+	}
+	s.Equal("Sure, what time?", spoken)
+	s.Equal("Sure, what time?", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAClosedStreamNobodyReadsOutDrainsItselfForTheWatchers() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		var mu sync.Mutex
+		var watched []Event
+		seen := func() []Event {
+			mu.Lock()
+			defer mu.Unlock()
+			return watched
+		}
+		stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+			Observe(func(event Event) {
+				mu.Lock()
+				defer mu.Unlock()
+				watched = append(watched, event)
+			})
+		require.True(t, stream.Next())
+		require.NoError(t, stream.Close())
+
+		time.Sleep(drainGrace - time.Millisecond)
+		synctest.Wait()
+		require.Len(t, seen(), 1, "the caller has drainGrace to read it out itself")
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		require.Len(t, seen(), 2)
+		require.Equal(t, StatusCancelled, seen()[1].(ResponseCompleted).Response.Status)
+	})
+}
+
+func (s *LLMSuite) TestACallerReadingAfterTheDrainStillSeesEveryEventOnce() {
+	var watched []Event
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+		Observe(func(event Event) { watched = append(watched, event) })
+	require.True(s.T(), stream.Next())
+	stream.Close()
+	stream.drain()
+
+	events := s.drain(stream)
+	s.Require().Len(events, 1)
+	s.IsType(ResponseCompleted{}, events[0], "the end the caller waits for is still there to read")
+	s.Len(watched, 2, "and the watchers saw it once")
+	s.Equal(StatusCancelled, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestAStreamReadToItsEndBeforeTheGraceIsNotDrainedAgain() {
+	var watched int
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+		Observe(func(Event) { watched++ })
+	stream.Close()
+	s.drain(stream)
+	stream.drain()
+
+	s.Equal(2, watched)
+}

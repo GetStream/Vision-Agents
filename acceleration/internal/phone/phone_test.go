@@ -1,0 +1,808 @@
+package phone
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+)
+
+type PhoneSuite struct {
+	suite.Suite
+	ctx context.Context
+}
+
+func TestPhone(t *testing.T) { suite.Run(t, new(PhoneSuite)) }
+
+func (s *PhoneSuite) SetupTest() { s.ctx = context.Background() }
+
+func (s *PhoneSuite) TestTheBuiltInVendorListDeclaresEveryVendorProperly() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	s.Len(config.Vendors, 11, "the sprint names eleven vendors")
+	for _, vendor := range config.Vendors {
+		s.NotEmpty(vendor.Capabilities, vendor.Vendor+" declares no capabilities")
+		s.NotEmpty(vendor.Credentials, vendor.Vendor+" declares no credentials")
+	}
+}
+
+func (s *PhoneSuite) TestAHookPointedBeforeTheParticipantEventsIsMissingThem() {
+	ours := "https://router.example" + CallHookPath
+	hooks := []CallHook{
+		{URL: "https://other.example/hook", EventTypes: []string{"message.new"}, Enabled: true, HookType: "webhook"},
+		{URL: ours + "/42", EventTypes: []string{"call.session_started", "call.session_ended"}, Enabled: true, HookType: "webhook"},
+	}
+
+	missing, found := MissingCallHookEvents(hooks, ours)
+
+	s.True(found)
+	s.Equal([]string{"call.session_participant_joined", "call.session_participant_left"}, missing)
+	missing, found = MissingCallHookEvents([]CallHook{{URL: ours, Enabled: true}}, ours)
+	s.True(found)
+	s.Empty(missing, "a hook asking for nothing is sent everything")
+	_, found = MissingCallHookEvents(hooks[:1], ours)
+	s.False(found)
+	_, found = MissingCallHookEvents([]CallHook{{URL: ours, EventTypes: []string{"call.session_started"}}}, ours)
+	s.False(found, "a disabled hook delivers nothing")
+}
+
+func (s *PhoneSuite) TestEightOfElevenVendorsAreImplemented() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	var implemented []string
+	for _, vendor := range config.Vendors {
+		if vendor.Implemented {
+			implemented = append(implemented, vendor.Vendor)
+		}
+	}
+
+	s.ElementsMatch([]string{
+		"twilio", "telnyx", "sinch", "bandwidth", "vonage", "bird", "didww", "plivo",
+	}, implemented)
+}
+
+func (s *PhoneSuite) TestAProviderWithoutAStreamLegIsPerCall() {
+	s.Equal(StreamLegPerCall, StreamLegOf(&stub{vendor: "twilio"}))
+}
+
+func (s *PhoneSuite) TestTheCallIDRidesOnTheBridgeURIAsAQueryParameter() {
+	bridge := Bridge{URI: "sip:+15125551234@sip.stream-io-api.com"}
+
+	s.Equal("sip:+15125551234@sip.stream-io-api.com?x-stream-call-id=a+b", bridge.WithCallID("a b").URI)
+	s.Equal(bridge, bridge.WithCallID(""))
+}
+
+func (s *PhoneSuite) TestEveryImplementedVendorButDidwwCanPlaceACall() {
+	// DIDWW sells numbers and has no call control API at all, so there is nothing to ask
+	// it to dial with. A caller can see that before buying a number from it rather than
+	// after. Attaching is still the narrower list, being inbound rather than outbound.
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for _, vendor := range config.Vendors {
+		if !vendor.Implemented {
+			s.Empty(vendor.Operations, vendor.Vendor+" claims operations it cannot do")
+			continue
+		}
+		s.True(vendor.Does(OpSearch), vendor.Vendor+" cannot search")
+		s.True(vendor.Does(OpBuy), vendor.Vendor+" cannot buy")
+		s.True(vendor.Does(OpRelease), vendor.Vendor+" cannot release")
+
+		s.Equal(vendor.Vendor != "didww", vendor.Does(OpDial),
+			vendor.Vendor+" disagrees about dialling")
+
+		attaches := vendor.Vendor == "twilio" || vendor.Vendor == "telnyx"
+		s.Equal(attaches, vendor.Does(OpAttach), vendor.Vendor+" disagrees about attaching")
+	}
+}
+
+func (s *PhoneSuite) TestEveryVendorThatCanDialSaysHowItGetsPastTheTrunk() {
+	// A trunk with no password and no allowlist is open to anyone who learns its uri, so
+	// which of the two a vendor uses is not something to leave undeclared.
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	byAddress := map[string]bool{
+		"vonage": true, "bird": true, "sinch": true, "bandwidth": true,
+	}
+	for _, vendor := range config.Vendors {
+		if !vendor.Does(OpDial) {
+			continue
+		}
+		want := TrunkPassword
+		if byAddress[vendor.Vendor] {
+			want = TrunkAllowlist
+		}
+		s.Equal(want, vendor.Authenticates(), vendor.Vendor+" disagrees about trunk auth")
+	}
+}
+
+func (s *PhoneSuite) TestAVendorAuthenticatingByAnUnknownMeansIsRejected() {
+	_, err := parseConfig([]byte(`
+vendors:
+  - vendor: twilio
+    capabilities: [voice]
+    credentials: [TWILIO_ACCOUNT_SID]
+    trunk_auth: vibes
+`))
+
+	s.ErrorContains(err, "neither")
+}
+
+func (s *PhoneSuite) TestAnImplementedVendorMustSayWhatItCanDo() {
+	_, err := parseConfig([]byte(`
+vendors:
+  - vendor: twilio
+    implemented: true
+    capabilities: [voice]
+    credentials: [TWILIO_ACCOUNT_SID]
+`))
+
+	s.ErrorContains(err, "declares no operations")
+}
+
+func (s *PhoneSuite) TestAVendorDeclaredTwiceIsRejected() {
+	_, err := parseConfig([]byte(`
+vendors:
+  - vendor: twilio
+    capabilities: [voice]
+    credentials: [TWILIO_ACCOUNT_SID]
+  - vendor: twilio
+    capabilities: [voice]
+    credentials: [TWILIO_ACCOUNT_SID]
+`))
+
+	s.ErrorContains(err, "declared twice")
+}
+
+func (s *PhoneSuite) TestAnUnknownVendorCannotBeOpened() {
+	registry := NewRegistry(s.config())
+
+	_, err := registry.Open("carrier-pigeon")
+
+	s.ErrorContains(err, "not a known vendor")
+	s.ErrorIs(err, ErrInvalid)
+}
+
+func (s *PhoneSuite) TestADeclaredButUnimplementedVendorRefusesEveryOperation() {
+	registry := NewRegistry(s.config())
+
+	provider, err := registry.Open("sinch")
+	s.Require().NoError(err, "an unimplemented vendor still resolves")
+
+	s.Equal("sinch", provider.Vendor())
+	_, err = provider.SearchNumbers(s.ctx, Search{Country: "US"})
+	s.ErrorIs(err, ErrNotImplemented)
+	s.ErrorContains(err, "sinch", "the error names the vendor that did nothing")
+
+	_, err = provider.BuyNumber(s.ctx, Order{E164: "+15551234567"})
+	s.ErrorIs(err, ErrNotImplemented)
+	s.ErrorIs(provider.ReleaseNumber(s.ctx, "+15551234567"), ErrNotImplemented)
+	s.ErrorIs(provider.ConfigureInbound(s.ctx, Inbound{}), ErrNotImplemented)
+	_, err = provider.Dial(s.ctx, Outbound{})
+	s.ErrorIs(err, ErrNotImplemented)
+	s.ErrorIs(provider.SendDigits(s.ctx, "call-1", "1"), ErrNotImplemented)
+}
+
+func (s *PhoneSuite) TestOnlyWhatAKeypadHasCanBePressed() {
+	s.NoError(ValidateDigits("1"))
+	s.NoError(ValidateDigits("4123"))
+	s.NoError(ValidateDigits("*0#"))
+	s.NoError(ValidateDigits("1w2"), "a menu that asks for an extension after a beep needs a pause")
+	s.NoError(ValidateDigits("1W2"), "the longer pause is spelt with a capital everywhere")
+	s.NoError(ValidateDigits("ABCD"), "no handset has the fourth column but every vendor's api takes it")
+
+	s.ErrorContains(ValidateDigits(""), "digits to press")
+	s.ErrorIs(ValidateDigits(""), ErrInvalid)
+	s.ErrorContains(ValidateDigits("one"), "keypad can press")
+	s.ErrorIs(ValidateDigits("one"), ErrInvalid)
+	s.ErrorContains(ValidateDigits("press 1"), "keypad can press")
+	s.ErrorContains(ValidateDigits("1E2"), "keypad can press", "the fourth column stops at D")
+}
+
+func (s *PhoneSuite) TestACallNamesOnlyTheTermsItWasActuallyPlacedOn() {
+	bare := Outbound{From: "+15125551234", To: "+15550001111"}
+	s.Empty(bare.Features(), "a call with no terms asks nothing of a vendor")
+
+	full := Outbound{
+		RingTimeout:   20 * time.Second,
+		InitialDigits: "1234#",
+		Headers:       map[string]string{"X-Ticket": "42"},
+	}
+	s.ElementsMatch(
+		[]CallFeature{FeatureRingTimeout, FeatureInitialDigits, FeatureCustomHeaders},
+		full.Features(),
+	)
+}
+
+func (s *PhoneSuite) TestACallSaysWhichOfItsTermsAVendorCannotExpress() {
+	call := Outbound{RingTimeout: 20 * time.Second, Headers: map[string]string{"X-Ticket": "42"}}
+	provider := &stub{vendor: "twilio", undialable: []CallFeature{FeatureCustomHeaders}}
+
+	s.Equal([]CallFeature{FeatureCustomHeaders}, call.Unsupported(provider))
+	s.Empty(Outbound{RingTimeout: time.Second}.Unsupported(provider))
+}
+
+func (s *PhoneSuite) TestDigitsAVendorCannotPlayAreATermItCannotExpress() {
+	provider := &picky{stub: stub{vendor: "telnyx"}, plays: "0123456789w#*"}
+
+	s.Equal([]CallFeature{FeatureInitialDigits}, Outbound{InitialDigits: "W1"}.Unsupported(provider))
+	s.Empty(Outbound{InitialDigits: "ww1#"}.Unsupported(provider))
+}
+
+func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
+	bridge := Bridge{URI: "sip:trunk@sip.stream-io-api.com"}
+	valid := Outbound{From: "+15125551234", To: "+15550001111", Bridge: bridge}
+	s.NoError(valid.Validate())
+
+	missing := valid
+	missing.To = ""
+	s.ErrorContains(missing.Validate(), "from and a to")
+	s.ErrorIs(missing.Validate(), ErrInvalid)
+
+	unbridged := valid
+	unbridged.Bridge = Bridge{}
+	s.ErrorContains(unbridged.Validate(), "uri is required")
+	s.NotErrorIs(unbridged.Validate(), ErrInvalid, "the bridge is the router's own, not the caller's")
+
+	backwards := valid
+	backwards.RingTimeout = -time.Second
+	s.ErrorContains(backwards.Validate(), "less than no time")
+	s.ErrorIs(backwards.Validate(), ErrInvalid)
+
+	words := valid
+	words.InitialDigits = "extension four"
+	s.ErrorContains(words.Validate(), "keypad can press")
+	s.ErrorIs(words.Validate(), ErrInvalid)
+
+	// Twilio stops at 32, so more than that is a call that would be placed with the
+	// digits silently truncated at whichever vendor happened to answer.
+	long := valid
+	long.InitialDigits = strings.Repeat("1", maxInitialDigits+1)
+	s.ErrorContains(long.Validate(), "than the 32")
+	s.ErrorIs(long.Validate(), ErrInvalid)
+}
+
+func (s *PhoneSuite) TestOnlyAFullNumberThatIsNotPremiumRateCanBeDialled() {
+	bridge := Bridge{URI: "sip:trunk@sip.stream-io-api.com"}
+	for _, short := range []string{"911", "112", "999", "000", "988", "+1911", "5125550123", "+1 512 555 0123"} {
+		s.ErrorContains(Outbound{From: "+15125551234", To: short, Bridge: bridge}.Validate(), "E.164", short)
+	}
+	for _, premium := range []string{"+19005550100", "+19765550100"} {
+		s.ErrorIs(Outbound{From: "+15125551234", To: premium, Bridge: bridge}.Validate(), ErrDestinationRefused, premium)
+	}
+	s.NoError(Outbound{From: "+15125551234", To: "+442071838750", Bridge: bridge}.Validate())
+}
+
+func (s *PhoneSuite) TestALineThatWasNotPlacedFromHereCannotPressAnything() {
+	// Pressing needs the vendor's own id for the leg, and an inbound call arrived at
+	// Stream rather than being dialled from here, so there is no such id to name.
+	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
+	s.Require().NoError(err)
+
+	line := service.Line(LineOptions{From: "+15125551234", CallID: "support-line"})
+
+	s.ErrorContains(line.SendDigits(s.ctx, "1"), "not placed from here")
+}
+
+func (s *PhoneSuite) TestACallSaysWhatItIsMissing() {
+	// A call is a trunk and a routing rule as well as a leg at the vendor, so it needs
+	// Stream even when the caller supplied everything else.
+	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
+	s.Require().NoError(err)
+
+	_, err = service.Call(s.ctx, CallRequest{From: "+15125551234", To: "+15550001111"})
+	s.ErrorContains(err, "stream credentials")
+	s.ErrorIs(err, ErrNoStream)
+}
+
+func (s *PhoneSuite) TestAVendorThatCannotSendAPasswordWillNotDialWithoutAnAllowlist() {
+	// Stream reads an empty allowlist as "accept everything" rather than "password only",
+	// so a vendor that can send no password and has no declared addresses would be given
+	// an open trunk. Refusing is the only safe answer.
+	allowed, err := trunkAllowlist(Vendor{
+		Vendor:     "vonage",
+		TrunkAuth:  TrunkAllowlist,
+		Signalling: []string{"216.147.0.0/18"},
+	})
+	s.Require().NoError(err)
+	s.Equal([]string{"216.147.0.0/18"}, allowed)
+
+	_, err = trunkAllowlist(Vendor{Vendor: "bandwidth", TrunkAuth: TrunkAllowlist})
+	s.ErrorContains(err, "none are declared")
+
+	// A vendor that can send the password needs no allowlist, and gets none: adding one
+	// would refuse its calls from anywhere the list did not happen to mention.
+	allowed, err = trunkAllowlist(Vendor{Vendor: "twilio", TrunkAuth: TrunkPassword})
+	s.Require().NoError(err)
+	s.Empty(allowed)
+}
+
+func (s *PhoneSuite) TestAttachDerivesItsAllowlistFromTheVendorDeclaration() {
+	// Attach used to build the trunk's allowlist from the request body, which is always
+	// empty in practice — an open trunk for a password-only vendor, and no way for an
+	// address-only vendor to connect at all. It has to come from the vendor's own
+	// declaration instead, the same way Call already derives it.
+	registry := NewRegistry(s.config())
+
+	declared, ok := registry.Lookup("vonage")
+	s.Require().True(ok)
+	allowed, err := trunkAllowlist(declared)
+	s.Require().NoError(err)
+	s.Equal(declared.Signalling, allowed, "vonage is address-only, so its declared addresses are the allowlist")
+	s.NotEmpty(allowed)
+
+	config, err := parseConfig([]byte(`
+vendors:
+  - vendor: bandwidth
+    capabilities: [voice]
+    credentials: [BANDWIDTH_API_TOKEN]
+    trunk_auth: allowlist
+    operations: [dial]
+`))
+	s.Require().NoError(err)
+	declared, ok = config.Lookup("bandwidth")
+	s.Require().True(ok)
+
+	_, err = trunkAllowlist(declared)
+	s.ErrorContains(err, "none are declared",
+		"a password-less vendor with no declared addresses must be refused, not given an open trunk")
+}
+
+func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
+	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
+	s.Require().NoError(err)
+
+	_, err = service.Transfer(s.ctx, TransferRequest{From: "+15125551234", To: "+15550001111"})
+	s.ErrorContains(err, "stream credentials",
+		"a transfer routes a leg into a call, which needs Stream")
+	s.ErrorIs(err, ErrNoStream)
+	s.NotErrorIs(err, ErrInvalid, "the deployment's credentials are not the caller's to change")
+}
+
+func (s *PhoneSuite) TestAVendorIsOpenedOnceAndReused() {
+	registry := NewRegistry(s.config())
+	opened := 0
+	registry.Register("twilio", func() (Provider, error) {
+		opened++
+		return NotImplemented("twilio"), nil
+	})
+	s.T().Setenv("TWILIO_ACCOUNT_SID", "sid")
+	s.T().Setenv("TWILIO_AUTH_TOKEN", "token")
+
+	first, err := registry.Open("twilio")
+	s.Require().NoError(err)
+	second, err := registry.Open("twilio")
+	s.Require().NoError(err)
+
+	s.Same(first, second, "a provider is a client, not a value")
+	s.Equal(1, opened)
+}
+
+func (s *PhoneSuite) TestAVendorWithoutItsCredentialsSaysWhichAreMissing() {
+	registry := NewRegistry(s.config())
+	registry.Register("twilio", func() (Provider, error) { return NotImplemented("twilio"), nil })
+	s.T().Setenv("TWILIO_ACCOUNT_SID", "sid")
+	s.T().Setenv("TWILIO_AUTH_TOKEN", "")
+
+	_, err := registry.Open("twilio")
+
+	s.ErrorContains(err, "TWILIO_AUTH_TOKEN")
+	s.ErrorIs(err, ErrNotConfigured, "the deployment lacks the vendor's settings")
+	s.NotErrorIs(err, ErrInvalid)
+}
+
+func (s *PhoneSuite) TestOnlyVendorsThatCanActuallyBeUsedAreAvailable() {
+	registry := NewRegistry(s.config())
+	registry.Register("twilio", func() (Provider, error) { return NotImplemented("twilio"), nil })
+	registry.Register("telnyx", func() (Provider, error) { return NotImplemented("telnyx"), nil })
+	s.T().Setenv("TWILIO_ACCOUNT_SID", "sid")
+	s.T().Setenv("TWILIO_AUTH_TOKEN", "token")
+	s.T().Setenv("TELNYX_API_KEY", "")
+
+	s.Equal([]string{"twilio"}, registry.Available(), "telnyx has no key, so it cannot be used")
+}
+
+func (s *PhoneSuite) TestABridgeMustBeASipAddress() {
+	s.ErrorContains(Bridge{}.Validate(), "uri is required")
+	s.ErrorContains(Bridge{URI: "https://example.com"}.Validate(), "not a sip uri")
+	s.NoError(Bridge{URI: "sip:trunk@sip.stream-io-api.com"}.Validate())
+}
+
+func (s *PhoneSuite) TestABridgeCarriesTheNumberStreamFindsItsTrunkBy() {
+	for uri, want := range map[string]string{
+		"sip:bridge.sip.example.com":               "sip:+15550000301@bridge.sip.example.com",
+		"sip:trunk@bridge.sip.example.com":         "sip:+15550000301@bridge.sip.example.com",
+		"sips:bridge.sip.example.com:5061":         "sips:+15550000301@bridge.sip.example.com:5061",
+		"sip:bridge.sip.example.com;transport=tcp": "sip:+15550000301@bridge.sip.example.com;transport=tcp",
+	} {
+		got, err := Bridge{URI: uri, Username: "stream-user", Password: "stream-pass"}.WithNumber("+15550000301")
+		s.Require().NoError(err, uri)
+		s.Equal(Bridge{URI: want, Username: "stream-user", Password: "stream-pass"}, got, uri)
+	}
+	_, err := Bridge{URI: "tel:+15550000301"}.WithNumber("+15550000301")
+	s.EqualError(err, `phone: "tel:+15550000301" is not a sip uri`)
+}
+
+func (s *PhoneSuite) TestTheBridgeHostIsTheHostAlone() {
+	s.Equal("trunk-1.sip.example.com", BridgeHost("sip:+15550100001@trunk-1.sip.example.com"))
+
+	host := BridgeHost("sips:user:secret-value@sip.example.com:5061;transport=tls")
+	s.Equal("sip.example.com", host)
+	s.NotContains(host, "secret-value")
+}
+
+func (s *PhoneSuite) TestABridgeHostOfSomethingThatIsNotSIPIsEmpty() {
+	s.Empty(BridgeHost(""))
+	s.Empty(BridgeHost("https://sip.example.com"))
+}
+
+func (s *PhoneSuite) TestCapabilitiesAreCoveredOnlyWhenEveryOneIsPresent() {
+	s.True(covers([]Capability{Voice, SMS}, []Capability{Voice}))
+	s.True(covers([]Capability{Voice}, nil))
+	s.False(covers([]Capability{Voice}, []Capability{Voice, MMS}))
+}
+
+func (s *PhoneSuite) TestOnlyTheFiltersUsedHaveToBeSupported() {
+	search := Search{Country: "US", AdministrativeArea: "CO", Capabilities: []Capability{Voice}}
+
+	s.ElementsMatch([]Filter{FilterCountry, FilterAdministrativeArea}, search.Filters(),
+		"capabilities are checked on the results, not asked of the vendor")
+}
+
+func (s *PhoneSuite) TestSearchingEveryVendorMergesWhatTheyOfferCheapestFirst() {
+	service := s.serviceWith(
+		&stub{vendor: "twilio", offers: []Available{
+			{E164: "+15125551234", Vendor: "twilio", MonthlyCostMicros: 2_000_000},
+		}},
+		&stub{vendor: "telnyx", offers: []Available{
+			{E164: "+17195551234", Vendor: "telnyx", MonthlyCostMicros: 1_000_000},
+		}},
+	)
+
+	offers, err := service.SearchAll(s.ctx, Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Empty(offers.Skipped)
+	s.Equal([]string{"+17195551234", "+15125551234"}, numbers(offers))
+}
+
+func (s *PhoneSuite) TestANumberWithNoQuotedPriceIsNotSortedAsIfItWereFree() {
+	service := s.serviceWith(
+		&stub{vendor: "twilio", offers: []Available{{E164: "+15125551234", Vendor: "twilio"}}},
+		&stub{vendor: "telnyx", offers: []Available{
+			{E164: "+17195551234", Vendor: "telnyx", MonthlyCostMicros: 1_000_000},
+		}},
+	)
+
+	offers, err := service.SearchAll(s.ctx, Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"+17195551234", "+15125551234"}, numbers(offers),
+		"twilio does not quote a price on a search, which is not the same as free")
+}
+
+func (s *PhoneSuite) TestAVendorThatCannotExpressAFilterIsSkippedRatherThanAsked() {
+	// Dropping the filter would answer a search for Colorado with numbers from anywhere,
+	// which reads as a result.
+	elsewhere := &stub{vendor: "twilio", unsupported: []Filter{FilterAdministrativeArea}, offers: []Available{
+		{E164: "+15125551234", Vendor: "twilio"},
+	}}
+	service := s.serviceWith(elsewhere, &stub{vendor: "telnyx", offers: []Available{
+		{E164: "+17195551234", Vendor: "telnyx"},
+	}})
+
+	offers, err := service.SearchAll(s.ctx, Search{Country: "US", AdministrativeArea: "CO"})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"+17195551234"}, numbers(offers))
+	s.Require().Len(offers.Skipped, 1)
+	s.Equal("twilio", offers.Skipped[0].Vendor)
+	s.Contains(offers.Skipped[0].Reason, "administrative_area")
+	s.Zero(elsewhere.searched, "a vendor that cannot answer is not asked")
+}
+
+func (s *PhoneSuite) TestANumberMissingACapabilityIsDroppedFromTheAnswer() {
+	// Not every vendor can filter by capability, but all of them say what a number
+	// carries, so the answer is checked here instead.
+	service := s.serviceWith(&stub{vendor: "twilio", offers: []Available{
+		{E164: "+15125551234", Vendor: "twilio", Capabilities: []Capability{Voice}},
+		{E164: "+15125555678", Vendor: "twilio", Capabilities: []Capability{Voice, HDVoice}},
+	}})
+
+	offers, err := service.SearchAll(s.ctx, Search{
+		Country:      "US",
+		Capabilities: []Capability{Voice, HDVoice},
+	})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"+15125555678"}, numbers(offers))
+}
+
+func (s *PhoneSuite) TestAVendorThatFailsIsReportedRatherThanFailingTheWholeSearch() {
+	service := s.serviceWith(
+		&stub{vendor: "twilio", err: errors.New("twilio is having a day")},
+		&stub{vendor: "telnyx", offers: []Available{{E164: "+17195551234", Vendor: "telnyx"}}},
+	)
+
+	offers, err := service.SearchAll(s.ctx, Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"+17195551234"}, numbers(offers))
+	s.Require().Len(offers.Skipped, 1)
+	s.Equal("twilio", offers.Skipped[0].Vendor)
+	s.Contains(offers.Skipped[0].Reason, "having a day")
+}
+
+func (s *PhoneSuite) TestSearchingWithNoUsableVendorSaysSoRatherThanAnsweringEmpty() {
+	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
+	s.Require().NoError(err)
+
+	_, err = service.SearchAll(s.ctx, Search{Country: "US"})
+
+	s.ErrorContains(err, "no vendor has the credentials")
+	s.ErrorIs(err, ErrNotConfigured)
+	s.NotErrorIs(err, ErrInvalid)
+}
+
+// serviceWith returns a service whose registry resolves each stub under its own vendor name.
+func (s *PhoneSuite) serviceWith(stubs ...*stub) *Service {
+	registry := NewRegistry(s.config())
+	for _, each := range stubs {
+		provider := each
+		registry.Register(provider.vendor, func() (Provider, error) { return provider, nil })
+		for _, name := range s.credentials(provider.vendor) {
+			s.T().Setenv(name, "set")
+		}
+	}
+
+	service, err := NewService(ServiceOptions{Registry: registry})
+	s.Require().NoError(err)
+	return service
+}
+
+// credentials are what a vendor needs before the registry will consider it usable.
+func (s *PhoneSuite) credentials(vendor string) []string {
+	declared, ok := s.config().Lookup(vendor)
+	s.Require().True(ok, vendor+" is not a declared vendor")
+	return declared.Credentials
+}
+
+func numbers(offers Offers) []string {
+	rendered := make([]string, 0, len(offers.Numbers))
+	for _, number := range offers.Numbers {
+		rendered = append(rendered, number.E164)
+	}
+	return rendered
+}
+
+// stub is a vendor with fixed inventory, which is what makes the fan-out's own behaviour
+// observable without eleven live accounts.
+type stub struct {
+	vendor      string
+	offers      []Available
+	err         error
+	unsupported []Filter
+	// undialable are the call features this vendor cannot express.
+	undialable []CallFeature
+	// searched counts the times this vendor was actually asked, so a skip can be told
+	// apart from an empty answer.
+	searched int
+	// dialed is the last call this vendor was asked to place, so a test can see what the
+	// service passed on rather than only that it passed something.
+	dialed Outbound
+	// inbound is the last number this vendor was told to send to a bridge, so a test can see
+	// the address the service passed on.
+	inbound Inbound
+	// monthly is what a number bought here costs a month, and vendorID the id it sells one
+	// under.
+	monthly  int64
+	vendorID string
+	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
+	// was told to take back.
+	ordered  int
+	released []string
+	// releaseErr is what a release answers, the vendor's other answers left to err.
+	releaseErr error
+	// stopped are the numbers this vendor was told to stop sending callers to the trunk.
+	stopped []string
+	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
+	leg StreamLeg
+	// pressed is every vendorCallID:digits this vendor was asked to press.
+	pressed []string
+	// hungUp is every vendorCallID this vendor was asked to hang up.
+	hungUp []string
+}
+
+func (s *stub) StreamLeg() StreamLeg { return s.leg }
+
+func (s *stub) StopInbound(_ context.Context, e164 string) error {
+	s.stopped = append(s.stopped, e164)
+	return s.err
+}
+
+func (s *stub) SearchNumbers(context.Context, Search) ([]Available, error) {
+	s.searched++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.offers, nil
+}
+
+func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
+	s.ordered++
+	if s.err != nil {
+		return Number{}, s.err
+	}
+	return Number{E164: order.E164, Vendor: s.vendor, VendorID: s.vendorID, Country: "US", MonthlyCostMicros: s.monthly}, nil
+}
+
+func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
+	s.released = append(s.released, e164)
+	return cmp.Or(s.releaseErr, s.err)
+}
+
+func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
+	s.inbound = inbound
+	return s.err
+}
+
+func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
+	s.dialed = outbound
+	if s.err != nil {
+		return Dialed{}, s.err
+	}
+	return Dialed{VendorCallID: s.vendor + "-call", Status: "dialing"}, nil
+}
+
+func (s *stub) SendDigits(_ context.Context, vendorCallID, digits string) error {
+	s.pressed = append(s.pressed, vendorCallID+":"+digits)
+	return s.err
+}
+
+// ReadStatus reads a form's result and word, as a vendor's status post would carry them, and
+// its sip code, ringing and post-dial delay (pdd), as some vendors' do.
+func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return CallStatus{}, err
+	}
+	if !form.Has("word") {
+		return CallStatus{}, errors.New("stub: a status needs a word")
+	}
+	code, _ := strconv.Atoi(form.Get("sip"))
+	delay, _ := time.ParseDuration(cmp.Or(form.Get("pdd"), "0s"))
+	return CallStatus{
+		Result: CallResult(form.Get("result")), Word: form.Get("word"), SIPCode: code, Ringing: form.Has("ringing"),
+		PostDialDelay: delay,
+	}, nil
+}
+
+// ReadMachine reads a form's machine, as a vendor's machine post would carry it.
+func (s *stub) ReadMachine(_ string, body []byte) (MachineReport, error) {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return MachineReport{}, err
+	}
+	if !form.Has("machine") {
+		return MachineReport{}, errors.New("stub: a machine report needs a machine")
+	}
+	return MachineReport{Machine: Machine(form.Get("machine")), Word: form.Get("machine")}, nil
+}
+
+func (s *stub) HangUp(_ context.Context, vendorCallID string) error {
+	s.hungUp = append(s.hungUp, vendorCallID)
+	return s.err
+}
+
+// silent is a vendor that reports nothing on the calls it places.
+type silent struct{ Provider }
+
+// plainVendor is a vendor that cannot hang up a call it placed.
+type plainVendor struct{ Provider }
+
+func (s *stub) Supports(filter Filter) bool { return !slices.Contains(s.unsupported, filter) }
+
+func (s *stub) Dials(feature CallFeature) bool { return !slices.Contains(s.undialable, feature) }
+
+// picky is a vendor that presses some keys on answer but not every one a keypad has.
+type picky struct {
+	stub
+	plays string
+}
+
+func (p *picky) PlaysDigits(digits string) bool {
+	return !strings.ContainsFunc(digits, func(key rune) bool { return !strings.ContainsRune(p.plays, key) })
+}
+
+func (s *stub) Vendor() string { return s.vendor }
+
+func (s *stub) Client() *http.Client { return http.DefaultClient }
+
+func (s *PhoneSuite) TestAFactoryThatFailsIsNotCached() {
+	registry := NewRegistry(s.config())
+	failures := 0
+	registry.Register("twilio", func() (Provider, error) {
+		failures++
+		return nil, errors.New("no")
+	})
+	s.T().Setenv("TWILIO_ACCOUNT_SID", "sid")
+	s.T().Setenv("TWILIO_AUTH_TOKEN", "token")
+
+	_, first := registry.Open("twilio")
+	_, second := registry.Open("twilio")
+
+	s.Error(first)
+	s.Error(second)
+	s.Equal(2, failures, "a failure is retried, not remembered")
+}
+
+func (s *PhoneSuite) TestAVendorErrorSaysEverythingTheLogNeeds() {
+	refused := &VendorError{Vendor: "twilio", Path: "/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		Status: 400, Code: "21631", Message: "Phone Number Requires an Address"}
+	s.Equal("twilio: /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json: 400 Bad Request 21631: "+
+		"Phone Number Requires an Address", refused.Error())
+
+	cause := errors.New("connection refused")
+	unreached := &VendorError{Vendor: "twilio", Path: "/x.json", Message: "no answer", Cause: cause}
+	s.Equal("twilio: /x.json: no answer: connection refused", unreached.Error())
+	s.ErrorIs(unreached, cause)
+}
+
+// A number's month is priced by the vendor's quote, not by the list: with none, it is billable
+// work with no price. Only a number on the customer's own trunk costs nothing.
+func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
+	config := s.config()
+	prices, err := pricing.NewList("config", pricing.PricedAll(PriceEntries(config)), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	number := func(vendor string) pricing.Item {
+		return routing.ItemOf(routing.Phone, routing.ProviderConfig{Provider: vendor, Model: ModelNumber}, nil)
+	}
+	own := prices.Quote(number(SIPTrunkVendor), nil)
+	s.False(own.Billable)
+	s.False(own.Unpriced)
+	for _, vendor := range config.Vendors {
+		quote := prices.Quote(number(vendor.Vendor), nil)
+		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
+		resold := prices.Quoted(number(vendor.Vendor), 1_000_000)
+		s.Equal(int64(1_080_000), resold.CostMicros, vendor.Vendor)
+		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
+		s.True(resold.Billable, vendor.Vendor)
+	}
+}
+
+func (s *PhoneSuite) config() Config {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+	return config
+}
+
+func (s *PhoneSuite) TestANumberThatCannotBeDialedIsErrNotDialable() {
+	for _, to := range []string{"+19005550123", "+19765550123", "911", "5125550123", "not a number"} {
+		err := Dialable(to)
+		s.ErrorIs(err, ErrNotDialable, to)
+	}
+	s.NoError(Dialable("+15125550123"))
+}
+
+func (s *PhoneSuite) TestAPremiumNumberIsStillRefusedAsADestination() {
+	err := Dialable("+19005550123")
+	s.ErrorIs(err, ErrDestinationRefused)
+	s.Contains(err.Error(), "premium-rate")
+	s.NotContains(err.Error(), ErrNotDialable.Error())
+}

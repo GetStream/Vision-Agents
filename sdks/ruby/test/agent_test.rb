@@ -1,0 +1,1206 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+
+class TestAgent < LocalRouterTest
+  CALLS = %r{\A/api/v2/video/call/}
+
+  def setup
+    super
+    @router.on(:post, CALLS, body: { "duration" => "1ms" })
+  end
+
+  def edge
+    VA::Edge.new(api_key: "key", api_secret: "secret", base_url: @router.url, monitor_url: "https://demo.example")
+  end
+
+  def agent(**options)
+    VA::Agent.new(config: "support", client: client, edge: edge, **options)
+  end
+
+  def session_request
+    @router.last(:post, "/v1/agents/sessions").json
+  end
+
+  def test_join_opens_the_session_with_voice_on_its_own_call
+    serve_session
+
+    call, started = agent(cost_tracking: { env: "production", team: 7 }, memory_filter: { user_id: 123, plan: "pro" })
+                    .join(participant_wait_timeout: 0, wait_for_end: false) do |session|
+                      [session.call, session.voice.started?]
+                    end
+
+    assert_empty @router.seen(:post, CALLS)
+    assert_equal VA::Edge::Call.new(id: "sess_1", type: "agent"), call
+    assert started
+    assert_equal({ "agent" => "support", "user_id" => "support", "user_name" => "support", "agent_id" => "support",
+                   "tags" => { "env" => "production", "team" => "7" },
+                   "memory" => { "user_id" => "123", "filter" => { "plan" => "pro" } },
+                   "start_voice" => true }, session_request)
+  end
+
+  def test_join_is_not_given_a_call_to_name
+    assert_raises(VA::ConfigurationError) { agent.join("call-1") }
+    assert_empty @router.requests
+  end
+
+  def test_leaving_the_block_closes_the_session_and_returns_its_value
+    closed = Thread::Queue.new
+    serve_session { |peer| closed << peer.receive_type("close", timeout: 10) }
+
+    value = agent.join(participant_wait_timeout: 0, wait_for_end: false) { :done }
+
+    assert_equal :done, value
+    assert_equal({ "type" => "close" }, closed.pop(timeout: 5))
+  end
+
+  def test_the_block_waits_for_the_call_to_end
+    serve_session do |peer|
+      peer.send_frame(type: "participant_joined", participant: { id: "p1", user_id: "ada", name: "Ada" })
+      sleep 0.2
+      peer.send_frame(type: "left")
+    end
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    participants = agent.join { |session| session.participants }
+
+    assert_equal [VA::Participant.new("p1", "ada", "Ada")], participants
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :>=, 0.2
+  end
+
+  def test_a_participant_that_is_the_agent_is_not_somebody_in_the_call
+    serve_session do |peer|
+      peer.send_frame(type: "participant_joined", participant: { id: "a", user_id: "agent-user" })
+      peer.receive_type("close", timeout: 10)
+    end
+
+    agent.join(participant_wait_timeout: 0, wait_for_end: false) do |session|
+      refute session.wait_for_participant(timeout: 0.3)
+      assert_empty session.participants
+    end
+  end
+
+  def test_an_inbound_call_joins_the_session_it_was_handed
+    serve_session do |peer|
+      peer.send_frame(type: "heard", text: "hello")
+      peer.receive_type("close", timeout: 10)
+    end
+    call = VA::InboundCall.from("call_id" => "agent:inbound-1", "session_id" => "inbound-1",
+                                "called_number" => "+15550100", "caller_number" => "+15550199")
+
+    agent.join(call, wait_for_end: false) { assert call.wait_for_phone_participant(timeout: 5) }
+
+    assert_empty @router.seen(:post, CALLS)
+    assert_equal "inbound-1", session_request["id"]
+    assert_equal true, session_request["start_voice"]
+    refute session_request.key?("call_id")
+    assert_equal({ "number" => "+15550100" }, session_request["phone"])
+  end
+
+  def test_an_inbound_call_that_names_no_session_is_refused
+    call = VA::InboundCall.from("call_id" => "pstn-1", "called_number" => "+15550100")
+
+    assert_raises(VA::ConfigurationError) { agent.join(call) }
+    assert_empty @router.seen(:post, "/v1/agents/sessions")
+  end
+
+  def test_the_caller_cannot_be_waited_for_before_joining
+    call = VA::InboundCall.new(call_id: "pstn-1")
+
+    assert_raises(VA::ConfigurationError) { call.wait_for_phone_participant(timeout: 0) }
+  end
+
+  def test_responses_create_names_the_turn
+    serve_session
+    @router.on(:post, "/v1/agents/sessions/sess_1/responses") do |request|
+      [202, { "id" => "resp_1", "session_id" => "sess_1", "status" => "running", "said" => request.json["text"] }]
+    end
+    support = agent
+
+    response = support.join(participant_wait_timeout: 0, wait_for_end: false) do
+      support.responses.create("greet the user")
+    end
+
+    assert_equal "resp_1", response.id
+    sent = @router.last(:post, "/v1/agents/sessions/sess_1/responses").json
+    assert_equal "greet the user", sent["text"]
+    assert_match(/\A[0-9a-f]{32}\z/, sent["request_id"])
+  end
+
+  def test_each_text_question_carries_a_fresh_request_id_and_one_with_an_image_none
+    serve_session
+    @router.on(:post, "/v1/agents/sessions/sess_1/responses",
+               body: { "id" => "resp_1", "session_id" => "sess_1", "status" => "running" })
+    support = agent
+
+    support.join(participant_wait_timeout: 0, wait_for_end: false) do
+      support.responses.create("first")
+      support.responses.create("second")
+      support.responses.create("look", images: [{ url: "https://example.com/a.png" }])
+    end
+
+    sent = @router.seen(:post, "/v1/agents/sessions/sess_1/responses").map(&:json)
+    assert_equal 2, sent.first(2).map { |body| body["request_id"] }.uniq.size
+    sent.first(2).each { |body| assert_match(/\A[0-9a-f]{32}\z/, body["request_id"]) }
+    assert_equal({ "text" => "look", "images" => [{ "url" => "https://example.com/a.png" }] }, sent[2])
+  end
+
+  def test_responses_need_a_conversation
+    assert_raises(VA::ConfigurationError) { agent.responses }
+  end
+
+  def test_a_tool_call_is_answered_with_its_request_and_turn
+    results = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "weather", arguments: '{"city":"Paris"}',
+                      request_id: "c1", turn_id: "turn_1")
+      results << peer.receive_type("tool_result")
+      peer.send_frame(type: "tool_call", id: "t2", name: "broken", arguments: "{}")
+      results << peer.receive_type("tool_result")
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new
+    tools.register("weather", description: "Weather for a city", executor: "client",
+                              display_title: "Checking the sky") { |args| { city: args["city"], sky: "clear" } }
+    tools.register("broken", description: "Always fails") { raise ArgumentError, "no sky today" }
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t1", "output" => '{"city":"Paris","sky":"clear"}',
+                     "request_id" => "c1", "turn_id" => "turn_1" }, results.pop(timeout: 5))
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t2", "error" => "no sky today" },
+                   results.pop(timeout: 5))
+    end
+    assert_equal [{ "name" => "weather", "description" => "Weather for a city",
+                    "parameters" => { "type" => "object", "properties" => {} }, "executor" => "client",
+                    "display_title" => "Checking the sky" },
+                  { "name" => "broken", "description" => "Always fails",
+                    "parameters" => { "type" => "object", "properties" => {} } }], session_request["tools"]
+  end
+
+  def test_a_cancelled_tool_answers_nothing
+    results = Thread::Queue.new
+    release = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "slow", arguments: "{}")
+      peer.send_frame(type: "tool_cancel", id: "t1")
+      sleep 0.05
+      release << true
+      results << peer.receive_type("tool_result", timeout: 0.5)
+    end
+    tools = VA::Tools.new.register("slow", description: "Takes a while") { release.pop(timeout: 5) && "late" }
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_nil results.pop(timeout: 5)
+    end
+  end
+
+  def test_a_tool_is_handed_its_call_and_says_how_it_is_going
+    seen = Thread::Queue.new
+    frames = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t0", name: "search", arguments: "{}", run: false)
+      peer.send_frame(type: "tool_call", id: "t1", turn_id: "turn_2", name: "search", arguments: "{}",
+                      user: { id: "sam", name: "Sam", custom: { tier: "gold" } },
+                      conversation: { cid: "agent:kept", custom: { line: "support" } }, approved: true)
+      3.times { frames << peer.receive(timeout: 5) }
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("search", description: "Search flights") do |tool_call_context, _args|
+      seen << tool_call_context
+      tool_call_context.update("checking three airlines")
+      tool_call_context.say("Still looking, one moment.")
+      "found two"
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "checking three airlines",
+                     "verbatim" => false }, frames.pop(timeout: 5))
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "Still looking, one moment.",
+                     "verbatim" => true }, frames.pop(timeout: 5))
+      assert_equal "t1", frames.pop(timeout: 5)["tool_call_id"], "the call addressed elsewhere is left"
+    end
+    tool_call_context = seen.pop(timeout: 1)
+    assert_equal %w[t1 sess_1 turn_2], [tool_call_context.id, tool_call_context.session_id, tool_call_context.turn_id]
+    assert_equal VA::ToolUser.new("sam", "Sam", { "tier" => "gold" }), tool_call_context.user
+    assert_equal VA::ToolConversation.new("agent:kept", { "line" => "support" }), tool_call_context.conversation
+    assert tool_call_context.approved?
+  end
+
+  def test_a_held_tool_is_answered_even_once_the_caller_talks_over_the_agent
+    results = Thread::Queue.new
+    release = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "charge", arguments: "{}")
+      results << peer.receive_type("tool_hold")
+      peer.send_frame(type: "tool_held", id: "t1")
+      sleep 0.05
+      peer.send_frame(type: "tool_cancel", id: "t1")
+      sleep 0.05
+      release << true
+      results << peer.receive_type("tool_result")
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |tool_call_context, _args|
+      tool_call_context.disallow_interruptions
+      release.pop(timeout: 5)
+      tool_call_context.cancelled? ? "stopped" : "charged"
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal({ "type" => "tool_hold", "tool_call_id" => "t1" }, results.pop(timeout: 5))
+      assert_equal({ "type" => "tool_result", "tool_call_id" => "t1", "output" => "charged" }, results.pop(timeout: 5))
+    end
+  end
+
+  def test_a_tool_stopped_before_it_was_held_never_writes
+    wrote = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "charge", arguments: "{}")
+      peer.receive_type("tool_hold")
+      peer.send_frame(type: "tool_cancel", id: "t1")
+      wrote << (peer.receive_type("tool_result", timeout: 0.5) || :nothing)
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |tool_call_context, _args|
+      tool_call_context.disallow_interruptions
+      wrote << :charged
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal :nothing, wrote.pop(timeout: 5)
+    end
+  end
+
+  def test_a_call_for_a_tool_held_elsewhere_is_left_for_whoever_holds_it
+    results = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "book_flight", arguments: "{}")
+      peer.send_frame(type: "tool_call", id: "t2", name: "weather", arguments: "{}")
+      results << peer.receive_type("tool_result")
+      results << peer.receive_type("tool_result", timeout: 0.3)
+    end
+    tools = VA::Tools.new.register("weather", description: "Weather") { "clear" }
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal "t2", results.pop(timeout: 5)&.fetch("tool_call_id")
+      assert_nil results.pop(timeout: 5)
+    end
+  end
+
+  def test_events_report_what_the_conversation_did
+    serve_session do |peer|
+      peer.send_frame(type: "heard", text: "hi", participant: { id: "p1", user_id: "ada" })
+      peer.send_frame(type: "responded", text: "hello", pending_work: true)
+      peer.send_frame(type: "left")
+    end
+
+    events = agent.join(participant_wait_timeout: 0) { |session| session.events.to_a }
+
+    assert_equal %w[heard responded left], events.map(&:kind)
+    assert_equal "ada", events[0].participant.user_id
+    assert events[1].pending_work
+  end
+
+  def test_the_events_socket_asks_for_what_was_wanted
+    serve_session
+
+    agent.join(participant_wait_timeout: 0, wait_for_end: false, interim: true) { nil }
+
+    assert_equal({ "interim" => "true", "decisions" => "false" },
+                 @router.last(:get, "/v1/agents/sessions/sess_1/events").query)
+  end
+
+  def test_a_session_nothing_can_watch_is_stopped_rather_than_deleted
+    @router.on(:post, "/v1/agents/sessions", body: { "id" => "sess_9" })
+    @router.on(:post, "/v1/agents/sessions/sess_9/stop", status: 204)
+
+    assert_raises(VA::RouterError) { agent.join(participant_wait_timeout: 0) }
+    assert_equal 1, @router.seen(:post, "/v1/agents/sessions/sess_9/stop").size
+    assert_empty @router.seen(:delete, "/v1/agents/sessions/sess_9")
+  end
+
+  def test_chat_holds_the_conversation_in_writing
+    serve_session
+
+    started = agent.chat { |session| session.voice.started? }
+    refute started
+    %w[start_voice text conversation_id incognito].each { |key| refute session_request.key?(key), key }
+
+    agent.chat(incognito: true) { nil }
+    assert_equal true, session_request["incognito"]
+    assert_empty @router.seen(:post, CALLS)
+  end
+
+  def test_voice_is_started_and_stopped_on_a_chat
+    serve_session
+    @router.on(:post, "/v1/agents/sessions/sess_1/voice", body: { "id" => "sess_1", "call_id" => "sess_1" })
+    @router.on(:delete, "/v1/agents/sessions/sess_1/voice", body: { "id" => "sess_1", "call_id" => "" })
+    support = agent
+
+    support.chat do |session|
+      assert_raises(VA::ConfigurationError) { support.monitor_url }
+      assert_equal "sess_1", session.voice.start["call_id"]
+      assert session.voice.started?
+      assert support.monitor_url.start_with?("https://demo.example/join/sess_1?")
+      session.voice.stop
+      refute session.voice.started?
+    end
+
+    assert_equal 1, @router.seen(:post, "/v1/agents/sessions/sess_1/voice").size
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1/voice").size
+  end
+
+  def test_reply_answers_the_conversation_the_message_came_from
+    serve_session
+    message = VA::InboundMessage.from("channel_id" => "room-1", "agent_id" => "support-1", "text" => "hi")
+
+    agent.reply(message) { nil }
+
+    assert_equal "support-1", session_request["agent_id"]
+    %w[conversation_id text incognito].each { |key| refute session_request.key?(key), key }
+  end
+
+  def test_an_outbound_call_is_placed_for_the_session_the_agent_joins
+    serve_session
+    @router.on(:post, "/v1/phone/calls",
+               status: 202, body: { "vendor_call_id" => "CA123", "status" => "queued", "session_id" => "placed-1" })
+
+    agent(cost_tracking: { env: "production" })
+      .outbound_call(from: "+15550100", to: "+15550199", ring_timeout: 30,
+                     participant_wait_timeout: 0, wait_for_end: false) { nil }
+
+    placed = @router.last(:post, "/v1/phone/calls").json
+    assert_equal({ "from" => "+15550100", "to" => "+15550199",
+                   "ring_timeout_seconds" => 30, "tags" => { "env" => "production" } }, placed)
+    assert_equal "placed-1", session_request["id"]
+    assert_equal true, session_request["start_voice"]
+    assert_equal true, session_request["navigating"]
+    assert_equal({ "number" => "+15550100", "vendor_call_id" => "CA123" }, session_request["phone"])
+    assert_equal %w[phone agents], @router.requests.map { |r| r.path.split("/")[2] }.first(2)
+  end
+
+  def test_a_call_placed_for_no_session_is_not_joined
+    @router.on(:post, "/v1/phone/calls", status: 202, body: { "vendor_call_id" => "CA123", "status" => "queued" })
+
+    assert_raises(VA::RouterError) { agent.outbound_call(from: "+15550100", to: "+15550199") }
+    assert_empty @router.seen(:post, "/v1/agents/sessions")
+  end
+
+  def test_what_the_code_sets_is_sent_and_nothing_else
+    serve_session
+
+    agent(name: "Ada", instructions: "Be brief",
+          pipeline: { llm: "fast", language: "fr", max_tokens: 200, greeting: "Hello" })
+      .chat { nil }
+
+    request = session_request
+    assert_equal "Ada", request["user_name"]
+    assert_equal "ada", request["user_id"]
+    refute request.key?("instructions")
+    assert_equal({ "text" => "Hello" }, request["greeting"])
+    assert_equal "fast", request["llm"]
+    assert_equal ["fr"], request["languages"]
+    assert_equal 200, request["max_tokens"]
+    refute request.key?("stt")
+  end
+
+  def test_the_harness_is_synced_onto_the_config_and_never_sent_with_a_session
+    serve_session
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+    skills = [VA::Skill.new(name: "research", description: "Looks things up", instructions: "Search first",
+                            deadline: 30)]
+    support = agent(harness: "default", pipeline: { subagent: "llm-thinking" }, skills: skills,
+                    sandbox: VA::Sandbox.daytona)
+
+    support.chat { nil }
+    support.sync
+
+    request = session_request
+    %w[harness subagent thinking_llm sandbox skills skill_names tasks].each { |key| refute request.key?(key), key }
+    synced = @router.last(:post, "/v1/agents/sync").json
+    assert_equal "default", synced["harness"]
+    assert_equal "llm-thinking", synced["subagent"]
+    refute synced.key?("thinking_llm")
+    assert_equal "daytona", synced["sandbox"]
+    assert_equal [{ "name" => "research", "description" => "Looks things up", "instructions" => "Search first",
+                    "capture_video" => false, "deadline_ms" => 30_000, "config_id" => "" }], synced["skills"]
+    expected = VA::Folder.fingerprint(VA::Folder.fingerprint("", "", "", skills, [], []),
+                                      "defaultllm-thinkingdaytona", "map[]", [], [], [])
+    assert_equal expected, synced["hash"]
+  end
+
+  def test_update_config_patches_only_what_it_is_given
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "support", "id" => "cfg_1" }])
+    @router.on(:patch, "/v1/agents/configs/cfg_1") { |request| request.json.merge("id" => "cfg_1") }
+
+    config = agent.update_config(guardrail: "Never quote prices.", visible_tools: ["athena_*"], llm: "fast")
+
+    assert_equal "cfg_1", config["id"]
+    assert_equal({ "guardrail" => "Never quote prices.", "visible_tools" => ["athena_*"], "llm" => "fast" },
+                 @router.last(:patch, "/v1/agents/configs/cfg_1").json)
+    assert_equal({ "name" => "support" }, @router.last(:get, "/v1/agents/configs").query)
+  end
+
+  def test_update_config_sends_a_review_guide
+    guide = { "instructions" => "Score how fast the refund was settled." }
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "support", "id" => "cfg_1" }])
+    @router.on(:patch, "/v1/agents/configs/cfg_1") { |request| request.json.merge("id" => "cfg_1") }
+
+    config = agent.update_config(review: { instructions: guide["instructions"] })
+
+    assert_equal({ "review" => guide }, @router.last(:patch, "/v1/agents/configs/cfg_1").json)
+    assert_equal guide, config["review"]
+  end
+
+  def test_update_config_needs_a_stored_config
+    @router.on(:get, "/v1/agents/configs", body: [])
+
+    assert_raises(VA::Error) { agent.update_config(guardrail: "x") }
+    assert_empty @router.seen(:patch, %r{\A/v1/agents/configs/})
+  end
+
+  def test_what_cannot_be_an_agent_is_refused
+    assert_raises(VA::ConfigurationError) { VA::Agent.new(client: client) }
+    assert_raises(VA::ConfigurationError) { agent(pipeline: { lmm: "fast" }) }
+    assert_raises(VA::ConfigurationError) do
+      agent(skills: [VA::Skill.new(name: "research", description: "", instructions: "x")])
+    end
+  end
+
+  def test_one_agent_holds_one_conversation
+    serve_session { |peer| peer.receive_type("close", timeout: 10) }
+    support = agent
+
+    support.chat
+    assert_raises(VA::ConfigurationError) { support.chat }
+    support.close
+  end
+
+  def test_the_monitor_url_joins_the_call_as_somebody_else
+    serve_session
+    support = agent
+
+    url = support.join(participant_wait_timeout: 0, wait_for_end: false) { support.monitor_url }
+
+    assert url.start_with?("https://demo.example/join/sess_1?api_key=key&token=")
+    assert_includes url, "user_name=Monitor"
+  end
+
+  def test_user_ids_are_made_from_names
+    assert_equal "ada-lovelace", VA::Agent.user_id_of("  Ada Lovelace!")
+    assert_equal "vision-agent", VA::Agent.user_id_of("!!!")
+  end
+
+  def folder
+    root = File.join(Dir.mktmpdir, "jean")
+    FileUtils.mkdir_p(File.join(root, "knowledge"))
+    File.write(File.join(root, "agent.yaml"), "name: jean\nllm: openai/gpt-5.6\ntags:\n  team: voice\n")
+    File.write(File.join(root, "instructions.md"), "You are Jean.\n")
+    File.write(File.join(root, "guardrail.md"), "Never quote prices.\n")
+    File.write(File.join(root, "knowledge/pricing.md"), "# Pricing\n\nA penny.\n")
+    File.write(File.join(root, "knowledge/urls.yaml"), "- https://example.com/plans\n")
+    root
+  end
+
+  def test_sync_stores_the_folder_in_one_request_and_stamps_it
+    root = folder
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
+    jean = VA::Agent.new(folder: root, client: client)
+
+    jean.sync
+
+    request = @router.last(:post, "/v1/agents/sync").json
+    assert_equal VA::Folder.load(root).fingerprint, request["hash"]
+    assert_equal({ "name" => "jean", "hash" => request["hash"], "instructions" => "You are Jean.",
+                   "guardrail" => "Never quote prices.", "llm" => "openai/gpt-5.6",
+                   "knowledge" => [{ "source" => "pricing.md", "text" => "# Pricing\n\nA penny.\n" }],
+                   "knowledge_urls" => [{ "url" => "https://example.com/plans" }],
+                   "tags" => { "team" => "voice" } }, request)
+    assert_equal request["hash"], JSON.parse(File.read(File.join(root, ".agent_sync")))["hash"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_sync_sends_what_the_folder_leaves_to_dispatch
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\ndispatch:\n  text: enabled\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "text" => "enabled" }, @router.last(:post, "/v1/agents/sync").json["dispatch"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_sync_sends_how_the_sandbox_is_built_and_what_it_may_reach
+    root = folder
+    File.write(File.join(root, "agent.yaml"),
+               "name: jean\nsandbox: daytona\nsandbox_options:\n  setup: [pip install bpy==5.2.2]\n  timeout: 5m\n" \
+               "  memory_gb: 4\n  network: true\n  allowed_domains: [api.example.com]\n" \
+               "  network_allow_list: [10.0.0.0/8]\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "setup" => ["pip install bpy==5.2.2"], "timeout_ms" => 300_000, "memory_gb" => 4,
+                   "network" => true, "allowed_domains" => ["api.example.com"],
+                   "network_allow_list" => ["10.0.0.0/8"] },
+                 @router.last(:post, "/v1/agents/sync").json["sandbox_options"])
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_sync_sends_the_files_a_skill_folder_brings
+    root = folder
+    FileUtils.mkdir_p(File.join(root, "skills/pdf/reference"))
+    File.write(File.join(root, "skills/pdf/SKILL.md"), "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
+    File.write(File.join(root, "skills/pdf/reference/forms.md"), "# Forms\n")
+    File.write(File.join(root, "skills/think.md"), "---\ndescription: Work it out\n---\nReason it through.\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    pdf, think = @router.last(:post, "/v1/agents/sync").json["skills"]
+    assert_equal({ "reference/forms.md" => "# Forms\n" }, pdf["files"])
+    refute think.key?("files")
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_sync_sends_the_greeting_harness_pages_and_simulations_the_folder_declares
+    root = folder
+    File.write(File.join(root, "agent.yaml"),
+               "name: jean\ngreeting:\n  text: Bonjour\n  mode: exact\nharness: default\n")
+    File.write(File.join(root, "knowledge/urls.yaml"), "- url: https://example.com/plans\n  refresh_hours: 24\n")
+    FileUtils.mkdir_p(File.join(root, "simulations"))
+    File.write(File.join(root, "simulations/lunch.yaml"),
+               "- name: lunch\n  scenario: Order a club\n  assertion: One club\n  variations: 3\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    request = @router.last(:post, "/v1/agents/sync").json
+    assert_equal({ "text" => "Bonjour", "mode" => "exact" }, request["greeting"])
+    assert_equal "default", request["harness"]
+    %w[speed agent_plugins plugins].each { |key| refute request.key?(key), key }
+    assert_equal [{ "url" => "https://example.com/plans", "refresh_hours" => 24 }], request["knowledge_urls"]
+    assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
+                 request["simulations"]
+    assert_equal VA::Folder.load(root).fingerprint, request["hash"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def sync_declaring(yaml)
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\n#{yaml}")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+    VA::Agent.new(folder: root, client: client).sync
+    @router.last(:post, "/v1/agents/sync").json
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def serve_connections(items, pages: nil)
+    @router.on(:get, "/v1/agents/connections") do |request|
+      page = pages ? pages.fetch(request.query["cursor"]) : { "items" => items }
+      page
+    end
+  end
+
+  # agent.yaml's floor_control goes as written, {} and a model the router does not know included,
+  # and a file that names none sends none, so the stored choice stays.
+  def test_sync_sends_the_floor_control_the_agent_declared
+    { "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n" =>
+        { "model" => "stream/chorus-asr", "max_wait_ms" => 800 },
+      "floor_control: {model: stream/chorus-asr}\n" => { "model" => "stream/chorus-asr" },
+      "floor_control: {}\n" => {},
+      "floor_control:\n  model: other\n" => { "model" => "other" } }.each do |declared, want|
+      assert_equal want, sync_declaring(declared)["floor_control"], declared
+    end
+    ["floor_control:\n", "llm: openai/gpt-5.6\n"].each do |declared|
+      refute sync_declaring(declared).key?("floor_control"), declared
+    end
+  end
+
+  def test_sync_without_connectors_sends_none_and_leaves_the_fingerprint_alone
+    request = sync_declaring("")
+
+    # What the base sha sent for this folder, probed before the change.
+    assert_equal %w[guardrail hash instructions knowledge knowledge_urls name], request.keys.sort
+    assert_equal "62b29ef1a278751e9437b7d1b6c9cbe4", request["hash"]
+    assert_empty @router.seen(:get, "/v1/agents/connections")
+  end
+
+  def test_sync_sends_a_connector_named_alone_as_a_session_binding
+    request = sync_declaring("connectors:\n  - linear\n")
+
+    assert_equal [{ "name" => "linear", "connector_id" => "linear", "tools" => [], "tool_patterns" => ["*"],
+                    "connection" => { "type" => "session" } }], request["connectors"]
+    assert_empty @router.seen(:get, "/v1/agents/connections")
+  end
+
+  def test_sync_sends_a_connector_mapping_with_the_connector_its_tools_and_whether_it_is_required
+    request = sync_declaring(<<~YAML)
+      connectors:
+        - name: issues
+          connector: linear
+          tools: ["list_*", get_issue]
+          required: true
+        - name: docs
+          tools:
+        - name: wiki
+          required: false
+    YAML
+
+    assert_equal [{ "name" => "issues", "connector_id" => "linear", "tools" => [],
+                    "tool_patterns" => ["list_*", "get_issue"], "required" => true,
+                    "connection" => { "type" => "session" } },
+                  { "name" => "docs", "connector_id" => "docs", "tools" => [], "tool_patterns" => ["*"],
+                    "connection" => { "type" => "session" } },
+                  { "name" => "wiki", "connector_id" => "wiki", "tools" => [], "tool_patterns" => ["*"],
+                    "required" => false, "connection" => { "type" => "session" } }], request["connectors"]
+  end
+
+  def test_sync_sends_an_empty_connectors_list_so_the_stored_bindings_are_cleared
+    assert_equal [], sync_declaring("connectors: []\n")["connectors"]
+  end
+
+  def test_sync_fixes_a_connector_to_the_app_connection_with_that_id
+    serve_connections([{ "id" => "conn_a", "label" => "conn_b" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: issues\n    connector: linear\n    connection: conn_b\n")
+
+    assert_equal({ "type" => "fixed", "connection_id" => "conn_b" }, request["connectors"].first["connection"])
+    assert_equal({ "owner_type" => "app", "connector_id" => "linear" },
+                 @router.last(:get, "/v1/agents/connections").query)
+  end
+
+  def test_sync_fixes_a_connector_to_the_one_connection_with_that_label
+    serve_connections([{ "id" => "conn_a", "label" => "staging" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal({ "type" => "fixed", "connection_id" => "conn_b" }, request["connectors"].first["connection"])
+    assert_equal "linear", @router.last(:get, "/v1/agents/connections").query["connector_id"]
+  end
+
+  def test_sync_reads_every_page_of_connections_before_choosing
+    serve_connections(nil, pages: {
+                        nil => { "items" => [{ "id" => "conn_a", "label" => "conn_b" }], "next_cursor" => "p2" },
+                        "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "" }
+                      })
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: conn_b\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+    assert_equal 2, @router.seen(:get, "/v1/agents/connections").size
+  end
+
+  def test_sync_stops_reading_pages_when_a_cursor_repeats
+    pages = {
+      nil => { "items" => [{ "id" => "conn_a", "label" => "staging" }], "next_cursor" => "p2" },
+      "p2" => { "items" => [{ "id" => "conn_b", "label" => "prod" }], "next_cursor" => "p2" }
+    }
+    call_count = 0
+    @router.on(:get, "/v1/agents/connections") do |request|
+      call_count += 1
+      next [400, LocalRouter.failure("loop_detected", "loop_detected", "too many list calls")] if call_count > 5
+      pages.fetch(request.query["cursor"])
+    end
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+    assert_equal 2, @router.seen(:get, "/v1/agents/connections").size
+  end
+
+  def test_sync_refuses_a_connection_that_no_app_connection_matches
+    serve_connections([{ "id" => "conn_a", "label" => "staging" }])
+
+    error = assert_raises(VA::ConfigurationError) do
+      sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+    end
+
+    assert_equal 'connector "linear": no app connection with id or label "prod"', error.message
+    assert_empty @router.seen(:post, "/v1/agents/sync")
+  end
+
+  def test_sync_refuses_a_label_that_matches_several_app_connections
+    serve_connections([{ "id" => "conn_a", "label" => "prod" }, { "id" => "conn_b", "label" => "prod" }])
+
+    error = assert_raises(VA::ConfigurationError) do
+      sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+    end
+
+    assert_equal 'connector "linear": "prod" matches 2 app connections', error.message
+    assert_empty @router.seen(:post, "/v1/agents/sync")
+  end
+
+  def test_sync_ignores_a_label_match_on_a_connection_with_no_id
+    serve_connections([{ "label" => "prod" }, { "id" => "conn_b", "label" => "prod" }])
+
+    request = sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
+
+    assert_equal "conn_b", request["connectors"].first["connection"]["connection_id"]
+  end
+
+  def test_sync_refuses_plugins_and_posts_nothing
+    error = assert_raises(VA::ConfigurationError) { sync_declaring("plugins: [linear, slack]\n") }
+
+    assert error.message.end_with?("/jean/agent.yaml: plugins is no longer read: plugins were replaced by " \
+                                   "connectors, so name the provider under connectors"), error.message
+    assert_empty @router.seen(:post, "/v1/agents/sync")
+  end
+
+  def test_sync_sends_no_plugins_for_a_key_that_names_none
+    ["plugins: []\n", "plugins:\n", "plugins: ~\n"].each do |yaml|
+      request = nil
+      _, warned = capture_io { request = sync_declaring("#{yaml}connectors: [linear]\n") }
+
+      refute request.key?("plugins"), yaml
+      assert_equal [{ "name" => "linear" }], request["connectors"].map { |each| each.slice("name") }, yaml
+      assert_empty warned, yaml
+    end
+  end
+
+  def test_sync_refuses_plugins_added_to_a_folder_that_was_synced_unchanged
+    root = File.join(Dir.mktmpdir, "jean")
+    FileUtils.mkdir_p(root)
+    File.write(File.join(root, "agent.yaml"), "name: jean\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
+    VA::Agent.new(folder: root, client: client).sync # stamps the folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\nplugins: [linear]\n")
+
+    error = assert_raises(VA::ConfigurationError) { VA::Agent.new(folder: root, client: client).sync }
+
+    assert_includes error.message, "plugins is no longer read"
+    assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_simulations_are_sent_only_when_the_folder_has_a_directory_for_them
+    root = folder
+    File.write(File.join(root, "agent.yaml"), "name: jean\n")
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client).sync
+    FileUtils.mkdir_p(File.join(root, "simulations"))
+    VA::Agent.new(folder: root, client: client).sync
+
+    without, empty = @router.seen(:post, "/v1/agents/sync").map(&:json)
+    refute without.key?("simulations")
+    assert_equal [], empty["simulations"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_an_untouched_folder_is_read_back_rather_than_written
+    root = folder
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
+    @router.on(:get, "/v1/agents/configs", body: [{ "name" => "jean", "id" => "cfg_1" }])
+    VA::Agent.new(folder: root, client: client).sync
+
+    result = VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal({ "unchanged" => true, "config" => { "name" => "jean", "id" => "cfg_1" } }, result)
+    assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
+    assert_equal({ "name" => "jean" }, @router.last(:get, "/v1/agents/configs").query)
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_a_config_deleted_since_the_stamp_is_synced_again
+    root = folder
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
+    @router.on(:get, "/v1/agents/configs", body: [])
+    VA::Agent.new(folder: root, client: client).sync
+
+    VA::Agent.new(folder: root, client: client).sync
+
+    assert_equal 2, @router.seen(:post, "/v1/agents/sync").size
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_cost_labels_are_synced_and_fingerprinted
+    root = folder
+    @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
+
+    VA::Agent.new(folder: root, client: client, cost_tracking: { env: "production" }).sync
+
+    request = @router.last(:post, "/v1/agents/sync").json
+    assert_equal({ "team" => "voice", "env" => "production" }, request["tags"])
+    expected = VA::Folder.fingerprint(VA::Folder.load(root).fingerprint, "", "map[env:production]", [], [], [])
+    assert_equal expected, request["hash"]
+  ensure
+    FileUtils.rm_rf(File.dirname(root))
+  end
+
+  def test_knowledge_is_added_under_the_agents_name_and_waited_for
+    reads = 0
+    @router.on(:post, "/v1/agents/knowledge/urls", body: { "id" => "k1", "state" => "pending" })
+    @router.on(:get, "/v1/agents/knowledge/urls/k1") do
+      reads += 1
+      { "id" => "k1", "state" => reads < 2 ? "pending" : "indexed", "passages" => 4 }
+    end
+
+    page = agent.knowledge.add_url("https://example.com/pricing", title: "Pricing", refresh_hours: 24)
+
+    assert_equal "indexed", page["state"]
+    assert_equal({ "namespace" => "support", "url" => "https://example.com/pricing", "title" => "Pricing",
+                   "refresh_hours" => 24 }, @router.last(:post, "/v1/agents/knowledge/urls").json)
+  end
+end
+
+class TestSessions < LocalRouterTest
+  def session_queries
+    queries = []
+    @router.on(:post, "/v1/agents/sessions/query") do |request|
+      queries << request.json
+      { "items" => [{ "id" => "s#{queries.size}" }], "has_more" => queries.size == 1, "next_cursor" => "c1" }
+    end
+    queries
+  end
+
+  def test_a_query_with_no_filter_asks_for_the_agents_sessions
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query
+    sessions.query(filter: nil)
+    sessions.query(filter: { agent: "other" })
+
+    assert_equal [{ "filter" => { "agent" => "docs" } }] * 3, queries
+  end
+
+  def test_a_query_filters_by_project
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query(filter: { project_id: "docs" })
+    sessions.query(filter: { "project_id" => { "$eq" => "docs" } })
+    sessions.query(filter: { project_id: { "$in": %w[docs billing] } })
+    sessions.query(filter: { "$or" => [{ project_id: "docs" }, { project_id: "billing" }] })
+
+    assert_equal [{ "filter" => { "project_id" => "docs", "agent" => "docs" } },
+                  { "filter" => { "project_id" => { "$eq" => "docs" }, "agent" => "docs" } },
+                  { "filter" => { "project_id" => { "$in" => %w[docs billing] }, "agent" => "docs" } },
+                  { "filter" => { "$or" => [{ "project_id" => "docs" }, { "project_id" => "billing" }],
+                                  "agent" => "docs" } }],
+                 queries
+  end
+
+  def test_a_nested_filter_is_sent_as_written_with_the_agent_beside_it
+    queries = session_queries
+    filter = { "$and": [{ user_id: "u1" },
+                        { "$or": [{ project_id: "docs" },
+                                  { "$and": [{ project_id: { "$in": %w[billing sales] } },
+                                             { review_score: { "$gte": 4 } }] }] }] }
+
+    client.agent("docs").sessions.query(filter: filter)
+
+    assert_equal [{ "filter" => {
+                   "$and" => [{ "user_id" => "u1" },
+                              { "$or" => [{ "project_id" => "docs" },
+                                          { "$and" => [{ "project_id" => { "$in" => %w[billing sales] } },
+                                                       { "review_score" => { "$gte" => 4 } }] }] }],
+                   "agent" => "docs"
+                 } }],
+                 queries
+    assert_equal [:$and], filter.keys
+    assert_raises(VA::ConfigurationError) { client.agent("docs").sessions.query(filter: "docs") }
+  end
+
+  def test_a_query_filters_by_review_score_and_user
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query(filter: { review_score: 5, user_id: "u1" })
+    sessions.query(filter: { review_score: { "$gte" => 2, "$lt" => 4 }, user_id: { "$eq" => "u1" } })
+
+    assert_equal [{ "filter" => { "review_score" => 5, "user_id" => "u1", "agent" => "docs" } },
+                  { "filter" => { "review_score" => { "$gte" => 2, "$lt" => 4 }, "user_id" => { "$eq" => "u1" },
+                                  "agent" => "docs" } }],
+                 queries
+  end
+
+  def test_a_search_sets_the_text_beside_the_callers_filter
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    found = sessions.search("billing")
+    sessions.search("billing", filter: { project_id: "docs" }, limit: 5, cursor: "c1")
+
+    assert_equal [{ "id" => "s1" }], found["items"]
+    assert_equal [{ "filter" => { "agent" => "docs", "text" => { "$q" => "billing" } } },
+                  { "filter" => { "project_id" => "docs", "agent" => "docs", "text" => { "$q" => "billing" } },
+                    "limit" => 5, "cursor" => "c1" }],
+                 queries
+    assert_raises(VA::ConfigurationError) { sessions.search("billing", filter: { text: { "$q" => "refund" } }) }
+    assert_raises(VA::ConfigurationError) { sessions.search("billing", filter: { "text" => { "$q" => "refund" } }) }
+    assert_raises(ArgumentError) { sessions.search("billing", sort: [{ field: "relevance" }]) }
+    assert_equal 2, queries.size
+  end
+
+  def test_a_query_is_sorted_as_asked
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query(sort: [{ field: "last_message_at", direction: 1 }])
+    sessions.query(sort: [{ field: "last_message_at", direction: -1 }])
+    sessions.query(sort: [{ field: "pinned" }])
+    sessions.query(sort: [{ field: :pinned, direction: -1 }, { "field" => "last_message_at", "direction" => 1 }])
+    sessions.query(sort: [{ field: "review_score", direction: -1 }])
+    sessions.query(sort: [{ field: "review_score", direction: 1 }])
+    sessions.query(filter: { text: { "$q" => "billing" } }, sort: [{ field: "relevance", direction: -1 }])
+
+    assert_equal [[{ "field" => "last_message_at", "direction" => 1 }],
+                  [{ "field" => "last_message_at", "direction" => -1 }],
+                  [{ "field" => "pinned" }],
+                  [{ "field" => "pinned", "direction" => -1 }, { "field" => "last_message_at", "direction" => 1 }],
+                  [{ "field" => "review_score", "direction" => -1 }],
+                  [{ "field" => "review_score", "direction" => 1 }],
+                  [{ "field" => "relevance", "direction" => -1 }]],
+                 queries.map { |query| query["sort"] }
+    assert_equal({ "filter" => { "text" => { "$q" => "billing" }, "agent" => "docs" },
+                   "sort" => [{ "field" => "relevance", "direction" => -1 }] }, queries.last)
+  end
+
+  def test_a_query_is_paged_by_cursor
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+    asked = { filter: { project_id: "docs" }, sort: [{ field: "pinned" }], limit: 10 }
+
+    first = sessions.query(**asked)
+    second = sessions.query(**asked, cursor: first["next_cursor"])
+
+    assert_equal [{ "id" => "s1" }], first["items"]
+    assert first["has_more"]
+    refute second["has_more"]
+    sent = { "filter" => { "project_id" => "docs", "agent" => "docs" }, "sort" => [{ "field" => "pinned" }],
+             "limit" => 10 }
+    assert_equal [sent, sent.merge("cursor" => "c1")], queries
+  end
+
+  def test_the_old_flat_filters_are_gone
+    sessions = client.agent("docs").sessions
+
+    assert_raises(ArgumentError) { sessions.query(project_id: "docs") }
+    assert_raises(ArgumentError) { sessions.query(state: "live") }
+    assert_raises(ArgumentError) { sessions.search("billing", modality: "text") }
+    assert_empty @router.seen(:post, "/v1/agents/sessions/query")
+  end
+
+  def test_pinned_at_is_read_from_a_session
+    @router.on(:post, "/v1/agents/sessions/query",
+               body: { "items" => [{ "id" => "s1", "pinned_at" => "2026-11-10T09:30:00Z" }, { "id" => "s2" }],
+                       "has_more" => false })
+    @router.on(:get, "/v1/agents/sessions/s1", body: { "id" => "s1", "pinned_at" => "2026-11-10T09:30:00Z" })
+    sessions = client.agent("docs").sessions
+
+    items = sessions.query(sort: [{ field: "pinned" }])["items"]
+
+    assert_equal "2026-11-10T09:30:00Z", items.first["pinned_at"]
+    refute items.last.key?("pinned_at")
+    assert_equal "2026-11-10T09:30:00Z", sessions.get("s1")["pinned_at"]
+  end
+
+  def test_a_session_is_pinned_and_unpinned_by_id
+    @router.on(:patch, "/v1/agents/sessions/s1") do |request|
+      request.json["pinned"] ? { "id" => "s1", "pinned_at" => "2026-11-10T09:30:00Z" } : { "id" => "s1" }
+    end
+    sessions = client.agent("docs").sessions
+
+    assert_equal "2026-11-10T09:30:00Z", sessions.pin("s1")["pinned_at"]
+    refute sessions.unpin("s1").key?("pinned_at")
+    assert_equal "2026-11-10T09:30:00Z", sessions.update("s1", pinned: true, title: "Pricing")["pinned_at"]
+
+    assert_equal [{ "pinned" => true }, { "pinned" => false }, { "pinned" => true, "title" => "Pricing" }],
+                 @router.seen(:patch, "/v1/agents/sessions/s1").map(&:json)
+  end
+
+  def test_a_held_session_is_pinned_and_unpinned
+    serve_session
+    @router.on(:patch, "/v1/agents/sessions/sess_1") do |request|
+      request.json["pinned"] ? { "id" => "sess_1", "pinned_at" => "2026-11-10T09:30:00Z" } : { "id" => "sess_1" }
+    end
+    session = client.agent("docs").sessions.create
+
+    pinned = session.pin
+    unpinned = session.unpin
+    session.close
+
+    assert_equal "2026-11-10T09:30:00Z", pinned["pinned_at"]
+    refute unpinned.key?("pinned_at")
+    assert_equal [{ "pinned" => true }, { "pinned" => false }],
+                 @router.seen(:patch, "/v1/agents/sessions/sess_1").map(&:json)
+  end
+
+  def test_create_opens_a_written_conversation
+    serve_session
+
+    session = client.agent("docs").sessions.create(id: "billing_ada-1", title: "Is Stream better?",
+                                                   project_id: "pricing")
+    session.close
+
+    request = @router.last(:post, "/v1/agents/sessions").json
+    assert_equal({ "agent" => "docs", "user_id" => "docs", "user_name" => "docs", "agent_id" => "docs",
+                   "id" => "billing_ada-1", "title" => "Is Stream better?", "project_id" => "pricing" }, request)
+    refute session.voice.started?
+  end
+
+  def test_a_session_is_counted_under_a_team_only_when_one_is_given
+    serve_session
+
+    client.agent("docs").sessions.create(team: "finance").close
+    assert_equal "finance", @router.last(:post, "/v1/agents/sessions").json["team"]
+    client.agent("docs").sessions.create(team: "").close
+    refute @router.last(:post, "/v1/agents/sessions").json.key?("team")
+    assert_raises(VA::ConfigurationError) { client.agent("docs").sessions.create(team: "team:finance") }
+    assert_equal 2, @router.seen(:post, "/v1/agents/sessions").size
+  end
+
+  def test_a_conversation_is_resumed_by_its_session_id
+    @router.on(:get, "/v1/agents/sessions/s1", body: { "id" => "s1", "user_id" => "docs", "call_id" => "" })
+    @router.on_socket("/v1/agents/sessions/s1/events") do |peer|
+      peer.send_frame(type: "responding")
+      peer.receive_type("close", timeout: 10)
+      peer.close
+    end
+
+    session = client.agent("docs").sessions.resume("s1")
+    kind = session.events.first.kind
+    session.close
+
+    assert_equal "s1", session.id
+    assert_equal "responding", kind
+    assert_empty @router.seen(:post, "/v1/agents/sessions")
+  end
+
+  def test_update_changes_one_session
+    serve_session
+    @router.on(:patch, "/v1/agents/sessions/sess_1", body: { "id" => "sess_1", "llm" => "llm-thinking" })
+
+    session = client.agent("docs").sessions.create
+    updated = session.update(title: "Pricing", llm: "llm-thinking", thinking: "high", sts: "")
+    session.close
+
+    assert_equal "llm-thinking", updated["llm"]
+    assert_equal({ "title" => "Pricing", "llm" => "llm-thinking", "thinking" => "high", "sts" => "" },
+                 @router.last(:patch, "/v1/agents/sessions/sess_1").json)
+    assert_raises(VA::ConfigurationError) { session.update(model: "llm-fast") }
+    assert_raises(VA::ConfigurationError) { session.update(subagent: "llm-thinking") }
+  end
+
+  def test_an_ended_session_is_renamed_deleted_and_forgotten_by_id
+    @router.on(:patch, "/v1/agents/sessions/s1") { |request| request.json.merge("id" => "s1") }
+    @router.on(:delete, "/v1/agents/sessions/s1/memories", status: 204)
+    @router.on(:delete, "/v1/agents/sessions/s1", status: 204)
+    sessions = client.agent("docs").sessions
+
+    assert_equal "Pricing", sessions.update("s1", title: "Pricing")["title"]
+    assert_nil sessions.delete_memories("s1")
+    assert_nil sessions.delete("s1")
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/s1/memories").size
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/s1").size
+  end
+
+  def test_closing_a_session_stops_it_and_only_delete_deletes_it
+    closed = Thread::Queue.new
+    serve_session { |peer| closed << peer.receive_type("close", timeout: 10) }
+    @router.on(:delete, "/v1/agents/sessions/sess_1/memories", status: 204)
+    @router.on(:delete, "/v1/agents/sessions/sess_1", status: 204)
+    session = client.agent("docs").sessions.create
+
+    session.delete_memories
+    session.close
+    assert_equal({ "type" => "close" }, closed.pop(timeout: 5))
+    assert_empty @router.seen(:delete, "/v1/agents/sessions/sess_1")
+    session.delete
+
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1/memories").size
+    assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1").size
+  end
+end
+
+class TestResponses < LocalRouterTest
+  def responses
+    VA::Responses.new(client, "sess_1")
+  end
+
+  def test_rewind_goes_back_to_a_response
+    @router.on(:post, "/v1/agents/sessions/sess_1/rewind", status: 204)
+
+    assert_nil responses.rewind({ "response_id" => "resp_1", "type" => "message" })
+    assert_equal({ "response_id" => "resp_1" }, @router.last(:post, "/v1/agents/sessions/sess_1/rewind").json)
+  end
+
+  def test_a_persisted_conversation_cannot_be_rewound
+    refused = LocalRouter.failure("invalid_request", "invalid_request", "fork a persisted conversation instead")
+    @router.on(:post, "/v1/agents/sessions/sess_1/rewind", status: 400, body: refused)
+
+    error = assert_raises(VA::RouterError) { responses.rewind("resp_1") }
+    assert_equal 400, error.status
+    assert_equal "rewindSession: fork a persisted conversation instead", error.message
+  end
+
+  def test_rewind_needs_an_id
+    assert_raises(VA::ConfigurationError) { responses.rewind(VA::AgentResponse.new(client, { "id" => "" })) }
+  end
+
+  def test_items_are_read_a_page_at_a_time_by_cursor
+    @router.on(:get, "/v1/agents/sessions/sess_1/responses/items") do |request|
+      start = request.query["cursor"].to_i
+      ids = (start...[start + 2, 3].min).map { |i| { "id" => "item_#{i}" } }
+      more = start + 2 < 3
+      { "items" => ids, "has_more" => more, "next_cursor" => (more ? (start + 2).to_s : nil) }.compact
+    end
+
+    items = responses.items.each(page: 2).to_a
+
+    assert_equal %w[item_0 item_1 item_2], items.map { |item| item["id"] }
+    assert_equal [{ "limit" => "2" }, { "limit" => "2", "cursor" => "2" }],
+                 @router.seen(:get, "/v1/agents/sessions/sess_1/responses/items").map(&:query)
+  end
+
+  def test_one_turns_items
+    @router.on(:get, "/v1/agents/sessions/sess_1/responses/items", body: { "items" => [], "has_more" => false })
+    turn = VA::AgentResponse.new(client, { "id" => "resp_1", "session_id" => "sess_1" })
+
+    turn.items.list(limit: 10, cursor: "c1")
+
+    assert_equal({ "response_id" => "resp_1", "limit" => "10", "cursor" => "c1" },
+                 @router.last(:get, "/v1/agents/sessions/sess_1/responses/items").query)
+  end
+
+  def test_turns_are_listed_a_page_at_a_time
+    @router.on(:get, "/v1/agents/sessions/sess_1/responses",
+               body: { "items" => [{ "id" => "resp_1" }], "has_more" => true, "next_cursor" => "c1" })
+
+    page = responses.list(limit: 1)
+
+    assert_equal "c1", page["next_cursor"]
+    assert_equal({ "limit" => "1" }, @router.last(:get, "/v1/agents/sessions/sess_1/responses").query)
+  end
+
+  def test_a_fork_takes_the_history_up_to_a_response
+    serve_session("sess_1")
+    @router.on(:post, "/v1/agents/sessions/sess_1/fork", body: { "id" => "sess_2" })
+    @router.on_socket("/v1/agents/sessions/sess_2/events") do |peer|
+      peer.receive_type("close", timeout: 10)
+      peer.close
+    end
+
+    parent = client.agent("docs").sessions.create
+    fork = parent.fork(response_id: VA::AgentResponse.new(client, { "id" => "resp_1" }), title: "Branch")
+    fork.close
+    parent.close
+
+    assert_equal "sess_2", fork.id
+    assert_equal({ "response_id" => "resp_1", "title" => "Branch" },
+                 @router.last(:post, "/v1/agents/sessions/sess_1/fork").json)
+  end
+end

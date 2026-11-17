@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package node;
+
+option go_package = "github.com/GetStream/Vision-Agents/acceleration/internal/node";
+
+// Node is what one node of a deployment asks another.
+service Node {
+  // Forward hands a request to the node running what it is about, which answers it as if
+  // it had arrived there.
+  //
+  // The request is carried whole rather than taken apart into an operation and its
+  // arguments, so the node holding the session runs its own handler, its own
+  // authentication and its own authorization: a node is not trusted to have checked.
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+}
+
+// Header is one request or response header. Repeated values are kept because Set-Cookie
+// and Accept are both ordinary and both lose their meaning when joined.
+message Header {
+  string name = 1;
+  repeated string values = 2;
+}
+
+message ForwardRequest {
+  string method = 1;
+  // url is the path and the query, without scheme or host: the answer belongs to the
+  // session, and which node was reached first is not part of what was asked.
+  string url = 2;
+  repeated Header headers = 3;
+  bytes body = 4;
+  // remote_addr is who reached the node that took the request, so the node answering it
+  // sees the caller rather than its peer.
+  string remote_addr = 5;
+}
+
+message ForwardResponse {
+  int32 status = 1;
+  repeated Header headers = 2;
+  bytes body = 3;
+}

@@ -1,0 +1,141 @@
+package sttrouter
+
+import (
+	"context"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
+)
+
+// Transcribers is the set of batch transcription providers a build can construct.
+type Transcribers = routing.Registry[stt.Transcriber]
+
+// batch is what this router's half of the provider list is, for a priority list that
+// names a vendor rather than one of their models. A whole recording wants the batch model,
+// which is both cheaper per hour and more accurate than the same vendor's streaming one.
+var batch = false
+
+// NewTranscriberRegistry returns an empty registry.
+func NewTranscriberRegistry() *Transcribers { return routing.NewRegistry[stt.Transcriber]() }
+
+// DefaultTranscriberRegistry returns a registry with every batch transcriber this build
+// supports.
+//
+// It is a separate registry from the streaming one because a vendor's batch model is a
+// different model: Deepgram's live path is Flux, whose job is deciding where a turn ended
+// while somebody is still talking, and its recording path is Nova, which has the whole
+// file in front of it.
+func DefaultTranscriberRegistry() *Transcribers {
+	registry := NewTranscriberRegistry()
+	// Every factory here only reads config, so a model the deployment has no key or endpoint
+	// for is listed unavailable and never routed to.
+	registry.Probe()
+
+	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.Transcriber, error) {
+		return deepgram.NewPrerecorded(deepgram.PrerecordedOptions{
+			Model:     spec.Model,
+			MipOptOut: optsOut(spec),
+			Logger:    spec.Logger,
+		})
+	})
+
+	return registry
+}
+
+// Recordings routes whole recordings to a batch transcriber.
+type Recordings struct {
+	*routing.Router[stt.Transcriber]
+}
+
+// NewRecordings validates the options and returns a router.
+func NewRecordings(options Options) (*Recordings, error) {
+	core, err := routing.New(routing.Options[stt.Transcriber]{
+		Modality: routing.STT,
+		Config:   options.Config,
+		Registry: options.Transcribers,
+		Store:    options.Store,
+		Live:     options.Live,
+		Gate:     options.Gate,
+		Writer:   options.Writer,
+		Pricer:   options.Pricer,
+		Logger:   options.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Recordings{Router: core}, nil
+}
+
+// Recording is a whole recording to transcribe and how to bill it.
+type Recording struct {
+	// CustomerID owns the request. It is what every statistic is keyed by.
+	CustomerID string
+	// Tags are the customer's own cost labels.
+	Tags routing.Tags
+	// AgentID is the agent the recording was heard for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the recording was heard in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty is the region
+	// Options.DataPolicy asks for, else pricing.DefaultRegion.
+	Region string
+	// Options are what the caller asked for, target included.
+	Options options.STT
+	// Source is the recording itself.
+	Source stt.Recording
+}
+
+// Transcribe selects a provider and transcribes the whole recording, falling back to the
+// next candidate when one fails to start.
+//
+// Unlike a live session this records its own stat row: there is one unit of work rather
+// than a turn at a time, and it is finished by the time this returns.
+func (r *Recordings) Transcribe(
+	ctx context.Context,
+	recording Recording,
+) (stt.Transcription, routing.ProviderConfig, error) {
+	// A priority list is held to the batch half by Realtime below; a single target is not.
+	target := recording.Options.Target
+	if len(recording.Options.Providers) == 0 {
+		var err error
+		if target, err = r.Config().Recorded(target, recording.Options.Languages); err != nil {
+			return stt.Transcription{}, routing.ProviderConfig{}, err
+		}
+	}
+	request := routing.Request{
+		CustomerID:    recording.CustomerID,
+		Attribution:   routing.AttributionFrom(ctx),
+		Spent:         routing.SpentFrom(ctx),
+		AgentID:       recording.AgentID,
+		CallID:        recording.CallID,
+		Region:        recording.Region,
+		Tags:          recording.Tags,
+		Target:        target,
+		Providers:     recording.Options.Providers,
+		Realtime:      &batch,
+		LanguageHints: recording.Options.Languages,
+		Keyterms:      recording.Options.Keyterms,
+		Terms:         recording.Options.Terms(),
+		DataPolicy:    recording.Options.DataPolicy,
+		STT:           recording.Options,
+	}
+
+	provider, config, err := r.Select(ctx, request)
+	if err != nil {
+		return stt.Transcription{}, routing.ProviderConfig{}, err
+	}
+	defer provider.Close()
+
+	transcription, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: request.Owner(),
+		Code: func(error) string { return "transcribe_failed" },
+	}, func(ctx context.Context) (stt.Transcription, error) {
+		return provider.Transcribe(ctx, recording.Source)
+	})
+	if err != nil {
+		return stt.Transcription{}, config, err
+	}
+	return transcription, config, nil
+}

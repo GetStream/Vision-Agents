@@ -1,0 +1,714 @@
+// Package muse implements the stt.STT contract on top of Meta's Muse Voice Transcribe.
+//
+// The session is configured by the first frame rather than by the query string or a
+// header: the API key travels inside that frame too, which is why Start writes it before
+// anything else and why a rejected key surfaces as an error frame rather than as a failed
+// dial.
+//
+// Partials arrive in CUMULATIVE mode, so each one restates the turn from its beginning
+// rather than carrying only the words that are new. They are therefore replacements. The
+// turn settles on speechComplete, which the server also sends for whatever it was still
+// holding when the audio stream ends, so the tail of a call that was cut off is not lost.
+package muse
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// ProviderName is the stable name used in routing config and stats.
+const ProviderName = "muse"
+
+// DefaultModel is the only speech-to-text model Meta serves.
+const DefaultModel = "muse-voice-transcribe-1.0"
+
+// DefaultURL is the realtime transcription socket.
+const DefaultURL = "wss://api.meta.ai/v1/asr/realtime"
+
+// apiKeyEnvVar holds the credentials when Options does not.
+const apiKeyEnvVar = "META_API_KEY"
+
+// The modes the server recognises. ModeEndpointing is the default here because a call
+// needs the model to find the turn boundaries; ModePushToTalk leaves that to the caller.
+//
+// ModeDiarization finds the same boundaries and names the voice as well, but it looks for
+// a speaker change rather than a clean end of speech, and measured against the same clip
+// it settles a turn in about 2150ms where endpointing takes about 770ms. That second and a
+// half is the whole of what a caller waits through, so naming the voice is something to
+// ask for when a microphone is shared rather than something to have by default.
+const (
+	ModePushToTalk  = "PUSH_TO_TALK"
+	ModeEndpointing = "ENDPOINTING"
+	ModeDiarization = "DIARIZATION"
+)
+
+// encoding16k matches stt.SampleRate. The server also takes PCM_24KHZ, which it prefers,
+// but upsampling audio that arrived at 16kHz would not put back what is not in it.
+const encoding16k = "PCM_16KHZ"
+
+// partialModeCumulative makes each partial restate the whole turn, which is what
+// stt.ModeReplacement means. The alternative, DELTA, would need the consumer to stitch
+// the turn back together.
+const partialModeCumulative = "CUMULATIVE"
+
+// Server message types.
+const (
+	messageSpeechStart    = "speechStart"
+	messageTranscript     = "transcript"
+	messageSpeechEnd      = "speechEnd"
+	messageSpeechComplete = "speechComplete"
+	messageSpeaker        = "speaker"
+	messageAudioProgress  = "audioProgress"
+	messageError          = "error"
+)
+
+// controlTypeEndStream tells the server the audio has stopped, which makes it transcribe
+// what it is still holding, report it as speechComplete and close the socket.
+const controlTypeEndStream = "endStream"
+
+// The server closes a session whose audio falls behind the clock: with 1008 "Ingress
+// below real-time" after about 16s of no audio, and after about 22s of audio arriving at
+// half speed (probed 2026-10-19). A call carries audio only while someone speaks, so
+// silence is filled in for the time nobody did.
+const (
+	// fillTick is one token's worth of audio: the model turns each 80ms into one, and the
+	// server reports audioProgress in 80ms steps (probed 2026-10-19).
+	fillTick = 80 * time.Millisecond
+	// fillAfter is how far the audio may fall behind the clock before silence makes up
+	// the difference. It is twice the 100ms pieces a call is tested at
+	// (sttsuite.defaultChunkMs), so audio that is late by one piece is not padded out.
+	fillAfter = 200 * time.Millisecond
+	// samplePeriod is how long one 16-bit sample at stt.SampleRate lasts.
+	samplePeriod = time.Second / stt.SampleRate
+)
+
+// Options configures the provider. APIKey falls back to META_API_KEY.
+type Options struct {
+	APIKey string
+	Model  string
+	URL    string
+	// Mode is one of ModePushToTalk, ModeEndpointing or ModeDiarization. Empty means
+	// ModeEndpointing.
+	Mode string
+	// Keyterms are the words the model would otherwise get wrong, sent as the vocabulary
+	// to bias recognition toward. The API takes up to a hundred, which is stt.MaxKeyterms.
+	Keyterms []string
+	// LanguageHints are the languages to expect, as ISO codes such as "en", or as the
+	// names the API itself uses. The model code-switches regardless; the hints only
+	// weight it.
+	LanguageHints []string
+	// HandshakeTimeout bounds the initial connect.
+	HandshakeTimeout time.Duration
+	// FlushTimeout bounds how long Close waits for the transcript of whatever audio the
+	// server is still holding.
+	FlushTimeout time.Duration
+	Logger       *slog.Logger
+}
+
+// authorization carries the credentials, which this API takes in the setup frame rather
+// than in a header.
+type authorization struct {
+	AccessToken string `json:"accessToken"`
+}
+
+// setupFrame is the first frame, which configures the session.
+type setupFrame struct {
+	Authorization authorization `json:"authorization"`
+	AudioEncoding string        `json:"audioEncoding"`
+	Model         string        `json:"model"`
+	Mode          string        `json:"mode"`
+	PartialMode   string        `json:"partialMode"`
+	// EmitAudioProgress is off: the router has no use for a milestone every chunk.
+	EmitAudioProgress bool     `json:"emitAudioProgress"`
+	LanguageBias      []string `json:"languageBias,omitempty"`
+	Keywords          []string `json:"keywords,omitempty"`
+}
+
+// serverMessage is a frame sent by the server.
+type serverMessage struct {
+	Type string `json:"type"`
+	// TurnID numbers the run of speech, and is only on the turn boundary frames.
+	TurnID int64 `json:"turnId"`
+	// Transcript is the text, on transcript and speechComplete.
+	Transcript string `json:"transcript"`
+	// Final says the text will not change. speechComplete says the same thing about the
+	// turn as a whole.
+	Final bool `json:"final"`
+	// AudioProcessedMs is how much audio the server has consumed so far, counting from
+	// the start of the session rather than of the turn.
+	AudioProcessedMs float64 `json:"audioProcessedMs"`
+	// Label is the diarised speaker, "A" through to "Z", in ModeDiarization only.
+	Label   string `json:"label"`
+	Message string `json:"message"`
+}
+
+// turn is one run of speech the server has opened.
+type turn struct {
+	// startMs is how much audio had been processed when the turn began, so the turn's own
+	// duration can be told from the session-wide count the server reports.
+	startMs float64
+	// speaker is the diarised label for the voice this turn is in, empty until the server
+	// says and in the other two modes for good.
+	speaker string
+	// settled marks that the turn already has a final, so the server restating one is not
+	// reported to the rest of the call as the caller saying it twice.
+	settled bool
+}
+
+// STT is a Muse Voice Transcribe session.
+type STT struct {
+	options Options
+	logger  *slog.Logger
+	emitter *stt.Emitter
+
+	conn *websocket.Conn
+	// writeMu serialises writes: a websocket connection allows only one writer. It also
+	// guards the audio clock, so silence is measured against the audio actually sent.
+	writeMu sync.Mutex
+	// clockStart is when the session started taking audio, and audioSent how much of it
+	// has been written since, the caller's and the filled-in silence together.
+	clockStart time.Time
+	audioSent  time.Duration
+	// stopFill stops the silence filler, and filling is what Close waits for so no silence
+	// follows the end of the audio stream.
+	stopFill chan struct{}
+	filling  sync.WaitGroup
+
+	// finished is closed when the server has answered the end of the audio stream and
+	// hung up, which is how Close knows the tail has been transcribed.
+	finished     chan struct{}
+	finishedOnce sync.Once
+
+	mu sync.Mutex
+	// participant is the speaker of the most recent audio, used to label transcripts
+	// that arrive asynchronously.
+	participant stt.Participant
+	// lastAudioAt is when audio was last sent, so latency can be reported as the delay
+	// between sending audio and hearing about it.
+	lastAudioAt time.Time
+	// turns are the runs of speech the server has opened, keyed by the id it numbers them
+	// with. A later turn can open before an earlier one is settled, so which turn a frame
+	// belongs to is what the id says and not what the order suggests.
+	turns map[int64]*turn
+	// current is the turn the most recent speechStart opened, which is the one a partial
+	// belongs to: partials carry no id of their own.
+	current int64
+	started bool
+	closed  bool
+}
+
+// New validates the options and returns an unstarted provider.
+func New(options Options) (*STT, error) {
+	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
+	if keys.Len() == 0 {
+		return nil, stack.Wrap(fmt.Errorf("muse: api key is required (set %s)", apiKeyEnvVar))
+	}
+	// The key goes in the setup frame rather than the handshake, so a refusal cannot be
+	// told from one; sessions only take the keys in turn.
+	options.APIKey = keys.Next()
+	if options.URL == "" {
+		options.URL = DefaultURL
+	}
+	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
+		return nil, stack.Wrap(fmt.Errorf("muse: url must be ws:// or wss://, got %s", options.URL))
+	}
+	if options.Model == "" {
+		options.Model = DefaultModel
+	}
+	if options.Mode == "" {
+		options.Mode = ModeEndpointing
+	}
+	switch options.Mode {
+	case ModePushToTalk, ModeEndpointing, ModeDiarization:
+	default:
+		return nil, stack.Wrap(fmt.Errorf("muse: mode must be one of %s, %s or %s, got %s",
+			ModePushToTalk, ModeEndpointing, ModeDiarization, options.Mode))
+	}
+	options.Keyterms = stt.CleanKeyterms(options.Keyterms)
+	if len(options.Keyterms) > stt.MaxKeyterms {
+		return nil, stack.Wrap(fmt.Errorf("muse: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms)))
+	}
+	if options.HandshakeTimeout == 0 {
+		options.HandshakeTimeout = 15 * time.Second
+	}
+	if options.FlushTimeout == 0 {
+		options.FlushTimeout = 10 * time.Second
+	}
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &STT{
+		options:  options,
+		logger:   logger.With("provider", ProviderName, "model", options.Model),
+		emitter:  stt.NewEmitter(64),
+		finished: make(chan struct{}),
+		stopFill: make(chan struct{}),
+		turns:    map[int64]*turn{},
+	}, nil
+}
+
+// Start dials the socket and sends the setup frame. The server does not acknowledge that
+// frame, so a rejected key arrives later as an error event rather than from here.
+func (s *STT) Start(ctx context.Context) error {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return stack.Wrap(errors.New("muse: already started"))
+	}
+	s.started = true
+	s.mu.Unlock()
+
+	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
+	conn, response, err := dialer.DialContext(ctx, s.endpoint(), nil)
+	if err != nil {
+		if response != nil {
+			return stack.Wrap(fmt.Errorf("muse: dial: %w (http %d)", err, response.StatusCode))
+		}
+		return stack.Wrap(fmt.Errorf("muse: dial: %w", err))
+	}
+	s.conn = conn
+
+	if err := s.setup(); err != nil {
+		conn.Close()
+		return err
+	}
+
+	s.emitter.Send(stt.Connected{Provider: ProviderName, Model: s.options.Model, At: time.Now()})
+	go s.readLoop()
+	s.writeMu.Lock()
+	s.clockStart = time.Now()
+	s.writeMu.Unlock()
+	s.filling.Add(1)
+	go s.fillSilence()
+	return nil
+}
+
+// ProcessAudio streams one chunk of audio. The participant labels any transcript that
+// results from it.
+func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
+	if err := pcm.Validate(stt.SampleRate); err != nil {
+		return fmt.Errorf("muse: %w", err)
+	}
+
+	s.mu.Lock()
+	closed, started := s.closed, s.started
+	s.participant = participant
+	s.lastAudioAt = time.Now()
+	s.mu.Unlock()
+
+	if closed {
+		return errors.New("muse: session closed")
+	}
+	if !started || s.conn == nil {
+		return errors.New("muse: not started")
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.writeAudio(pcm.Bytes()); err != nil {
+		return fmt.Errorf("muse: write audio: %w", err)
+	}
+	return nil
+}
+
+// Events returns transcript revisions.
+func (s *STT) Events() <-chan stt.Event { return s.emitter.Events() }
+
+// Close ends the audio stream, waits for the server to transcribe what it was holding,
+// then tears down the connection.
+func (s *STT) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	conn := s.conn
+	s.mu.Unlock()
+
+	close(s.stopFill)
+	s.filling.Wait()
+	if conn != nil {
+		s.flush()
+		conn.Close()
+	}
+	s.emitter.Close()
+	return nil
+}
+
+// Provider implements stt.STT.
+func (s *STT) Provider() string { return ProviderName }
+
+// Model implements stt.STT.
+func (s *STT) Model() string { return s.options.Model }
+
+// Metering is the router's count of the audio it streams: Meta bills Muse by the minute of
+// audio, where a turn reports only its own length.
+func (s *STT) Metering() stt.Metering { return stt.MeteredByRouter }
+
+// Client exposes the underlying WebSocket so callers can use the API directly.
+func (s *STT) Client() *websocket.Conn { return s.conn }
+
+// endpoint is the socket URL with the session identifier the API asks for.
+func (s *STT) endpoint() string {
+	separator := "?"
+	if strings.Contains(s.options.URL, "?") {
+		separator = "&"
+	}
+	return s.options.URL + separator + "sessionId=" + url.QueryEscape(uuid.NewString())
+}
+
+// setup sends the frame that configures the session and authenticates it.
+func (s *STT) setup() error {
+	payload, err := json.Marshal(setupFrame{
+		Authorization: authorization{AccessToken: "Bearer " + s.options.APIKey},
+		AudioEncoding: encoding16k,
+		Model:         s.options.Model,
+		Mode:          s.options.Mode,
+		PartialMode:   partialModeCumulative,
+		LanguageBias:  languageBias(s.options.LanguageHints),
+		Keywords:      s.options.Keyterms,
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("muse: encode setup: %w", err))
+	}
+	if err := s.write(websocket.TextMessage, payload); err != nil {
+		return stack.Wrap(fmt.Errorf("muse: send setup: %w", err))
+	}
+	return nil
+}
+
+// flush tells the server the audio has stopped and waits for it to hang up, which it does
+// once it has reported the transcript of everything it was still holding. A dead
+// connection must not stop teardown.
+func (s *STT) flush() {
+	if err := s.write(websocket.TextMessage, []byte(`{"type":"`+controlTypeEndStream+`"}`)); err != nil {
+		s.logger.Debug("endStream not delivered", "error", err)
+		return
+	}
+
+	select {
+	case <-s.finished:
+	case <-time.After(s.options.FlushTimeout):
+		s.logger.Debug("timed out waiting for the final transcript")
+	}
+}
+
+func (s *STT) write(messageType int, payload []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return stack.Wrap(s.conn.WriteMessage(messageType, payload))
+}
+
+// writeAudio sends PCM and moves the audio clock on by its length. The caller holds
+// writeMu.
+func (s *STT) writeAudio(payload []byte) error {
+	if err := s.conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+		return stack.Wrap(err)
+	}
+	s.audioSent += time.Duration(len(payload)/2) * samplePeriod
+	return nil
+}
+
+// fillSilence sends zero PCM whenever the audio has fallen behind the clock by fillAfter,
+// until Close stops it or the connection is gone.
+func (s *STT) fillSilence() {
+	defer s.filling.Done()
+
+	ticker := time.NewTicker(fillTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopFill:
+			return
+		case <-ticker.C:
+			if err := s.fillGap(); err != nil {
+				// The server hung up, which the read loop reports.
+				return
+			}
+		}
+	}
+}
+
+// fillGap writes the silence the audio is behind the clock by, if that is fillAfter or
+// more.
+func (s *STT) fillGap() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	behind := time.Since(s.clockStart) - s.audioSent
+	if behind < fillAfter {
+		return nil
+	}
+	// A peer that stopped reading would hold writeMu, and so Close, for as long as it
+	// stays silent: bound the write by how long Close waits for the server anyway.
+	// gorilla's SetWriteDeadline only stores the time and always returns nil (conn.go in
+	// github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674).
+	_ = s.conn.SetWriteDeadline(time.Now().Add(s.options.FlushTimeout))
+	defer func() { _ = s.conn.SetWriteDeadline(time.Time{}) }()
+	return s.writeAudio(make([]byte, 2*int(behind/samplePeriod)))
+}
+
+// readLoop translates server frames into events until the connection ends.
+func (s *STT) readLoop() {
+	for {
+		_, raw, err := s.conn.ReadMessage()
+		if err != nil {
+			s.finishedOnce.Do(func() { close(s.finished) })
+			s.handleReadError(err)
+			return
+		}
+
+		var message serverMessage
+		if err := json.Unmarshal(raw, &message); err != nil {
+			s.logger.Debug("undecodable frame", "error", err, "payload", string(raw))
+			continue
+		}
+		s.handleMessage(message)
+	}
+}
+
+func (s *STT) handleReadError(err error) {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return
+	}
+
+	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		s.emitter.Send(stt.Disconnected{
+			Provider: ProviderName,
+			Model:    s.options.Model,
+			Clean:    true,
+			At:       time.Now(),
+		})
+		return
+	}
+	s.emitter.Send(stt.Error{
+		Provider: ProviderName,
+		Model:    s.options.Model,
+		Err:      err,
+		Context:  "read",
+		Fatal:    true,
+	})
+}
+
+func (s *STT) handleMessage(message serverMessage) {
+	switch message.Type {
+	case messageSpeechStart:
+		s.startTurn(message.TurnID, message.AudioProcessedMs)
+	case messageTranscript:
+		// Which frame settles a turn is the mode's answer to give. Push to talk announces
+		// no turn boundaries, so the flag on the transcript is all there is; the other two
+		// settle on speechComplete, whose text is the one the model has been over and can
+		// differ from the last partial by its punctuation and capitals.
+		mode := stt.ModeReplacement
+		if message.Final && s.options.Mode == ModePushToTalk {
+			mode = stt.ModeFinal
+		}
+		s.sendTranscript(message, mode)
+	case messageSpeechComplete:
+		s.sendTranscript(message, stt.ModeFinal)
+	case messageSpeechEnd:
+		// The boundary alone settles nothing: speechComplete carries the text the turn
+		// settles on and follows straight after.
+	case messageSpeaker:
+		s.nameSpeaker(message.Label)
+	case messageAudioProgress:
+		s.logger.Debug("audio progress", "audio_processed_ms", message.AudioProcessedMs)
+	case messageError:
+		s.emitter.Send(stt.Error{
+			Provider: ProviderName,
+			Model:    s.options.Model,
+			Err:      errors.New(message.Message),
+			Context:  "server",
+			Fatal:    true,
+		})
+	default:
+		s.logger.Debug("unhandled frame", "type", message.Type)
+	}
+}
+
+func (s *STT) sendTranscript(message serverMessage, mode stt.Mode) {
+	text := strings.TrimSpace(message.Transcript)
+	if text == "" {
+		return
+	}
+
+	reported, ok := s.record(message, mode)
+	if !ok {
+		return
+	}
+	s.emitter.Send(stt.Transcript{
+		Participant:      reported.participant,
+		Mode:             mode,
+		Utterance:        reported.utterance,
+		Speaker:          reported.speaker,
+		Text:             text,
+		Provider:         ProviderName,
+		Model:            s.options.Model,
+		ProcessingTimeMs: reported.latencyMs,
+		AudioDurationMs:  reported.turnMs,
+	})
+}
+
+// reported is what a transcript event needs beyond its own text.
+type reported struct {
+	participant stt.Participant
+	utterance   int64
+	speaker     string
+	latencyMs   float64
+	turnMs      float64
+}
+
+// record files a transcript against the turn it belongs to and returns what the event
+// needs. It reports false when that turn has already settled, since a final and the
+// server restating it are one turn and reporting both would tell the rest of the call the
+// caller said it twice.
+func (s *STT) record(message serverMessage, mode stt.Mode) (reported, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, id := s.turnFor(message)
+	if mode == stt.ModeFinal {
+		if current.settled {
+			return reported{}, false
+		}
+		current.settled = true
+	} else {
+		// A hypothesis after a final belongs to a turn the server never announced the
+		// start of, so it clears the mark that would swallow that turn's own final.
+		current.settled = false
+	}
+
+	var latencyMs float64
+	if !s.lastAudioAt.IsZero() {
+		latencyMs = float64(time.Since(s.lastAudioAt).Microseconds()) / 1000
+	}
+	turnMs := message.AudioProcessedMs - current.startMs
+	if turnMs < 0 {
+		turnMs = 0
+	}
+	return reported{
+		participant: s.participant,
+		utterance:   id,
+		speaker:     current.speaker,
+		latencyMs:   latencyMs,
+		turnMs:      turnMs,
+	}, true
+}
+
+// startTurn opens a run of speech at the point in the audio the server reports.
+func (s *STT) startTurn(turnID int64, audioProcessedMs float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.current = turnID
+	s.turns[turnID] = &turn{startMs: audioProcessedMs}
+}
+
+// nameSpeaker records which voice the open turn is in. The server sends this once per
+// turn, before the turn settles, so the settled transcript carries it even though the
+// partials ahead of it may not.
+func (s *STT) nameSpeaker(label string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if label == "" {
+		return
+	}
+	current, _ := s.turnFor(serverMessage{})
+	current.speaker = label
+}
+
+// turnFor returns the turn a frame belongs to and the id it is numbered by, opening the
+// turn if the server never announced its start, which is what happens to whatever it was
+// still holding when the audio stream ended.
+//
+// Only the boundary frames carry an id. A partial belongs to the turn speechStart opened
+// last, and push to talk announces no turns at all, so it is all one. A frame that names
+// its own turn does not become the turn partials belong to: a later turn can open before
+// an earlier one settles, and the earlier one settling does not take the floor back.
+//
+// The caller holds the lock.
+func (s *STT) turnFor(message serverMessage) (*turn, int64) {
+	id := message.TurnID
+	if id == 0 {
+		if s.current == 0 {
+			s.current = 1
+		}
+		id = s.current
+	}
+	current, ok := s.turns[id]
+	if !ok {
+		current = &turn{startMs: message.AudioProcessedMs}
+		s.turns[id] = current
+	}
+	return current, id
+}
+
+// languageNames are the twenty-five languages the model recognises, keyed by the ISO code
+// the rest of the router speaks. The API names them in full instead, so a hint has to be
+// translated on the way out or it is silently ignored.
+var languageNames = map[string]string{
+	"ar": "Arabic",
+	"bn": "Bengali",
+	"de": "German",
+	"en": "English",
+	"es": "Spanish",
+	"fr": "French",
+	"he": "Hebrew",
+	"hi": "Hindi",
+	"id": "Indonesian",
+	"it": "Italian",
+	"ja": "Japanese",
+	"kn": "Kannada",
+	"ko": "Korean",
+	"mr": "Marathi",
+	"ms": "Malay",
+	"nl": "Dutch",
+	"pl": "Polish",
+	"pt": "Portuguese",
+	"ta": "Tamil",
+	"te": "Telugu",
+	"th": "Thai",
+	"tl": "Tagalog",
+	"tr": "Turkish",
+	"vi": "Vietnamese",
+	"zh": "Mandarin Chinese",
+}
+
+// languageBias renders the hints the way the API names languages. A hint that is not a
+// code this model knows goes up as it was given, so a caller naming a language outright
+// is not second-guessed.
+func languageBias(hints []string) []string {
+	if len(hints) == 0 {
+		return nil
+	}
+	named := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		if name, ok := languageNames[strings.ToLower(strings.TrimSpace(hint))]; ok {
+			named = append(named, name)
+			continue
+		}
+		named = append(named, hint)
+	}
+	return named
+}

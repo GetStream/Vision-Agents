@@ -116,8 +116,8 @@ class GeminiVLM(VideoLLM):
             else GenerateContentConfig()
         )
 
-        if self._instructions:
-            config.system_instruction = self._instructions
+        if self.instructions:
+            config.system_instruction = self.instructions
 
         if self.thinking_level:
             config.thinking_config = ThinkingConfig(thinking_level=self.thinking_level)
@@ -163,7 +163,7 @@ class GeminiVLM(VideoLLM):
         try:
             parts = await self._build_message_parts(text)
             iterator = await self.chat.send_message_stream(
-                message=parts, config=self._config
+                message=parts, config=self._build_config()
             )
 
             async for chunk in iterator:

@@ -1,0 +1,190 @@
+package session
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/google/uuid"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/stretchr/testify/suite"
+)
+
+type TitleSuite struct {
+	suite.Suite
+}
+
+func TestTitleSuite(t *testing.T) {
+	suite.Run(t, new(TitleSuite))
+}
+
+func (s *TitleSuite) TestTheGreetingIsNotAnAnswerToNameTheConversationAfter() {
+	// The greeting is the same on every call, so naming after it would call every
+	// conversation the same thing until the next renaming.
+	session := &Session{naming: &naming{}}
+	// A naming in flight stops this from starting one, which needs a model.
+	session.naming.running.Store(true)
+
+	session.name(agent.Responded{TurnID: "say-1", Text: "Hi, thanks for calling Acme, how can I help?"})
+	s.Zero(session.naming.answered)
+
+	session.name(agent.Responded{TurnID: "turn-1", Text: "We open at nine."})
+	s.Equal(1, session.naming.answered)
+}
+
+func (s *TitleSuite) TestATitleIsReadOutOfWhatTheModelWrote() {
+	named, err := parseTitle("```json\n{\"title\":\"\\\"Add push to an Android app.\\\"\",\"description\":\" They asked how. \"}\n```")
+
+	s.Require().NoError(err)
+	s.Equal("Add push to an Android app", named.Title)
+	s.Equal("They asked how.", named.Description)
+}
+
+// The namer runs on llm-fast, whose failover models think before they answer, out of the same
+// cap as the title.
+func (s *TitleSuite) TestAModelThatThinksBeforeItNamesStillWritesTheWholeTitle() {
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
+		return &llmtest.Thinker{Thinks: 1300, Answer: `{"title":"Add push to an Android app","description":"They asked how."}`}, nil
+	})
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	router, err := llmrouter.New(llmrouter.Options{Config: config, Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	named, err := (&titler{llm: router}).ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-thought-over",
+		[]spoken{{text: "how do I add push?"}})
+
+	s.Require().NoError(err)
+	s.Equal("Add push to an Android app", named.Title)
+}
+
+func (s *TitleSuite) TestAConversationWithARefusedTurnIsNamedWithItWithheld() {
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Order 3825 delivery","description":"They asked when it ships."}`})}
+	// A forked conversation is named on its parent's turns as well as its own.
+	earlier := spokenOf(HistoryOf([]store.Exchange{{ResponseID: "first", Said: injected, Refused: true}}))
+
+	_, err := titles.ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-refused", []spoken{{text: injected}})
+	s.Require().ErrorIs(err, policy.ErrPromptInjection, "the refused line quoted as it was said is refused again")
+
+	named, err := titles.ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-refused", append(earlier, refusedCall()...))
+
+	s.Require().NoError(err)
+	s.Equal("Order 3825 delivery", named.Title)
+}
+
+// A conversation resumed from its Chat channel past a refused reply is named with what that
+// reply was asked withheld, as the resume handed it back.
+func (s *TitleSuite) TestAConversationResumedPastARefusedReplyIsNamedWithItWithheld() {
+	ctx := context.Background()
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Order 3825 delivery","description":"They asked when it ships."}`})}
+	chat := chattest.NewServer(s.T())
+	conversations := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(conversations.Close)
+	opened, _, _, err := conversations.Open(ctx, "customer-named", "agent", "")
+	s.Require().NoError(err)
+	s.Require().NoError(opened.Begin(injected))
+	opened.Observe(agent.Responding{TurnID: "turn-1"})
+	opened.Observe(agent.ResponseDelta{TurnID: "turn-1", Text: "I"})
+	opened.Observe(agent.Error{Err: screenRefusal, Context: "llm", TurnID: "turn-1"})
+	channel := strings.TrimPrefix(opened.CID(), "agent:")
+	s.Require().Eventually(func() bool {
+		stored := chat.Stored(channel)
+		return len(stored) == 2 && stored[1]["custom"].(map[string]any)[persistent.RefusedField] == true
+	}, settleFor, 10*time.Millisecond, "the refused reply was never stored")
+	opened.Release()
+	_, previous, _, err := conversations.Open(ctx, "customer-named", "agent", opened.CID())
+	s.Require().NoError(err)
+
+	named, err := titles.ask(ctx, Spec{CustomerID: "customer-named"}, "title-resumed",
+		append(spokenOf(previous), spoken{text: "Where is order 3825?"}))
+
+	s.Require().NoError(err)
+	s.Equal("Order 3825 delivery", named.Title)
+	s.Equal([]spoken{{text: agent.WithheldInput}}, spokenOf(previous))
+}
+
+// The channel a worker's session answers a dispatched message in is the customer's: the
+// session is named, the channel is left as the customer made it. Any other session names its
+// channel.
+func (s *TitleSuite) TestADispatchedSessionLeavesTheCustomersChannelItsName() {
+	ctx := context.Background()
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Rain in Rome","description":"They asked about rain."}`})}
+	chat := chattest.NewServer(s.T())
+	conversations := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(conversations.Close)
+	for dispatched, want := range map[bool]any{true: nil, false: "Rain in Rome"} {
+		channel := "chat-" + uuid.NewString()
+		creator := "sam"
+		_, err := chat.Client.Chat().GetOrCreateChannel(ctx, "agent", channel, &getstream.GetOrCreateChannelRequest{
+			Data: &getstream.ChannelInput{CreatedByID: &creator},
+		})
+		s.Require().NoError(err)
+		session := &Session{id: "session-" + channel, spec: Spec{CustomerID: "customer-named", ConversationID: "agent:" + channel, Dispatched: dispatched},
+			naming: &naming{titles: titles, service: conversations}}
+
+		s.Require().NoError(session.retitle(ctx, []spoken{{text: "is it raining in Rome?"}}))
+
+		s.Equal("Rain in Rome", session.Spec().Title, "dispatched %v", dispatched)
+		stored, _ := chat.Channel(channel)
+		s.Equal(want, stored["name"], "dispatched %v", dispatched)
+	}
+}
+
+func (s *TitleSuite) TestNoTitleIsNotOne() {
+	_, err := parseTitle(`{"title":"  ","description":"something"}`)
+
+	s.Require().Error(err)
+}
+
+func (s *TitleSuite) TestALongTitleIsCut() {
+	named, err := parseTitle(`{"title":"` + strings.Repeat("word ", 40) + `"}`)
+
+	s.Require().NoError(err)
+	s.LessOrEqual(utf8.RuneCountInString(named.Title), titleRunes)
+	s.True(strings.HasSuffix(named.Title, "…"))
+}
+
+func (s *TitleSuite) TestTheConversationIsQuotedFromItsBeginningWithBothSides() {
+	said := []spoken{{text: "how do I add push?"}, {agent: true, text: "register the device first."}}
+	for range titleLimit {
+		said = append(said, spoken{text: "and then?"})
+	}
+
+	written := quoted(said)
+
+	s.Contains(written, "Person: how do I add push?")
+	s.Contains(written, "Assistant: register the device first.")
+	s.Equal(titleLimit, strings.Count(written, "\n")-2)
+}
+
+func (s *TitleSuite) TestResumedHistoryKeepsOnlyWhatWasSaid() {
+	said := spokenOf([]llm.Message{
+		{Role: llm.System, Content: "be helpful"},
+		{Role: llm.User, Content: "hello"},
+		{Role: llm.Assistant, Content: ""},
+		{Role: llm.Assistant, Content: "hi"},
+	})
+
+	s.Equal([]spoken{{text: "hello"}, {agent: true, text: "hi"}}, said)
+}

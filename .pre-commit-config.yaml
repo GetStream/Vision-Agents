@@ -11,8 +11,11 @@ repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v3.2.0
   hooks:
+  # Generated SDK code is checked byte for byte against its generator's output.
   -   id: trailing-whitespace
+      exclude: ^sdks/.*/[Gg]enerated/
   -   id: end-of-file-fixer
+      exclude: ^sdks/.*/[Gg]enerated/
   -   id: check-yaml
       exclude: ^examples/.*/helm/templates/
   -   id: check-added-large-files

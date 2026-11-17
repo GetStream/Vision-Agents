@@ -44,7 +44,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
-        await agent.simple_response(
+        await agent.responses.create(
             text="Say hi. After the user joins ask them about their day"
         )
         await agent.finish()
@@ -71,7 +71,7 @@ llm = Realtime(model=LIVE_EXTENDED_THINKING_MODEL)
 `turn_complete` only ends a streaming chunk. Agent turn-complete events wait for `interaction_status=IDLE` (or the deprecated `REQUIRES_ACTION` alias) so thinking and async tool calls can continue. Tools are declared `NON_BLOCKING` by default; `blocking=True` is allowed only on `gemini-3.8-live`. Use `send_client_content` to inject structured turns; `turn_complete=True` starts a response, `False` waits for more client content. Sending client content can interrupt ongoing generation.
 
 The `Agent` subscribes to track events internally, so no manual wiring is needed.
-For full runnable examples, see `plugins/gemini/example/gemini_realtime_example.py`, `plugins/gemini/example/gemini_live_standalone_example.py` (no Stream SFU), and `examples/02_golf_coach_example/golf_coach_example.py`.
+For full runnable examples, see `plugins/gemini/example/gemini_realtime_example.py`, `plugins/gemini/example/gemini_live_standalone_example.py` (no Stream SFU), and `examples/old/02_golf_coach_example/golf_coach_example.py`.
 
 ### Gemini Speech-to-Text
 

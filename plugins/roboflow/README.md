@@ -89,6 +89,46 @@ See `example/roboflow_example.py` for a complete working example with a video ca
 - `model`: optional instance of `RFDETRModel` to be used for detections.
   Use it provide a model of choosing with custom parameters.
 
+## RoboflowStreamingProcessor Configuration
+
+Streams call video to Roboflow Serverless Video Streaming (or a self-hosted
+Inference Server) over WebRTC. Predictions come back on the data channel; the
+processor draws them on the frames it publishes back to the call and keeps the
+latest labels in `state()` for the LLM's `get_video_state` tool. Published overlays are
+approximate: the latest prediction can belong to an earlier input frame.
+
+For visual reasoning, configure `subagent: vlm`, the `vision` skill, and
+`video: {source: roboflow_streaming, max_frames: 1}`. The vision skill receives
+raw frames from bounded observation history plus separately timestamped predictions.
+The streaming provider does not currently expose reliable frame correlation here,
+so those predictions are marked unaligned and are never treated as exact annotations.
+`max_frames` can be 1–8 for a recent sequence; insufficient or stale history is reported.
+Capture times use the receiver's Unix millisecond clock, not camera exposure time.
+
+```python
+processor = roboflow.RoboflowStreamingProcessor(model_id="rfdetr-nano")
+```
+
+- `model_id`: A serverless model such as `rfdetr-nano`, or a Universe model id.
+- `workflow_id` / `workspace`: A saved Workflow instead of `model_id`. It must expose a `predictions` output.
+- `api_key`: Roboflow API key. Defaults to `ROBOFLOW_API_KEY`.
+- `api_url`: Defaults to `https://serverless.roboflow.com`.
+- `requested_region`: `us`, `eu`, or `ap`.
+- `fps`: Frames sent per second. Default `5`.
+- `classes`: Optional label filter.
+- `task_type`: The model's task, so `model_id` needs no lookup. Default `object-detection`.
+
+See the [Serverless Video Streaming docs](https://docs.roboflow.com/deploy/serverless/serverless-video-streaming).
+
+Streaming needs `inference-sdk[webrtc]>=1.3.5`, which depends on NumPy 2, Pillow 12
+and PyAV 14.2. The workspace pins NumPy 1 and other plugins need older Pillow or newer
+PyAV, so the plugin does not declare it. Install it in a project of its own, outside the
+workspace, next to `vision-agents-plugins-roboflow`:
+
+```bash
+uv add vision-agents-plugins-roboflow 'inference-sdk[webrtc]>=1.3.5'
+```
+
 ## Testing
 
 ```bash
@@ -103,7 +143,7 @@ pytest plugins/roboflow/tests/test_roboflow.py -v
 
 - `vision-agents` - Core framework
 - `numpy>=2.0.0` - Array operations
-- `rfdetr>=1.3.0` - RF-DETR models for local object detection
+- `rfdetr>=1.4.3` - RF-DETR models for local object detection
 - `inference-sdk>=0.26.1` - Roboflow SDK for cloud inference
 
 ## Links

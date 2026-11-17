@@ -154,7 +154,7 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
         await wait_for_start(telnyx_stream)
 
         async with agent.join(stream_call, participant_wait_timeout=0):
-            await agent.simple_response(
+            await agent.responses.create(
                 text="Greet the caller and ask whether the inbound Telnyx audio is clear."
             )
             await stream_task

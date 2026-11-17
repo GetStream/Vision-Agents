@@ -1,0 +1,580 @@
+//go:build integration
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+)
+
+// LimitsSuite runs the limits API as the hosted router does: spend is read from the real usage
+// service, which the tests spend in directly, as the rows the router ships would.
+type LimitsSuite struct {
+	RouterSuite
+	staff *testClient
+}
+
+func TestLimitsSuite(t *testing.T) {
+	runSuite(t, new(LimitsSuite))
+}
+
+func (s *LimitsSuite) SetupSuite() {
+	s.limited = true
+	s.RouterSuite.SetupSuite()
+}
+
+// SetupTest gives every test an organization of its own, with credit, so only its limits refuse.
+func (s *LimitsSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+	s.usage.Credit(s.T(), s.organization(), 100_000_000)
+	s.staff = &testClient{suite: &s.RouterSuite, kind: noCredential, header: http.Header{
+		manageKeyHeader: {suiteManageKey},
+		actorIDHeader:   {"staff:" + s.utils.uuid()},
+	}}
+}
+
+func (s *LimitsSuite) organization() string { return s.app.organization.ID }
+
+// create writes a limit as the app's backend, and answers it.
+func (s *LimitsSuite) create(body map[string]any) Limit {
+	var created Limit
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/spend/limits", body)
+	s.Require().Equal(http.StatusCreated, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	return created
+}
+
+// refusal is the failure a write is answered with.
+func (s *LimitsSuite) refusal(client *testClient, method, path string, body any) (int, ErrorDetail) {
+	status, payload := client.call(method, path, body)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	return status, answered.Error
+}
+
+// backend is a server-side client of app, signed with its own credential, naming claims.
+func (s *LimitsSuite) backend(app testApp, claims jwt.MapClaims) *testClient {
+	claims["server"], claims["exp"] = true, time.Now().Add(time.Hour).Unix()
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(app.secret))
+	s.Require().NoError(err)
+	header := http.Header{}
+	header.Set(auth.APIKeyHeader, app.key)
+	header.Set("Authorization", "Bearer "+token)
+	header.Set(auth.AuthTypeHeader, auth.AuthTypeServer)
+	return &testClient{suite: &s.RouterSuite, header: header, kind: server, token: token}
+}
+
+// searchedUntil waits for a search as client to be answered status, once the money is read.
+func (s *LimitsSuite) searchedUntil(client *testClient, status int) ErrorDetail {
+	var failure ErrorDetail
+	s.Require().Eventually(func() bool {
+		answered, payload := client.call(http.MethodPost, "/v1/search", SearchRequest{Query: "what is the time"})
+		if answered != status {
+			return false
+		}
+		if status >= http.StatusBadRequest {
+			var body ErrorResponse
+			s.Require().NoError(json.Unmarshal(payload, &body), string(payload))
+			failure = body.Error
+		}
+		return !unreadLimits(failure)
+	}, 10*time.Second, 50*time.Millisecond, "searching answers %d", status)
+	return failure
+}
+
+func (s *LimitsSuite) spend(micros int64, change func(*usage.Event)) {
+	s.usage.Spend(s.T(), s.organization(), micros, func(event *usage.Event) {
+		event.AppID = s.customerID()
+		if change != nil {
+			change(event)
+		}
+	})
+}
+
+// usagesOf reads what the subjects query names spent as client, through path.
+func (s *LimitsSuite) usagesOf(client *testClient, path, query string) []SubjectUsage {
+	var read []SubjectUsage
+	status, payload := client.call(http.MethodGet, path+"?"+query, nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	return read
+}
+
+// usageOf reads what the one subject query names spent, as the app's backend.
+func (s *LimitsSuite) usageOf(query string) SubjectUsage {
+	read := s.usagesOf(s.serverClient, "/v1/spend/limits/usage", query)
+	s.Require().Len(read, 1)
+	return read[0]
+}
+
+func (s *LimitsSuite) TestLimitUsageForManyUsers() {
+	s.create(map[string]any{"subject": "user", "app_id": s.customerID(), "interval": "daily", "limit_micros": 2_000_000})
+	for i, user := range []string{"u1", "u2", "u3"} {
+		s.spend(int64(i+1)*100_000, func(event *usage.Event) { event.UserID = user })
+	}
+	query := "subject=user&app_id=" + url.QueryEscape(s.customerID()) + "&user_id=u3&user_id=u1&user_id=u2"
+
+	read := s.usagesOf(s.serverClient, "/v1/spend/limits/usage", query)
+
+	s.Require().Len(read, 3)
+	for i, want := range []struct {
+		user  string
+		spent int64
+	}{{"u3", 300_000}, {"u1", 100_000}, {"u2", 200_000}} {
+		s.Equal(LimitSubjectUser, read[i].Subject)
+		s.Equal(want.user, read[i].UserId, "in the order asked")
+		s.Equal(s.customerID(), read[i].AppId, "the one app_id goes with every user")
+		s.Equal(want.spent, read[i].Windows[0].SpentMicros)
+		s.Require().NotNil(read[i].Windows[0].RoomMicros)
+		s.Equal(2_000_000-want.spent, *read[i].Windows[0].RoomMicros, "each held to the default for every user")
+	}
+	s.Equal(read, s.usagesOf(s.staff, "/v1/manage/spend/limits/usage", query+"&organization_id="+url.QueryEscape(s.organization())),
+		"staff read the same with the organization named")
+
+	many := "subject=user&app_id=" + url.QueryEscape(s.customerID())
+	for i := range 101 {
+		many += "&user_id=u" + strconv.Itoa(i)
+	}
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?"+many, nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.NotEmpty(failure.Message)
+}
+
+// limitIDs are the ids of the limits the query lists, as the app's backend.
+func (s *LimitsSuite) limitIDs(query string) []int64 {
+	var page LimitPage
+	status, payload := s.serverClient.call(http.MethodGet, "/v1/spend/limits?"+query, nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &page))
+	ids := make([]int64, 0, len(page.Items))
+	for _, limit := range page.Items {
+		ids = append(ids, limit.Id)
+	}
+	return ids
+}
+
+// Stream's proxy forwards the app's key as api_key in every call's query, so the limits list
+// takes a key as api_key_id and lists every limit beside the caller's key (AI-2684).
+func (s *LimitsSuite) TestLimitsListWithTheCallersKeyInTheQuery() {
+	organization := s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 10_000_000})
+	key := s.create(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "interval": "daily", "limit_micros": 1_000_000})
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	s.ElementsMatch([]int64{organization.Id, key.Id}, s.limitIDs(proxied))
+	s.Equal([]int64{key.Id}, s.limitIDs(proxied+"&api_key_id=key_a"))
+	s.Equal([]int64{key.Id}, s.limitIDs("api_key_id=key_a"), "the same with no credential in the query")
+}
+
+// A usage read's refusal names the query field it was sent, api_key_id; a write's names the
+// body field, api_key (AI-2684).
+func (s *LimitsSuite) TestAUsageReadRefusalNamesTheKeyFieldOfTheQuery() {
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key_id")
+
+	status, failure = s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=user&app_id=a&user_id=u1&api_key_id=k1", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names no api_key_id")
+
+	status, failure = s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a&api_key_id=hook:chat", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "api_key_id is 1 to 128 characters")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{"subject": "api_key", "level": "api_key", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a write names the body field")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/grants", map[string]any{"subject": "api_key", "app_id": s.customerID(), "amount_micros": 1, "reason": "x"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a grant names the body field")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/usage/reset", map[string]any{"subject": "api_key", "app_id": s.customerID(), "reason": "x"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a reset names the body field")
+}
+
+// The usage read names a key subject by api_key_id, so the caller's key the proxy forwards as
+// api_key is no subject id: a user's usage is read beside it (AI-2684).
+func (s *LimitsSuite) TestLimitUsageWithTheCallersKeyInTheQuery() {
+	s.create(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(300_000, func(event *usage.Event) { event.APIKey = "key_a" })
+	s.spend(200_000, func(event *usage.Event) { event.UserID = "u1" })
+	proxied := "api_key=" + url.QueryEscape(s.app.key) + "&app_id=" + url.QueryEscape(s.customerID())
+
+	user := s.usageOf(proxied + "&subject=user&user_id=u1")
+	s.Equal("u1", user.UserId)
+	s.Empty(user.ApiKey)
+	s.Equal(int64(200_000), user.Windows[0].SpentMicros)
+
+	key := s.usageOf(proxied + "&subject=api_key&api_key_id=key_a")
+	s.Equal("key_a", key.ApiKey)
+	s.Equal(int64(300_000), key.Windows[0].SpentMicros)
+
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a&app_id=b&app_id=c&api_key_id=k1&api_key_id=k2", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "api_key_id names 2 subjects", "the refusal names the parameter sent")
+}
+
+func (s *LimitsSuite) TestLimitUsagePairsTheAppsWithTheirSubjects() {
+	sibling := store.App{OrganizationID: s.organization(), Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &sibling))
+	s.spend(400_000, func(event *usage.Event) { event.UserID = "u1" })
+	s.spend(700_000, func(event *usage.Event) { event.AppID, event.UserID = sibling.ID, "u1" })
+
+	read := s.usagesOf(s.serverClient, "/v1/spend/limits/usage", "subject=user&app_id="+url.QueryEscape(s.customerID())+
+		"&app_id="+url.QueryEscape(sibling.ID)+"&user_id=u1&user_id=u1")
+
+	s.Require().Len(read, 2)
+	s.Equal(s.customerID(), read[0].AppId)
+	s.Equal(int64(400_000), read[0].Windows[0].SpentMicros)
+	s.Equal(sibling.ID, read[1].AppId)
+	s.Equal(int64(700_000), read[1].Windows[0].SpentMicros, "a user id is only unique within its app")
+
+	status, _ := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=user&app_id=a&app_id=b&user_id=u1&user_id=u2&user_id=u3", nil)
+	s.Equal(http.StatusBadRequest, status, "two apps for three users pair with nothing")
+}
+
+func (s *LimitsSuite) TestAClientTokenCannotReadOrWriteLimits() {
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodGet, "/v1/spend/limits", nil, nil)
+	})
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodPost, "/v1/spend/limits", map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 1}, nil)
+	})
+	status, failure := s.refusal(s.client, http.MethodGet, "/v1/spend/limits/usage?subject=organization", nil)
+	s.Equal(http.StatusForbidden, status)
+	s.Equal(codeServerSideOnly, failure.Code)
+}
+
+func (s *LimitsSuite) TestOneAppsServerCredentialManagesTheWholeOrganization() {
+	sibling := store.App{OrganizationID: s.organization(), Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &sibling))
+
+	created := s.create(map[string]any{"subject": "app", "app_id": sibling.ID, "interval": "daily", "limit_micros": 1_000_000})
+
+	s.Equal(LimitSubjectApp, created.Subject)
+	s.Equal(LimitLevel(store.LevelApp), created.Level, "the level an app's id implies")
+	s.Equal(sibling.ID, created.AppId)
+	var listed LimitPage
+	s.Require().Equal(http.StatusOK, s.backend(s.data.keyed(s.app.organization, sibling), jwt.MapClaims{}).
+		do(http.MethodGet, "/v1/spend/limits", nil, &listed))
+	s.Require().Len(listed.Items, 1, "the sibling's credential reads the organization's limits")
+	s.Equal(created.Id, listed.Items[0].Id)
+	s.Equal("api", created.UpdatedBy)
+}
+
+func (s *LimitsSuite) TestAnAppLimitAboveItsOrganizationsIsRefused() {
+	organization := s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 10_000_000})
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 11_000_000})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeLimitAboveParent, failure.Code)
+	s.Contains(failure.Message, "the organization (limit "+strconv.FormatInt(organization.Id, 10)+")")
+	s.create(map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "weekly", "limit_micros": 11_000_000})
+}
+
+func (s *LimitsSuite) TestAKeyLimitIsBoundByItsAppAndOrganization() {
+	s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 10_000_000})
+	app := s.create(map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 5_000_000})
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "interval": "daily", "limit_micros": 6_000_000})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeLimitAboveParent, failure.Code)
+	s.Contains(failure.Message, "app "+s.customerID()+" (limit "+strconv.FormatInt(app.Id, 10)+")")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "api_key", "level": "organization", "interval": "daily", "limit_micros": 11_000_000})
+	s.Equal(http.StatusBadRequest, status, "a default for every key of the organization is held to the organization")
+	s.Contains(failure.Message, "the organization")
+}
+
+func (s *LimitsSuite) TestAnAppCategoryIsBoundByTheOrganizationsCategory() {
+	category := s.create(map[string]any{"subject": "category", "category": "project:onboarding", "interval": "monthly", "limit_micros": 2_000_000})
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{
+		"subject": "app_category", "app_id": s.customerID(), "category": "project:onboarding", "interval": "monthly", "limit_micros": 3_000_000,
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "category project:onboarding (limit "+strconv.FormatInt(category.Id, 10)+")")
+}
+
+func (s *LimitsSuite) TestLoweringTheOrganizationBelowAnAppIsAllowedAndShown() {
+	organization := s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 10_000_000})
+	app := s.create(map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 8_000_000})
+	s.Equal(int64(8_000_000), app.EffectiveLimitMicros)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/spend/limits/"+strconv.FormatInt(organization.Id, 10),
+		map[string]any{"limit_micros": 3_000_000}, nil))
+
+	var read Limit
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/spend/limits/"+strconv.FormatInt(app.Id, 10), nil, &read))
+	s.Equal(int64(8_000_000), read.LimitMicros, "the app's own stays")
+	s.Equal(int64(3_000_000), read.EffectiveLimitMicros, "and what it can spend is the organization's")
+}
+
+func (s *LimitsSuite) TestADuplicateIsAConflictNamingTheFirst() {
+	first := s.create(map[string]any{"subject": "user", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1})
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "user", "app_id": s.customerID(), "interval": "daily", "limit_micros": 2})
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal(codeLimitExists, failure.Code)
+	s.Contains(failure.Message, "limit "+strconv.FormatInt(first.Id, 10))
+}
+
+func (s *LimitsSuite) TestAKeyLimitRefusesThatKeyOnly() {
+	other := s.data.keyed(s.app.organization, s.app.app)
+	s.create(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": s.app.key, "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(1_000_000, func(event *usage.Event) { event.APIKey = s.app.key })
+
+	failure := s.searchedUntil(s.serverClient, http.StatusPaymentRequired)
+
+	s.Equal(codeSpendLimitReached, failure.Code)
+	s.Contains(failure.Message, "on key "+s.app.key+" of app "+s.customerID())
+	s.searchedUntil(s.backend(other, jwt.MapClaims{}), http.StatusOK)
+}
+
+func (s *LimitsSuite) TestATeamLimitRefusesItsTeamOnly() {
+	created := s.create(map[string]any{"subject": "team", "team": "finance", "interval": "weekly", "limit_micros": 1_000_000})
+	s.Equal(LimitSubjectTeam, created.Subject)
+	s.Equal("finance", created.Team)
+	s.Empty(created.Category)
+	s.spend(1_000_000, func(event *usage.Event) { event.UsageCategories = []string{"team:finance"} })
+
+	failure := s.searchedUntil(s.backend(s.app, jwt.MapClaims{"team": "finance"}), http.StatusPaymentRequired)
+
+	s.Equal(codeSpendLimitReached, failure.Code)
+	s.Contains(failure.Message, "the weekly limit of $1.00 on team finance is spent; it resets at")
+	s.searchedUntil(s.backend(s.app, jwt.MapClaims{"team": "sales"}), http.StatusOK)
+}
+
+func (s *LimitsSuite) TestACategoryLimitRefusesWorkCarryingIt() {
+	s.create(map[string]any{"subject": "category", "category": "project:onboarding", "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(1_000_000, func(event *usage.Event) { event.UsageCategories = []string{"project:onboarding"} })
+
+	failure := s.searchedUntil(s.backend(s.app, jwt.MapClaims{"usage_categories": []string{"project:onboarding"}}), http.StatusPaymentRequired)
+
+	s.Contains(failure.Message, "on category project:onboarding is spent")
+	s.searchedUntil(s.backend(s.app, jwt.MapClaims{"usage_categories": []string{"project:support"}}), http.StatusOK)
+}
+
+func (s *LimitsSuite) TestATeamIsStoredAsACategoryAndReadAsATeam() {
+	team := s.create(map[string]any{"subject": "team", "team": "finance", "interval": "daily", "limit_micros": 5})
+	s.create(map[string]any{"subject": "category", "category": "project:x", "interval": "daily", "limit_micros": 5})
+
+	stored, err := s.store.Limit(context.Background(), s.organization(), team.Id)
+	s.Require().NoError(err)
+	s.Equal(usage.SubjectCategory, stored.Subject)
+	s.Equal("team:finance", stored.Category)
+	var teams, categories LimitPage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/spend/limits?subject=team", nil, &teams))
+	s.Require().Len(teams.Items, 1)
+	s.Equal("finance", teams.Items[0].Team)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/spend/limits?subject=category", nil, &categories))
+	s.Require().Len(categories.Items, 1, "the teams are not categories on the API")
+	s.Equal("project:x", categories.Items[0].Category)
+}
+
+func (s *LimitsSuite) TestACategoryNamingATeamIsRefused() {
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "category", "category": "team:finance", "interval": "daily", "limit_micros": 1})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeUseTeam, failure.Code)
+}
+
+func (s *LimitsSuite) TestATeamWithinAnAppIsBoundByTheTeam() {
+	team := s.create(map[string]any{"subject": "team", "team": "finance", "interval": "weekly", "limit_micros": 100_000_000})
+
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{
+		"subject": "app_team", "app_id": s.customerID(), "team": "finance", "interval": "weekly", "limit_micros": 101_000_000,
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "team finance (limit "+strconv.FormatInt(team.Id, 10)+")")
+}
+
+func (s *LimitsSuite) TestAnOriginCannotHaveAKeyLimit() {
+	status, _ := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "hook:chat", "interval": "daily", "limit_micros": 1})
+
+	s.Equal(http.StatusBadRequest, status)
+}
+
+func (s *LimitsSuite) TestAUserIDFollowsStreamChatsRule() {
+	for _, id := range []string{"jane.doe", "Jane Doe", "jane@example.com", "u_1-2"} {
+		limit := s.create(map[string]any{"subject": "user", "app_id": s.customerID(), "user_id": id, "interval": "daily", "limit_micros": 1})
+		s.Equal(id, limit.UserId)
+	}
+	for _, id := range []string{"auth0|abc", "jane+doe", "jané", "a/b", strings.Repeat("u", 256)} {
+		status, _ := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+			map[string]any{"subject": "user", "app_id": s.customerID(), "user_id": id, "interval": "daily", "limit_micros": 1})
+		s.Equal(http.StatusBadRequest, status, id)
+	}
+}
+
+func (s *LimitsSuite) TestASystemFieldIsAnUnknownField() {
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 1, "system": true})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal(codeValidationFailed, failure.Code)
+	s.Contains(failure.Message, "system")
+}
+
+// TestALimitWhoseSpendIsUnreadIsNoSpentLimit has the app's spend unreadable when its limit
+// lands: the tier fails closed with a refusal that says nothing of the limit, which
+// searchedUntil waits past.
+func (s *LimitsSuite) TestALimitWhoseSpendIsUnreadIsNoSpentLimit() {
+	s.T().Cleanup(func() { s.usageFront.down.Store(false) })
+	s.usageFront.down.Store(true)
+	s.create(map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(1_000_000, nil)
+	s.Require().Eventually(func() bool {
+		status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/search", SearchRequest{Query: "what is the time"})
+		return status == http.StatusPaymentRequired && unreadLimits(failure)
+	}, 10*time.Second, 50*time.Millisecond, "refused while the spend cannot be read")
+
+	// Keep the outage open past the helper's first polls: a read that lands before them would answer the real refusal at once.
+	time.AfterFunc(time.Second, func() { s.usageFront.down.Store(false) })
+	failure := s.searchedUntil(s.serverClient, http.StatusPaymentRequired)
+
+	s.Contains(failure.Message, "the daily limit of $1.00 on app "+s.customerID()+" is spent")
+}
+
+func (s *LimitsSuite) TestACustomerResetLetsItSpendAgain() {
+	s.create(map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(1_000_000, nil)
+	s.searchedUntil(s.serverClient, http.StatusPaymentRequired)
+
+	var after SubjectUsage
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/spend/limits/usage/reset",
+		map[string]any{"subject": "app", "app_id": s.customerID(), "intervals": []string{"daily"}, "reason": "a runaway loop, fixed"})
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &after))
+
+	daily := after.Windows[0]
+	s.Equal(LimitInterval(usage.Daily), daily.Interval)
+	s.Equal(int64(1_000_000), daily.SpentMicros, "the usage records are untouched")
+	s.Equal(int64(1_000_000), daily.BaselineMicros)
+	s.Require().NotNil(daily.RoomMicros)
+	s.Equal(int64(1_000_000), *daily.RoomMicros, "the whole limit is back")
+	s.searchedUntil(s.serverClient, http.StatusOK)
+	entries, err := s.store.AuditEntries(context.Background(), s.customerID(), store.AuditEntryFilter{ResourceType: store.AuditSpendLimit})
+	s.Require().NoError(err)
+	s.Contains(entries[0].ResourceID, "reset:")
+}
+
+func (s *LimitsSuite) TestAResetOfASubjectWithNoLimitIsNotFound() {
+	status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/usage/reset",
+		map[string]any{"subject": "user", "app_id": s.customerID(), "user_id": "u1", "reason": "x"})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Equal(codeNoLimit, failure.Code)
+}
+
+func (s *LimitsSuite) TestAUsersDefaultIsReadAsTheUsersLimit() {
+	created := s.create(map[string]any{"subject": "user", "app_id": s.customerID(), "interval": "daily", "limit_micros": 2_000_000})
+	s.spend(500_000, func(event *usage.Event) { event.UserID = "u1" })
+
+	var read SubjectUsage
+	s.Require().Eventually(func() bool {
+		read = s.usageOf("subject=user&app_id=" + url.QueryEscape(s.customerID()) + "&user_id=u1")
+		return read.Windows[0].SpentMicros == 500_000
+	}, 5*time.Second, 50*time.Millisecond)
+
+	daily := read.Windows[0]
+	s.Require().NotNil(daily.Limit)
+	s.Equal(created.Id, daily.Limit.Id)
+	s.Equal(LimitLevel(store.LevelApp), daily.Limit.Level)
+	s.Equal(int64(1_500_000), *daily.RoomMicros)
+	s.Nil(read.Windows[1].Limit, "no weekly limit")
+	s.Nil(read.SpendHardLimit, "the operator set none")
+}
+
+func (s *LimitsSuite) TestSubjectUsageShowsTheSpendHardLimit() {
+	daily := int64(5_000_000)
+	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: &daily}})
+	s.spend(1_000_000, nil)
+
+	read := s.usageOf("subject=organization")
+
+	s.Require().NotNil(read.SpendHardLimit)
+	s.Require().NotNil(read.SpendHardLimit.Daily)
+	s.Nil(read.SpendHardLimit.Monthly)
+	s.Equal(int64(5_000_000), read.SpendHardLimit.Daily.LimitMicros)
+	s.Equal(int64(1_000_000), read.SpendHardLimit.Daily.SpentMicros)
+	s.Equal(int64(4_000_000), read.SpendHardLimit.Daily.RoomMicros)
+	_, end := usage.Window(usage.Daily, time.Now())
+	s.True(read.SpendHardLimit.Daily.WindowEnd.Equal(end))
+
+	zero := int64(0)
+	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{SpendHardLimit: &usage.SpendHardLimit{DailyMicros: &zero, MonthlyMicros: &zero}})
+	read = s.usageOf("subject=organization")
+	s.Nil(read.SpendHardLimit, "0 is no limit")
+}
+
+func (s *LimitsSuite) TestStaffEditACustomerLimitThroughManage() {
+	status, payload := s.staff.call(http.MethodPost, "/v1/manage/spend/limits", map[string]any{
+		"organization_id": s.organization(), "subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1_000_000,
+	})
+	s.Require().Equal(http.StatusCreated, status, string(payload))
+	var created Limit
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Contains(created.UpdatedBy, "manage:")
+
+	entries, err := s.store.AuditEntries(context.Background(), s.organization(), store.AuditEntryFilter{ResourceType: store.AuditSpendLimit})
+	s.Require().NoError(err)
+	s.Require().Len(entries, 1)
+	s.Equal(store.AuditSourceManage, entries[0].Source)
+	s.Equal(s.staff.header.Get(actorIDHeader), entries[0].ActorID)
+
+	var changed Limit
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/spend/limits/"+strconv.FormatInt(created.Id, 10),
+		map[string]any{"limit_micros": 2_000_000}, &changed), "the customer's credential changes it afterwards")
+	s.Equal(int64(2_000_000), changed.LimitMicros)
+
+	var listed LimitPage
+	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodGet, "/v1/manage/spend/limits?organization_id="+url.QueryEscape(s.organization()), nil, &listed))
+	s.Len(listed.Items, 1)
+
+	without := &testClient{suite: &s.RouterSuite, kind: noCredential, header: http.Header{actorIDHeader: {"staff:x"}}}
+	s.Equal(http.StatusUnauthorized, without.do(http.MethodGet, "/v1/manage/spend/limits?organization_id="+url.QueryEscape(s.organization()), nil, nil))
+	status, _ = s.staff.call(http.MethodGet, "/v1/manage/spend/limits", nil)
+	s.Equal(http.StatusBadRequest, status, "no organization_id")
+	status, _ = s.staff.call(http.MethodPost, "/v1/manage/spend/limits", map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 1})
+	s.Equal(http.StatusBadRequest, status, "no organization_id")
+
+	s.Equal(http.StatusNoContent, s.staff.do(http.MethodDelete, "/v1/manage/spend/limits/"+strconv.FormatInt(created.Id, 10), nil, nil))
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet, "/v1/spend/limits/"+strconv.FormatInt(created.Id, 10), nil, nil))
+}
+
+func (s *LimitsSuite) TestAnotherOrganizationsLimitIsNotThere() {
+	created := s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 1})
+
+	stranger := s.data.backendOfAnotherApp()
+
+	s.Equal(http.StatusNotFound, stranger.do(http.MethodGet, "/v1/spend/limits/"+strconv.FormatInt(created.Id, 10), nil, nil))
+	s.Equal(http.StatusNotFound, stranger.do(http.MethodPatch, "/v1/spend/limits/"+strconv.FormatInt(created.Id, 10), map[string]any{"limit_micros": 5}, nil))
+	s.Equal(http.StatusNotFound, stranger.do(http.MethodDelete, "/v1/spend/limits/"+strconv.FormatInt(created.Id, 10), nil, nil))
+}

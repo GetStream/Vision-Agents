@@ -1,0 +1,917 @@
+mod support;
+
+use axum::http::Method;
+use serde_json::json;
+use support::{SECRET, Server, claims, refusal};
+use vision_agents::{Client, ClientOptions, Error, ListResponsesQuery, RouterFailure, types};
+
+#[tokio::test]
+async fn a_router_with_nothing_in_front_is_told_the_customer() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+
+    server.client().get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("x-customer-id"), "examples");
+    assert_eq!(seen.header("authorization"), "");
+}
+
+#[tokio::test]
+async fn a_backend_signs_a_server_token_per_request() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+
+    let client = server.backend();
+    assert!(client.server_side());
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("x-api-key"), "key");
+    assert_eq!(seen.header("stream-auth-type"), "server");
+    let claims = claims(seen.header("authorization"));
+    assert_eq!(claims["server"], true);
+    assert!(claims["exp"].as_u64().unwrap() > claims["iat"].as_u64().unwrap());
+}
+
+#[tokio::test]
+async fn a_user_holds_their_own_token_and_is_not_a_backend() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+
+    let user = server.backend().as_user("ada", "ada-token").unwrap();
+    assert!(!user.server_side());
+    user.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("authorization"), "Bearer ada-token");
+    assert_eq!(seen.header("stream-auth-type"), "jwt");
+}
+
+#[tokio::test]
+async fn a_backend_acting_for_a_user_names_them() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+
+    let client = Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        api_key: Some("key".into()),
+        api_secret: Some(SECRET.into()),
+        user_id: Some("ada".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    client.get_health().await.unwrap();
+
+    assert_eq!(
+        server
+            .request(Method::GET, "/health")
+            .header("x-stream-user-id"),
+        "ada"
+    );
+}
+
+#[tokio::test]
+async fn the_proxy_is_given_the_credential_its_own_way() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+
+    let client = Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        api_key: Some("key".into()),
+        api_secret: Some(SECRET.into()),
+        authenticate: Some(true),
+        ..Default::default()
+    })
+    .unwrap();
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("api_key"), "key");
+    assert_eq!(seen.header("stream-auth-type"), "jwt");
+    assert_eq!(claims(seen.header("authorization"))["server"], true);
+}
+
+#[test]
+fn a_client_that_names_no_router_goes_to_the_hosted_one() {
+    if std::env::var(vision_agents::URL_ENV).is_ok()
+        || std::env::var(vision_agents::REGION_ENV).is_ok()
+    {
+        return;
+    }
+    let api = Client::new(ClientOptions {
+        api_key: Some("key".into()),
+        token: Some("token-for-jim".into()),
+        user_id: Some("jlahey".into()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    assert_eq!(api.url(), vision_agents::DEFAULT_URL);
+}
+
+#[test]
+fn a_client_that_does_not_say_who_is_calling_is_refused() {
+    let refused = Client::new(ClientOptions {
+        url: Some("http://localhost:1".into()),
+        customer_id: Some(String::new()),
+        ..Default::default()
+    });
+    assert!(matches!(refused, Err(Error::Configuration(_))));
+
+    let keyless = Client::new(ClientOptions {
+        url: Some("http://localhost:1".into()),
+        api_key: Some("key".into()),
+        api_secret: Some(String::new()),
+        ..Default::default()
+    });
+    assert!(matches!(keyless, Err(Error::Configuration(_))));
+}
+
+#[tokio::test]
+async fn a_refusal_carries_the_status_and_what_the_router_said() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/missing",
+        404,
+        refusal("not_found", "session_not_found", "no such session"),
+    );
+
+    let error = server.client().get_session("missing").await.unwrap_err();
+
+    assert_eq!(error.status(), Some(404));
+    assert_eq!(error.to_string(), "getSession: 404: no such session");
+    match error {
+        Error::Router(failure) => {
+            assert_eq!(failure.operation, "getSession");
+            assert_eq!(failure.message, "no such session");
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+fn failure(error: Error) -> RouterFailure {
+    match error {
+        Error::Router(failure) => *failure,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_carries_the_routers_envelope_and_request_id() {
+    let server = Server::start().await;
+    server.route_raw(
+        Method::POST,
+        "/v1/agents/sessions",
+        503,
+        &[
+            ("content-type", "application/json"),
+            ("x-request-id", "req-7f3a"),
+        ],
+        &refusal(
+            "unavailable",
+            "not_configured",
+            "this deployment has no voice",
+        )
+        .to_string(),
+    );
+
+    let refused = failure(
+        server
+            .client()
+            .create_session(&Default::default())
+            .await
+            .unwrap_err(),
+    );
+
+    assert_eq!(refused.status, 503);
+    assert_eq!(refused.operation, "createSession");
+    assert_eq!(refused.kind, "unavailable");
+    assert_eq!(refused.code, "not_configured");
+    assert_eq!(refused.message, "this deployment has no voice");
+    assert_eq!(
+        refused.doc_url,
+        "https://getstream.io/agents/docs/api/errors/#not_configured"
+    );
+    assert_eq!(refused.request_id, "req-7f3a");
+}
+
+#[tokio::test]
+async fn an_envelope_of_a_type_this_build_does_not_know_is_still_read() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/s1",
+        418,
+        refusal("teapot", "short_and_stout", "I am a teapot"),
+    );
+
+    let refused = failure(server.client().get_session("s1").await.unwrap_err());
+
+    assert_eq!(
+        (
+            refused.kind.as_str(),
+            refused.code.as_str(),
+            refused.message.as_str()
+        ),
+        ("teapot", "short_and_stout", "I am a teapot")
+    );
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_the_envelope_is_the_message() {
+    let server = Server::start().await;
+    let path = "/v1/agents/sessions/s1";
+    server.route_raw(
+        Method::GET,
+        path,
+        502,
+        &[("content-type", "text/html"), ("x-request-id", "req-proxy")],
+        "<html>bad gateway</html>\n",
+    );
+    server.route(Method::GET, path, 400, json!({"error": "the old shape"}));
+    server.route(Method::GET, path, 503, json!(null));
+    let client = server.client();
+
+    let proxy = failure(client.get_session("s1").await.unwrap_err());
+    let old = failure(client.get_session("s1").await.unwrap_err());
+    let empty = failure(client.get_session("s1").await.unwrap_err());
+
+    assert_eq!(proxy.status, 502);
+    assert_eq!(proxy.message, "<html>bad gateway</html>");
+    assert_eq!(
+        (
+            proxy.kind.as_str(),
+            proxy.code.as_str(),
+            proxy.doc_url.as_str()
+        ),
+        ("", "", "")
+    );
+    assert_eq!(proxy.request_id, "req-proxy");
+    assert_eq!(old.message, r#"{"error":"the old shape"}"#);
+    assert_eq!(old.code, "");
+    assert_eq!(empty.message, "503 Service Unavailable");
+    assert_eq!(empty.request_id, "");
+}
+
+#[tokio::test]
+async fn a_refused_socket_upgrade_carries_the_routers_envelope_and_request_id() {
+    let server = Server::start().await;
+    let path = "/v1/agents/sessions/s1/events";
+    server.route_raw(
+        Method::GET,
+        path,
+        403,
+        &[
+            ("content-type", "application/json"),
+            ("x-request-id", "req-socket"),
+        ],
+        &refusal("permission", "forbidden", "not yours").to_string(),
+    );
+
+    let Err(error) = server.client().socket(path).await else {
+        panic!("the upgrade was refused, yet the socket opened");
+    };
+    let refused = failure(error);
+
+    assert_eq!(refused.status, 403);
+    assert_eq!(refused.operation, format!("GET {path}"));
+    assert_eq!(refused.kind, "permission");
+    assert_eq!(refused.code, "forbidden");
+    assert_eq!(refused.message, "not yours");
+    assert_eq!(
+        refused.doc_url,
+        "https://getstream.io/agents/docs/api/errors/#forbidden"
+    );
+    assert_eq!(refused.request_id, "req-socket");
+}
+
+#[tokio::test]
+async fn an_answer_with_no_body_is_nothing() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/stop",
+        204,
+        json!(null),
+    );
+
+    server.client().stop_session("s1").await.unwrap();
+
+    server.request(Method::POST, "/v1/agents/sessions/s1/stop");
+}
+
+#[tokio::test]
+async fn a_path_parameter_stays_one_segment() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/a%2Fb%20c",
+        200,
+        support::session("a/b c"),
+    );
+
+    let session = server.client().get_session("a/b c").await.unwrap();
+
+    assert_eq!(session.id, "a/b c");
+}
+
+#[tokio::test]
+async fn what_was_left_out_is_left_out() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions",
+        201,
+        support::session("s1"),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/s1/responses",
+        200,
+        json!({"items": [], "has_more": false}),
+    );
+
+    let client = server.client();
+    client
+        .create_session(&types::CreateSessionRequest {
+            title: Some("Plans".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    client
+        .list_responses(
+            "s1",
+            &ListResponsesQuery {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/sessions").body,
+        json!({"title": "Plans"})
+    );
+    assert_eq!(
+        server
+            .request(Method::GET, "/v1/agents/sessions/s1/responses")
+            .query,
+        "limit=5"
+    );
+}
+
+#[tokio::test]
+async fn a_policy_tells_no_models_from_every_model() {
+    let server = Server::start().await;
+    server.route(Method::PUT, "/v1/policies/app", 200, json!({}));
+    let client = server.backend();
+
+    client
+        .update_app_policy(&types::Policy {
+            allowed_models: Some(vec![]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let everything = client
+        .update_app_policy(&types::Policy::default())
+        .await
+        .unwrap();
+
+    let bodies: Vec<_> = server
+        .requests(Method::PUT, "/v1/policies/app")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect();
+    assert_eq!(bodies, [json!({"allowed_models": []}), json!({})]);
+    assert_eq!(everything.allowed_models, None);
+}
+
+#[tokio::test]
+async fn simulations_are_written_run_and_read_back_as_a_resource() {
+    let server = Server::start().await;
+    let simulation = json!({"id": "sim1", "name": "lunch", "config_id": "c1", "scenario": "Order lunch.",
+                            "assertion": "Lunch was ordered.", "created_at": "2026-09-24T10:00:00Z",
+                            "max_turns": 6, "mode": "text", "variations": 1});
+    let run = json!({"id": "run1", "simulation_id": "sim1", "state": "running", "cases": 1,
+                     "passed": 0, "failed": 0, "started_at": "2026-09-24T10:00:00Z"});
+    server.route(Method::POST, "/v1/agents/simulations", 201, simulation);
+    server.route(
+        Method::POST,
+        "/v1/agents/simulations/sim1/run",
+        201,
+        run.clone(),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/simulation-runs/run1",
+        200,
+        run.clone(),
+    );
+    server.route(
+        Method::POST,
+        "/v1/agents/simulation-runs/run1/cancel",
+        200,
+        run,
+    );
+    let simulations = server.backend().simulations();
+
+    let created = simulations
+        .create(&types::SimulationRequest {
+            name: "lunch".into(),
+            config_id: "c1".into(),
+            scenario: "Order lunch.".into(),
+            assertion: "Lunch was ordered.".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let started = simulations.run(&created.id).await.unwrap();
+    let read = simulations.runs.get(&started.id).await.unwrap();
+    simulations.runs.cancel(&read.id).await.unwrap();
+
+    assert_eq!(read.simulation_id, "sim1");
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/simulations").body["name"],
+        "lunch"
+    );
+    server.request(Method::POST, "/v1/agents/simulation-runs/run1/cancel");
+}
+
+#[tokio::test]
+async fn an_answer_that_is_not_what_the_spec_says_is_a_decode_error() {
+    let server = Server::start().await;
+    server.route(Method::GET, "/v1/agents/sessions/s1", 200, json!({"id": 7}));
+
+    let error = server.client().get_session("s1").await.unwrap_err();
+
+    assert!(matches!(error, Error::Decode { .. }), "{error:?}");
+}
+
+/// A session the router describes with these fields laid over the usual ones.
+fn session_with(fields: serde_json::Value) -> serde_json::Value {
+    let mut session = support::session("s1");
+    let laid = session.as_object_mut().expect("a session is an object");
+    for (key, value) in fields.as_object().expect("fields are an object") {
+        laid.insert(key.clone(), value.clone());
+    }
+    session
+}
+
+#[tokio::test]
+async fn a_value_this_sdk_does_not_list_reads_as_it_was_sent() {
+    // A newer router can end a session for a reason this SDK was not built with. Close
+    // spellings of a listed value are not folded into it.
+    for (reason, state) in [
+        ("reason_from_a_newer_router", "paused"),
+        ("VOICEMAIL", "Ended"),
+        ("", "live "),
+    ] {
+        let server = Server::start().await;
+        let answer = session_with(json!({"end_reason": reason, "state": state}));
+        server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
+
+        let session = server
+            .client()
+            .agent("docs")
+            .sessions
+            .get("s1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            session.end_reason,
+            Some(types::SessionEndReason::Unlisted(reason.into()))
+        );
+        assert_eq!(session.state, types::SessionState::Unlisted(state.into()));
+        assert_eq!(session.end_reason.as_ref().unwrap().to_string(), reason);
+        assert_eq!(session.state.to_string(), state);
+        let written = serde_json::to_value(&session).unwrap();
+        assert_eq!(
+            (&written["end_reason"], &written["state"]),
+            (&json!(reason), &json!(state))
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_page_of_sessions_reads_a_value_this_sdk_does_not_list() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/query",
+        200,
+        json!({"items": [session_with(json!({"end_reason": "reason_from_a_newer_router"})),
+                         session_with(json!({"end_reason": "hangup"}))],
+               "has_more": false}),
+    );
+
+    let page = server
+        .client()
+        .agent("docs")
+        .sessions
+        .query(Default::default())
+        .await
+        .unwrap();
+
+    let reasons: Vec<_> = page
+        .items
+        .into_iter()
+        .map(|session| session.end_reason)
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            Some(types::SessionEndReason::Unlisted(
+                "reason_from_a_newer_router".into()
+            )),
+            Some(types::SessionEndReason::Hangup)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_listed_value_reads_as_its_variant_and_is_written_back_unchanged() {
+    let server = Server::start().await;
+    let answer =
+        session_with(json!({"end_reason": "voicemail", "state": "ended", "mode": "native"}));
+    server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
+
+    let session = server
+        .client()
+        .agent("docs")
+        .sessions
+        .get("s1")
+        .await
+        .unwrap();
+
+    assert_eq!(session.end_reason, Some(types::SessionEndReason::Voicemail));
+    assert_eq!(session.state, types::SessionState::Ended);
+    assert_eq!(session.mode, Some(types::SessionMode::Native));
+    // What the SDK before AI-2951 wrote for this answer, read from a run of it.
+    assert_eq!(
+        serde_json::to_string(&session).unwrap(),
+        r#"{"agent_id":"agent","call_id":"call","call_type":"agent","created_at":"2026-09-24T10:00:00Z","end_reason":"voicemail","id":"s1","modality":"voice","mode":"native","state":"ended","user_id":"user"}"#
+    );
+}
+
+#[tokio::test]
+async fn a_value_a_caller_parses_is_still_one_the_spec_lists() {
+    assert!(
+        "reason_from_a_newer_router"
+            .parse::<types::SessionEndReason>()
+            .is_err()
+    );
+    assert!(types::SessionEndReason::try_from("reason_from_a_newer_router").is_err());
+    assert!(types::SessionState::try_from("paused".to_string()).is_err());
+    assert_eq!(
+        "voicemail".parse::<types::SessionEndReason>().unwrap(),
+        types::SessionEndReason::Voicemail
+    );
+}
+
+#[tokio::test]
+async fn a_reason_that_is_not_a_string_is_still_a_decode_error() {
+    for reason in [
+        json!(5),
+        json!({"value": "reason_from_a_newer_router"}),
+        json!(["reason_from_a_newer_router"]),
+    ] {
+        let server = Server::start().await;
+        let answer = session_with(json!({"end_reason": reason}));
+        server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
+
+        let error = server
+            .client()
+            .agent("docs")
+            .sessions
+            .get("s1")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Decode { .. }), "{reason}: {error:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_guest_is_minted_and_later_claimed_by_a_backend() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/guests",
+        201,
+        json!({"id": "guest-1", "token": "guest-token", "name": "Visitor"}),
+    );
+    server.route(
+        Method::POST,
+        "/v1/agents/guests/claim",
+        200,
+        json!({"guest_id": "guest-1", "user_id": "ada", "sessions_moved": 2}),
+    );
+
+    let client = server.backend();
+    let guest = client
+        .guest_user(&types::GuestUserRequest {
+            name: Some("Visitor".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let as_guest = client.as_guest(&guest).unwrap();
+
+    let refused = as_guest.claim_guest("guest-1", "ada").await.unwrap_err();
+    assert!(matches!(refused, Error::Configuration(_)));
+    assert!(
+        server
+            .requests(Method::POST, "/v1/agents/guests/claim")
+            .is_empty()
+    );
+
+    let claimed = client.claim_guest("guest-1", "ada").await.unwrap();
+    assert_eq!(claimed.sessions_moved, 2);
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/guests").body,
+        json!({"name": "Visitor"})
+    );
+    assert_eq!(
+        server.request(Method::POST, "/v1/agents/guests/claim").body,
+        json!({"guest_id": "guest-1", "user_id": "ada"})
+    );
+}
+
+#[tokio::test]
+async fn a_stream_call_is_created_with_a_server_token() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/api/v2/video/call/agent/demo",
+        201,
+        json!({"call": {}}),
+    );
+
+    let stream = server.stream();
+    let call = stream.create_call(&"demo".into(), "jean").await.unwrap();
+
+    assert_eq!((call.id.as_str(), call.kind.as_str()), ("demo", "agent"));
+    let seen = server.request(Method::POST, "/api/v2/video/call/agent/demo");
+    assert_eq!(seen.query, "api_key=key");
+    assert_eq!(seen.header("stream-auth-type"), "jwt");
+    assert_eq!(claims(seen.header("authorization"))["server"], true);
+    assert_eq!(seen.body, json!({"data": {"created_by_id": "jean"}}));
+}
+
+#[tokio::test]
+async fn a_call_stream_refuses_is_reported() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/api/v2/video/call/agent/demo",
+        403,
+        json!({"message": "no"}),
+    );
+
+    let error = server
+        .stream()
+        .create_call(&"demo".into(), "jean")
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.status(), Some(403));
+}
+
+#[tokio::test]
+async fn a_monitoring_link_carries_a_token_for_a_listener() {
+    let server = Server::start().await;
+    let link = server
+        .stream()
+        .monitor_url(&vision_agents::Call::new("demo"), "monitor-s1", "Monitor")
+        .unwrap();
+
+    let parsed = url::Url::parse(&link).unwrap();
+    assert_eq!(parsed.path(), "/demo/join/demo");
+    let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+    assert_eq!(query["api_key"], "key");
+    assert_eq!(query["skip_lobby"], "true");
+    assert_eq!(query["user_name"], "Monitor");
+    assert_eq!(claims(&query["token"])["user_id"], "monitor-s1");
+}
+
+fn health(server: &Server) {
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+}
+
+fn with_team(server: &Server, options: ClientOptions) -> Client {
+    Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        team: Some("finance".into()),
+        usage_categories: vec![
+            "project:onboarding".into(),
+            "batch".into(),
+            "project:onboarding".into(),
+        ],
+        ..options
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_backends_team_and_categories_are_signed_into_its_token() {
+    let server = Server::start().await;
+    health(&server);
+    let client = with_team(
+        &server,
+        ClientOptions {
+            api_key: Some("key".into()),
+            api_secret: Some(SECRET.into()),
+            ..Default::default()
+        },
+    );
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    let claims = claims(seen.header("authorization"));
+    assert_eq!(claims["server"], true);
+    assert_eq!(claims["team"], "finance");
+    assert_eq!(
+        claims["usage_categories"],
+        json!(["batch", "project:onboarding"])
+    );
+    assert_eq!(
+        seen.header("x-stream-usage-categories"),
+        "batch,project:onboarding,team:finance"
+    );
+}
+
+#[tokio::test]
+async fn behind_the_proxy_the_team_is_only_on_the_token() {
+    let server = Server::start().await;
+    health(&server);
+    let client = with_team(
+        &server,
+        ClientOptions {
+            api_key: Some("key".into()),
+            api_secret: Some(SECRET.into()),
+            user_id: Some("user-42".into()),
+            authenticate: Some(true),
+            ..Default::default()
+        },
+    );
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    let claims = claims(seen.header("authorization"));
+    assert_eq!(claims["user_id"], "user-42");
+    assert_eq!(claims["team"], "finance");
+    assert_eq!(seen.header("x-stream-usage-categories"), "");
+}
+
+#[tokio::test]
+async fn a_router_with_nothing_in_front_is_told_the_team_in_a_header() {
+    let server = Server::start().await;
+    health(&server);
+    let client = Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        customer_id: Some("examples".into()),
+        team: Some("finance".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("x-stream-usage-categories"), "team:finance");
+    assert_eq!(seen.header("authorization"), "");
+}
+
+#[tokio::test]
+async fn a_client_with_no_team_sends_none() {
+    let server = Server::start().await;
+    health(&server);
+    server.backend().get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("x-stream-usage-categories"), "");
+    let claims = claims(seen.header("authorization"));
+    assert!(claims.get("team").is_none() && claims.get("usage_categories").is_none());
+}
+
+#[test]
+fn a_team_or_categories_the_router_would_refuse_are_refused_when_the_client_is_built() {
+    let build = |team: Option<&str>, categories: Vec<String>| {
+        Client::new(ClientOptions {
+            url: Some("http://localhost:1".into()),
+            customer_id: Some("examples".into()),
+            team: team.map(Into::into),
+            usage_categories: categories,
+            ..Default::default()
+        })
+    };
+    let eleven = (0..11).map(|n| format!("c{n}")).collect::<Vec<_>>();
+    let ten = (0..10).map(|n| format!("c{n}")).collect::<Vec<_>>();
+    for (refused, says) in [
+        (build(Some("fin ance"), vec![]), "is not 1 to 59"),
+        (build(Some(&"t".repeat(60)), vec![]), "is not 1 to 59"),
+        (build(Some("team:finance"), vec![]), "is not 1 to 59"),
+        (build(None, vec!["TEAM:finance".into()]), "names a team"),
+        (build(None, vec!["a/b".into()]), "is not 1 to 64"),
+        (build(None, vec!["c".repeat(65)]), "is not 1 to 64"),
+        (build(None, vec![String::new()]), "is not 1 to 64"),
+        (build(None, eleven), "at most 10"),
+        (build(Some("finance"), ten.clone()), "at most 10"),
+    ] {
+        match refused {
+            Err(Error::Configuration(message)) => assert!(message.contains(says), "{message}"),
+            other => panic!("expected {says:?}, got {other:?}"),
+        }
+    }
+    assert!(build(None, ten).is_ok());
+    assert!(build(Some("Fin_ance.2-x"), vec!["project:a.b_c-1".into()]).is_ok());
+}
+
+#[test]
+fn a_team_beside_a_token_handed_in_is_refused() {
+    let refused = Client::new(ClientOptions {
+        url: Some("http://localhost:1".into()),
+        api_key: Some("key".into()),
+        token: Some("token-for-ada".into()),
+        team: Some("finance".into()),
+        ..Default::default()
+    });
+    match refused {
+        Err(Error::Configuration(message)) => assert!(message.contains("token"), "{message}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_user_token_names_the_users_team_and_categories() {
+    let backend = Client::new(ClientOptions {
+        url: Some("http://localhost:1".into()),
+        api_key: Some("key".into()),
+        api_secret: Some(SECRET.into()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let token = backend
+        .user_token("user-42", Some("finance"), &["project:b", "project:a"], 600)
+        .unwrap();
+    let signed = claims(&token);
+    assert_eq!(signed["user_id"], "user-42");
+    assert_eq!(signed["team"], "finance");
+    assert_eq!(
+        signed["usage_categories"],
+        json!(["project:a", "project:b"])
+    );
+    assert_eq!(
+        signed["exp"].as_u64().unwrap() - signed["iat"].as_u64().unwrap(),
+        600
+    );
+
+    let plain = claims(&backend.user_token("user-42", None, &[], 600).unwrap());
+    assert!(plain.get("team").is_none() && plain.get("usage_categories").is_none());
+
+    assert!(matches!(
+        backend.user_token("user-42", Some("team:x"), &[], 600),
+        Err(Error::Configuration(_))
+    ));
+    let device = backend.as_user("user-42", &token).unwrap();
+    assert!(matches!(
+        device.user_token("user-43", None, &[], 600),
+        Err(Error::Configuration(_))
+    ));
+}

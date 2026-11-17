@@ -1,0 +1,410 @@
+---
+name: sdk-swift
+description: How to build and extend the Swift SDK in sdks/swift. Read this before changing StreamAgents, the Swift demos' use of Stream's AI components, or before adding a Swift client for a new endpoint.
+---
+
+# Swift SDK conventions
+
+The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the package in
+[`sdks/swift`](../../../sdks/swift) already follow, so a change lands consistently rather than
+re-litigating them. Where a rule has an exception, the exception is written down.
+
+Assume Swift 6 language mode with complete strict concurrency, iOS 15, SPM only.
+
+## The package
+
+One package, `core`, with one product, `StreamAgents`: the generated client, the socket,
+the conversation state, `session.chat()` (the Stream Chat channel a text session is kept in)
+and `VoiceSession` (joining the agent's call over Stream Video). It is the only thing published.
+It depends on `stream-chat-swift` (`StreamChat` only) and `stream-video-swift` (`StreamVideo`
+only), so every app resolves Stream Video's 47 MB `StreamWebRTC` binary, text-only or not.
+That is the price of one artifact; do not split it back up without being asked.
+
+- **No views in core.** The views are Stream Chat's AI components, `StreamChatAI` from the
+  same `stream-chat-swift`, which the app adds itself; see [Views](#views).
+- Stream's types cross the public API only where an app uses Stream's own SDK: the app's
+  `StreamVideo` or `ChatClient` in `use`, `chat()` answering a `ChatChannelController`,
+  `VoiceSession.call`, and `LiveReasoning.read(_:)` taking a `ChatMessage`. The exception is
+  StreamCore, which Chat and Video both stand on: its `User` is who `setUser` acts for and its
+  `RawJSON` is every open-ended value, and core `@_exported import`s it as they do. Do not
+  write a second `User` or JSON enum beside them. Nothing generated crosses.
+- iOS only, because Stream Video is and Stream Chat's macOS build does not compile under
+  Swift 6. `stream-chat-swift` is required from 5.13, the first with `StreamChatAI`, so an app
+  adding the views resolves the version core does; `StreamChat` alone would build from 5.3
+  (4.x's `ChatClient` is not `Sendable`, and 5.0 to 5.2 fail inside `stream-core-swift`).
+- Core builds with Xcode 26 and 27. `StreamChatAI` needs Xcode 27 to add with SPM, and
+  `stream-video-swift` is required from 1.54.0, since 1.51.0's `StreamVideoSwiftUI` does not
+  compile under Xcode 27. `swift_demo` uses `StreamChatAI` and builds.
+- Declare `platforms:`. An unspecified platform makes consumers discover availability
+  failures inside generated code.
+
+**Published from this repository.** SwiftPM reads a manifest and version tags only at a
+repository's root, so the manifest is the root `Package.swift`, its targets reaching into
+`sdks/swift/core` with `path:`, and the examples reference the root by path. A release is a `v`
+tag, shared with the Python packages: there is nothing to upload, and SwiftPM has no tag prefix
+that would give Swift versions of its own. Never move or delete a released tag. An app clones
+the whole repository once (`git clone --mirror`, about 300 MB); that is the price of one
+repository. Do not make `Package.swift` branch on an environment variable between `path:` and
+`url:` — resolution stops being reproducible and development paths leak into releases.
+
+A library's `Package.resolved` is not a promise to consumers; it is gitignored for the package
+and committed for the demo apps.
+
+## Concurrency
+
+The conversation state is a `@MainActor` `ObservableObject`; the socket is an `actor`. Not an actor
+holding the state with a main-actor projection beside it: that is two truths and a window in
+which they disagree.
+
+The state machine itself is a **value type** (`Conversation`) with `mutating func apply(_:)`.
+That is what makes it testable without a network, and it is where new event handling goes.
+
+One read loop per connection, weakly capturing its owner *inside* the loop:
+
+```swift
+pump = Task { [weak self] in
+    for try await event in stream {
+        guard let self else { return }   // inside, so each iteration is the only strong hold
+        self.apply(event)                // inherits @MainActor: no Task { @MainActor in }
+    }
+}
+```
+
+`guard let self` *outside* an infinite loop is the same retain cycle written differently: the
+task owns the object that owns the task, and `deinit` never runs to cancel it.
+
+- Exactly one `receive()` in flight per connection. Concurrent receives reorder frames.
+- Never `Task { @MainActor in }` per frame. It loses ordering and cancellation.
+- Never a callback the socket invokes to mutate state. One sequential pump.
+- Tool handlers are `@Sendable ... async throws`, so their bodies run off the main actor even
+  though they are called from it.
+- Do not mark a type `@unchecked Sendable` to silence the compiler. Map a non-`Sendable`
+  generated value into one of ours instead.
+- Answering a tool call must not depend on anybody consuming a public event stream. It happens
+  inside `AgentSession`.
+- A tool with an `approval` is not run when its call arrives. The call waits in
+  `AgentSession.approvals` until `decide` sends `tool_approval`; then the tool runs (allowed) or
+  the call is answered with an error (declined), since the router wants a `tool_result` either
+  way. A `tool_cancel` drops a waiting call. A failed send puts the call back, so the person can
+  answer again.
+
+## Observation
+
+`ObservableObject` with `@Published`, which is why the floor can be iOS 15: `@Observable` is
+iOS 17. Do not add an `@Observable` path beside it; two state systems in one SDK diverge.
+`VoiceSession` passes its `AgentSession`'s `objectWillChange` on as its own, so a view
+observing the voice session follows `voice.session` too, as nested reads did under
+`@Observable`. An app holding a session it does not have yet keeps it in an `ObservableObject`
+of its own, the shape of StreamVideo's `CallViewModel`; the demos' `CurrentVoice` is one.
+
+The public stream of events is `AgentSession.events()`, handing each caller its own bounded
+continuation — never one stored `AsyncStream` property. A single stream is not a broadcast: two
+iterators compete for elements. It uses `.bufferingNewest(256)`, checks the `yield` result, and
+finishes a subscriber that falls behind rather than dropping an unknown number of events
+silently; every subscriber finishes when the session stops. `.unbounded` turns a stalled
+consumer into a leak.
+
+## The socket
+
+`URLSessionWebSocketTask`. Not a third-party library, which adds TLS, proxy and threading risk
+for nothing; not `NWConnection`, which means implementing the upgrade, framing, masking and
+control frames yourself.
+
+- The task answers the router's pings itself. Do not decode ping frames as application
+  messages, and do not send JSON `"ping"`.
+- Set `maximumMessageSize`. A socket gone wrong at the far end otherwise buffers without bound.
+- Closing is idempotent: cancel the reader, then `cancel(with: .normalClosure, reason:)`. Never
+  a bare `cancel()` for a close the user asked for.
+- A cancelled read is a close we asked for, not a failure. Finish the stream, do not throw.
+
+**No automatic reconnection, on purpose.** `respond` and `tool_result` are not idempotent, and
+the protocol has no sequence number, cursor or acknowledgement to resume from. Replaying after
+a reconnect would duplicate turns and tool results. The socket reports `socketClosed` and the
+caller decides. Adding reconnection means adding resume semantics to the router first.
+
+Backgrounding will break the socket; that is iOS, not a bug. Do not promise uninterrupted
+background streaming, and do not hold a chat socket open with repeated background tasks.
+
+## Frames
+
+Distinct types per direction: `AgentEvent` in, `Command` out. Never one bidirectional type
+with invalid combinations.
+
+Decoding is forward compatible by keeping the whole frame as `RawJSON` and exposing `type`
+plus a `kind` that is nil for anything unknown. An event added to the router after this SDK
+shipped still reaches the caller whole. A frame that cannot be decoded at all is skipped rather
+than closing the socket, which is what the router does with a command it cannot read.
+
+Never `[String: Any]`: not `Codable`, not `Sendable`, and it loses the type guarantees.
+
+Tool-call `arguments` stay an opaque JSON string, because that is the wire contract. Decoding
+them is a convenience on top (`argumentValues`), not a requirement.
+
+Quote frames **verbatim from `frameOf`** in
+[`sessionws.go`](../../../acceleration/internal/api/sessionws.go) in tests, so a rename on the
+Go side fails here rather than in somebody's app.
+
+## The generated client
+
+Committed, generated by `sdks/swift/generate.py`, never hand-edited. Committed rather than a
+build-tool plugin because an SDK's generated source should be reviewable and diffable, needs no
+generator on a consumer's machine, and needs no plugin trusted in Xcode.
+
+The generator is Stream's own, the one Stream Chat and Stream Video use: `tools/openapi` in the
+`chat` repository, checked out beside this one and run with `go run`. Its `DefaultAPI` and
+models run on StreamCore (`Request`, `DefaultAPITransport`, `DefaultAPIClientMiddleware`,
+`APIHelper`, `RawJSON`), so `Backend.swift` supplies a transport and two middlewares rather
+than a client of its own. It is run with Stream Chat's options: internal, immutable models,
+enums as `RawRepresentable` classes that keep a value the router added, shared coding keys.
+`generate.py` hands it a copy of the spec in terms it reads: an integer enum is a plain
+integer, a reference to a string-or-object union (`Equals`) is its string shorthand, since the
+generator would drop the field, a required field that may be null is not required, since the
+generator ignores `nullable` and the null would fail to decode, and a model whose name a
+hand-written type has is renamed (`RENAMED`: `Session` is `SessionPayload`). A collision `RENAMED` misses fails the build.
+`DefaultEndpoints.swift` is discarded: it is Stream Chat's request path, written against its
+internals.
+Each run writes `sdks/swift/core/generated.json`: the sha256 of the spec copy it handed the
+generator, the options and the generator's `chat` commit. `--check` fails ("Swift client is
+stale") when the spec's client part (without `info` and `servers`) no longer hashes to it, or when
+the files under `Generated/` are not the ones the last run wrote, so commit that file with the
+client.
+
+**A spec change to the client part needs a regeneration by someone with access to the private
+`GetStream/chat` repository**, because the generator is in it and CI does not check it out: an
+outside contributor's PR cannot pass the `swift` job. Check out `chat` beside this repository
+at the commit in `generated.json`'s `generator` (`git -C ../chat checkout <sha>`), run
+`uv run sdks/swift/generate.py`, and commit the result. Move to another `chat` commit only on
+purpose: `chat`'s master changes generated enum files for every author. The rules of the check
+are tested in `sdks/swift/test_generate.py`; CI runs it before `--check`.
+
+**Generated code is `internal`.** Every type crossing the public API is hand-written in
+`Models.swift`. Leaking one generated type couples the SDK's semantic version to the schema and
+to the generator. Never return a generated model or `DefaultAPI`.
+
+Rewrap deliberately:
+
+- **Enums** get an `unknown(String)`-style case or a raw-value fallback. Never `fatalError` on a
+  value the server added.
+- **Dates** go through `RouterDates`, which `JSONDecoder.default`, the decoder `DefaultAPI` is
+  built with, reads every timestamp with. It exists because Go writes as many fractional digits
+  as a value needs and none when it needs none. Before iOS 26, a format style that includes
+  fractional seconds refuses a timestamp without them, so `RouterDates` reads twice. Test
+  fractional seconds, no fractional seconds, offsets and malformed input, on the oldest
+  simulator runtime there is as well as the newest: Foundation parses differently across them.
+- **Open-ended objects** are StreamCore's `RawJSON`, which the generator already emits.
+
+`generate.py` carries an explicit allowlist of operation ids and **fails if any of them is
+marked `x-server-side-only`**. That is how the server-side/client-side split is enforced at the
+SDK boundary: marking an operation server-side only in the spec is the whole of removing it
+from iOS. Adding an endpoint to the Swift SDK means adding it to `OPERATIONS` and rerunning.
+
+The filter is an API-surface tool, not a security boundary — the router still enforces it, and
+that is why every request sends `Stream-Auth-Type: jwt`.
+
+## Errors
+
+One `AgentsError`, deliberately: it has five cohesive cases over one service, not a dumping
+ground. If it starts collecting unrelated cases, split it per domain (REST, socket, session)
+rather than letting it grow.
+
+`CancellationError` is never wrapped and never mapped. A view that goes away mid-request is not
+a failure. It must never be confused with a timeout, a lost connection, an HTTP 408, a normal
+socket close, or a session ending.
+
+Distinguish, and keep distinguishing: transport failure before any response; an HTTP status;
+a decoded error body; a socket close code. Never classify by parsing `localizedDescription`.
+
+`http` carries an `HTTPFailure`: the status, the envelope's `type`, `code`, `message` and
+`docURL`, and `requestID` from `X-Request-Id`, which is what a user quotes for a 500. `type` and
+`code` are strings, so a value the router adds later still reads, and a body that is not the
+envelope keeps its trimmed text as `message` with the rest empty. `FailureMiddleware` throws every
+non-2xx, documented or not, before the generated client decodes it, which is why `generate.py`
+hands the generator the spec with only each operation's 2xx responses. It also hands a 204 on as
+`{}`, since `DefaultAPI` decodes `EmptyResponse` from every success. `Backend.call` reports a
+`DecodingError` as `unreadable` and anything else the transport threw as `transport`.
+A refused socket upgrade is an `http` too, with only the status and request id: URLSession never
+hands over its body.
+
+## Public API
+
+`StreamAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
+provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
+capitalised as Swift does. The initialiser does no I/O. `StreamAgents(url:customerID:)` is
+only for a router running locally with nothing in front of it; an `apiKey:` beside it is
+Stream's alone, for chat and video, and the router is still reached by customer id.
+
+```swift
+let agents = StreamAgents(apiKey: "your_api_key")
+agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
+let session = try await agents.agent("myagent").sessions.create()
+let turn = try await session.responses.create("Where is order 1042?")
+```
+
+and the advanced form is a request value, not thirty initialiser parameters:
+
+```swift
+var options = SessionOptions(agent: "myagent")
+options.greeting = Greeting("Hello.", mode: .variation)
+let session = try await agents.sessions.create(options)
+```
+
+The key is public and goes in the query, where Stream's proxy and the router both read it;
+the token goes in `Authorization` and never in a URL.
+
+`nil` means "omit the field and let the config or the router decide", never "send a copy of the
+server's default". A schema default copied into the client is how a caller silently loses the
+model their config named.
+
+Async/await only. No completion handlers, no `.shared` singleton, no configuration read from
+`Info.plist` or the environment.
+
+**A token provider, not a token,** for anything with credentials. `Backend` takes a
+`TokenProvider` in `setUser` and threads it through requests, the socket handshake and a
+single 401 retry, single-flighted.
+
+**Stream is set up once.** The key, the user and the token from `setUser` are the one identity
+for the router, Stream Chat and Stream Video. `VoiceSession.join()` and `session.chat()` take
+no credentials: `Backend.shared` builds one client per kind, key and user, single-flighted and
+shared by every session, and hands Stream a provider that asks `streamCredentials(refresh:
+true)`, so an hour-long call outlives its token and two clients refreshing at once fetch one.
+`agents.use(_:)` hands over the app's own `ChatClient` or `StreamVideo`, which is used first,
+kept across `setUser` and never disconnected here; one connected as another user is a
+`.configuration` error. `agents.disconnect()` closes only what was built, and closing a session
+closes nothing. A client is built only when a session first asks for one.
+
+**Guests.** `agents.guestUser(_:store:)` mints a guest (`createGuestUser`), or hands back the
+one a `GuestStore` remembers; one whose token has expired is asked for again with its id and
+the `refresh_secret` the store keeps beside it, which the router answers with the same guest, a
+fresh token and the next secret. A secret works once, so whatever comes back replaces what was
+stored; one lost or spent gets a new guest. The secret stays in the store, never on `Guest`.
+`setUser(_ guest:)` acts as them, and `forgetGuest(store:)` clears the store and the user. `GuestStore` is three methods so an app
+keeps the guest wherever it keeps things, the keychain included; `FileGuestStore(url:)` is the
+one provided, and a store holding something unreadable means a new guest, not an error.
+`GuestOptions(fresh: true)` is a "not me" button. Claiming a guest's history for an account is
+server-side only and not here.
+
+## Views
+
+Core has none. An app shows a conversation with Stream Chat's AI components (`StreamChatAI`),
+and the demo (`examples/voice_agents/swift_demo`) is where that composition lives and is kept
+working. What the router writes is what it renders:
+
+- A text session's reply is a message marked `ai_generated`, with `generating` true until done:
+  `StreamingMessageView(content:isGenerating:)`.
+- Its steps are `ai_reasoning` and `ai_tool_call` attachments, in order:
+  `AIMessagePart.parts(from:)` and `AIMessagePartsView`.
+- A reasoning step stores only its opening. The whole of it comes a window at a time on the
+  live updates' `reasoning` field; `LiveReasoning` reassembles it, fed from the client's
+  `MessageUpdatedEvent`s (the channel's message list can fold updates together), and goes to
+  `StreamingReasoningView(part:text:)`. Look a step up by its reply and its id: every reply
+  numbers its steps from `r1`.
+- A call that asks first is `awaiting_approval` with an `approval`: `AIToolApprovalView`, with
+  an `AIToolApprover` whose `decide` is `session.decide`. On a call there is no channel; show
+  `session.approvals` with `AIToolApprovalCard`.
+- A connector call that waits for the person to sign in is `awaiting_authorization` with an
+  `authorization`, which `AIToolAuthorizationView` shows when the `AIToolApprover` has an
+  `AIToolAuthorizer`. Its `callbackScheme` is the scheme of the session's
+  `SessionOptions.returnURL` (the app's own, in reverse domain form), and its `decline` is
+  `session.declineLogin`. The view opens `authorization.launchURL`, the page with the handoff
+  token in its fragment, in a web authentication sheet. The router updates the step once the
+  provider has answered, and the call runs in the same reply. A session made without a
+  `returnURL` sends the sign-in back to the dashboard, and the sheet never comes back.
+- A reply's interactive UI (`ai_ui`) reaches the session's socket first, as `ui_delta` and
+  `ui_completed`, which `Conversation` folds onto the turn as `Turn.ui` (`TurnUI`), merging an
+  `openui` patch onto the turn before's card. While OpenUI streams, `TurnUI.content` holds only
+  its finished statements, so a card grows a part at a time. `LiveUI` shows it on the reply while
+  Chat is writing it and its own `ai_ui` isn't complete, by the rules in the `generative-ui`
+  skill: `observe` the conversation, and read each message's custom data through `overlay(_:)`
+  into `AIUIDocument(customData:)`. On a call there is no channel; show the newest `Turn.ui`
+  with an `AIUIHost` of its own.
+- `ai_indicator.update` and `.clear` say what the agent is doing before the answer starts:
+  `AITypingIndicatorView`. Read them from `chatClient.eventsController()`; a channel's events
+  controller never sees them.
+- `AIComposerView`'s stop button is `session.interrupt()`, which cancels the reply in flight.
+  The router does not listen for `ai_indicator.stop`.
+
+A spoken session has no channel. The demo shows the agent as `AIVoiceGlowView`, whose
+`AIVoiceAgentState` comes from the call and the session together: connecting until
+`VoiceSession.call` is joined, speaking while a remote participant `isSpeaking`, and otherwise
+`session.state` (listening, thinking while responding or working, idle). Speaking is the call's
+to say because a reply is written before it is spoken, and `responded` arrives before the agent
+stops talking. An app that wants the words too renders `session.turns` with
+`StreamingMessageView`.
+
+## Tests
+
+Swift Testing, not XCTest. Never mock; assert on state and outputs, never on a call happening.
+
+Three layers, in order of how much they cost to run:
+
+1. **The state machine.** `Conversation` is a value type, so what a stream of real router
+   frames means for a transcript is tested in milliseconds with no network. Most new behaviour
+   belongs here.
+2. **Live tests.** `LiveTests` is gated on `VISION_AGENTS_URL`, which is the Swift answer to
+   `@pytest.mark.integration`. It creates a real session, asks the model something and waits
+   for a real tool call. Mark the suite `@MainActor`, because `AgentSession` is.
+   `PostureTests` fails offline if the generated client holds an operation the spec does not
+   mark `x-client-accessible`, and with `INTEGRATION_ROUTER_KEY` and `_SECRET` checks a
+   device token's 403s against a router in `api_key` mode (see the JS README for that router).
+3. **Builds.** `VoiceSession` and `chat()` are wrappers over Stream's SDKs, and the demos are
+   views; build them for the simulator. What they share is in `Backend` and tested there
+   (`StreamCredentialsTests`).
+
+The package is iOS only, so the tests run on a simulator, from the root of the repository:
+`xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone
+18 Pro'`, with `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and
+`TEST_RUNNER_INTEGRATION_ROUTER_KEY` and `_SECRET` for the keyed posture checks.
+
+CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
+on any change under `sdks/swift`, the demo's app or the spec. It runs `generate.py --check`
+(the generator is in the `chat` repository, which CI does not check out, so it cannot
+regenerate, and compares the spec against `generated.json` instead), runs the core tests on
+the first iPhone simulator the runner has, and builds `swift_demo`. Regenerate locally after a spec change.
+
+Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
+
+```swift
+try await until(20) { session.state == .idle && session.turns.count >= 2 }
+```
+
+If a loopback server is ever needed for close codes, malformed bodies or reconnect timing,
+write a real one on `127.0.0.1:0` rather than a `URLProtocol` subclass — `URLProtocol` cannot
+test a genuine WebSocket upgrade. Do not spend tests re-testing the generated client's
+forwarding; it is machine-produced.
+
+## Audio and permissions, for `VoiceSession`
+
+- **One owner of `AVAudioSession`.** A WebRTC SDK and the app both setting category, mode or
+  active state gives dropped Bluetooth, wrong routing and activation failures. Use Stream's
+  supported hooks; do not set audio policy at initialisation, and do not "save the category at
+  startup and restore it later" — something else may have legitimately changed it in between.
+- Remote audio plays through the audio session once joined. There is no view to add for it;
+  `enableSpeakerPhone()` is what makes it hands-free instead of the earpiece.
+- `NSMicrophoneUsageDescription` is the **host app's**, and a package cannot supply it. Missing
+  it terminates the app — not a recoverable permission denial. Check authorisation before
+  joining, and distinguish not-determined, denied, restricted and granted.
+- The simulator does not test echo cancellation, Bluetooth routing, receiver versus speaker,
+  interruption by a call, or route changes. Release RTC changes only after device testing.
+
+## Logging
+
+Transcripts, prompts, tool arguments and tokens are the most sensitive data here. Do not log
+frames or bodies by default. Never put a token in a query string.
+
+## Reviewing a change
+
+Reject it if it:
+
+- mutates conversation state off the main actor, or hops per frame;
+- exposes a generated type publicly, or a Stream type outside `use`, `chat()`,
+  `VoiceSession.call` and `LiveReasoning`;
+- runs a tool that has an `approval` before `decide` allows it;
+- builds a second Stream client for a user who already has one, or disconnects one the app
+  handed over;
+- uses `[String: Any]`, or `@unchecked Sendable` to quiet a warning;
+- starts more than one receive per connection, or replays `respond`/`tool_result`;
+- treats an unknown frame as fatal, or discards its payload;
+- wraps `CancellationError`, or reports an HTTP status as a transport failure;
+- hand-edits generated code, or adds a client method for an `x-server-side-only` operation;
+- adds a view to core, or a second package beside it;
+- asserts that a method was called.

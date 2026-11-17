@@ -1,0 +1,237 @@
+package conversation
+
+import (
+	"encoding/json"
+	"strings"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+)
+
+// login is a consent a session would ask employee's conversation to show.
+func login(name, attempt string) ConnectorAuthorization {
+	return ConnectorAuthorization{
+		Name: name, ConnectorID: "slack", ConnectionID: "connection-1", AuthorizationID: attempt,
+		Title: "Connect Slack", LaunchURL: "https://router.example/v1/agents/connectors/oauth/launch/" + attempt,
+		HandoffToken: "handoff-" + attempt, ExpiresAt: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func (s *DisplaySuite) TestALoginAConnectorAsksForIsAttachedToTheReplyAndRestored() {
+	c := s.open("on_call")
+	receipt, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+
+	s.True(c.AskToConnect("employee", login("slack", "attempt-1")))
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	var reply struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	s.Require().NoError(json.Unmarshal([]byte(s.raw(receipt.AssistantMessageID)), &reply))
+	s.Require().NotEmpty(reply.Attachments)
+	button := reply.Attachments[len(reply.Attachments)-1]
+	s.Equal(ConnectorAuthorizationType, button["type"])
+	s.Equal("Connect Slack", button["title"])
+	c.Release()
+	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
+	s.Require().NoError(err)
+	s.Require().Len(page.Messages, 2)
+	asked := login("slack", "attempt-1")
+	asked.Type = ConnectorAuthorizationType
+	s.Equal([]ConnectorAuthorization{asked}, page.Messages[1].ConnectorAuthorizations)
+	// A session's client reads it where a Chat client does: among the attachments.
+	encoded, err := json.Marshal(page.Messages[1])
+	s.Require().NoError(err)
+	var wire struct {
+		Attachments []map[string]any `json:"attachments"`
+	}
+	s.Require().NoError(json.Unmarshal(encoded, &wire))
+	shown := wire.Attachments[len(wire.Attachments)-1]
+	s.Equal(ConnectorAuthorizationType, shown["type"])
+	s.Equal(asked.LaunchURL, shown["launch_url"])
+	s.Equal(asked.HandoffToken, shown["handoff_token"])
+}
+
+// TestALoginIsShownOnlyInItsOwnersConversation: whoever reads the attachment first can hand
+// the consent off, so a conversation that is not the owner's own is never asked to show it.
+func (s *DisplaySuite) TestALoginIsShownOnlyInItsOwnersConversation() {
+	c := s.open("on_call")
+	receipt, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+
+	s.False(c.CanAskToConnect("someone-else"))
+	s.True(c.CanAskToConnect("employee"))
+	s.False(c.AskToConnect("someone-else", login("slack", "attempt-1")))
+	s.False(c.AskToConnect("", login("slack", "attempt-1")))
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	s.NotContains(s.raw(receipt.AssistantMessageID), ConnectorAuthorizationType)
+	s.NotContains(s.raw(receipt.AssistantMessageID), "handoff-attempt-1")
+}
+
+func (s *DisplaySuite) TestALoginIsShownOnlyOnAReplyBeingWritten() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+
+	s.False(c.AskToConnect("employee", login("slack", "attempt-1")), "the reply is finished")
+}
+
+// TestAFinishedConnectorLoginMarksTheReplyAndDropsItsHandoffToken: the person has moved on by
+// the time the provider hands them back; the reply that asked still says the login is done.
+func (s *DisplaySuite) TestAFinishedConnectorLoginMarksTheReplyAndDropsItsHandoffToken() {
+	c := s.open("on_call")
+	asked, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	s.Require().True(c.AskToConnect("employee", login("slack", "attempt-1")))
+	c.Observe(agent.Responded{})
+	saved(s.T(), c)
+	_, err = c.BeginCommand("command-b", "And on the crm?", "")
+	s.Require().NoError(err)
+
+	s.False(c.ConnectorConnected("attempt-2"), "another attempt")
+	s.True(c.ConnectorConnected("attempt-1"))
+	s.False(c.ConnectorConnected("attempt-1"), "finished once")
+	// The outbox writes the earlier reply again, after the current one is saved.
+	s.Eventually(func() bool {
+		raw := s.raw(asked.AssistantMessageID)
+		return strings.Contains(raw, `"status":"connected"`) && !strings.Contains(raw, "handoff-attempt-1")
+	}, 8*time.Second, 20*time.Millisecond, "the reply that asked is marked connected, its handoff token dropped")
+}
+
+// TestAMessageWithNoConnectorLoginWritesWhatItDidBefore: no connector login, no new
+// attachment, on the wire or in Chat.
+func (s *DisplaySuite) TestAMessageWithNoConnectorLoginWritesWhatItDidBefore() {
+	m := Message{ID: "m", Role: "assistant", Tools: []Tool{}}
+
+	encoded, err := json.Marshal(m)
+
+	s.Require().NoError(err)
+	s.Contains(string(encoded), `"attachments":[]`)
+	s.NotContains(string(encoded), ConnectorAuthorizationType)
+	s.Empty(connectorAuthorizationAttachments(nil))
+}
+
+// TestAnAttachmentThatIsNotALaunchPageIsNotReadBack: what Chat hands back is read as a login
+// only when its launch URL is the launch page of the attempt it names.
+func (s *DisplaySuite) TestAnAttachmentThatIsNotALaunchPageIsNotReadBack() {
+	elsewhere := login("slack", "attempt-1")
+	elsewhere.LaunchURL = "https://evil.example/authorize"
+	otherAttempt := login("slack", "attempt-1")
+	otherAttempt.AuthorizationID = "attempt-2"
+	plain := login("slack", "attempt-1")
+	plain.LaunchURL = "http://router.example/v1/agents/connectors/oauth/launch/attempt-1"
+
+	s.True(validConnectorAuthorization(login("slack", "attempt-1")))
+	s.False(validConnectorAuthorization(elsewhere))
+	s.False(validConnectorAuthorization(otherAttempt))
+	s.False(validConnectorAuthorization(plain), "https only")
+}
+
+// TestTheReplyBeingWrittenSaysWhichLoginItShows: a second call in the same reply reuses the
+// consent it shows; a finished reply, or a finished login, shows none.
+func (s *DisplaySuite) TestTheReplyBeingWrittenSaysWhichLoginItShows() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "Tell Nash a joke on Slack", "")
+	s.Require().NoError(err)
+	s.Require().True(c.AskToConnect("employee", login("slack", "attempt-1")))
+
+	s.True(c.ShowsLogin("attempt-1"))
+	s.False(c.ShowsLogin("attempt-2"))
+	c.Observe(agent.Responded{})
+	s.False(c.ShowsLogin("attempt-1"), "the reply is finished")
+}
+
+// signIn is a sign-in a session would have a call of employee's wait for.
+func signIn() Authorization {
+	expires := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	return Authorization{
+		Type: "oauth", Provider: "linear", ProviderName: "Linear", Title: "Connect Linear",
+		Message: "You sign in at Linear.", URL: "https://router.example/v1/agents/connectors/oauth/launch/attempt-1",
+		HandoffToken: "handoff-attempt-1", ExpiresAt: &expires,
+	}
+}
+
+// The step is shown whatever visible_tools says, addressed to the person who asked, and goes on
+// running once they sign in.
+func (s *DisplaySuite) TestACallWaitingForASignInShowsItOnItsStepAndRunsOnceConnected() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+
+	s.Require().True(c.AwaitAuthorization("employee", "call-1", signIn()))
+
+	parts := current(c).Parts
+	s.Require().Len(parts, 1)
+	s.Equal("awaiting_authorization", parts[0].Status)
+	s.Equal("linear__list_tools", parts[0].Name)
+	s.Equal("employee", parts[0].TargetUserID)
+	s.Equal("Using Linear", parts[0].DisplayTitle)
+	s.Equal(signIn(), *parts[0].Authorization)
+	shown := parts[0].attachment()["authorization"].(map[string]any)
+	s.Equal("https://router.example/v1/agents/connectors/oauth/launch/attempt-1", shown["url"])
+	s.Equal("handoff-attempt-1", shown["handoff_token"])
+
+	s.True(c.AwaitsAuthorization("call-1"))
+	s.True(c.AuthorizationEnded("call-1", AuthorizationConnected))
+	s.False(c.AuthorizationEnded("call-1", AuthorizationDeclined), "a sign-in ends once")
+	s.False(c.AwaitsAuthorization("call-1"), "connected, it runs")
+	part := current(c).Parts[0]
+	s.Equal("running", part.Status)
+	s.Equal(AuthorizationConnected, part.Authorization.Status)
+	s.Empty(part.Authorization.HandoffToken, "nobody needs the token any more")
+	c.Observe(agent.ToolRan{ID: "call-1", Result: `{"tools":[]}`})
+	s.Equal("completed", current(c).Parts[0].Status)
+}
+
+// A declined call never ran, whatever its result says.
+func (s *DisplaySuite) TestADeclinedSignInCancelsTheCallsStep() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+	s.Require().True(c.AwaitAuthorization("employee", "call-1", signIn()))
+
+	s.True(c.AuthorizationEnded("call-1", AuthorizationDeclined))
+	c.Observe(agent.ToolRan{ID: "call-1", Result: `{"status":"declined"}`})
+
+	part := current(c).Parts[0]
+	s.Equal("cancelled", part.Status)
+	s.Equal(AuthorizationDeclined, part.Authorization.Status)
+	s.Equal("Not connected", part.Summary)
+	s.NotNil(part.FinishedAt)
+}
+
+// A reply that ends, stopped by the person, ends the steps still going, so nothing waits for
+// the sign-in any more.
+func (s *DisplaySuite) TestASignInStopsWaitingWhenItsReplyEnds() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+	s.Require().True(c.AwaitAuthorization("employee", "call-1", signIn()))
+
+	c.Cancel()
+
+	s.False(c.AwaitsAuthorization("call-1"))
+	s.Equal("cancelled", current(c).Parts[0].Status)
+}
+
+// Whoever reads the step first can hand the consent off, so only the conversation's owner is
+// asked, as with AskToConnect, and only for a call the reply made.
+func (s *DisplaySuite) TestASignInIsAskedOnlyOfTheConversationsOwnerForACallOfTheReply() {
+	c := s.open("on_call")
+	_, err := c.BeginCommand("command-a", "What are my most important Linear tickets?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "linear__list_tools", StartedAt: time.Now().UTC()})
+
+	s.False(c.AwaitAuthorization("someone-else", "call-1", signIn()))
+	s.False(c.AwaitAuthorization("employee", "call-2", signIn()), "a call the reply did not make")
+	s.Empty(current(c).Parts)
+}

@@ -1,0 +1,18 @@
+# Layouts the concierge repeats. Each example must render with the catalog, or the folder is
+# refused.
+- name: restaurant_booking
+  when: >
+    recommending or booking
+    a restaurant for tonight
+  order: [Text, RestaurantCard, AvailabilityGauge, ChoicePicker, Button]
+  rules:
+    - Show the gauge only when the wait is known
+  example: |
+    ```ui:a2ui@1.0
+    {"version":"1.0","createSurface":{"surfaceId":"kaneo_booking","catalogId":"getstream.io:app-catalog","dataModel":{"slot":["19:15"]}}}
+    {"version":"1.0","updateComponents":{"surfaceId":"kaneo_booking","components":[{"id":"root","component":"Column","children":["title","venue","gauge","slots","book"]},{"id":"title","component":"Text","text":"## Tonight at Kaneo"},{"id":"venue","component":"RestaurantCard","name":"Kaneo Cliffside","cuisine":"Macedonian Grill · 1.2 km","rating":4.9,"price_tier":"$$$"},{"id":"gauge","component":"AvailabilityGauge","occupancy_pct":86,"wait_label":"12 min wait"}]}}
+    {"version":"1.0","updateComponents":{"surfaceId":"kaneo_booking","components":[{"id":"slots","component":"ChoicePicker","label":"Time","variant":"mutuallyExclusive","displayStyle":"chips","options":[{"label":"19:15","value":"19:15"},{"label":"20:30","value":"20:30"}],"value":{"@path":"/slot"}},{"id":"book","component":"Button","variant":"primary","child":"book_label","action":{"event":{"name":"book","userMessage":"Book the table","context":{"slot":{"@path":"/slot"}}}}},{"id":"book_label","component":"Text","text":"Book the table"}]}}
+    ```
+- name: guest_status
+  when: a returning guest asks where they stand
+  order: [Text, LoyaltyBadge]

@@ -55,7 +55,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
         if event.participant.user.id != "agent":
             await asyncio.sleep(2)
-            # await agent.simple_response("Roast the person you see")
+            # await agent.responses.create("Roast the person you see")
 
     async with agent.join(call):
         await agent.finish()

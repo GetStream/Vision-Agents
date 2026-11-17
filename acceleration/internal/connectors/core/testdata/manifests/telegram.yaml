@@ -1,0 +1,40 @@
+# A Telegram bot as an inbound channel, the shape T52 (subtasks.md on connectors/planning)
+# builds: the customer's own bot, a channel only. Telegram's page, opened October 6, 2026:
+#   [api] https://core.telegram.org/bots/api
+id: telegram
+revision: 1
+name: Telegram
+# [api], «Making requests»: every call is https://api.telegram.org/bot<token>/METHOD_NAME, so
+# the token is the first path segment, not a header. No registered scheme writes a credential
+# there; path_token stands for the one T52 adds, whose Wrap puts bot<token> in front of the
+# path. # unverified: the scheme's name and shape are T52's
+schemes: [path_token]
+channel:
+  verifier:
+    # [api], setWebhook: «the bot receives a header named X-Telegram-Bot-Api-Secret-Token»
+    # holding the secret_token given to setWebhook, compared as it is.
+    kind: secret_header
+    # The secret_token the Router sets on the customer's bot (T52, T38).
+    secret: provider_app
+    header: X-Telegram-Bot-Api-Secret-Token
+  # [api]: an Update is a JSON object.
+  format: json
+  messages:
+    # No provider_unit_id: an Update does not name the bot ([api], Update), and each bot has
+    # its own events URL (T38), which names it.
+    thread_key:
+      # chat_id: channels doc, «Other channels», the Telegram row.
+      - name: chat_id
+        path: $.message.chat.id
+    # [api], Message: from is optional («empty for messages sent to channels»), so a channel
+    # post has no author and is not read.
+    author_id: $.message.from.id
+    provider_message_id: $.message.message_id
+    text: $.message.text
+  reply:
+    # [api], sendMessage. The token segment is the scheme's, as above.
+    url: https://api.telegram.org/sendMessage
+    body:
+      # [api]: chat_id is «Integer or String».
+      chat_id: "{thread.chat_id}"
+      text: "{text}"

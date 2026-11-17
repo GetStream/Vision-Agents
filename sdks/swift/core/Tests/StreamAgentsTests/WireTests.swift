@@ -1,0 +1,383 @@
+import Foundation
+import Testing
+
+@testable import StreamAgents
+
+/// The frames in both directions, checked against what the router actually writes and reads.
+@Suite struct WireTests {
+    @Test func anUnknownEventKeepsItsNameAndItsFields() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(#"{"type":"overheard","who":"nobody","confidence":0.5}"#.utf8))
+
+        #expect(event.type == "overheard")
+        #expect(event.kind == nil)
+        #expect(event["who"].stringValue == "nobody")
+        #expect(event["confidence"].numberValue == 0.5)
+    }
+
+    @Test func anEventWithoutATypeIsRefused() {
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(AgentEvent.self, from: Data(#"{"text":"hi"}"#.utf8))
+        }
+    }
+
+    @Test func aMissingFieldReadsAsEmptyRatherThanFailing() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self, from: Data(#"{"type":"heard"}"#.utf8))
+
+        #expect(event.text == "")
+        #expect(event.turnID == "")
+        #expect(event.participant == nil)
+        #expect(event["nothing"] == .nil)
+    }
+
+    @Test func aToolCallArrivesWithItsArgumentsDecoded() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"{\"order_id\":\"A-1\",\"full\":true}"}"#
+                    .utf8))
+
+        let call = try #require(event.toolCall)
+        #expect(call.id == "c1")
+        #expect(call.name == "lookup_order")
+        #expect(call.argumentValues["order_id"]?.stringValue == "A-1")
+        #expect(call.argumentValues["full"]?.boolValue == true)
+    }
+
+    @Test func aToolCallNamesTheRequestAndTurnItsResultAnswers() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"tool_call","id":"c1","name":"now","arguments":"{}","request_id":"r1","turn_id":"t1"}"#
+                    .utf8))
+
+        let call = try #require(event.toolCall)
+        #expect(call.requestID == "r1")
+        #expect(call.turnID == "t1")
+    }
+
+    @Test func aTextQuestionCarriesAFreshRequestID() throws {
+        let first = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
+        let second = try JSONEncoder().encode(Responses.body("Where is order 1042?", images: []))
+
+        let ids = try [first, second].map {
+            try #require(JSONDecoder().decode([String: RawJSON].self, from: $0)["request_id"]?.stringValue)
+        }
+        #expect(ids.allSatisfy { $0.wholeMatch(of: /[A-Za-z0-9_-]{1,128}/) != nil })
+        #expect(ids[0] != ids[1])
+    }
+
+    @Test func aQuestionWithImagesCarriesARequestIDToo() throws {
+        let body = try JSONEncoder().encode(
+            Responses.body("What is this?", images: [ImageSource(url: "data:image/png;base64,iVBORw0KGgo=")]))
+
+        #expect(try JSONDecoder().decode([String: RawJSON].self, from: body)["request_id"] != nil)
+    }
+
+    @Test func oneAnswerCanBeCappedAndToldHowLongToThinkAndNeitherIsSentUnasked() throws {
+        let tuned = try JSONDecoder().decode(
+            [String: RawJSON].self,
+            from: JSONEncoder().encode(
+                Responses.body("Think hard", images: [], maxOutputTokens: 512, reasoningEffort: "high")))
+        let plain = try JSONDecoder().decode(
+            [String: RawJSON].self, from: JSONEncoder().encode(Responses.body("Plain", images: [])))
+
+        #expect(tuned["max_output_tokens"] == .number(512))
+        #expect(tuned["reasoning_effort"] == .string("high"))
+        #expect(tuned["request_id"] != nil)
+        #expect(Set(plain.keys) == ["request_id", "text"])
+    }
+
+    @Test func whatThePersonDidInAReplysUIGoesWithTheirWords() throws {
+        let action: [String: RawJSON] = [
+            "message_id": .string("m1"), "format": .string("openui"), "name": .string("ask_about"),
+            "payload": .dictionary(["title": .string("Ohrid")]),
+        ]
+        let body = try JSONDecoder().decode(
+            [String: RawJSON].self,
+            from: JSONEncoder().encode(Responses.body("Tell me more about Ohrid", images: [], uiAction: action)))
+
+        #expect(body["text"] == .string("Tell me more about Ohrid"))
+        #expect(body["ui_action"] == .dictionary(action))
+    }
+
+    @Test func aToolCallWhoseArgumentsAreNotAnObjectYieldsNoArguments() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(#"{"type":"tool_call","id":"c1","name":"now","arguments":"oops"}"#.utf8))
+
+        #expect(try #require(event.toolCall).argumentValues.isEmpty)
+    }
+
+    @Test func onlyToolCallEventsAreToolCalls() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(#"{"type":"tool_ran","tool":"lookup_order","result":"A-1"}"#.utf8))
+
+        #expect(event.toolCall == nil)
+    }
+
+    @Test func aStepUpFrameReadsAsTheStepUp() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self,
+            from: Data(
+                #"{"type":"connector_scope_required","name":"crm","connector_id":"custom_crm","connection_id":"conn-1","scopes":["files:read","files:write"],"authorization_id":"attempt-1","launch_url":"https://router.example/v1/agents/connectors/oauth/launch/attempt-1","handoff_token":"handoff","expires_at":"2026-10-07T12:00:00Z"}"#
+                    .utf8))
+
+        let asked = try #require(event.connectorScopeRequired)
+
+        #expect(event.kind == .connectorScopeRequired)
+        #expect(asked.name == "crm")
+        #expect(asked.connectorID == "custom_crm")
+        #expect(asked.connectionID == "conn-1")
+        #expect(asked.scopes == ["files:read", "files:write"])
+        #expect(asked.authorizationID == "attempt-1")
+        #expect(asked.launchURL == "https://router.example/v1/agents/connectors/oauth/launch/attempt-1")
+        #expect(asked.handoffToken == "handoff")
+        #expect(asked.expiresAt == Date(timeIntervalSince1970: 1_791_374_400))
+    }
+
+    @Test func anotherKindIsNotAStepUp() throws {
+        let event = try JSONDecoder().decode(
+            AgentEvent.self, from: Data(#"{"type":"tool_ran","tool":"lookup_order"}"#.utf8))
+
+        #expect(event.connectorScopeRequired == nil)
+    }
+
+    /// The router reads one flat struct, so a command has to put its fields at the top level
+    /// under the names in `readCommands`.
+    @Test(arguments: [
+        (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
+        (Command.interrupt(), #"{"type":"interrupt"}"#),
+        (Command.interrupt(requestID: "m1"), #"{"request_id":"m1","type":"interrupt"}"#),
+        (Command.close, #"{"type":"close"}"#),
+        (
+            Command.toolResult(id: "c1", output: "20 degrees", error: nil),
+            #"{"error":"","output":"20 degrees","tool_call_id":"c1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolResult(id: "c1", output: nil, error: "no such order"),
+            #"{"error":"no such order","output":"","tool_call_id":"c1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolResult(id: "c1", output: "ok", error: nil, requestID: "m1", turnID: "t1"),
+            #"{"error":"","output":"ok","request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolResult(
+                id: "c1", output: "the kitchen", error: nil,
+                images: [ImageSource(url: "data:image/png;base64,iVBORw0KGgo=", detail: .low)]),
+            #"{"error":"","output":[{"text":"the kitchen","type":"text"},{"image_url":{"detail":"low","url":"data:image\/png;base64,iVBORw0KGgo="},"type":"image_url"}],"tool_call_id":"c1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolResult(
+                id: "c1", output: nil, error: nil, images: [ImageSource(url: "https://example.com/a.png")]),
+            #"{"error":"","output":[{"image_url":{"url":"https:\/\/example.com\/a.png"},"type":"image_url"}],"tool_call_id":"c1","type":"tool_result"}"#
+        ),
+        (
+            Command.toolApproval(id: "c1", allowed: true, requestID: "m1", turnID: "t1"),
+            #"{"allowed":true,"request_id":"m1","tool_call_id":"c1","turn_id":"t1","type":"tool_approval"}"#
+        ),
+        (
+            Command.toolApproval(id: "c1", allowed: false, summary: "Kept the card"),
+            #"{"allowed":false,"summary":"Kept the card","tool_call_id":"c1","type":"tool_approval"}"#
+        ),
+    ])
+    func aCommandEncodesToWhatTheRouterReads(command: Command, expected: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+
+        #expect(String(decoding: try encoder.encode(command), as: UTF8.self) == expected)
+    }
+
+    @Test func aToolSchemaSaysWhichArgumentsAreRequired() throws {
+        let schema = RawJSON.strings(
+            ["order_id": "the order number"], required: ["order_id"])
+
+        #expect(schema["type"]?.stringValue == "object")
+        #expect(schema["required"]?.stringArrayValue == ["order_id"])
+        #expect(schema["properties"]?["order_id"]?["description"]?.stringValue == "the order number")
+    }
+}
+
+@Suite struct BackendTests {
+    private let backend = Backend(
+        url: URL(string: "http://localhost:8080")!, customerID: "acme")
+
+    @Test func everyRequestSaysItComesFromADevice() async throws {
+        // Without this the router treats a caller with no proxy in front of it as a backend,
+        // which would hand a phone the paths that rewrite an agent.
+        let headers = try await backend.headers()
+        #expect(headers["Stream-Auth-Type"] == "jwt")
+        #expect(headers["X-Customer-Id"] == "acme")
+    }
+
+    @Test func anAPIKeyReachesStreamsHostedRouter() {
+        #expect(Backend(apiKey: "key").url.absoluteString == "https://accelerate-us-east4.gcp.stream-io-api.com")
+    }
+
+    @Test func aRegionIsTheHostedRouterThere() throws {
+        #expect(try Backend.regionURL("us-east4").absoluteString == "https://accelerate-us-east4.gcp.stream-io-api.com")
+        #expect(
+            try Backend.regionURL("europe-west4").absoluteString
+                == "https://accelerate-europe-west4.gcp.stream-io-api.com")
+    }
+
+    @Test(arguments: ["", "US-EAST4", "us-east4.evil.com/x", "us-east4\n", "us_east4", "useast4", "us-east"])
+    func anythingButARegionNameIsRefused(_ name: String) {
+        #expect(throws: AgentsError.self) { try Backend.regionURL(name) }
+    }
+
+    @Test func anAPIKeyWithNoUserSendsNothing() async {
+        await #expect(throws: AgentsError.self) { try await Backend(apiKey: "key").headers() }
+    }
+
+    @Test func theUsersTokenIsSentAsTheirs() async throws {
+        let backend = Backend(apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "t1")
+
+        let headers = try await backend.headers()
+        #expect(headers["Authorization"] == "Bearer t1")
+        #expect(headers["Stream-Auth-Type"] == "jwt")
+        #expect(headers["X-Customer-Id"] == nil)
+    }
+
+    @Test func aTokenIsAskedForOnceUntilItExpires() async throws {
+        let backend = Backend(apiKey: "key")
+        let minted = Minted()
+        backend.setUser(User(id: "jlahey")) { "t\(await minted.next())" }
+
+        async let first = backend.headers()
+        async let second = backend.headers()
+        #expect(try await [first["Authorization"], second["Authorization"]] == ["Bearer t1", "Bearer t1"])
+
+        #expect(backend.expireToken())
+        #expect(try await backend.headers()["Authorization"] == "Bearer t2")
+    }
+
+    @Test func aRejectedTokenIsReplacedAndTheRequestSentAgain() async throws {
+        let backend = Backend(apiKey: "key", url: URL(string: "https://router.example.com")!)
+        let minted = Minted()
+        backend.setUser(User(id: "jlahey")) { "t\(await minted.next())" }
+        let router = ExpiringRouter()
+
+        let page = try await backend.client(transport: router).querySessions(sessionQueryPayload: .init())
+
+        #expect(page.items.isEmpty)
+        let sent = await router.requests
+        #expect(sent.map { $0.headers["Authorization"] } == ["Bearer t1", "Bearer t2"])
+        #expect(sent.allSatisfy { $0.queryParams.contains(URLQueryItem(name: "api_key", value: "key")) })
+    }
+
+    @Test func aSocketURLSwitchesSchemeAndCarriesTheCustomer() {
+        let url = backend.socketURL(
+            path: "/v1/agents/sessions/s1/events", query: ["decisions": "false"])
+
+        #expect(url.absoluteString == "ws://localhost:8080/v1/agents/sessions/s1/events?customer_id=acme&decisions=false")
+    }
+
+    @Test func aSocketURLCarriesTheKeyButNeverTheToken() {
+        let backend = Backend(apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "secret-token")
+
+        let url = backend.socketURL(path: "/v1/agents/sessions/s1/events")
+
+        #expect(url.absoluteString == "wss://accelerate-us-east4.gcp.stream-io-api.com/v1/agents/sessions/s1/events?api_key=key")
+    }
+
+    @Test func aKeyBesideACustomerIsStreamsAlone() async throws {
+        let backend = Backend(url: URL(string: "http://localhost:8080")!, customerID: "acme", apiKey: "key")
+        backend.setUser(User(id: "jlahey"), token: "t1")
+
+        let headers = try await backend.headers()
+        #expect(headers["X-Customer-Id"] == "acme")
+        #expect(headers["X-Stream-User-Id"] == "jlahey")
+        #expect(headers["Authorization"] == nil)
+        #expect(backend.socketURL(path: "/v1/agents/sessions/s1/events").query == "customer_id=acme")
+        #expect(try await backend.streamCredentials() == StreamCredentials(apiKey: "key", user: User(id: "jlahey"), token: "t1"))
+    }
+
+    @Test func aSecureRouterGetsASecureSocket() {
+        let secure = Backend(url: URL(string: "https://router.example.com")!, customerID: "acme")
+
+        #expect(secure.socketURL(path: "/v1/agents/sessions/s1/events").scheme == "wss")
+    }
+
+    /// Go writes as many fractional digits as the value needs, and none when it needs none,
+    /// so both of these come off the same endpoint on consecutive calls.
+    @Test(arguments: [
+        ("2026-09-02T18:46:50.89279Z", 1_788_374_810.89279),
+        ("2026-09-02T18:46:50.123456789Z", 1_788_374_810.123456),
+        ("2026-09-02T18:46:50Z", 1_788_374_810),
+        ("2026-09-02T12:46:50-06:00", 1_788_374_810),
+        ("2026-09-02T12:46:50.5-06:00", 1_788_374_810.5),
+    ])
+    func aTimestampTheRouterWritesIsRead(text: String, seconds: Double) throws {
+        // To the millisecond, which is what the format style keeps.
+        #expect(abs(try RouterDates().decode(text).timeIntervalSince1970 - seconds) < 0.001)
+    }
+
+    @Test func somethingThatIsNotATimestampIsRefused() {
+        #expect(throws: AgentsError.self) { try RouterDates().decode("last Tuesday") }
+    }
+
+    @Test func aRecordedTurnKeepsWhatWasAskedAndHowItEnded() {
+        let response = Response(
+            .init(
+                createdAt: Date(timeIntervalSince1970: 0), id: "r1", said: "What are your hours?",
+                sessionId: "s1", status: .cancelled))
+
+        #expect(response.id == "r1")
+        #expect(response.said == "What are your hours?")
+        #expect(response.status == .cancelled)
+        #expect(response.error == "")
+        #expect(response.finishedAt == nil)
+    }
+
+    @Test func aSessionSaysHowTheUserTookPartAndWhereItIsKept() {
+        let session = Session(
+            .init(
+                agentId: "a1", callId: "", callType: "default", conversationId: "messaging:a1",
+                createdAt: Date(timeIntervalSince1970: 0), id: "s1", modality: .text,
+                projectId: "health", state: .live, userId: "jlahey"))
+
+        #expect(session.modality == .text)
+        #expect(session.conversationID == "messaging:a1")
+        #expect(session.projectID == "health")
+    }
+
+    @Test func a403IsRecognisedAsAServerSideOnlyPath() {
+        #expect(AgentsError.http(HTTPFailure(status: 403, message: "server-side only")).isServerSideOnly)
+        #expect(!AgentsError.http(HTTPFailure(status: 404, message: "no such session")).isServerSideOnly)
+    }
+}
+
+/// Counts the tokens a provider hands out, across the actor boundary it is called on.
+private actor Minted {
+    private var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+}
+
+/// A router that refuses the first token it sees, and answers with no sessions after that.
+private actor ExpiringRouter: DefaultAPITransport {
+    private(set) var requests: [Request] = []
+
+    func execute(request: Request) async throws -> (Data, URLResponse) {
+        requests.append(request)
+        let refused = requests.count == 1
+        let body =
+            refused
+            ? #"{"error":{"message":"token expired","type":"authentication","code":"unauthenticated","doc_url":"https://getstream.io/agents/docs/api/errors/#unauthenticated"}}"#
+            : #"{"items":[],"has_more":false}"#
+        let response = HTTPURLResponse(
+            url: request.url, statusCode: refused ? 401 : 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"])!
+        return (Data(body.utf8), response)
+    }
+}

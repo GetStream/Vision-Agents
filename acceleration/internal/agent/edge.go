@@ -1,0 +1,141 @@
+package agent
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+)
+
+// InboundAudio is a chunk of one participant's speech, arriving from the edge.
+type InboundAudio struct {
+	Participant stt.Participant
+	// Audio must be 16 kHz mono, which is what every speech-to-text provider accepts.
+	// Whatever the transport carried is the edge's problem to convert.
+	Audio audio.PcmData
+}
+
+// ErrCallLeft is what an edge's PublishAudio returns once the call is over. The caller hanging
+// up mid-reply ends the reply, which is no failure of the agent's.
+var ErrCallLeft = errors.New("the call has been left")
+
+// ErrNoVideo is an edge's Join that the call refused because the customer's Stream account has
+// Video off, or the Stream server their app is on runs none. Every call in that app is refused
+// the same way, which is the app's setup and no failure of the router's.
+var ErrNoVideo = errors.New("agent: the call's Stream app has no video")
+
+// Edge is where the conversation happens. It is deliberately four methods wide, so the
+// agent's flow can be exercised in-process against a loopback rather than only against a
+// real call.
+//
+// Everything transport-specific -- credentials, codecs, tracks, subscriptions -- lives
+// behind this, which is why the agent knows nothing about WebRTC.
+type Edge interface {
+	Join(ctx context.Context) error
+	// Audio carries what the participants said. The channel closes when the edge leaves.
+	Audio() <-chan InboundAudio
+	// PublishAudio sends a chunk of the agent's speech to the participants. It is called
+	// on the text-to-speech provider's goroutine as audio arrives, so it must not block for
+	// longer than the chunk it was given represents.
+	PublishAudio(pcm audio.PcmData) error
+	Leave() error
+}
+
+// PlayoutMarks is told when the speech an edge was handed reaches its outgoing track.
+//
+// Publishing says neither. It returns once a chunk is queued, and a chunk longer than the
+// queue returns only as the track drains all but the end of it, so the return can come long
+// after the participants could first have heard the reply. Each call carries the time it
+// happened, and none may block: they run on the publishing goroutine and on the track's own.
+type PlayoutMarks interface {
+	// FirstFrameQueued is when the first frame of the reply was queued for the track.
+	FirstFrameQueued(at time.Time)
+	// FirstAudiblePulled is when the track took the first frame of the reply that was not
+	// silence. It is not called for speech dropped before the track got to it.
+	FirstAudiblePulled(at time.Time)
+}
+
+// MarkedPlayout is an edge that reports PlayoutMarks for the speech it is given. Marks may
+// be nil, which makes this PublishAudio.
+//
+// Separate from Edge rather than a change to it, because only an edge with a track of its
+// own has a moment the speech is taken at.
+type MarkedPlayout interface {
+	PublishAudioMarked(pcm audio.PcmData, marks PlayoutMarks) error
+}
+
+// Attendance is somebody arriving in or leaving the call.
+type Attendance struct {
+	Participant stt.Participant
+	// Joined is false when they left.
+	Joined bool
+}
+
+// Playout is an edge that holds a queue of speech on its way to the participants.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that paces
+// audio out has a queue at all. It matters at both ends of a reply. At the end of one, a
+// voice provider streams an utterance far faster than it is spoken, so the provider saying it
+// has finished means it sent the last chunk, not that the caller heard it, and leaving on
+// that word cuts the agent off mid-word. When the caller takes the floor mid-reply,
+// cancelling the provider only stops what it has not synthesised yet, and what it already
+// sent goes on being heard until the queue is thrown away.
+//
+// An edge that cannot say leaves nothing to wait for and nothing to drop, which is what an
+// in-process loopback is.
+type Playout interface {
+	// SpeechPending reports whether audio already published is still waiting to go out.
+	SpeechPending() bool
+	// DropSpeech throws away audio published but not heard yet, so an interruption stops the
+	// agent within a frame rather than at the end of what is already queued.
+	DropSpeech()
+}
+
+// PlayoutStats is what an edge's outgoing queue has done with the agent's speech since the
+// edge was made. Queued frames went in, Sent ones were taken by the track, and Dropped ones were
+// thrown away before it got to them, on an interruption or on leaving.
+type PlayoutStats struct {
+	Queued, Sent, Dropped uint64
+	// Waiting is the speech in the queue now.
+	Waiting time.Duration
+	// Peak is the most speech the queue held at once since the stats were last read.
+	Peak time.Duration
+}
+
+// PlayoutCounter is an edge that counts what its outgoing queue does.
+//
+// Separate from Playout, because only a queue can be counted: an edge without one, which is
+// what an in-process loopback is, reports nothing rather than zeros that read as an empty
+// queue. Reading the stats starts the next peak, so they have one reader.
+type PlayoutCounter interface {
+	PlayoutStats() PlayoutStats
+}
+
+// Roster is an edge that can say who else is in the call.
+//
+// Separate from Edge rather than a fifth method on it, because it is only answerable by a
+// transport with other people in it. It matters for a call the agent did not start: an agent
+// answering a phone has to know the caller is there before it says hello, and until somebody
+// speaks, audio says nothing about who is listening.
+type Roster interface {
+	// Attendance reports who comes and goes, starting with whoever was already there when
+	// the edge joined. The channel closes when the edge leaves. Those already in the call
+	// must be queued on it before Join returns.
+	Attendance() <-chan Attendance
+}
+
+// SFU is the Stream SFU a call runs on, by the name of its edge and the host of its URL.
+type SFU struct {
+	Edge string
+	Host string
+}
+
+// SFUReporter is an edge that can say which SFU it is on.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that
+// connects to an SFU has one. An edge without it leaves the SFU unnamed.
+type SFUReporter interface {
+	SFU() SFU
+}

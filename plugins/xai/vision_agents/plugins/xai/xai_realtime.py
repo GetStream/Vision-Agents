@@ -258,9 +258,8 @@ class XAIRealtime(realtime.Realtime):
         """Send session configuration to xAI.
 
         Sends the OpenAI-realtime-compatible session.update payload that xAI
-        expects. We mirror the shape used by the livekit xAI plugin (which
-        extends `openai.realtime.RealtimeModel`) to stay aligned with what the
-        server is known to accept.
+        expects, in the shape of OpenAI's realtime session so it stays aligned
+        with what the server is known to accept.
         """
         config: dict[str, Any] = {
             "voice": self.voice,

@@ -1,0 +1,1358 @@
+package core_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+)
+
+// requestTimeout bounds every request a test sends, so a broken transport fails the test
+// instead of hanging it. Ten times what a loopback round trip takes; a choice.
+const requestTimeout = 5 * time.Second
+
+// closedWithin is how long a test waits for the server to see a connection the client
+// closed: the close travels over loopback, so it is milliseconds. A choice.
+const closedWithin = 2 * time.Second
+
+// sha256Header is where the signing scheme puts the digest of the body it signed.
+const sha256Header = "X-Content-Sha256"
+
+// body is what every POST carries.
+const body = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`
+
+// TransportsSuite runs Transports against a TLS server on loopback that plays the provider,
+// with a scheme that signs the final request and a resolver that keeps one connection in
+// memory.
+type TransportsSuite struct {
+	suite.Suite
+	resolver *memoryResolver
+	scheme   *signingScheme
+	provider *provider
+	ref      core.ConnectionRef
+}
+
+func TestTransportsSuite(t *testing.T) {
+	suite.Run(t, new(TransportsSuite))
+}
+
+func (s *TransportsSuite) SetupTest() {
+	s.resolver = &memoryResolver{token: "token-1", revision: 1, connected: true}
+	s.scheme = &signingScheme{}
+	s.provider = newProvider(s.T())
+	s.ref = core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"}
+}
+
+// TestAPrivateDestinationIsRefusedAfterTheSchemeSignedTheFinalRequest is the router's own
+// client, egress.NewClient: the scheme signs the request as it will leave, Content-Length
+// and body digest included, and the egress transport under it refuses to dial loopback, so
+// the provider receives nothing.
+func (s *TransportsSuite) TestAPrivateDestinationIsRefusedAfterTheSchemeSignedTheFinalRequest() {
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: requestTimeout})
+	s.Require().NoError(err)
+
+	_, err = s.post(transports.Client(s.ref, s.scheme), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "non-public address")
+	signed := s.scheme.signed()
+	s.Require().Len(signed, 1, "the scheme saw the request before egress refused it")
+	s.Equal(int64(len(body)), signed[0].contentLength)
+	s.Equal(digest([]byte(body)), signed[0].digest)
+	s.Empty(s.provider.received(), "nothing left the router")
+}
+
+func (s *TransportsSuite) TestTheProviderReceivesTheBodyTheSchemeSigned() {
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	received := s.provider.received()
+	s.Require().Len(received, 1)
+	s.True(received[0].signatureMatches, "the digest the scheme signed is the digest of the bytes on the wire")
+	s.Equal(int64(len(body)), received[0].contentLength)
+}
+
+func (s *TransportsSuite) TestEachRequestCarriesTheCredentialTheResolverHandsOutThen() {
+	client := s.client()
+	_, err := s.post(client, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.resolver.renew("token-2")
+	s.provider.accept("token-2")
+
+	_, err = s.post(client, s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+}
+
+// TestTheRequestsDeadlineIsWhatTheCredentialMustOutlive: the resolver renews a credential
+// that expires before the call's deadline, as the real one does (RetrieveOptions.ValidUntil).
+// The deadline is the request context's, or, without one, the client's Timeout from now.
+func (s *TransportsSuite) TestTheRequestsDeadlineIsWhatTheCredentialMustOutlive() {
+	s.resolver.expires = time.Now().Add(requestTimeout / 2)
+	s.provider.accept("renewed")
+	client := s.client()
+
+	short, cancel := context.WithTimeout(context.Background(), requestTimeout/5)
+	defer cancel()
+	_, err := s.postWith(short, client, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	_, err = s.post(client, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"token-1", "renewed"}, s.provider.tokens())
+}
+
+func (s *TransportsSuite) TestAResolverRefusalSendsNothing() {
+	s.resolver.disconnect()
+
+	_, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().ErrorIs(err, errNotConnected)
+	s.Empty(s.provider.received())
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsARequestThatLeftAndItsStatus() {
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.True(exchange.Sent())
+	s.Equal(http.StatusOK, exchange.Status())
+	s.NoError(exchange.CredentialError())
+	s.False(exchange.TimedOut())
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsTheResolversRefusalAndNothingSent() {
+	s.resolver.disconnect()
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.False(exchange.Sent())
+	s.ErrorIs(exchange.CredentialError(), errNotConnected)
+}
+
+// TestAnExchangeRedactsTheLastRequestsPathAndCredential: what Redact takes out of a text, such
+// as the MCP client's error for a JSON-RPC error that echoes them (AI-1244).
+func (s *TransportsSuite) TestAnExchangeRedactsTheLastRequestsPathAndCredential() {
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal("invalid token [redacted] for [redacted]", exchange.Redact("invalid token token-1 for /mcp"))
+	// AGENTS.md «Secrets never print»: what Redact takes out is in no formatting of the Exchange.
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		s.NotContains(fmt.Sprintf(verb, exchange), "token-1", verb)
+	}
+}
+
+// TestAnExchangeThatSentNothingRedactsNothing: with no request, Redact has nothing to take out,
+// and the Resolver's refusal is kept as it is.
+func (s *TransportsSuite) TestAnExchangeThatSentNothingRedactsNothing() {
+	s.resolver.disconnect()
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.Equal(err.Error(), exchange.Redact(err.Error()))
+}
+
+func (s *TransportsSuite) TestAnExchangeRecordsTheProvidersRefusal() {
+	s.provider.refuse("token-1")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, exchange.Status())
+}
+
+// TestAnExchangeRecordsTheWaitA429AskedFor: the scheme reads the 429's Retry-After, and the
+// caller still reads the whole body.
+func (s *TransportsSuite) TestAnExchangeRecordsTheWaitA429AskedFor() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusTooManyRequests, exchange.Status())
+	s.Equal(30*time.Second, exchange.RetryAfter())
+	s.Equal("slow down", s.read(response))
+}
+
+// TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswered: the wait is the last answer's.
+func (s *TransportsSuite) TestAnExchangeForgetsTheWaitOnceAnotherRequestIsAnswered() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.provider.limit("")
+
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Zero(exchange.RetryAfter())
+}
+
+// Synthetic values the provider is sent or answers with, which an Exchange must not keep.
+const (
+	setCookieSecret = "set-cookie-secret-1243"
+	queryToken      = "query-token-1243"
+)
+
+// TestAnExchangeRecordsTheHostTheStartOfA403sBodyAndItsChallenge: the host without the path
+// or query, the body and WWW-Authenticate as the provider wrote them, and nothing of the
+// Authorization the scheme set or the cookie the provider set (AI-1243).
+func (s *TransportsSuite) TestAnExchangeRecordsTheHostTheStartOfA403sBodyAndItsChallenge() {
+	refusal := `{"error":"forbidden","message":"this app may not read contacts"}`
+	s.provider.answer(http.StatusForbidden, http.Header{"Content-Type": {"application/json"},
+		"Www-Authenticate": {`Bearer realm="crm"`}, "Set-Cookie": {"session=" + setCookieSecret}}, refusal)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp/v1?access_token="+queryToken)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, exchange.Status())
+	s.Equal(strings.TrimPrefix(s.provider.URL, "https://"), exchange.Host())
+	s.Equal(refusal, exchange.ErrorBody())
+	s.Equal(`Bearer realm="crm"`, exchange.WWWAuthenticate())
+	s.Empty(exchange.RetryAfterHeader())
+	s.Equal(refusal, s.read(response), "the caller reads the whole body")
+	kept := strings.Join([]string{exchange.Host(), exchange.ErrorBody(), exchange.WWWAuthenticate(),
+		exchange.RetryAfterHeader()}, "\n")
+	for _, secret := range []string{"token-1", "Bearer token", setCookieSecret, queryToken, "/mcp"} {
+		s.NotContains(kept, secret)
+	}
+}
+
+// TestAnExchangeKeepsTheFirstKiBOfA5xxsBodyAndTheCallerReadsItAll: the body is 3 KiB.
+func (s *TransportsSuite) TestAnExchangeKeepsTheFirstKiBOfA5xxsBodyAndTheCallerReadsItAll() {
+	page := "<html>" + strings.Repeat("bad gateway ", 256) + "</html>"
+	s.provider.answer(http.StatusBadGateway, http.Header{"Retry-After": {"120"}}, page)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(page, s.read(response))
+	s.Equal(page[:1024], exchange.ErrorBody())
+	s.Equal("120", exchange.RetryAfterHeader())
+	s.Zero(exchange.RetryAfter(), "only a 429's Retry-After holds calls")
+	s.Empty(exchange.WWWAuthenticate())
+}
+
+// TestAnExchangeKeepsA429sRetryAfterAsWritten: beside the wait the scheme read from it.
+func (s *TransportsSuite) TestAnExchangeKeepsA429sRetryAfterAsWritten() {
+	s.provider.limit("30")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal("30", exchange.RetryAfterHeader())
+	s.Equal("slow down", exchange.ErrorBody())
+}
+
+// TestAnExchangeKeepsNothingOfA2xx: a 2xx's body is the call's answer, never kept.
+func (s *TransportsSuite) TestAnExchangeKeepsNothingOfA2xx() {
+	s.provider.answer(http.StatusOK, http.Header{"Retry-After": {"5"}, "Www-Authenticate": {"Bearer"}}, "ok")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Empty(exchange.ErrorBody())
+	s.Empty(exchange.WWWAuthenticate())
+	s.Empty(exchange.RetryAfterHeader())
+}
+
+// TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswered: as the status, it is the last
+// answer's, with its challenge and Retry-After.
+func (s *TransportsSuite) TestAnExchangeForgetsTheBodyOnceAnotherRequestIsAnswered() {
+	s.provider.answer(http.StatusServiceUnavailable, http.Header{"Retry-After": {"120"},
+		"Www-Authenticate": {`Bearer realm="crm"`}}, "down")
+	ctx, exchange := core.WithExchange(context.Background())
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+	s.Require().Equal("down", exchange.ErrorBody())
+	s.Require().Equal(`Bearer realm="crm"`, exchange.WWWAuthenticate())
+	s.Require().Equal("120", exchange.RetryAfterHeader())
+	s.provider.respondWith(nil)
+
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, exchange.Status())
+	s.Empty(exchange.ErrorBody())
+	s.Empty(exchange.WWWAuthenticate())
+	s.Empty(exchange.RetryAfterHeader())
+}
+
+// TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead: the provider promises 3000 bytes and
+// sends 500. The caller sees the failure the Exchange's read met, not a clean end.
+func (s *TransportsSuite) TestABodyCutOffBeforeItsKiBStillFailsTheCallersRead() {
+	s.provider.respondWith(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "3000")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", 500))
+	})
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	read, err := io.ReadAll(response.Body)
+	s.ErrorIs(err, io.ErrUnexpectedEOF)
+	s.Equal(strings.Repeat("x", 500), string(read))
+	s.Equal(strings.Repeat("x", 500), exchange.ErrorBody())
+}
+
+// TestAnAnswerIsNotReadEarlyWithoutAnExchange: a request whose context carries none gets its
+// 5xx before the body has come, as it did before the Exchange kept bodies.
+func (s *TransportsSuite) TestAnAnswerIsNotReadEarlyWithoutAnExchange() {
+	release := make(chan struct{})
+	defer close(release)
+	s.provider.respondWith(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.(http.Flusher).Flush()
+		<-release
+	})
+	request, err := http.NewRequest(http.MethodPost, s.provider.URL+"/mcp", strings.NewReader(body))
+	s.Require().NoError(err)
+	statuses := make(chan int, 1)
+	go func() {
+		response, err := s.client().Do(request)
+		if err != nil {
+			statuses <- 0
+			return
+		}
+		_ = response.Body.Close()
+		statuses <- response.StatusCode
+	}()
+
+	select {
+	case status := <-statuses:
+		s.Equal(http.StatusInternalServerError, status)
+	case <-time.After(closedWithin):
+		s.Fail("the answer waited for its body")
+	}
+}
+
+// stallFor is how long a provider in these tests holds a body it has not finished: well past
+// what any wait of the transport's may last, so a test that waits for it fails. A choice.
+const stallFor = 3 * time.Second
+
+// heldWithin is how long a test lets an answer whose body stalls take to reach the caller, or
+// a Close of it to return: the transport reads nothing before the caller does, and a Close
+// waits closeReadWait (50 ms) and net/http's own 50 ms, so a tenth of stallFor. A choice.
+const heldWithin = stallFor / 10
+
+// stall is a provider answer with status that sends sent, then holds the rest of its body
+// (holdUntilDone).
+func stall(status int, sent string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, sent)
+		w.(http.Flusher).Flush()
+		holdUntilDone(r)
+	}
+}
+
+// holdUntilDone holds a handler until r's client is gone or stallFor passes.
+func holdUntilDone(r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(stallFor):
+	}
+}
+
+// TestA4xxOr5xxWhoseBodyStallsReachesTheCallerAtOnce: under an Exchange, as the connection
+// proxy sends (api/connection_proxy.go), a 404, 500 or 502 that sends part of its body and
+// stalls reaches the caller with its headers, and its Close waits only a moment for the rest
+// of the KiB, as on 11102295, where Do returned at once (rprobe-proxy.txt in the AI-1243 ledger).
+// The Exchange keeps what came.
+func (s *TransportsSuite) TestA4xxOr5xxWhoseBodyStallsReachesTheCallerAtOnce() {
+	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError, http.StatusBadGateway} {
+		s.Run(http.StatusText(status), func() {
+			s.provider.respondWith(stall(status, "partial"))
+			ctx, exchange := core.WithExchange(context.Background())
+
+			started := time.Now()
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+			s.Require().NoError(err)
+			s.Less(time.Since(started), heldWithin, "the answer waited for its body")
+			s.Equal(status, response.StatusCode)
+			closing := time.Now()
+			s.Require().NoError(response.Body.Close())
+			s.Less(time.Since(closing), heldWithin, "Close waited for the body")
+			s.Equal("partial", exchange.ErrorBody())
+		})
+	}
+}
+
+// TestA5xxClosedUnreadKeepsTheStartOfItsBody: the MCP client closes a 500's, 502's, 503's or
+// 504's body unread (go-sdk v1.8.0 mcp/streamable.go checkResponse); the KiB that came at once
+// is kept all the same.
+func (s *TransportsSuite) TestA5xxClosedUnreadKeepsTheStartOfItsBody() {
+	page := "<html>" + strings.Repeat("bad gateway ", 256) + "</html>"
+	s.provider.answer(http.StatusBadGateway, nil, page)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Equal(page[:1024], exchange.ErrorBody())
+}
+
+// closedFast is how long a Close of a body that has fully arrived may take: it reads what is
+// there and returns, where waiting out closeReadWait (50 ms, not exported) would not. Half of
+// that, so a timer that fires fails it, and far above what a loopback read takes. A choice.
+const closedFast = 25 * time.Millisecond
+
+// TestAFullyArrivedBodyClosedUnreadClosesAtOnce: a 502 whose page came whole, whether it is
+// under or over a KiB, is read by Close from what is already there, so Close does not wait
+// closeReadWait for a body that has nothing more to give. The body is recorded all the same.
+func (s *TransportsSuite) TestAFullyArrivedBodyClosedUnreadClosesAtOnce() {
+	long := "<html>" + strings.Repeat("bad gateway ", 256) + "</html>"
+	cases := []struct{ name, page, kept string }{
+		{"under a KiB", "<html>bad gateway</html>", "<html>bad gateway</html>"},
+		{"over a KiB", long, long[:1024]},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.provider.answer(http.StatusBadGateway, nil, c.page)
+			ctx, exchange := core.WithExchange(context.Background())
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+			s.Require().NoError(err)
+			// Let the page reach the client's connection before Close, as it does when the
+			// caller does other work between the headers and the Close.
+			time.Sleep(20 * time.Millisecond)
+
+			started := time.Now()
+			s.Require().NoError(response.Body.Close())
+
+			s.Less(time.Since(started), closedFast)
+			s.Equal(c.kept, exchange.ErrorBody())
+		})
+	}
+}
+
+// TestAWholeChunkedBodyEndingInTheStartOfATokenIsKeptUncut: the body ends on "t", the first
+// byte of the token "token-1", and its end comes in a chunk of its own after the text, so
+// the last read returns no bytes, only io.EOF. The body is whole, so nothing of it is cut.
+func (s *TransportsSuite) TestAWholeChunkedBodyEndingInTheStartOfATokenIsKeptUncut() {
+	cases := []struct{ name, url, said string }{
+		{"token", "/mcp", "invalid request, see the docs at"},
+		{"path", "/primary/mcp", "not found: /"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.provider.respondWith(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, c.said)
+				w.(http.Flusher).Flush()
+				// The terminating chunk is sent after the text has been read.
+				time.Sleep(50 * time.Millisecond)
+			})
+			ctx, exchange := core.WithExchange(context.Background())
+
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+c.url)
+
+			s.Require().NoError(err)
+			s.Equal(c.said, s.read(response))
+			s.Equal(c.said, exchange.ErrorBody())
+		})
+	}
+}
+
+// TestAClosedBodyIsNotReadNearTheRequestsDeadline: with 90 ms left, less than twice
+// closeReadWait, Close reads nothing more, so the call still ends before its deadline. The
+// provider sends its body 20 ms after the headers, inside the wait Close would have.
+func (s *TransportsSuite) TestAClosedBodyIsNotReadNearTheRequestsDeadline() {
+	s.provider.respondWith(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.(http.Flusher).Flush()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = io.WriteString(w, "late")
+		w.(http.Flusher).Flush()
+		holdUntilDone(r)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Millisecond)
+	defer cancel()
+	ctx, exchange := core.WithExchange(ctx)
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+	time.Sleep(40 * time.Millisecond)
+	s.Empty(exchange.ErrorBody())
+}
+
+// TestAnExchangeKeepsA400sBody: every status from 400 up is a failure whose body is kept.
+func (s *TransportsSuite) TestAnExchangeKeepsA400sBody() {
+	s.provider.answer(http.StatusBadRequest, nil, "the arguments are wrong")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal("the arguments are wrong", s.read(response))
+	s.Equal("the arguments are wrong", exchange.ErrorBody())
+}
+
+// TestAnExchangeJoinsTheChallengesOfAnAnswer: two WWW-Authenticate headers are one list
+// (RFC 9110 section 5.3).
+func (s *TransportsSuite) TestAnExchangeJoinsTheChallengesOfAnAnswer() {
+	s.provider.answer(http.StatusForbidden, http.Header{"Www-Authenticate": {`Bearer realm="crm"`, `Basic realm="crm"`}}, "")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(`Bearer realm="crm", Basic realm="crm"`, exchange.WWWAuthenticate())
+}
+
+// TestAnExchangeKeepsNoPathQueryOrTokenTheProviderEchoes: Express's default 404, Spring
+// Boot's error JSON (its DefaultErrorAttributes: timestamp, status, error, path), and a
+// provider that repeats the token it refused or the URL it was sent.
+func (s *TransportsSuite) TestAnExchangeKeepsNoPathQueryOrTokenTheProviderEchoes() {
+	cases := []struct{ name, url, said, kept string }{
+		{"express 404", "/primary/mcp", "<pre>Cannot POST /primary/mcp</pre>", "<pre>Cannot POST [redacted]</pre>"},
+		{"spring error json", "/primary/mcp",
+			`{"timestamp":"2026-10-14T20:34:46.485+00:00","status":404,"error":"Not Found","path":"/primary/mcp"}`,
+			`{"timestamp":"2026-10-14T20:34:46.485+00:00","status":404,"error":"Not Found","path":"[redacted]"}`},
+		{"echoed token", "/mcp", "invalid token token-1", "invalid token [redacted]"},
+		{"echoed url", "/mcp?access_token=" + queryToken, "no route for POST /mcp?access_token=" + queryToken,
+			"no route for POST [redacted]"},
+		{"echoed query", "/mcp?access_token=" + queryToken, "unknown parameters access_token=" + queryToken,
+			"unknown parameters [redacted]"},
+		{"escaped path", "/a%20b/mcp?x=1", "Cannot POST /a%20b/mcp, that is /a b/mcp",
+			"Cannot POST [redacted], that is [redacted]"},
+		{"root path", "/", "see a/b", "see a/b"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.provider.answer(http.StatusNotFound, nil, c.said)
+			ctx, exchange := core.WithExchange(context.Background())
+
+			response, err := s.postWith(ctx, s.client(), s.provider.URL+c.url)
+
+			s.Require().NoError(err)
+			s.Equal(c.said, s.read(response), "the caller reads the body as it came")
+			s.Equal(c.kept, exchange.ErrorBody())
+		})
+	}
+}
+
+// TestAnExchangeKeepsNoStartOfATokenItsKiBEndsInside: the KiB ends on the first 4 bytes of
+// the token the provider repeats, which are cut off with it.
+func (s *TransportsSuite) TestAnExchangeKeepsNoStartOfATokenItsKiBEndsInside() {
+	before := strings.Repeat("a", 1020)
+	s.provider.answer(http.StatusBadRequest, nil, before+"token-1 is not valid")
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.read(response)
+	s.Equal(before, exchange.ErrorBody())
+}
+
+func (s *TransportsSuite) TestACorrelationIsWhatTheContextCarries() {
+	ctx := core.WithCorrelation(context.Background(), core.Correlation{RequestID: "request", SessionID: "session"})
+
+	s.Equal(core.Correlation{RequestID: "request", SessionID: "session"}, core.CorrelationOf(ctx))
+	s.Zero(core.CorrelationOf(context.Background()))
+}
+
+// TestARefusedCredentialIsRenewedAndTheRequestSentOnceMore: the provider ended token-1
+// before the expiry the router knows (its clock runs ahead, or it revoked the access token
+// alone). The grant still works, so the resolver renews past token-1 and the request goes
+// again, with its body, and the connection stays connected.
+func (s *TransportsSuite) TestARefusedCredentialIsRenewedAndTheRequestSentOnceMore() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.refuse("token-1")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.True(s.resolver.isConnected())
+	received := s.provider.received()
+	s.Require().Len(received, 2)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+	s.Equal(body, received[1].body)
+	s.True(received[1].signatureMatches)
+}
+
+// TestARefusedCredentialNothingRenewsNeedsAReconnect: a static key, or a token without a
+// refresh token, comes back the same, so only a new grant helps.
+func (s *TransportsSuite) TestARefusedCredentialNothingRenewsNeedsAReconnect() {
+	s.provider.refuse("token-1")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Equal("refused", s.read(response), "the caller reads the provider's whole answer")
+	s.False(s.resolver.isConnected(), "the resolver was told which credential the provider refused")
+	s.Len(s.provider.received(), 1)
+}
+
+// TestARefusedRenewalIsTheAnswer: the refresh itself is refused (invalid_grant at the token
+// endpoint), which the resolver acts on; the provider's 401 is the answer.
+func (s *TransportsSuite) TestARefusedRenewalIsTheAnswer() {
+	s.resolver.refreshRefused = true
+	s.provider.refuse("token-1")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Equal("refused", s.read(response))
+	s.False(s.resolver.isConnected())
+	s.Len(s.provider.received(), 1)
+}
+
+// TestARefusalOfACredentialAnotherRouterRenewedIsRetriedOnceWithTheRenewedOne: the request
+// left with token-1 while another router renewed it to token-2, so the provider refuses
+// token-1. The resolver hands out token-2 without renewing again, and the request goes again
+// with its body.
+func (s *TransportsSuite) TestARefusalOfACredentialAnotherRouterRenewedIsRetriedOnceWithTheRenewedOne() {
+	s.provider.accept("token-2")
+	s.provider.onRequest(func() { s.resolver.renew("token-2") })
+	s.provider.refuse("token-1")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.True(s.resolver.isConnected())
+	received := s.provider.received()
+	s.Require().Len(received, 2)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+	s.Equal(body, received[1].body)
+	s.True(received[1].signatureMatches)
+}
+
+// TestARefusedRequestIsSentAgainOnlyOnce: every request finds its token renewed elsewhere and
+// refused, so a retry could always find a newer one. It goes twice.
+func (s *TransportsSuite) TestARefusedRequestIsSentAgainOnlyOnce() {
+	renewals := 1
+	s.provider.onRequest(func() {
+		renewals++
+		s.resolver.renew("token-" + strconv.Itoa(renewals))
+	})
+	s.provider.refuse("token-1", "token-2", "token-3")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+}
+
+func (s *TransportsSuite) TestARefusalOfTheRenewedCredentialNeedsAReconnect() {
+	s.resolver.refresh = "token-2"
+	s.provider.refuse("token-1", "token-2")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+	s.False(s.resolver.isConnected(), "the provider refused the credential just renewed")
+}
+
+// TestABodyThatCannotBeReadAgainIsNotSentAgain: the credential is still renewed, so the next
+// call carries the renewed one.
+func (s *TransportsSuite) TestABodyThatCannotBeReadAgainIsNotSentAgain() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.refuse("token-1")
+	client := s.client()
+	// A reader http.NewRequest does not know, so the request has no GetBody.
+	request, err := http.NewRequest(http.MethodPost, s.provider.URL+"/mcp", io.MultiReader(strings.NewReader(body)))
+	s.Require().NoError(err)
+
+	response, err := client.Do(request)
+
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.Len(s.provider.received(), 1)
+	next, err := s.post(client, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, next.StatusCode)
+	s.Equal([]string{"token-1", "token-2"}, s.provider.tokens())
+}
+
+func (s *TransportsSuite) TestA401TheSchemeFindsNothingInLeavesTheConnectionAlone() {
+	s.provider.refuseWithoutReason()
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	s.True(s.resolver.isConnected())
+	s.Len(s.provider.received(), 1)
+}
+
+// TestAScopeChallengeIsRecordedAndLeavesTheGrantAlone: a 403 insufficient_scope (RFC 6750
+// section 3.1) is the provider asking for more access, which a renewed token of the same grant
+// does not have. Nothing is sent again, the grant stays connected for what it covers, and the
+// call's Exchange carries the scopes to ask for.
+func (s *TransportsSuite) TestAScopeChallengeIsRecordedAndLeavesTheGrantAlone() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusForbidden, `Bearer error="insufficient_scope", scope="files:read files:write"`)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("challenged", s.read(response), "the caller reads the provider's whole answer")
+	asked, found := exchange.ScopeRequired()
+	s.True(found)
+	s.Equal(core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"files:read", "files:write"}}, asked)
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected(), "the old grant keeps working")
+}
+
+// TestAClaimsChallengeIsRecordedAndLeavesTheGrantAlone: Microsoft's 401 insufficient_claims
+// asks for a consent with those claims, which a refresh does not give.
+func (s *TransportsSuite) TestAClaimsChallengeIsRecordedAndLeavesTheGrantAlone() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusUnauthorized, `Bearer error="insufficient_claims", claims="e30="`)
+	ctx, exchange := core.WithExchange(context.Background())
+
+	response, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusUnauthorized, response.StatusCode)
+	asked, found := exchange.ScopeRequired()
+	s.True(found)
+	s.Equal(core.Outcome{Kind: core.OutcomeScopeRequired, Claims: "{}"}, asked)
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected(), "the old grant keeps working")
+}
+
+// TestARefusalThatAsksForNoAccessRecordsNoScopeChallenge: a 403 with no challenge and an
+// invalid_token 401 are not asks for access.
+func (s *TransportsSuite) TestARefusalThatAsksForNoAccessRecordsNoScopeChallenge() {
+	s.provider.challenge(http.StatusForbidden, "")
+	ctx, exchange := core.WithExchange(context.Background())
+	_, err := s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	_, found := exchange.ScopeRequired()
+	s.False(found)
+	s.True(s.resolver.isConnected())
+
+	s.provider.challenge(0, "")
+	s.provider.refuse("token-1")
+	ctx, exchange = core.WithExchange(context.Background())
+	_, err = s.postWith(ctx, s.client(), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	_, found = exchange.ScopeRequired()
+	s.False(found)
+}
+
+// TestA403ThatRefusesTheCredentialIsTheAnswer: only a 401 refuses the credential (RFC 6750
+// section 3.1). A 403 with error="invalid_token" is answered as is: sent once, never renewed,
+// and the connection stays connected.
+func (s *TransportsSuite) TestA403ThatRefusesTheCredentialIsTheAnswer() {
+	s.resolver.refresh = "token-2"
+	s.provider.accept("token-2")
+	s.provider.challenge(http.StatusForbidden, `Bearer error="invalid_token"`)
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("challenged", s.read(response), "the caller reads the provider's whole answer")
+	s.Equal([]string{"token-1"}, s.provider.tokens(), "sent once, never renewed")
+	s.True(s.resolver.isConnected())
+}
+
+// TestACrossOriginRedirectNeverCarriesTheCredential: the egress client's redirect policy
+// refuses a redirect to another origin, so the second hop never reaches the scheme and the
+// other server never sees the credential.
+func (s *TransportsSuite) TestACrossOriginRedirectNeverCarriesTheCredential() {
+	other := newProvider(s.T())
+	s.provider.redirect(other.URL + "/mcp")
+
+	_, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "redirect to another host refused")
+	s.Empty(other.received())
+	s.Len(s.scheme.signed(), 1)
+}
+
+func (s *TransportsSuite) TestASameOriginRedirectCarriesTheCredential() {
+	s.provider.redirect(s.provider.URL + "/moved")
+
+	response, err := s.post(s.client(), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal([]string{"token-1", "token-1"}, s.provider.tokens())
+}
+
+func (s *TransportsSuite) TestOneConnectionSharesOnePoolAndAnotherHasItsOwn() {
+	transports := s.transports()
+	other := core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"}
+
+	for _, client := range []*http.Client{transports.Client(s.ref, s.scheme), transports.Client(s.ref, s.scheme)} {
+		response, err := s.post(client, s.provider.URL+"/mcp")
+		s.Require().NoError(err)
+		s.read(response)
+	}
+	s.Equal(1, s.provider.opened())
+	response, err := s.post(transports.Client(other, s.scheme), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+
+	s.Equal(2, s.provider.opened())
+}
+
+func (s *TransportsSuite) TestClosingAConnectionClosesItsIdleConnections() {
+	transports := s.transports()
+	response, err := s.post(transports.Client(s.ref, s.scheme), s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+	s.Zero(s.provider.closed())
+
+	transports.Close(s.ref)
+
+	s.Eventually(func() bool { return s.provider.closed() == 1 }, closedWithin, 10*time.Millisecond)
+}
+
+// TestReplacingTheTransportOfOneClientLeavesTheConnectionsOwn: a caller that swaps its
+// copy's Transport bypasses the credential and egress for itself only.
+func (s *TransportsSuite) TestReplacingTheTransportOfOneClientLeavesTheConnectionsOwn() {
+	transports := s.transports()
+	replaced := transports.Client(s.ref, s.scheme)
+	replaced.Transport = http.DefaultTransport
+
+	response, err := s.post(transports.Client(s.ref, s.scheme), s.provider.URL+"/mcp")
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal([]string{"token-1"}, s.provider.tokens())
+}
+
+// TestAClientUnusedForIdleAfterIsDropped: connection-1 is asked for and sent with at t0,
+// connection-3 sent with again at t0+80s. Building a client for connection-2 at t0+95s drops
+// connection-1's, which closes its idle connection, and keeps connection-3's pool.
+func (s *TransportsSuite) TestAClientUnusedForIdleAfterIsDropped() {
+	clock := &clock{now: time.Now()}
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: requestTimeout,
+		NewClient: loopback(s.provider.Client()), Now: clock.Now})
+	s.Require().NoError(err)
+	kept := transports.Client(core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-3"}, s.scheme)
+	for _, client := range []*http.Client{transports.Client(s.ref, s.scheme), kept} {
+		response, err := s.post(client, s.provider.URL+"/mcp")
+		s.Require().NoError(err)
+		s.read(response)
+	}
+	clock.Add(80 * time.Second)
+	response, err := s.post(kept, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+	s.Equal(2, s.provider.opened())
+	clock.Add(15 * time.Second)
+
+	transports.Client(core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-2"}, s.scheme)
+
+	s.Eventually(func() bool { return s.provider.closed() == 1 }, closedWithin, 10*time.Millisecond)
+	response, err = s.post(kept, s.provider.URL+"/mcp")
+	s.Require().NoError(err)
+	s.read(response)
+	s.Equal(2, s.provider.opened(), "connection-3 still has its idle connection")
+}
+
+func (s *TransportsSuite) TestTransportsNeedAResolver() {
+	_, err := core.NewTransports(core.TransportsConfig{})
+
+	s.Error(err)
+}
+
+// transports is Transports whose clients reach s.provider (see loopback).
+func (s *TransportsSuite) transports() *core.Transports {
+	transports, err := core.NewTransports(core.TransportsConfig{Resolver: s.resolver, Timeout: requestTimeout,
+		NewClient: loopback(s.provider.Client())})
+	s.Require().NoError(err)
+	return transports
+}
+
+func (s *TransportsSuite) client() *http.Client {
+	return s.transports().Client(s.ref, s.scheme)
+}
+
+func (s *TransportsSuite) post(client *http.Client, url string) (*http.Response, error) {
+	return s.postWith(context.Background(), client, url)
+}
+
+func (s *TransportsSuite) postWith(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	s.Require().NoError(err)
+	response, err := client.Do(request)
+	if err == nil {
+		s.T().Cleanup(func() { _ = response.Body.Close() })
+	}
+	return response, err
+}
+
+func (s *TransportsSuite) read(response *http.Response) string {
+	raw, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return string(raw)
+}
+
+// loopback is egress.NewClient for a test: the same redirect policy, but the TLS server's
+// own transport instead of egress's, because egress refuses loopback, where httptest
+// listens. Like egress's client, it forwards CloseIdleConnections past the wrap to the
+// transport, which a wrap hides from http.Client.
+func loopback(server *http.Client) core.NewClientFunc {
+	policy := egress.NewClient(0, nil).CheckRedirect
+	return func(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+		transport := server.Transport.(*http.Transport).Clone()
+		var next http.RoundTripper = transport
+		if wrap != nil {
+			next = wrap(transport)
+		}
+		return &http.Client{Timeout: timeout, CheckRedirect: policy,
+			Transport: idleCloser{RoundTripper: next, transport: transport}}
+	}
+}
+
+type idleCloser struct {
+	http.RoundTripper
+	transport *http.Transport
+}
+
+func (c idleCloser) CloseIdleConnections() {
+	c.transport.CloseIdleConnections()
+}
+
+var errNotConnected = errors.New("the connection is not connected")
+
+// memoryResolver is one connection's credential state in memory, with the semantics of
+// core.Resolver: Resolve renews a credential that expires before the call's deadline, and
+// one the provider refused (CredentialRequest.Refused) while it is still the current one;
+// Invalidate moves the connection out of connected only when the refused credential is the
+// current one and had not expired.
+type memoryResolver struct {
+	mu        sync.Mutex
+	token     string
+	revision  int
+	expires   time.Time
+	connected bool
+	// refresh is the token a renewal of a refused credential gets; empty when nothing
+	// renews it, so it comes back the same.
+	refresh string
+	// refreshRefused makes that renewal fail as a refused refresh does: needs_reauthorization.
+	refreshRefused bool
+}
+
+func (r *memoryResolver) Resolve(_ context.Context, _ core.ConnectionRef, req core.CredentialRequest) (core.AccessCredential, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.connected {
+		return core.AccessCredential{}, errNotConnected
+	}
+	if req.Refused != nil && req.Refused.Revision == r.revision {
+		switch {
+		case r.refreshRefused:
+			r.connected = false
+			return core.AccessCredential{}, errNotConnected
+		case r.refresh != "":
+			r.token, r.revision = r.refresh, r.revision+1
+		}
+	}
+	if !r.expires.IsZero() && !req.Deadline.IsZero() && !req.Deadline.Before(r.expires) {
+		r.token, r.revision, r.expires = "renewed", r.revision+1, req.Deadline.Add(time.Hour)
+	}
+	secret, _ := json.Marshal(r.token)
+	credential := core.NewAccessCredential(signingName, r.expires, secret)
+	credential.Revision = r.revision
+	return credential, nil
+}
+
+func (r *memoryResolver) Invalidate(_ context.Context, _ core.ConnectionRef, rejected core.AccessCredential, why core.Outcome) error {
+	if why.Kind != core.OutcomeInvalidGrant && why.Kind != core.OutcomeScopeRequired {
+		return errors.New("only invalid_grant and scope_required invalidate")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !rejected.ExpiresAt.IsZero() && !time.Now().Before(rejected.ExpiresAt) {
+		return nil
+	}
+	if r.revision == rejected.Revision {
+		r.connected = false
+	}
+	return nil
+}
+
+// renew is another router renewing the stored credentials.
+// Revoke ends the grant whatever revision it is at, as a verified provider event does.
+func (r *memoryResolver) Revoke(context.Context, core.ConnectionRef, core.SignalKind, time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.connected = false
+	return nil
+}
+
+func (r *memoryResolver) renew(token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.token, r.revision = token, r.revision+1
+}
+
+func (r *memoryResolver) disconnect() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.connected = false
+}
+
+func (r *memoryResolver) isConnected() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.connected
+}
+
+// clock is the time Transports judges unused clients by, moved by the test.
+type clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *clock) Add(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+const signingName = "signing"
+
+// signingScheme signs each request as a request-signing scheme does (SigV4, for one): a
+// digest of the body it is handed and the token, in headers. It keeps what it signed.
+type signingScheme struct {
+	mu   sync.Mutex
+	seen []signedRequest
+}
+
+type signedRequest struct {
+	contentLength int64
+	digest        string
+}
+
+func (*signingScheme) Name() string { return signingName }
+
+func (*signingScheme) Begin(context.Context, core.BeginInput) (core.BeginOutput, error) {
+	return core.BeginOutput{Done: true}, nil
+}
+
+func (*signingScheme) Complete(context.Context, core.CompleteInput) (core.StoredCredentials, core.AccountInfo, error) {
+	return core.StoredCredentials{Scheme: signingName}, core.AccountInfo{}, nil
+}
+
+func (*signingScheme) Retrieve(context.Context, core.StoredCredentials, core.ResolvedManifest, core.RetrieveOptions) (core.AccessCredential, core.StoredCredentials, error) {
+	return core.AccessCredential{}, core.StoredCredentials{}, errors.New("signing: the test's resolver hands out credentials")
+}
+
+func (s *signingScheme) Wrap(base http.RoundTripper, c core.AccessCredential) http.RoundTripper {
+	var token string
+	if err := json.Unmarshal(c.Secret(), &token); err != nil {
+		panic(err)
+	}
+	return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		out := r.Clone(r.Context())
+		raw := []byte{}
+		if r.Body != nil {
+			var err error
+			if raw, err = io.ReadAll(r.Body); err != nil {
+				return nil, err
+			}
+			_ = r.Body.Close()
+			out.Body = io.NopCloser(bytes.NewReader(raw))
+		}
+		out.Header.Set("Authorization", "Bearer "+token)
+		out.Header.Set(sha256Header, digest(raw))
+		s.mu.Lock()
+		s.seen = append(s.seen, signedRequest{contentLength: out.ContentLength, digest: digest(raw)})
+		s.mu.Unlock()
+		return base.RoundTrip(out)
+	})
+}
+
+// Classify finds a refused credential where RFC 6750 section 3.1 puts it: a Bearer challenge
+// with error="invalid_token". A 429 is RateLimited (RFC 6585 section 4) with its Retry-After in
+// delay-seconds (RFC 9110 section 10.2.3), the only form the provider sends. It reads an ask for
+// more access as oauth2code does, from the test's own fixed challenges: insufficient_scope with
+// files:read and files:write, and insufficient_claims with the claims request {}.
+func (*signingScheme) Classify(resp *http.Response, _ []byte, _ error) core.Outcome {
+	if resp == nil {
+		return core.Outcome{Kind: core.OutcomeOK}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return core.Outcome{Kind: core.OutcomeRateLimited, RetryAfter: time.Duration(seconds) * time.Second}
+	}
+	challenge := resp.Header.Get("WWW-Authenticate")
+	switch {
+	case strings.Contains(challenge, `error="invalid_token"`):
+		return core.Outcome{Kind: core.OutcomeInvalidGrant}
+	case strings.Contains(challenge, `error="insufficient_scope"`):
+		return core.Outcome{Kind: core.OutcomeScopeRequired, Scopes: []string{"files:read", "files:write"}}
+	case strings.Contains(challenge, `error="insufficient_claims"`):
+		return core.Outcome{Kind: core.OutcomeScopeRequired, Claims: "{}"}
+	}
+	return core.Outcome{Kind: core.OutcomeOK}
+}
+
+func (*signingScheme) Revoke(context.Context, core.StoredCredentials, core.ResolvedManifest) error {
+	return nil
+}
+
+func (s *signingScheme) signed() []signedRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]signedRequest(nil), s.seen...)
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// provider is a TLS server on loopback that takes the tokens it accepts, refuses the ones it
+// refuses with RFC 6750's invalid_token, and keeps every request it received and every
+// connection it saw.
+type provider struct {
+	*httptest.Server
+	mu       sync.Mutex
+	accepted map[string]bool
+	refused  map[string]bool
+	noReason bool
+	// challengeStatus, when set, answers every request with that status and challengeHeader
+	// as its WWW-Authenticate.
+	challengeStatus int
+	challengeHeader string
+	// retryAfter, when set, answers every request with 429 and it as Retry-After.
+	retryAfter string
+	moveTo     string
+	before     func()
+	requests   []receivedRequest
+	connsSeen  map[net.Conn]bool
+	connsGone  int
+
+	// respond, when set, answers every request in place of the cases in serve.
+	respond func(http.ResponseWriter, *http.Request)
+}
+
+type receivedRequest struct {
+	token            string
+	body             string
+	contentLength    int64
+	signatureMatches bool
+}
+
+func newProvider(t *testing.T) *provider {
+	p := &provider{accepted: map[string]bool{"token-1": true}, refused: map[string]bool{}, connsSeen: map[net.Conn]bool{}}
+	p.Server = httptest.NewUnstartedServer(http.HandlerFunc(p.serve))
+	p.Config.ConnState = func(conn net.Conn, state http.ConnState) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		switch state {
+		case http.StateNew:
+			p.connsSeen[conn] = true
+		case http.StateClosed:
+			p.connsGone++
+		}
+	}
+	p.StartTLS()
+	t.Cleanup(p.Close)
+	return p
+}
+
+func (p *provider) serve(w http.ResponseWriter, r *http.Request) {
+	raw, _ := io.ReadAll(r.Body)
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	p.mu.Lock()
+	p.requests = append(p.requests, receivedRequest{token: token, body: string(raw), contentLength: r.ContentLength,
+		signatureMatches: r.Header.Get(sha256Header) == digest(raw)})
+	before, moveTo, refused, noReason, accepted := p.before, p.moveTo, p.refused[token], p.noReason, p.accepted[token]
+	challengeStatus, challengeHeader := p.challengeStatus, p.challengeHeader
+	retryAfter, respond := p.retryAfter, p.respond
+	p.moveTo = ""
+	p.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	if respond != nil {
+		respond(w, r)
+		return
+	}
+	switch {
+	case challengeStatus != 0:
+		if challengeHeader != "" {
+			w.Header().Set("WWW-Authenticate", challengeHeader)
+		}
+		w.WriteHeader(challengeStatus)
+		_, _ = w.Write([]byte("challenged"))
+	case retryAfter != "":
+		w.Header().Set("Retry-After", retryAfter)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("slow down"))
+	case moveTo != "":
+		// RFC 9110 section 15.4.8: 307 keeps the method and the body.
+		http.Redirect(w, r, moveTo, http.StatusTemporaryRedirect)
+	case noReason:
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		w.WriteHeader(http.StatusUnauthorized)
+	case refused || !accepted:
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("refused"))
+	default:
+		_, _ = w.Write([]byte("ok"))
+	}
+}
+
+func (p *provider) accept(token string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.accepted[token] = true
+}
+
+func (p *provider) refuse(tokens ...string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, token := range tokens {
+		p.refused[token] = true
+	}
+}
+
+func (p *provider) refuseWithoutReason() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.noReason = true
+}
+
+// challenge answers every request with status and header as its WWW-Authenticate, whatever
+// token it carries; a status of 0 stops.
+func (p *provider) challenge(status int, header string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.challengeStatus, p.challengeHeader = status, header
+}
+
+// limit answers every request with 429 and retryAfter, until it is set to "".
+func (p *provider) limit(retryAfter string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.retryAfter = retryAfter
+}
+
+// answer answers every request with status, header and body, whatever token it carries.
+func (p *provider) answer(status int, header http.Header, body string) {
+	p.respondWith(func(w http.ResponseWriter, _ *http.Request) {
+		for name, values := range header {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	})
+}
+
+// respondWith answers every request with fn.
+func (p *provider) respondWith(fn func(http.ResponseWriter, *http.Request)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.respond = fn
+}
+
+// redirect answers the next request with a 307 to url.
+func (p *provider) redirect(url string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.moveTo = url
+}
+
+// onRequest runs fn when each request arrives, before it is answered.
+func (p *provider) onRequest(fn func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.before = fn
+}
+
+func (p *provider) received() []receivedRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]receivedRequest(nil), p.requests...)
+}
+
+func (p *provider) tokens() []string {
+	var tokens []string
+	for _, r := range p.received() {
+		tokens = append(tokens, r.token)
+	}
+	return tokens
+}
+
+func (p *provider) opened() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.connsSeen)
+}
+
+func (p *provider) closed() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.connsGone
+}
+
+func digest(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}

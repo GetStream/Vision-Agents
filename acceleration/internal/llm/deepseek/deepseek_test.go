@@ -1,0 +1,112 @@
+package deepseek
+
+import (
+	"testing"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openweights/hosttest"
+	"github.com/stretchr/testify/suite"
+)
+
+type DeepSeekSuite struct {
+	suite.Suite
+}
+
+func TestDeepSeekSuite(t *testing.T) {
+	suite.Run(t, new(DeepSeekSuite))
+}
+
+func (s *DeepSeekSuite) SetupTest() {
+	s.T().Setenv(apiKeyEnvVar, "")
+	s.T().Setenv(baseURLEnvVar, "")
+}
+
+func (s *DeepSeekSuite) TestCredentialsComeFromTheEnvironmentWhenNotGiven() {
+	_, err := New(Options{})
+	s.ErrorContains(err, apiKeyEnvVar+" is required")
+
+	s.T().Setenv(apiKeyEnvVar, "from-env")
+	provider, err := New(Options{})
+	s.Require().NoError(err)
+	s.Equal(ProviderName, provider.Provider())
+}
+
+func (s *DeepSeekSuite) TestStatsUseTheRoutingNameNotTheQualifiedModelID() {
+	provider, err := New(Options{APIKey: "k", Model: "DeepSeek-V4-Flash-0731"})
+	s.Require().NoError(err)
+
+	s.Equal("DeepSeek-V4-Flash-0731", provider.Model(),
+		"the config names the model, so stats and health key on that")
+}
+
+func (s *DeepSeekSuite) TestModelIsQualifiedWithItsOwnerForBaseten() {
+	s.Equal("deepseek-ai/DeepSeek-V4-Flash-0731", upstreamModel("DeepSeek-V4-Flash-0731"))
+	s.Equal("deepseek-ai/DeepSeek-V4-Pro-0813", upstreamModel("deepseek-ai/DeepSeek-V4-Pro-0813"),
+		"an already-qualified id is left alone")
+}
+
+func (s *DeepSeekSuite) TestThinkingIsOffByDefault() {
+	// Reasoning spends the token budget and the latency before the first word of the
+	// answer, which is the wrong trade on the live path.
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	s.Empty(provider.Capabilities().ReasoningEfforts)
+}
+
+func (s *DeepSeekSuite) TestThinkingCanBeTurnedOn() {
+	provider, err := New(Options{APIKey: "k", Thinking: true, ReasoningEffort: "high"})
+	s.Require().NoError(err)
+
+	model := provider.Capabilities()
+	s.True(model.StreamsReasoning)
+	s.Equal("high", model.DefaultEffort)
+}
+
+func (s *DeepSeekSuite) TestFlashUsesChatTemplateThinkingFields() {
+	fields := requestFields("DeepSeek-V4-Flash-0731", false)(llm.ResponseParams{}, "")
+	s.Equal(map[string]any{
+		"chat_template_kwargs": map[string]any{"thinking": false},
+	}, fields)
+}
+
+func (s *DeepSeekSuite) TestProUsesTopLevelThinkingFields() {
+	fields := requestFields("DeepSeek-V4-Pro-0813", true)(llm.ResponseParams{}, "high")
+	s.Equal(map[string]any{
+		"thinking":         map[string]any{"type": "enabled"},
+		"reasoning_effort": "high",
+	}, fields)
+}
+
+func (s *DeepSeekSuite) TestBaseURLCanBeOverriddenForADedicatedDeployment() {
+	s.T().Setenv(baseURLEnvVar, "https://model-abc.api.baseten.co/environments/production/sync/v1")
+
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+	s.NotNil(provider.Client())
+}
+
+// rolesSent is the role of every message a model sends upstream for a conversation with a
+// system message on both sides of the caller's turn.
+func (s *DeepSeekSuite) rolesSent(options Options) []string {
+	return hosttest.SentRoles(s.T(), func(baseURL string) (*openaicompat.LLM, error) {
+		options.APIKey, options.BaseURL = "k", baseURL
+		return New(options)
+	}, hosttest.Noted())
+}
+
+func (s *DeepSeekSuite) TestFlashSendsASystemMessageAfterTheCallerOnTheUsersSide() {
+	// V4's chat template, given a system message after the caller, has the model write on
+	// from the note and close a think block it never opened, all in the answer, which is
+	// how a harness note and a stray </think> reached a written reply.
+	s.Equal([]string{"system", "user", "user"}, s.rolesSent(Options{Model: "DeepSeek-V4-Flash-0731"}),
+		"one that opens the conversation is still a system message")
+}
+
+func (s *DeepSeekSuite) TestProSendsASystemMessageAfterTheCallerOnTheUsersSide() {
+	// Pro thinking does no better: the note lands where its thinking should start, so
+	// nothing streams as reasoning and the note and </think> arrive as the answer.
+	s.Equal([]string{"system", "user", "user"},
+		s.rolesSent(Options{Model: "DeepSeek-V4-Pro-0813", Thinking: true, ReasoningEffort: "low"}))
+}

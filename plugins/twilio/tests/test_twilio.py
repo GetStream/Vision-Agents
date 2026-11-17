@@ -73,6 +73,28 @@ class TestTwilioCallRegistry:
         retrieved = registry.get("CA123")
         assert retrieved is call
 
+    def test_create_does_not_log_full_numbers(self, caplog):
+        """The numbers of a call are logged masked, down to their last four digits."""
+        registry = twilio.TwilioCallRegistry()
+        webhook_data = CallWebhookInput(
+            CallSid="CA999",
+            AccountSid="AC123",
+            CallStatus="ringing",
+            Direction="inbound",
+            From="+15551234567",
+            Caller="+15551234567",
+            To="+15559876543",
+            Called="+15559876543",
+        )
+
+        with caplog.at_level("INFO"):
+            registry.create("CA999", webhook_data=webhook_data)
+
+        assert "+15551234567" not in caplog.text
+        assert "+15559876543" not in caplog.text
+        assert "4567" in caplog.text
+        assert "6543" in caplog.text
+
     def test_get_unknown(self):
         """Test getting unknown call returns None."""
         registry = twilio.TwilioCallRegistry()

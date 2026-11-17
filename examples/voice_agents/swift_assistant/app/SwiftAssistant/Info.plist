@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Juno</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>So Juno can tell you what is on your calendar.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>So you can show Juno what you are looking at.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>To reach the acceleration router running on your Mac.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>So Juno can answer questions about where you are.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>So you can talk to Juno.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>So you can show Juno a photo.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>So Juno can add reminders for you.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>So you can dictate a question to Juno.</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

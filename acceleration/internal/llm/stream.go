@@ -1,0 +1,628 @@
+package llm
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// Puller advances a provider's upstream stream by one chunk.
+//
+// It exists so a Stream needs no goroutine of its own: Next pulls, which means there is
+// nothing to leak when a caller walks away from a response part-way through, and no
+// channel whose close semantics have to be got right in every provider.
+type Puller interface {
+	// Advance reads the next chunk and records what it carried on the writer. It returns
+	// false when the response has ended, at which point Err reports why and the upstream
+	// has been released. It is called from one goroutine at a time.
+	Advance(w *ResponseWriter) bool
+	// Err is the failure that ended the stream, if there was one. A cancelled upstream is
+	// not one: closing a stream is how a response is abandoned.
+	Err() error
+	// Close abandons the upstream. It is safe to call from any goroutine and may run
+	// while Advance is blocked, which is what makes barge-in work.
+	Close() error
+}
+
+// Stream is the response one Create produced.
+//
+// It is pulled rather than pushed, in the manner of the OpenAI SDK's own streams: Next
+// advances it, Current is the event it advanced to, and Response is the whole answer once
+// Next has returned false. A Stream is read from one goroutine; only Close may be called
+// from another.
+type Stream struct {
+	writer *ResponseWriter
+	puller Puller
+
+	// reading is held by whatever is advancing the stream: its caller, or the drain a Close
+	// left unread starts.
+	reading sync.Mutex
+	// recorded is how many of the pending events the watchers have already seen, which a
+	// drain does without taking them off the stream.
+	recorded int
+
+	current  Event
+	response Response
+	err      error
+	// exhausted is set once the puller has said the upstream is done, which Await can find
+	// out before Next has settled the response.
+	exhausted bool
+	ended     bool
+	watchers  []func(Event)
+
+	// closed is read by the goroutine calling Next and written by whichever one closes
+	// the stream, which is the whole of the concurrency here.
+	closed    atomic.Bool
+	closeOnce sync.Once
+	closeErr  error
+
+	// screened is closed once a screen's verdict has arrived, and refused holds it when
+	// the verdict was an objection. Nil screened means nothing is screening this stream.
+	screened chan struct{}
+	refused  atomic.Pointer[error]
+}
+
+// StreamOptions identifies the response a Stream carries.
+type StreamOptions struct {
+	// ResponseID correlates the events. One is generated when the caller has none.
+	ResponseID string
+	Provider   string
+	Model      string
+}
+
+// NewStream returns the stream a provider produces by advancing the given puller.
+func NewStream(options StreamOptions, puller Puller) *Stream {
+	if options.ResponseID == "" {
+		options.ResponseID = fmt.Sprintf("resp-%d", time.Now().UnixNano())
+	}
+
+	stream := &Stream{puller: puller}
+	stream.writer = &ResponseWriter{
+		stream:    stream,
+		options:   options,
+		startedAt: time.Now(),
+		status:    StatusCompleted,
+		calls:     map[int64]*partialCall{},
+	}
+	stream.writer.emit(ResponseCreated{
+		ResponseID: options.ResponseID,
+		Provider:   options.Provider,
+		Model:      options.Model,
+		At:         stream.writer.startedAt,
+	})
+	return stream
+}
+
+// Replay returns a Stream over events that have already happened, for a caller standing in
+// for a provider.
+func Replay(events ...Event) *Stream {
+	stream := &Stream{ended: true}
+	stream.writer = &ResponseWriter{stream: stream, pending: events}
+	return stream
+}
+
+// Next advances to the next event, returning false once the response has settled. The last
+// event of every stream is a ResponseCompleted, whatever ended it.
+func (s *Stream) Next() bool {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	for {
+		if len(s.writer.pending) > 0 {
+			s.current = s.writer.pending[0]
+			s.writer.pending = s.writer.pending[1:]
+			if s.recorded > 0 {
+				s.recorded--
+			} else {
+				s.record(s.current)
+			}
+			return true
+		}
+		if !s.pull() {
+			return false
+		}
+	}
+}
+
+// pull has the provider add to the pending events, settling the response once the upstream
+// is done, and returns false once nothing more can come.
+func (s *Stream) pull() bool {
+	if s.ended {
+		return false
+	}
+	if s.exhausted || !s.puller.Advance(s.writer) {
+		s.ended = true
+		if s.screened != nil {
+			<-s.screened
+		}
+		if refused := s.refused.Load(); refused != nil {
+			s.writer.refuse(*refused)
+			return true
+		}
+		// A stream the caller closed was abandoned rather than finished, however the
+		// provider happened to notice.
+		if s.closed.Load() {
+			s.writer.Cancelled()
+		}
+		s.writer.settle(s.puller.Err())
+	}
+	return true
+}
+
+// drain reads a closed stream to its end for the watchers, so what the response generated is
+// recorded even when its caller walked away without reading it out. The events stay pending:
+// a caller that does read on still sees every one, the ResponseCompleted it waits for too.
+func (s *Stream) drain() {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	for {
+		for ; s.recorded < len(s.writer.pending); s.recorded++ {
+			s.record(s.writer.pending[s.recorded])
+		}
+		if !s.pull() {
+			return
+		}
+	}
+}
+
+// Await blocks until the response has produced something to act on, text or a tool call,
+// and reports whether it did: false means it ended without. Thinking is neither, since it is
+// not part of the answer.
+//
+// It takes nothing off the stream, so Next still returns every event from the first. It is
+// for a caller that has to know a response is alive before committing to it, and it runs
+// before the first Next, on the goroutine that then hands the stream over. Closing the
+// stream from another goroutine is what ends the wait early.
+func (s *Stream) Await() bool {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	for seen := 0; ; {
+		for ; seen < len(s.writer.pending); seen++ {
+			switch s.writer.pending[seen].(type) {
+			case OutputTextDelta, FunctionCallArgumentsDelta:
+				return true
+			}
+		}
+		if s.ended || s.exhausted {
+			return false
+		}
+		s.exhausted = !s.puller.Advance(s.writer)
+	}
+}
+
+// Lead pulls the stream until the opening of its answer satisfies enough, a tool call starts,
+// or it ends, and returns the answer's text so far. Like Await it takes nothing off the
+// stream and runs before the first Next.
+func (s *Stream) Lead(enough func(text string) bool) string {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	for seen := 0; ; {
+		var text strings.Builder
+		for _, event := range s.writer.pending {
+			if delta, ok := event.(OutputTextDelta); ok {
+				text.WriteString(delta.Delta)
+			}
+		}
+		for ; seen < len(s.writer.pending); seen++ {
+			if _, ok := s.writer.pending[seen].(FunctionCallArgumentsDelta); ok {
+				return text.String()
+			}
+		}
+		if enough(text.String()) || s.ended || s.exhausted {
+			return text.String()
+		}
+		s.exhausted = !s.puller.Advance(s.writer)
+	}
+}
+
+// Cut drops bytes from to to of the answer's text, which Lead returned, from the deltas still
+// to come and from the response they settle into. It runs before the first Next, and leaves
+// what text remains on the first text delta.
+func (s *Stream) Cut(from, to int) {
+	if to <= from {
+		return
+	}
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	var text strings.Builder
+	first := -1
+	for i, event := range s.writer.pending {
+		if delta, ok := event.(OutputTextDelta); ok {
+			text.WriteString(delta.Delta)
+			if first < 0 {
+				first = i
+			}
+		}
+	}
+	whole := text.String()
+	if first < 0 || to > len(whole) {
+		return
+	}
+	kept := whole[:from] + whole[to:]
+	events := s.writer.pending[:0]
+	for i, event := range s.writer.pending {
+		delta, ok := event.(OutputTextDelta)
+		if !ok {
+			events = append(events, event)
+			continue
+		}
+		if i == first && kept != "" {
+			delta.Delta = kept
+			events = append(events, delta)
+		}
+	}
+	s.writer.pending = events
+	s.writer.text.Reset()
+	s.writer.text.WriteString(kept)
+}
+
+// Current is the event Next advanced to.
+func (s *Stream) Current() Event {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	return s.current
+}
+
+// Err is the provider failure that ended the stream, or nil. A stream that was closed
+// part-way through did not fail: it was abandoned.
+func (s *Stream) Err() error {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	return stack.Wrap(s.err)
+}
+
+// Response is the whole answer. It is settled once Next has returned false, and reports
+// what had arrived so far before then.
+func (s *Stream) Response() Response {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	return s.response
+}
+
+// drainGrace is how long a closed stream is left to its caller to read out before the stream
+// reads itself out for the watchers.
+var drainGrace = 5 * time.Second
+
+// Close abandons the response. It is how barge-in stops a model mid-sentence, and it is
+// safe to call from another goroutine and more than once.
+//
+// The stream should still be drained afterwards: a response that was cut short still
+// generated tokens, and it is the ResponseCompleted at the end that reports them. One left
+// undrained drains itself for the watchers after drainGrace.
+func (s *Stream) Close() error {
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		if s.puller != nil {
+			s.closeErr = s.puller.Close()
+			time.AfterFunc(drainGrace, s.drain)
+		}
+	})
+	return stack.Wrap(s.closeErr)
+}
+
+// Screen has a judgement of what the response was asked run beside it. The verdict channel
+// yields exactly once: nil to let the response stand, or the reason to refuse it.
+//
+// The deltas are not held, so the screen costs a caller no time to first token. What is held
+// is the ResponseCompleted, until the verdict arrives, because that is where the tool calls a
+// caller acts on are settled. A refusal that arrives while the model is still answering
+// closes the upstream at once, and either way the response settles as failed with the
+// refusal as its error. It is for a stream a provider produced, not one from Replay.
+func (s *Stream) Screen(verdict <-chan error) *Stream {
+	s.screened = make(chan struct{})
+	go func() {
+		defer close(s.screened)
+		if err := <-verdict; err != nil {
+			s.Close()
+			s.refused.Store(&err)
+		}
+	}()
+	return s
+}
+
+// Observe adds a function that sees every event as the stream is drained, for a caller
+// that has to know what a response cost without standing between the events and whoever
+// asked for them. It is what the router records its statistics from.
+func (s *Stream) Observe(watch func(Event)) *Stream {
+	s.watchers = append(s.watchers, watch)
+	return s
+}
+
+// record keeps the stream's own view of what has passed and lets the watchers see it.
+func (s *Stream) record(event Event) {
+	switch typed := event.(type) {
+	case ResponseCompleted:
+		s.response = typed.Response
+	case ResponseFailed:
+		s.err = typed
+	}
+	for _, watch := range s.watchers {
+		watch(event)
+	}
+}
+
+// Collect drains a stream and returns the whole answer. It is for the model calls nobody
+// is streaming: a reviewer summarising a call, a judge ruling on one, a model asked to
+// rewrite a scenario.
+func Collect(stream *Stream) (Response, error) {
+	defer stream.Close()
+
+	for stream.Next() {
+	}
+	if err := stream.Err(); err != nil {
+		return stream.Response(), stack.Wrap(err)
+	}
+	response := stream.Response()
+	if response.Status == StatusCancelled {
+		return response, stack.Wrap(errors.New("llm: the response was abandoned before it finished"))
+	}
+	return response, nil
+}
+
+// ResponseWriter is how a provider records what came back. A provider is handed one by
+// Puller.Advance and never holds it itself.
+//
+// Every method both records what it was told and queues the event a consumer sees for it,
+// so the running answer and the deltas cannot drift apart.
+type ResponseWriter struct {
+	stream  *Stream
+	options StreamOptions
+	pending []Event
+
+	startedAt          time.Time
+	firstTokenAt       time.Time
+	text               strings.Builder
+	reasoning          strings.Builder
+	deltas             int
+	usage              Usage
+	usageReported      bool
+	timedOut           bool
+	refused            bool
+	serviceTier        string
+	status             ResponseStatus
+	incompleteReason   string
+	providerResponseID string
+	settled            bool
+
+	// calls holds the calls being assembled, keyed by the index the provider streams them
+	// under, and order remembers which index arrived first so the calls settle in the
+	// order the model asked for them.
+	calls map[int64]*partialCall
+	order []int64
+}
+
+// partialCall is one tool call being assembled from the fragments a provider streams.
+type partialCall struct {
+	id        string
+	name      string
+	arguments strings.Builder
+	signature string
+}
+
+// ResponseID is the id the events of this response carry, which is the caller's.
+func (w *ResponseWriter) ResponseID() string { return w.options.ResponseID }
+
+// SetProviderResponseID records what the provider stored the response as, so a later
+// response can continue from it. It never changes the id the events carry: the caller
+// correlates a turn by the id it asked under.
+func (w *ResponseWriter) SetProviderResponseID(id string) {
+	if id == "" {
+		return
+	}
+	w.providerResponseID = id
+}
+
+// OutputText records a piece of the answer.
+func (w *ResponseWriter) OutputText(delta string) {
+	if delta == "" {
+		return
+	}
+	w.markFirstToken()
+	w.text.WriteString(delta)
+	w.emit(OutputTextDelta{ResponseID: w.options.ResponseID, Index: w.next(), Delta: delta})
+}
+
+// ReasoningText records a piece of the model's thinking. Thinking counts towards time to
+// first token, since it is the provider working, but it is not part of the answer.
+func (w *ResponseWriter) ReasoningText(delta string) {
+	if delta == "" {
+		return
+	}
+	w.markFirstToken()
+	w.reasoning.WriteString(delta)
+	w.emit(ReasoningTextDelta{ResponseID: w.options.ResponseID, Index: w.next(), Delta: delta})
+}
+
+// FunctionCall records a fragment of a call the model is asking for.
+//
+// A call arrives in pieces under one index: the first carries the id and the name, and the
+// arguments follow as JSON text spread over the fragments after it. Anything empty leaves
+// what was already recorded alone, so a fragment carrying only arguments does not erase the
+// name, and a signature need not arrive on the fragment that carried the name.
+func (w *ResponseWriter) FunctionCall(index int64, callID, name, arguments, signature string) {
+	w.markFirstToken()
+
+	call, known := w.calls[index]
+	if !known {
+		call = &partialCall{}
+		w.calls[index] = call
+		w.order = append(w.order, index)
+	}
+	if callID != "" {
+		call.id = callID
+	}
+	if name != "" {
+		call.name = name
+	}
+	if signature != "" {
+		call.signature = signature
+	}
+	call.arguments.WriteString(arguments)
+
+	w.emit(FunctionCallArgumentsDelta{
+		ResponseID: w.options.ResponseID,
+		Index:      index,
+		CallID:     callID,
+		Name:       name,
+		Delta:      arguments,
+	})
+}
+
+// Usage records what the provider reported. Providers that repeat a cumulative usage frame
+// on every chunk can call it as often as they like; the last one wins, and a response cut
+// short keeps it.
+func (w *ResponseWriter) Usage(usage Usage) {
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+	w.usage, w.usageReported = usage, true
+}
+
+// ServiceTier records the tier the provider says it served the response at.
+func (w *ResponseWriter) ServiceTier(tier string) {
+	w.serviceTier = tier
+}
+
+// Incomplete records that the model stopped for a reason of the caller's making, such as
+// the token cap.
+func (w *ResponseWriter) Incomplete(reason string) {
+	w.status = StatusIncomplete
+	w.incompleteReason = reason
+}
+
+// Cancelled records that the response was abandoned before the model finished, which on
+// the live path is barge-in. What did arrive still counts and is still billed.
+func (w *ResponseWriter) Cancelled() {
+	w.status = StatusCancelled
+	w.incompleteReason = ""
+}
+
+// TimedOut records that the response ran past a deadline before the model finished. The
+// provider still reports the deadline as the stream's failure, so whoever was waiting sees it
+// fail as before.
+func (w *ResponseWriter) TimedOut() {
+	w.timedOut = true
+}
+
+// Fail reports a provider failure. The stream still settles afterwards, so a caller
+// counting responses sees this one end.
+func (w *ResponseWriter) Fail(err error, context string, fatal bool) {
+	w.status = StatusFailed
+	w.emit(ResponseFailed{
+		ResponseID: w.options.ResponseID,
+		Provider:   w.options.Provider,
+		Model:      w.options.Model,
+		Err:        err,
+		Context:    context,
+		Fatal:      fatal,
+	})
+}
+
+// Text is the answer so far, reasoning excluded.
+func (w *ResponseWriter) Text() string { return w.text.String() }
+
+// refuse settles the response as failed with a screen's refusal. The screen closed the
+// upstream to stop it, which a provider reports as a cancel, so the refusal is reported
+// whatever the provider made of it.
+func (w *ResponseWriter) refuse(reason error) {
+	w.refused = true
+	w.Fail(reason, "stream", false)
+	w.settle(nil)
+}
+
+// settle queues the event that ends the stream. A response that produced nothing reports a
+// zero time to first token rather than the whole duration.
+func (w *ResponseWriter) settle(failure error) {
+	if w.settled {
+		return
+	}
+	w.settled = true
+
+	if failure != nil && w.status != StatusFailed && w.status != StatusCancelled {
+		w.Fail(failure, "stream", false)
+	}
+
+	var timeToFirstToken float64
+	if !w.firstTokenAt.IsZero() {
+		timeToFirstToken = float64(w.firstTokenAt.Sub(w.startedAt).Microseconds()) / 1000
+	}
+	// A failed response asks for nothing: refused by a screen or broken off by its provider,
+	// it is not an answer that stands, and a caller running its calls would act on it anyway.
+	calls, dropped := w.assembled(), []ToolCall(nil)
+	if w.status == StatusFailed {
+		calls, dropped = nil, calls
+	}
+
+	w.emit(ResponseCompleted{Response: Response{
+		ID:                 w.options.ResponseID,
+		ProviderResponseID: w.providerResponseID,
+		Provider:           w.options.Provider,
+		Model:              w.options.Model,
+		OutputText:         w.text.String(),
+		ReasoningText:      w.reasoning.String(),
+		ToolCalls:          calls,
+		DroppedToolCalls:   dropped,
+		Usage:              w.usage,
+		UsageReported:      w.usageReported,
+		TimedOut:           w.timedOut,
+		Refused:            w.refused,
+		ServiceTier:        w.serviceTier,
+		Status:             w.status,
+		IncompleteReason:   w.incompleteReason,
+		TimeToFirstTokenMs: timeToFirstToken,
+		DurationMs:         float64(time.Since(w.startedAt).Microseconds()) / 1000,
+	}})
+}
+
+// assembled returns the tool calls in the order the model asked for them.
+//
+// A provider that names its calls but does not identify them gets an id made here, because
+// the result sent back has to say which call it answers and the model gave nothing else to
+// say it with.
+func (w *ResponseWriter) assembled() []ToolCall {
+	if len(w.order) == 0 {
+		return nil
+	}
+
+	calls := make([]ToolCall, 0, len(w.order))
+	for _, index := range w.order {
+		call := w.calls[index]
+		// A reply cut off mid-call leaves arguments that are not JSON. Such a call cannot
+		// run, and replayed in the history it has the provider refuse every later turn.
+		if arguments := call.arguments.String(); arguments != "" && !json.Valid([]byte(arguments)) {
+			continue
+		}
+		id := call.id
+		if id == "" {
+			id = fmt.Sprintf("%s-tool-%d", w.options.ResponseID, index)
+		}
+		calls = append(calls, ToolCall{
+			ID:        id,
+			Name:      call.name,
+			Arguments: call.arguments.String(),
+			Signature: call.signature,
+		})
+	}
+	return calls
+}
+
+func (w *ResponseWriter) emit(event Event) { w.pending = append(w.pending, event) }
+
+// next numbers a delta. Reasoning and text share one sequence, so order is total.
+func (w *ResponseWriter) next() int {
+	index := w.deltas
+	w.deltas++
+	return index
+}
+
+// markFirstToken stamps the first sign of life from the provider.
+func (w *ResponseWriter) markFirstToken() {
+	if w.firstTokenAt.IsZero() {
+		w.firstTokenAt = time.Now()
+	}
+}

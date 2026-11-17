@@ -4,7 +4,7 @@ import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.plugins.local.tracks import LocalOutputAudioTrack
 
-from .conftest import _FakeAudioOutput
+from .fakes import _FakeAudioOutput
 
 
 class TestLocalOutputAudioTrack:

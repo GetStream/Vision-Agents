@@ -1,0 +1,121 @@
+// Command knowledge fills a knowledge base with documentation an agent can look things up
+// in.
+//
+// It is the writing half of internal/knowledge, which only ever reads: an agent searches a
+// namespace mid-sentence, and something has to have put the passages there. Nothing is
+// embedded, because nothing that reads them embeds either. The files are cut into passages,
+// indexed for full-text search, and found again by the words the caller happens to use.
+//
+// Usage:
+//
+//	go run ./cmd/knowledge -customer examples -namespace docs ../docs README.md
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// writeTimeout is generous because ingesting is not on anybody's conversation: the store's
+// own default is tuned for a lookup somebody is waiting on.
+const writeTimeout = 60 * time.Second
+
+func main() {
+	customer := flag.String("customer", "", "customer (app id) the knowledge base belongs to")
+	namespace := flag.String("namespace", "", "knowledge base to write into")
+	size := flag.Int("chunk", ingest.DefaultChunk, "characters per passage")
+	minChunk := flag.Int("min-chunk", ingest.DefaultLimits.MinChunk, "bytes a smaller -chunk is raised to")
+	maxHeading := flag.Int("max-heading", ingest.DefaultLimits.MaxHeading, "bytes of a heading repeated in each later passage")
+	dryRun := flag.Bool("dry-run", false, "print the passages instead of writing them")
+	verbose := flag.Bool("verbose", false, "log what is written")
+	flag.Parse()
+
+	level := slog.LevelWarn
+	if *verbose {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
+
+	options := options{
+		customer: *customer, namespace: *namespace, size: *size, dryRun: *dryRun,
+		limits: ingest.Limits{MinChunk: *minChunk, MaxHeading: *maxHeading},
+	}
+	if err := run(options, flag.Args(), logger); err != nil {
+		logger.Error("knowledge stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+type options struct {
+	customer  string
+	namespace string
+	size      int
+	limits    ingest.Limits
+	dryRun    bool
+}
+
+func run(options options, paths []string, logger *slog.Logger) error {
+	if strings.TrimSpace(options.customer) == "" {
+		return errors.New("a customer is required, knowledge is never shared")
+	}
+	if strings.TrimSpace(options.namespace) == "" {
+		return errors.New("a namespace is required, knowledge is never shared")
+	}
+	if len(paths) == 0 {
+		return errors.New("name the files or directories to ingest")
+	}
+	if options.size <= 0 {
+		return errors.New("a passage needs room for something to read")
+	}
+	if options.limits.MinChunk < 0 || options.limits.MaxHeading < 0 {
+		return errors.New("-min-chunk and -max-heading cannot be negative")
+	}
+
+	documents, err := ingest.Read(paths, options.size, options.limits)
+	if err != nil {
+		return err
+	}
+	if len(documents) == 0 {
+		return fmt.Errorf("there is nothing to read in %s", strings.Join(paths, ", "))
+	}
+
+	// A dry run is what tells you whether the documents were cut somewhere sensible
+	// before a namespace is filled with passages that answer nothing.
+	if options.dryRun {
+		for _, document := range documents {
+			fmt.Printf("%-60s %5d characters\n", document.Source, len(document.Text))
+		}
+		fmt.Printf("\n%d passages, nothing written\n", len(documents))
+		return nil
+	}
+
+	base, err := turbopuffer.New(turbopuffer.Options{Timeout: writeTimeout, Logger: logger})
+	if err != nil {
+		return err
+	}
+	defer base.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// An operator's tool, so what it writes is nobody's usage and is not recorded.
+	if _, err := base.Upsert(ctx, knowledge.Scoped(options.customer, options.namespace), documents); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %d passages from %d files to %s\n",
+		len(documents), ingest.Files(documents), options.namespace)
+	return nil
+}

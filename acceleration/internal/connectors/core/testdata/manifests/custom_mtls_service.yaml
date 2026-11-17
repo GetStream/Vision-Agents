@@ -1,0 +1,21 @@
+# Stress-test row 11 (a service with mTLS) of «Stress test: 12 awkward providers» in
+# acceleration/docs/connectors/architecture.md on connectors/planning. The row names no
+# single vendor (ElevenLabs mtls, Dialogflow CX tools, RFC 8705), so this is a customer's
+# own service, under the custom_ prefix T6 reserves for custom definitions
+# (acceleration/docs/connectors/subtasks.md, T6 acceptance).
+id: custom_mtls_service
+revision: 1
+name: A service behind mutual TLS
+inputs:
+  # The customer's host, as RFC 1123 labels joined by dots. The egress policy still refuses
+  # a private address at dial (internal/egress).
+  - name: host
+    pattern: "[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+"
+endpoints:
+  api_base: https://{host}
+# Client certificate and key, no token: row 11. A bearer bound to the certificate is a
+# second scheme on the connection, not a field here.
+schemes: [mtls]
+sources:
+  - kind: http
+    endpoint: api_base

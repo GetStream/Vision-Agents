@@ -1,0 +1,326 @@
+package voices
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
+)
+
+// elevenLabsBaseURL is the production endpoint. The streaming provider's is a WebSocket
+// URL, so this one is its own rather than shared.
+const elevenLabsBaseURL = "https://api.elevenlabs.io"
+
+// elevenLabsVoiceID is the shape of an ElevenLabs voice id: 20 letters and digits.
+// ElevenLabs does not document the format; it is what every id observed live on 2026-10-16
+// has: 21m00Tcm4TlvDq8ikWAM, NOpBlnGInO9m6vDvFkFC, pNInz6obpgDQGcFmaJgB, IKne3meq5aSn9XLyUdCD.
+var elevenLabsVoiceID = regexp.MustCompile(`^[0-9A-Za-z]{20}$`)
+
+// ElevenLabsOptions configures the cloner. APIKey falls back to ELEVENLABS_API_KEY.
+type ElevenLabsOptions struct {
+	APIKey  string
+	BaseURL string
+	Timeout time.Duration
+}
+
+// ElevenLabs prepares a voice with ElevenLabs instant voice cloning.
+type ElevenLabs struct {
+	options ElevenLabsOptions
+	client  *http.Client
+}
+
+// NewElevenLabs validates the options and returns a cloner.
+func NewElevenLabs(options ElevenLabsOptions) (*ElevenLabs, error) {
+	keys := keypool.FromEnv(options.APIKey, "ELEVENLABS_API_KEY")
+	options.APIKey = keys.Peek()
+	if options.APIKey == "" {
+		return nil, errors.New("voices: api key is required (set ELEVENLABS_API_KEY)")
+	}
+	if options.BaseURL == "" {
+		options.BaseURL = elevenLabsBaseURL
+	}
+	return &ElevenLabs{options: options, client: client(keys, keypool.Header("xi-api-key", ""), options.Timeout)}, nil
+}
+
+// Prepare uploads the recordings and returns the voice id sessions ask for: one clone.
+func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (Prepared, error) {
+	return cloned(e.clone(ctx, request))
+}
+
+func (e *ElevenLabs) clone(ctx context.Context, request Request) (string, error) {
+	if err := request.Validate(); err != nil {
+		return "", stack.Wrap(err)
+	}
+
+	body := newForm()
+	if err := body.field("name", request.Name); err != nil {
+		return "", stack.Wrap(err)
+	}
+	if err := body.field("description", request.Description); err != nil {
+		return "", stack.Wrap(err)
+	}
+	// Every recording goes under the same field name, which is how the endpoint takes
+	// more than one.
+	for _, sample := range request.Samples {
+		if err := body.file("files", sample); err != nil {
+			return "", stack.Wrap(err)
+		}
+	}
+	content, contentType, err := body.done()
+	if err != nil {
+		return "", stack.Wrap(err)
+	}
+
+	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices/add"
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, url, content)
+	if err != nil {
+		return "", stack.Wrap(err)
+	}
+	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
+	httpRequest.Header.Set("Content-Type", contentType)
+
+	response, err := e.client.Do(httpRequest)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("voices: elevenlabs clone: %w", err))
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", refused(elevenlabs.ProviderName, response)
+	}
+
+	var created struct {
+		VoiceID string `json:"voice_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		return "", stack.Wrap(fmt.Errorf("voices: elevenlabs clone: decode: %w", err))
+	}
+	if created.VoiceID == "" {
+		return "", stack.Wrap(errors.New("voices: elevenlabs took the recordings but named no voice"))
+	}
+	return created.VoiceID, nil
+}
+
+// SpeechModel is the model Speak says a line with.
+func (e *ElevenLabs) SpeechModel() string { return elevenlabs.DefaultModel }
+
+// Speak says a line in the voice with the model a call would use.
+func (e *ElevenLabs) Speak(ctx context.Context, externalID, text string) (Speech, error) {
+	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/text-to-speech/" + externalID +
+		"?output_format=" + elevenlabs.DefaultRecordingFormat
+	header := http.Header{}
+	header.Set("xi-api-key", e.options.APIKey)
+	payload := map[string]string{"text": text, "model_id": elevenlabs.DefaultModel}
+	return speak(ctx, e.client, elevenlabs.ProviderName, url, "audio/mpeg", header, payload)
+}
+
+// List reads the voices this account can speak in: the premade library plus anything
+// cloned into it. Legacy voices are left out, since they are the ones ElevenLabs itself no
+// longer offers.
+func (e *ElevenLabs) List(ctx context.Context) ([]Library, error) {
+	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices?show_legacy=false"
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
+
+	response, err := e.client.Do(httpRequest)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs list: %w", err))
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, listRefused(elevenlabs.ProviderName, response)
+	}
+	var listed struct {
+		Voices []struct {
+			VoiceID     string            `json:"voice_id"`
+			Name        string            `json:"name"`
+			Category    string            `json:"category"`
+			Description string            `json:"description"`
+			PreviewURL  string            `json:"preview_url"`
+			Labels      map[string]string `json:"labels"`
+		} `json:"voices"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&listed); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs list: decode: %w", err))
+	}
+
+	found := make([]Library, 0, len(listed.Voices))
+	for _, voice := range listed.Voices {
+		if voice.VoiceID == "" {
+			continue
+		}
+		description := voice.Description
+		if description == "" {
+			description = voice.Labels["descriptive"]
+		}
+		found = append(found, Library{
+			ID:          voice.VoiceID,
+			Name:        voice.Name,
+			Description: description,
+			Gender:      voice.Labels["gender"],
+			Accent:      voice.Labels["accent"],
+			Language:    voice.Labels["language"],
+			Tags:        labelTags(voice.Labels, "age", "use_case"),
+			// Premade voices are the shared library; everything else was made here.
+			Own:     voice.Category != "premade",
+			Preview: voice.PreviewURL != "",
+		})
+	}
+	return found, nil
+}
+
+// Preview fetches the sample ElevenLabs already published for the voice, which is why it
+// costs nothing to hear. Voices without one are refused rather than synthesised.
+func (e *ElevenLabs) Preview(ctx context.Context, id string) (Speech, error) {
+	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices/" + id
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Speech{}, stack.Wrap(err)
+	}
+	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
+
+	response, err := e.client.Do(httpRequest)
+	if err != nil {
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs preview: %w", err))
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Speech{}, refused(elevenlabs.ProviderName, response)
+	}
+	var voice struct {
+		PreviewURL string `json:"preview_url"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&voice); err != nil {
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs preview: decode: %w", err))
+	}
+	if voice.PreviewURL == "" {
+		return Speech{}, stack.Wrap(fmt.Errorf("voices: elevenlabs has published no sample of %s", id))
+	}
+	return fetchPreview(ctx, e.client, elevenlabs.ProviderName, voice.PreviewURL, nil, "audio/mpeg")
+}
+
+// Exists reports whether ElevenLabs will speak in a voice.
+//
+// A voice in this account is found by id. A voice from the public Voice Library is not,
+// yet it speaks (ElevenLabs adds it to the account the first time it does), so a voice the
+// account lacks is searched for there too, whose search matches ids as well as names. Both
+// live on 2026-10-16: GET /v1/voices/cVOjvbxC2c4mOyGcx3AH answered voice_not_found and
+// /v1/shared-voices?search= of the same id returned it.
+func (e *ElevenLabs) Exists(ctx context.Context, id string) (bool, error) {
+	base := strings.TrimSuffix(e.options.BaseURL, "/")
+	response, err := e.get(ctx, base+"/v1/voices/"+url.PathEscape(id))
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return true, nil
+	}
+
+	// The code is what says the voice is missing, not the status: the same lookup answered
+	// it with a 404 and, later on 2026-10-16, a 400, which is also what a bad key gets.
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+	var failure struct {
+		Detail struct {
+			Code   string `json:"code"`
+			Status string `json:"status"`
+		} `json:"detail"`
+	}
+	decoded := json.Unmarshal(body, &failure) == nil
+	// Live on 2026-10-16, GET /v1/voices/5619d38c-cf51-4d8e-9575-48f61a280413 (a Cartesia
+	// voice) answered 400 with detail.code bad_request and detail.status invalid_uid.
+	if decoded && failure.Detail.Status == "invalid_uid" {
+		return false, stack.Wrap(errNotAVoiceID)
+	}
+	if !decoded || failure.Detail.Code != "voice_not_found" {
+		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup (http %d): %s",
+			response.StatusCode, bytes.TrimSpace(body)))
+	}
+
+	shared, err := e.get(ctx, base+"/v1/shared-voices?search="+url.QueryEscape(id))
+	if err != nil {
+		return false, err
+	}
+	defer shared.Body.Close()
+	if shared.StatusCode < 200 || shared.StatusCode >= 300 {
+		return false, refused(elevenlabs.ProviderName, shared)
+	}
+	var listed struct {
+		Voices []struct {
+			VoiceID string `json:"voice_id"`
+		} `json:"voices"`
+	}
+	if err := json.NewDecoder(shared.Body).Decode(&listed); err != nil {
+		return false, stack.Wrap(fmt.Errorf("voices: elevenlabs library search: decode: %w", err))
+	}
+	// The search also matches names, so only the id itself counts.
+	for _, voice := range listed.Voices {
+		if voice.VoiceID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Shaped reports an id with the shape of an ElevenLabs voice id.
+func (*ElevenLabs) Shaped(id string) bool {
+	return elevenLabsVoiceID.MatchString(id)
+}
+
+func (e *ElevenLabs) get(ctx context.Context, address string) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	request.Header.Set("xi-api-key", e.options.APIKey)
+	response, err := e.client.Do(request)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("voices: elevenlabs lookup: %w", err))
+	}
+	return response, nil
+}
+
+// Delete takes the voice back off ElevenLabs.
+func (e *ElevenLabs) Delete(ctx context.Context, externalID string) error {
+	if externalID == "" {
+		return nil
+	}
+
+	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/voices/" + externalID
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	httpRequest.Header.Set("xi-api-key", e.options.APIKey)
+
+	response, err := e.client.Do(httpRequest)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("voices: elevenlabs delete: %w", err))
+	}
+	defer response.Body.Close()
+
+	// A voice that is already gone is not a failure, because the caller wanted it gone.
+	if response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return refused(elevenlabs.ProviderName, response)
+	}
+	return nil
+}

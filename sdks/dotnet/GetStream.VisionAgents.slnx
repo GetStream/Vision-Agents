@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GetStream.VisionAgents/GetStream.VisionAgents.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GetStream.VisionAgents.Tests/GetStream.VisionAgents.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Generate/Generate.csproj" />
+  </Folder>
+</Solution>

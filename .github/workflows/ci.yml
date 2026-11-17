@@ -1,7 +1,9 @@
 name: CI (unit)
+# Feature branches run through pull_request; a push of the same commit would be a second,
+# uncancellable copy of every job.
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "main", "accelerate" ]
     paths-ignore:
       - '**/*.md'
       - '**/*.png'
@@ -42,18 +44,346 @@ on:
       - '.idea/**'
 
 permissions:
-  actions: write
   contents: read
   pull-requests: read
 
 jobs:
+  # No secrets: unit tests reach no provider, and a pull request's code runs here.
   unit:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'not integration'
-    secrets: inherit
+
+  go:
+    runs-on: ubuntu-latest
+    # Every backend test that needs Redis skips without ROUTER_REDIS_ADDR: the service gives
+    # them one, on a host port the runner picks so a port already held on the runner cannot
+    # fail the job. The health check holds the steps until it answers PING.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: acceleration/go.mod
+          cache-dependency-path: |
+            acceleration/go.sum
+            sdks/go/go.sum
+            tui/go.sum
+            performance_benchmark/go.sum
+
+      # The spec is rendered from the server's Go operations and the clients are generated
+      # from the spec, so any of them left behind has already drifted from the others.
+      - name: Check the generated code is in step with the spec
+        run: |
+          (cd acceleration && go run ./cmd/openapi)
+          (cd sdks/go && go generate ./...)
+          git diff --exit-code -- acceleration/api/openapi.yaml sdks/go/acceleration/generated.go
+
+      # internal/video samples clips with ffmpeg and ffprobe, and its tests skip without them.
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      # The backend is built with Go's SIMD experiment, as acceleration/Dockerfile builds it.
+      - name: Vet the backend
+        run: go vet ./...
+        working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
+
+      - name: Test the backend
+        run: go test ./...
+        working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
+          ROUTER_REDIS_ADDR: localhost:${{ job.services.redis.ports['6379'] }}
+
+      # Without the experiment the Opus codec runs its scalar code, which must still build
+      # and pass.
+      - name: Test the audio without SIMD
+        run: go build ./... && go test ./internal/audio/... ./internal/audiofloor/... ./internal/agent/streamedge/...
+        working-directory: acceleration
+
+      - name: Vet phonecheck
+        run: go vet ./...
+        working-directory: acceleration/cmd/phonecheck
+
+      - name: Test phonecheck
+        run: go test -race ./...
+        working-directory: acceleration/cmd/phonecheck
+
+      - name: Compile STS integration tests
+        run: go test -tags integration -run '^$' -exec=true ./internal/sts/...
+        working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
+
+      - name: Vet the SDK
+        run: go vet ./...
+        working-directory: sdks/go
+
+      - name: Test the SDK
+        run: go test -race ./...
+        working-directory: sdks/go
+
+      - name: Vet the terminal UI
+        run: go vet ./...
+        working-directory: tui
+
+      - name: Test the terminal UI
+        run: go test -race ./...
+        working-directory: tui
+
+      # Without the webrtc tag the load benchmark builds its transport as a stub, so its
+      # ramp, report and audio checks are tested here without live calls.
+      - name: Vet the load benchmark
+        run: go vet ./...
+        working-directory: performance_benchmark
+
+      - name: Test the load benchmark
+        run: go test ./...
+        working-directory: performance_benchmark
+
+  # The Go SDK is installed on its own, with no go.work, by Go as old as its go directive,
+  # so it is checked that way too. GOTOOLCHAIN=local keeps 1.25 from switching to a newer
+  # toolchain, which would prove nothing about 1.25.
+  go-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: sdks/go/go.sum
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Check go.mod and go.sum are tidy and verified
+        run: |
+          go mod tidy -diff
+          go mod verify
+
+      - name: Vet, the end-to-end suite included
+        run: |
+          go vet ./...
+          go vet -tags e2e .
+
+      - name: Test
+        run: go test -race ./...
+
+  js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The generated types are committed so that installing the package needs no code
+      # generation, which only holds while they are the ones the spec describes.
+      - name: Check the generated types are in step with the spec
+        run: npm run types -- --check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # The same suite with stream-chat 10 in place of the 9 the lockfile has: an app may hand
+  # either to the SDK, and the SDK reads both by shape.
+  js-stream-chat-10:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The newest 10 there is, release candidates included, so a release candidate that
+      # breaks the SDK shows here before it ships. The log says which one ran.
+      - name: Install stream-chat 10
+        run: |
+          npm install --no-save stream-chat@^10.0.2
+          node -p "'stream-chat ' + require('./node_modules/stream-chat/package.json').version"
+
+      - name: Test
+        run: npm test
+
+  dotnet:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: sdks/dotnet/global.json
+
+      - name: Check the generated models are in step with the spec
+        run: dotnet run --project tools/Generate -- --check
+
+      - name: Check formatting
+        run: dotnet format --verify-no-changes
+
+      - name: Build
+        run: dotnet build -warnaserror
+
+      - name: Test
+        run: dotnet test --no-build
+
+  php:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/php
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          tools: composer
+
+      - name: Install
+        run: composer install --no-interaction --no-progress
+
+      - name: Check the generated classes are in step with the spec
+        run: composer generate-check
+
+      - name: Analyse
+        run: composer stan
+
+      - name: Test
+        run: composer test
+
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: sdks/rust
+
+      - name: Check the generated types are in step with the spec
+        run: cargo run -p generate -- --check
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+  ruby:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/ruby
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: sdks/ruby
+
+      # The default task checks the generated spec table against the spec, then runs the tests.
+      - name: Check and test
+        run: bundle exec rake
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for dashboard
+        id: dashboard
+        working-directory: .
+        run: echo "present=$([[ -f dashboard/package-lock.json ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        if: steps.dashboard.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install
+        if: steps.dashboard.outputs.present == 'true'
+        run: npm ci
+
+      # The dashboard's types come from the same spec the Go and Python clients do, so a
+      # spec edited without regenerating them is a dashboard already reading a shape the
+      # router no longer answers with.
+      - name: Check the generated types are in step with the spec
+        if: steps.dashboard.outputs.present == 'true'
+        run: |
+          npm run types
+          git diff --exit-code -- src/lib/api.d.ts
+
+      - name: Lint
+        if: steps.dashboard.outputs.present == 'true'
+        run: npm run lint
+
+      - name: Build
+        if: steps.dashboard.outputs.present == 'true'
+        run: npm run build
 
 # Cancel in-flight runs for the same branch/PR when new commits arrive
 concurrency:
-  group: ci-unit-${{ github.workflow }}-${{ github.ref }}
+  group: ci-unit-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true

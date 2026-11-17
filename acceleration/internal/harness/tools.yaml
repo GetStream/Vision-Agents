@@ -1,0 +1,86 @@
+# What the fast voice model may do rather than say.
+#
+# A tool is not a skill: a skill hands a question to a better model and gets an answer
+# back, while a tool changes something outside the conversation and cannot be taken back.
+# The description is the whole of how the model decides when to reach for one, so it says
+# what the tool does to the call rather than what it is called.
+tools:
+  - name: transfer
+    description: >
+      Hand the caller to a human and leave the call. Use it when they ask for a person, or
+      when what they need is beyond you. You stop being on the call once the human answers,
+      so say goodbye in the same reply. Give a summary to introduce the caller to whoever
+      picks up; leave it out only if there is nothing worth handing over.
+    parameters:
+      type: object
+      properties:
+        to:
+          type: string
+          description: the human's phone number, written as +15551234567
+        summary:
+          type: string
+          description: >
+            One or two sentences telling the human who is calling and what they want. It is
+            spoken aloud on the call, and the caller hears it too, so say it as you would
+            with them listening.
+      required: [to]
+
+  - name: lookup
+    description: >
+      Look something up in the knowledge base, which is what this business has written
+      down: prices, policies, opening hours, how a product works. Use it whenever the
+      caller asks something your instructions and any matching skill do not already
+      answer, rather than guessing or saying you cannot help. Look here after a matching
+      skill and before searching the web: what this business wrote down is the answer it
+      wants given, even where the web says otherwise. Say something that fills the pause
+      while you look.
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: >
+            What to look for, in the caller's own words. Keep the terms they used: the
+            handbook was written in the same ones.
+      required: [query]
+
+  - name: search
+    description: >
+      Find out something that is true right now and that no handbook records: traffic,
+      weather, a score, whether a place is open, news. Use it whenever the answer depends
+      on today rather than on what you know, instead of saying you cannot check. What you
+      remember about any of these is out of date. Search only when a matching skill and
+      the knowledge base have nothing: never before them or alongside them. Say something
+      that fills the pause while you look.
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: >
+            What to find out, written as you would type it into a search box. Include the
+            place and the road or name the caller gave, since that is what makes the answer
+            theirs rather than somewhere else's.
+      required: [query]
+
+  - name: press
+    description: >
+      Press digits on the keypad, for when you have called a number and reached a menu. Use
+      it only for a menu: a person cannot hear digits, and pressing at one wastes the call.
+    parameters:
+      type: object
+      properties:
+        digits:
+          type: string
+          description: >
+            The digits to press, such as 1 or 4123. Only 0-9, * and # can be pressed, and w
+            waits half a second between two of them.
+      required: [digits]
+
+  - name: end_call
+    description: >
+      Hang up, ending the call for everyone on it. Say goodbye in the same reply: the call
+      ends once you have finished speaking, and nothing after that is heard.
+    parameters:
+      type: object
+      properties: {}

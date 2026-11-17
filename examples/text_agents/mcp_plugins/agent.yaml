@@ -1,0 +1,61 @@
+name: mcp_plugins
+description: Reads the team's issues and your own calendar and files, and makes 3D renders with Blender.
+mode: text
+llm: llm-fast
+# This agent has dozens of tools, and some servers write a page of instructions and examples
+# into a tool's description. progressive offers each tool by the first line of its
+# description instead, and the first call to a tool returns the rest without running it,
+# which costs one more model turn per tool used. Off when left out.
+tools:
+  progressive: true
+# Sentry, GitHub, HubSpot and Salesforce are the company's accounts, connected once on
+# the dashboard. connection: company is that connection's label, resolved when the folder
+# syncs, so every conversation uses it. A name alone is a session binding: the agent asks
+# for that person's connection in the chat the first time it needs it, and offers every
+# tool. Name it with a mapping to offer only the tools named, or matching a pattern such
+# as get_*; left out, all of them. required fails a session that cannot open the binding.
+# Linear, Calendly and Cal.com register their own OAuth clients, so they need nothing
+# configured on the router: ask about an issue and the login works.
+connectors:
+  - name: sentry
+    connection: company
+    tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
+  - name: github
+    connection: company
+  - name: hubspot
+    connection: company
+  - name: salesforce
+    connection: company
+  - name: linear
+    tools: [list_issues, get_issue, save_issue, list_comments, save_comment, list_projects, get_project, list_cycles, list_teams, list_users, list_issue_statuses]
+  - google_calendar
+  - google_drive
+  - google_docs
+  - calendly
+  - calcom
+  - slack
+# Blender for the render skill, in the router's Daytona sandbox.
+sandbox: daytona
+sandbox_options:
+  # bpy is Blender as a Python module, for Python 3.13. The libraries are the X and GL
+  # ones its wheel links against that a slim Debian does not have.
+  setup:
+    - >-
+      apt-get update && apt-get install -y --no-install-recommends
+      libgl1 libx11-6 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrender1
+      libxxf86vm1 libsm6 libice6 libxt6 && rm -rf /var/lib/apt/lists/*
+    - pip install --no-cache-dir bpy==5.2.2
+  timeout: 5m
+  cpu: 2
+  memory_gb: 4
+# The lines this agent answers on besides its Stream Chat channel. The provider's
+# credentials are not here: the app connects each line once on the router, which answers
+# what arrives and writes the reply back. identity: phone, the default, makes every number
+# that writes an end user of its own; link answers a number only once somebody signed in has
+# tied it to themselves with a code, which is what reading their own calendar needs.
+channels:
+  whatsapp:
+    number: "+15556325550"
+  sms:
+    number: "+12187021098"
+  identity: link

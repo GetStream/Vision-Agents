@@ -1,0 +1,473 @@
+package session
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
+)
+
+// recordQueueSize bounds how far the session writer may fall behind before rows are
+// dropped. Larger than the call queue because items arrive per turn rather than per call.
+const recordQueueSize = 1024
+
+// recordWriteTimeout bounds a single write so a stuck database cannot wedge the writer.
+const recordWriteTimeout = 5 * time.Second
+
+// itemFlushEvery is how long a partial batch of items waits for company.
+//
+// Items arrive in bursts -- a question, then nothing while a tool runs, then several at once
+// -- so batching only on a full buffer would leave the last few items of a quiet turn
+// unwritten until the next turn happened. Short enough that a reader refreshing the page
+// sees the turn they just watched.
+const itemFlushEvery = 250 * time.Millisecond
+
+// itemBatchSize is how many items are written in one statement.
+const itemBatchSize = 64
+
+// recordWrite is one thing that happened to a session that Postgres should hear about.
+//
+// A single queue rather than one per kind, because the order matters and separate queues
+// would race: a response row written before the session row it points at violates the
+// foreign key, and items written before their response do the same.
+type recordWrite struct {
+	// session is a session that opened or was renamed, nil otherwise, and tools what its
+	// model is offered.
+	session *store.AgentSession
+	tools   []store.ToolDefinition
+	// closed is the session that ended, closedAt when and endReason why.
+	closed    string
+	closedAt  time.Time
+	endReason string
+	// response is a turn that began, nil otherwise.
+	response *store.AgentResponse
+	// finished is the response that ended, with how it ended.
+	finished   string
+	status     string
+	failure    string
+	finishedAt time.Time
+	// items are things that happened during a turn.
+	items []store.AgentResponseItem
+	// described is a session given a new title and description, nil otherwise.
+	described *described
+	// sawVideo is the session whose user's video the agent saw.
+	sawVideo string
+	// voiced is the session voice was started on, and the call it joined.
+	voiced *voiced
+	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
+	chose *chose
+}
+
+// recorder is what a session needs of the writer behind it, which is less than the writer
+// offers: starting and stopping it belongs to the manager that owns it. Narrowing it here
+// also says plainly what a session may record, which is the list a reader of the event
+// mapping wants.
+type recorder interface {
+	// Responding says a turn began.
+	Responding(row store.AgentResponse)
+	// Responded says how it ended.
+	Responded(id, status, failure string, at time.Time)
+	// Item says one thing that happened during it.
+	Item(item store.AgentResponseItem)
+	// Described says the session was renamed. A nil custom leaves the labels as they were.
+	Described(customerID, id, title, description string, custom map[string]any)
+	// SawVideo says the agent saw the user's video.
+	SawVideo(id string)
+	// Voiced says voice was started on the session, on the call named.
+	Voiced(id, callID, callType string)
+	// Chose says a login in the conversation chose a connection for the binding called name.
+	Chose(customerID, id, name, connectionID string)
+	// Flush waits until everything said so far has been written, which is what reading the
+	// conversation back straight after it happened needs.
+	Flush(ctx context.Context) error
+}
+
+// sessionRecords is a recorder for every session a manager opens, which also hears each
+// session open and close.
+type sessionRecords interface {
+	recorder
+	Opened(row store.AgentSession, tools []store.ToolDefinition)
+	Closed(id string, at time.Time, reason EndReason)
+	Close()
+}
+
+// sessionRecorder writes sessions, turns and items to Postgres off the conversation's path.
+//
+// Same trade as the call recorder and for the same reason: a caller must never wait on a
+// database to be answered, and a conversation must not fail to happen because the row
+// recording it could not be written. So recording is asynchronous and rows are what gets
+// dropped when the writer cannot keep up.
+//
+// An incognito session never reaches this writer at all. That is deliberate: a flag checked
+// here would be one place, and one place that forgot to check it would be a conversation
+// kept against its caller's wishes. The session simply never hands anything over.
+type sessionRecorder struct {
+	store  *store.Store
+	logger *slog.Logger
+
+	queue chan recordWrite
+	// flushes takes each Flush to the writer beside the queue rather than in it: a reader
+	// waiting on a slow writer must not take the room the rows need, or enough of them at
+	// once would get every later row dropped. The writer answers each with the channel it
+	// closes once the Flush may return.
+	flushes chan chan (<-chan struct{})
+	done    chan struct{}
+
+	closeOnce sync.Once
+	dropped   atomic.Int64
+}
+
+func newSessionRecorder(pgStore *store.Store, logger *slog.Logger) *sessionRecorder {
+	r := &sessionRecorder{
+		store:   pgStore,
+		logger:  logger,
+		queue:   make(chan recordWrite, recordQueueSize),
+		flushes: make(chan chan (<-chan struct{})),
+		done:    make(chan struct{}),
+	}
+	go r.run()
+	return r
+}
+
+// Opened queues the row for a session that has just started.
+func (r *sessionRecorder) Opened(row store.AgentSession, tools []store.ToolDefinition) {
+	r.queueWrite(recordWrite{session: &row, tools: tools})
+}
+
+// Closed queues the time a session ended.
+func (r *sessionRecorder) Closed(id string, at time.Time, reason EndReason) {
+	r.queueWrite(recordWrite{closed: id, closedAt: at, endReason: string(reason)})
+}
+
+// described is what a session was renamed to.
+type described struct {
+	customerID, id, title, description string
+	custom                             map[string]any
+}
+
+// Described queues a session's new name. It goes through the queue rather than straight to
+// the store so it cannot be written before the row it renames.
+func (r *sessionRecorder) Described(customerID, id, title, description string, custom map[string]any) {
+	r.queueWrite(recordWrite{described: &described{customerID, id, title, description, custom}})
+}
+
+// chose is the connection a login chose for one of a session's bindings.
+type chose struct {
+	customerID, id, name, connectionID string
+}
+
+// Chose queues a connection a login chose, behind the row it changes, as Described does.
+func (r *sessionRecorder) Chose(customerID, id, name, connectionID string) {
+	r.queueWrite(recordWrite{chose: &chose{customerID, id, name, connectionID}})
+}
+
+// SawVideo queues that a session became a video one, behind the row it changes.
+func (r *sessionRecorder) SawVideo(id string) {
+	r.queueWrite(recordWrite{sawVideo: id})
+}
+
+// voiced is a session voice was started on.
+type voiced struct {
+	id, callID, callType string
+}
+
+// Voiced queues that voice was started on a session, behind the row it changes.
+func (r *sessionRecorder) Voiced(id, callID, callType string) {
+	r.queueWrite(recordWrite{voiced: &voiced{id, callID, callType}})
+}
+
+// Responding queues a turn that has just begun.
+func (r *sessionRecorder) Responding(row store.AgentResponse) {
+	r.queueWrite(recordWrite{response: &row})
+}
+
+// Responded queues how a turn ended.
+func (r *sessionRecorder) Responded(id, status, failure string, at time.Time) {
+	r.queueWrite(recordWrite{finished: id, status: status, failure: failure, finishedAt: at})
+}
+
+// Item queues one thing that happened during a turn.
+func (r *sessionRecorder) Item(item store.AgentResponseItem) {
+	r.queueWrite(recordWrite{items: []store.AgentResponseItem{item}})
+}
+
+// Flush waits for the writer to catch up with everything queued before it. Unlike the other
+// writes it is never dropped, because the caller is about to read what it wrote.
+func (r *sessionRecorder) Flush(ctx context.Context) error {
+	// The writer answers at once, so the reply never holds it up.
+	reply := make(chan (<-chan struct{}), 1)
+	select {
+	case r.flushes <- reply:
+	case <-r.done:
+		// The writer drained the queue before it stopped.
+		return nil
+	case <-ctx.Done():
+		return stack.Wrap(ctx.Err())
+	}
+	select {
+	case <-<-reply:
+		return nil
+	case <-ctx.Done():
+		return stack.Wrap(ctx.Err())
+	}
+}
+
+// Dropped reports how many writes were thrown away, for a test or a health check that wants
+// to know the writer is keeping up.
+func (r *sessionRecorder) Dropped() int64 { return r.dropped.Load() }
+
+// Close drains the queue and stops the writer.
+func (r *sessionRecorder) Close() {
+	r.closeOnce.Do(func() {
+		close(r.queue)
+		<-r.done
+		if dropped := r.dropped.Load(); dropped > 0 {
+			r.logger.Warn("dropped session records because the writer fell behind", "count", dropped)
+		}
+	})
+}
+
+func (r *sessionRecorder) queueWrite(write recordWrite) {
+	select {
+	case r.queue <- write:
+	default:
+		r.dropped.Add(1)
+	}
+}
+
+func (r *sessionRecorder) run() {
+	defer close(r.done)
+
+	// Items are the only writes that batch, so they collect here while everything else goes
+	// straight through. Anything that is not an item flushes them first: a response marked
+	// finished before its items were written would be read back as a turn that did nothing.
+	pending := make([]store.AgentResponseItem, 0, itemBatchSize)
+	flush := time.NewTicker(itemFlushEvery)
+	defer flush.Stop()
+
+	// Each waiting Flush is released once the writer has taken everything that was queued
+	// when it arrived. The queue is first in, first out, so that is the writes taken so far
+	// plus those still in it.
+	var taken int
+	var waiting flushWaiters
+	for {
+		// Every Flush already waiting is taken in before the next write, so none waits on
+		// writes queued while the ones before it were taken in.
+		for registering := true; registering; {
+			select {
+			case reply := <-r.flushes:
+				reply <- waiting.wait(taken + len(r.queue))
+			default:
+				registering = false
+			}
+		}
+		if waiting.due(taken) {
+			// The items pending ahead of them are written before they are told.
+			r.writeItems(pending)
+			pending = pending[:0]
+			waiting.release(taken)
+		}
+		select {
+		case write, open := <-r.queue:
+			if !open {
+				r.writeItems(pending)
+				return
+			}
+			taken++
+			if len(write.items) > 0 {
+				pending = append(pending, write.items...)
+				if len(pending) >= itemBatchSize {
+					r.writeItems(pending)
+					pending = pending[:0]
+				}
+				continue
+			}
+			if len(pending) > 0 {
+				r.writeItems(pending)
+				pending = pending[:0]
+			}
+			r.write(write)
+		case reply := <-r.flushes:
+			reply <- waiting.wait(taken + len(r.queue))
+		case <-flush.C:
+			if len(pending) > 0 {
+				r.writeItems(pending)
+				pending = pending[:0]
+			}
+		}
+	}
+}
+
+// flushWaiters are the Flushes waiting on the writer, in order of the writes they wait for.
+// Those waiting for the same writes share one entry, so there is at most one entry per write
+// still queued, however many callers wait.
+type flushWaiters []flushWaiter
+
+// flushWaiter is the Flushes waiting until the writer has taken its first after writes.
+type flushWaiter struct {
+	after   int
+	flushed chan struct{}
+}
+
+// wait returns the channel closed once the writer has taken its first after writes. after
+// never falls below the last one asked for, since the writer only takes and the queue only
+// grows in between.
+func (w *flushWaiters) wait(after int) <-chan struct{} {
+	if n := len(*w); n == 0 || (*w)[n-1].after != after {
+		*w = append(*w, flushWaiter{after: after, flushed: make(chan struct{})})
+	}
+	return (*w)[len(*w)-1].flushed
+}
+
+// due says whether any of them is released by the writer having taken taken writes.
+func (w flushWaiters) due(taken int) bool {
+	return len(w) > 0 && w[0].after <= taken
+}
+
+// release tells every one whose writes are all taken.
+func (w *flushWaiters) release(taken int) {
+	due := slices.IndexFunc(*w, func(waiter flushWaiter) bool { return waiter.after > taken })
+	if due < 0 {
+		due = len(*w)
+	}
+	for _, waiter := range (*w)[:due] {
+		close(waiter.flushed)
+	}
+	*w = (*w)[due:]
+}
+
+func (r *sessionRecorder) write(write recordWrite) {
+	ctx, cancel := context.WithTimeout(context.Background(), recordWriteTimeout)
+	defer cancel()
+
+	switch {
+	case write.session != nil:
+		if err := r.store.SaveSession(ctx, write.session); err != nil {
+			r.logger.Error("could not record the session starting", "error", err)
+			return
+		}
+		if err := r.store.SaveSessionTools(ctx, write.session.ID, write.tools); err != nil {
+			r.logger.Error("could not record the session's tools", "error", err)
+		}
+	case write.closed != "":
+		if err := r.store.CloseSession(ctx, write.closed, write.closedAt, write.endReason); err != nil {
+			r.logger.Error("could not record the session ending", "error", err)
+		}
+	case write.response != nil:
+		if err := r.store.StartResponse(ctx, write.response); err != nil {
+			r.logger.Error("could not record the turn starting", "error", err)
+		}
+	case write.finished != "":
+		if err := r.store.FinishResponse(ctx, write.finished, write.status, write.failure, write.finishedAt); err != nil {
+			r.logger.Error("could not record the turn ending", "error", err)
+		}
+	case write.described != nil:
+		d := write.described
+		err := r.store.DescribeSession(ctx, d.customerID, d.id, d.title, d.description, d.custom)
+		if errors.Is(err, store.ErrNoSession) {
+			// The conversation is named after it ran, so the customer may have deleted it by
+			// then. Nothing is lost: the title had nothing left to name.
+			r.logger.Debug("dropped the session's title: the session is gone", "session", d.id)
+		} else if err != nil {
+			r.logger.Error("could not record the session's title", "session", d.id, "error", err)
+		}
+	case write.chose != nil:
+		c := write.chose
+		if err := r.store.ChooseSessionConnection(ctx, c.customerID, c.id, c.name, c.connectionID); err != nil {
+			r.logger.Error("could not record the connection a login chose", "session", c.id, "error", err)
+		}
+	case write.sawVideo != "":
+		if err := r.store.SawVideo(ctx, write.sawVideo); err != nil {
+			r.logger.Error("could not record the session's video", "session", write.sawVideo, "error", err)
+		}
+	case write.voiced != nil:
+		v := write.voiced
+		if err := r.store.SessionVoiced(ctx, v.id, v.callID, v.callType); err != nil {
+			r.logger.Error("could not record the session's call", "session", v.id, "error", err)
+		}
+	}
+}
+
+func (r *sessionRecorder) writeItems(items []store.AgentResponseItem) {
+	if len(items) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), recordWriteTimeout)
+	defer cancel()
+
+	// The slice is copied because the caller reuses its buffer, and the write outlives the
+	// call that handed it over only by as long as this statement takes.
+	batch := append([]store.AgentResponseItem(nil), items...)
+	if err := r.store.AppendResponseItems(ctx, batch); err != nil {
+		r.logger.Error("could not record what a turn did", "error", err, "items", len(batch))
+	}
+}
+
+// sessionRow is what a session looks like to somebody reading it back later.
+//
+// Deliberately not the call row. That one is a call: it carries numbers, a direction and the
+// review a finished call gets, none of which a text conversation has. This one carries what
+// the caller said about the conversation, which is what they will look for it by.
+func sessionRow(created *Session) store.AgentSession {
+	spec := created.Spec()
+	row := store.AgentSession{
+		ID:              created.id,
+		CustomerID:      spec.CustomerID,
+		StreamAppPK:     spec.StreamApp,
+		ConfigID:        spec.ConfigID,
+		AgentName:       spec.AgentName,
+		AgentID:         spec.AgentID,
+		ConversationID:  spec.ConversationID,
+		CallID:          spec.CallID,
+		CallType:        spec.CallType,
+		Title:           spec.Title,
+		Description:     spec.Description,
+		Project:         spec.Project,
+		Custom:          spec.Custom,
+		ModelOverwrites: spec.ModelOverwrites,
+		ResumeHistory:   spec.ResumeHistory,
+		FloorControl:    spec.FloorControl,
+		ForkedFrom:      spec.ForkedFrom,
+		ReturnURL:       spec.ReturnURL,
+		State:           store.SessionRunning,
+		Modality:        created.Modality(),
+		CreatedAt:       created.created.UTC(),
+	}
+	// Whose the session is comes from the credential rather than from the spec's UserID,
+	// which is who the agent joined the call as. Recording the agent's own id as the owner
+	// would make every session look like it belonged to the agent.
+	row.UserID = spec.Caller.UserID
+	row.CallerKind = string(spec.CallerKind)
+	row.APIKey, row.UsageCategories = spec.Attribution.APIKey, spec.Attribution.UsageCategories
+	row.Team = usage.Team(spec.Attribution.UsageCategories)
+	// What opens the session's memory (Manager.Create), so a delete knows whether there is
+	// anything in the memory store to forget.
+	row.Remembers = new(spec.Memory.UserID != "")
+	// Only the alias and the connection's id, so a fork can choose them again: a selection
+	// is a reference, and the credential stays sealed on the connection.
+	for _, selection := range spec.ConnectorSelections {
+		row.ConnectorSelections = append(row.ConnectorSelections,
+			store.SessionConnectorSelection{Name: selection.Name, ConnectionID: selection.ConnectionID})
+	}
+	return row
+}
+
+// toolRows is what a session's model is offered, as it is kept.
+func toolRows(created *Session) []store.ToolDefinition {
+	offered := created.ToolDefinitions()
+	rows := make([]store.ToolDefinition, 0, len(offered))
+	for _, tool := range offered {
+		rows = append(rows, store.ToolDefinition{
+			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			Source: string(created.ToolSource(tool.Name)),
+		})
+	}
+	return rows
+}

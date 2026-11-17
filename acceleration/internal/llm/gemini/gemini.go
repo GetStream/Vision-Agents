@@ -1,0 +1,162 @@
+// Package gemini reaches Google's Gemini models over their OpenAI-compatible endpoint.
+//
+// Google serves chat completions alongside their own API, which means these models need no
+// implementation of their own: the difference from OpenAI is a base URL, a key and how
+// reasoning is asked for.
+package gemini
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+// ProviderName is the stable name used in routing config and stats.
+const ProviderName = "gemini"
+
+// apiKeyEnvVar holds the credentials when Options does not. It is the name the Python side
+// of this repository already uses for the same key.
+const apiKeyEnvVar = "GOOGLE_API_KEY"
+
+// defaultBaseURL is Google's OpenAI-compatible endpoint. The trailing slash is theirs: the
+// compatibility layer lives under the versioned path rather than replacing it.
+const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+// defaultModel is used when the caller names no model. It is the same model llm-fast
+// prefers, so the provider does not give a second answer to the question of which Gemini a
+// conversation gets.
+const defaultModel = "gemini-3.8-flash"
+
+// unsignedCall is the signature Google accepts on calls it never made, so a conversation
+// a fallback continued on another model can come back here.
+const unsignedCall = "skip_thought_signature_validator"
+
+// Options configures the provider.
+type Options struct {
+	APIKey string
+	Model  string
+	// BaseURL overrides the endpoint, for a gateway or a test server.
+	BaseURL string
+	// ReasoningEffort is how long the model may think before answering. Empty leaves the
+	// default its family declares, which on the Flash models is their floor, because
+	// thinking spends the latency budget before the first word and a live conversation has
+	// none to spend.
+	//
+	// It cannot be turned off altogether: unlike the 2.5 series, every Gemini 3 model
+	// thinks, and the floor is as low as the setting goes.
+	ReasoningEffort string
+	Logger          *slog.Logger
+}
+
+// minimalEffort is the least thinking the Gemini 3 models up to 3.5 will do.
+const minimalEffort = "minimal"
+
+// lowEffort is the floor from 3.8 Flash onwards, which took minimal away.
+const lowEffort = "low"
+
+// modelCapabilities is what each model family accepts.
+//
+// 3.8 Flash made thinking a level rather than a budget and dropped minimal with it, so low
+// is as far down as it goes. Asking for minimal there is a 400 halfway through a call
+// rather than a slower turn, which is why the floor is a table and not one constant.
+//
+// Gemini 4 Argon takes the same three levels but defaults to high. It is routed only in
+// the quality tier, where nobody is waiting on the first word, and high is the level
+// Artificial Analysis score it at.
+var modelCapabilities = map[string]llm.Capabilities{
+	"gemini-3.8": {
+		ReasoningEfforts: []string{lowEffort, "medium", "high"},
+		DefaultEffort:    lowEffort,
+		StreamsReasoning: false,
+	},
+	"gemini-4": {
+		ReasoningEfforts: []string{lowEffort, "medium", "high"},
+		DefaultEffort:    "high",
+		StreamsReasoning: false,
+	},
+	"gemini-4-hydrogen": {
+		ReasoningEfforts: []string{lowEffort, "medium", "high", "xhigh"},
+		DefaultEffort:    "high",
+		StreamsReasoning: false,
+	},
+}
+
+// fallbackCapabilities is the older Gemini 3 line, where minimal is still the floor. There
+// is no none: every Gemini 3 model thinks.
+var fallbackCapabilities = llm.Capabilities{
+	ReasoningEfforts: []string{minimalEffort, lowEffort, "medium", "high"},
+	DefaultEffort:    minimalEffort,
+	// Google reports thinking as tokens rather than streaming it, so there is no
+	// reasoning text for a caller to separate out.
+	StreamsReasoning: false,
+}
+
+// capabilitiesFor returns what one model accepts, by longest matching family.
+func capabilitiesFor(model string) llm.Capabilities {
+	best := ""
+	for family := range modelCapabilities {
+		if strings.HasPrefix(model, family) && len(family) > len(best) {
+			best = family
+		}
+	}
+	if best == "" {
+		return fallbackCapabilities
+	}
+	return withVision(modelCapabilities[best])
+}
+
+func withVision(c llm.Capabilities) llm.Capabilities {
+	if len(c.InputModalities) == 0 {
+		c.InputModalities = []string{llm.ModalityImage}
+	}
+	return c
+}
+
+// New builds the provider, reading the API key from the environment when it is not given.
+func New(options Options) (*openaicompat.LLM, error) {
+	if options.APIKey == "" {
+		options.APIKey = keypool.Getenv(apiKeyEnvVar)
+	}
+	if options.APIKey == "" {
+		return nil, stack.Wrap(errors.New("gemini: " + apiKeyEnvVar + " is required"))
+	}
+	if options.Model == "" {
+		options.Model = defaultModel
+	}
+	if options.BaseURL == "" {
+		options.BaseURL = defaultBaseURL
+	}
+
+	model := capabilitiesFor(options.Model)
+	if options.ReasoningEffort != "" {
+		if err := model.Validate(
+			llm.ResponseParams{Reasoning: llm.ReasoningParams{Effort: options.ReasoningEffort}},
+		); err != nil {
+			return nil, stack.Wrap(fmt.Errorf("gemini: %s: %w", options.Model, err))
+		}
+		model.DefaultEffort = options.ReasoningEffort
+	}
+
+	return openaicompat.New(openaicompat.Options{
+		// Google's compatibility layer is not known to keep a later system message in
+		// place, and lifting it into the system prompt would change the prefix every turn.
+		SystemTurnsAsUser: true,
+		Provider:          ProviderName,
+		Model:             options.Model,
+		StatsModel:        options.Model,
+		APIKey:            options.APIKey,
+		BaseURL:           options.BaseURL,
+		Capabilities:      model,
+		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
+			return map[string]any{"reasoning_effort": effort}
+		},
+		UnsignedCall: unsignedCall,
+		Logger:       options.Logger,
+	})
+}

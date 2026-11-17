@@ -1,0 +1,363 @@
+# internal/scheduling
+
+Scheduled tasks: something the agent agreed to do for one end user at a wall-clock time in
+that user's zone, once or on a repeat. This package holds two things: the schedules (`scheduling.go`, `resolve.go`, `describe.go`,
+`quiet.go`: parse, validate, expand, describe, quiet hours; pure code) and the `Scheduler` (`scheduler.go`), which claims due occurrences from
+the store and hands each to a `DeliverFunc`. It imports `store` and nothing that delivers; the
+delivery is `api.Server.DeliverScheduledTask`, handed in at `cmd/router/main.go:1265`. What the
+feature is for and what is not done: `.factory/features/scheduled-tasks.md`. How to use and
+debug it: `.claude/skills/scheduled-tasks/SKILL.md`. Paths are under `acceleration/`.
+
+## Code map
+
+```
+ model calls a tool                       backend calls REST
+ internal/session/schedule_tools.go       internal/api/scheduled_tasks.go
+ (schedule_task, list_, update_, cancel_) (/v1/agents/scheduled-tasks ...)
+              \                                 /
+               \   scheduling.Parse, ResolveZone, CheckMove, SleptThrough
+                \                             /
+                 v                           v
+        internal/store/scheduled_tasks.go  (tables: scheduled_tasks, scheduled_task_runs)
+        migrations/20261105120000_scheduled_tasks.sql
+        migrations/20261105130000_scheduled_tasks_wake.sql  (scheduled_tasks_wake_idx)
+        migrations/20261106120000_scheduled_task_thread.sql (channel_thread)
+                 |
+                 |  ClaimDueScheduledTasks (FOR UPDATE SKIP LOCKED, lease, claim_id)
+                 v
+        internal/scheduling/scheduler.go   Scheduler.run: missed? -> deliver with retries
+                 |                         -> FinishScheduledTaskRun | PostponeScheduledTask
+                 |  DeliverFunc
+                 v
+        internal/api/scheduled_delivery.go DeliverScheduledTask
+                 |   quiet hours? -> Postponed
+                 |   channel_thread? -> internal/api/scheduled_thread_delivery.go deliverOnThread
+                 |   session live here | on a peer (POST /internal/scheduled-tasks/deliver)
+                 |   | ended: reopen from its row | none yet: open one
+                 v
+        deliver_to, in order, first that lands:
+          conversation  Session.FollowUp(command id "st_<run id>", or "st_<run id>_r1")
+          sms | whatsapp | imessage   same turn's words and files -> channels.Service.Notify
+          phone         phone.Service.Call -> call session -> task as first turn
+
+        deliverOnThread (a task made in an SMS, WhatsApp or 1:1 iMessage thread; deliver_to is not read):
+          channel_threads row, the task's customer's and user's   else thread_gone
+          channelbridge.Bridge.Reachable: connection, opt-out, sandbox gate, WhatsApp 24 h
+          lease the thread's turn (store.TakeChannelThreadTurn)
+          the session on the thread channel, else one opened as answerThread opens it
+          Session.FollowUp("st_<run id>" or "_r1"), wait for the reply   -> Bridge.Reply texts it
+          delivered_to sms (telnyx) | whatsapp
+```
+
+## Terms
+
+One word, one meaning, in code, docs and API alike.
+
+| Term | What it is | In code | Example |
+| --- | --- | --- | --- |
+| task | One agreement with one user: title, instructions, schedule, zone, `deliver_to`, `quiet_hours`, state `active`, `paused`, `completed` or `failed` | `store.ScheduledTask`, table `scheduled_tasks`, API `ScheduledTask` | "Stretch", every weekday at 09:00, Europe/Amsterdam |
+| occurrence | One instant the schedule names | `Schedule.Next`, `Schedule.Upcoming`; the task's `next_run_at` is the next one | Mon 26 Oct 2026 09:00 CET |
+| run | The record of one occurrence that came due, or of one run by hand: `running`, `delivered`, `failed` or `missed`, with `error` a reason code. Its `prompt` is the instructions as they were at the claim | `store.ScheduledTaskRun`, table `scheduled_task_runs`, unique per (`customer_id`, `task_id`, `scheduled_for`) for `trigger = schedule` | run `scheduled_for` 2026-10-26T09:00:00+01:00, `state` `delivered`, `delivered_to` `conversation` |
+| claim, lease | A worker's hold on a task: `claim_id` fences every later write of that worker, `lease_until` says when another worker may take it. Lease 1 min, renewed every 10 s | `ClaimDueScheduledTasks`, `RenewScheduledTaskLease`, `scheduledLease`, `renewLeaseEvery` (`scheduler.go:19`, `:22`) | A pause clears `claim_id`; the next renewal finds no row and stops the delivery |
+| held | An occurrence that came due in quiet hours: the claim stays, the lease moves to the hold's end, the run stays `running` with `postponed_until` | `Postponed`, `PostponeScheduledTask`, `ScheduledTaskRun.PostponedUntil` | Due 23:30 with quiet hours 22:00–07:00: held until 07:00, delivered then |
+| missed | A run not delivered because it was too late, the task slept through it, or a pause or edit settled it while it was held or in flight (S4). Not a failure: the failure streak is left as it is | `ScheduledTaskRunMissed`, `Missed`, `Scheduler.missed`, `SleptThrough` | A daily task the router could not reach for 25 h: yesterday's occurrence is `missed`, today's (59 min old) is delivered. With 3 h down, the one occurrence is 3 h old, past the 1 h grace, so it is `missed` and nothing is delivered |
+| reason | The short code a failed or missed run records; the full error goes to the logs only | `Reason*` constants (`scheduler.go:105`), `Failure.Reason` | `user_on_call`, `not_answered`, `task_paused` |
+| final | A failure another attempt would only repeat, or that would ring the user again: not retried | `Failure.Final`, `undeliveredFinally` | `not_answered`, `already_called` |
+| quiet hours | The part of the user's local day an occurrence is held through: `{start, end}` as "22:00", read in the task's zone; an end that does not read after the start (earlier or equal) wraps midnight | `QuietEnd` (`quiet.go:46`), `ScheduledTaskQuietHours` | `{"start": "22:00", "end": "07:00"}` |
+| schedule, RRULE subset | `at` or `in`, an optional `repeat` (FREQ DAILY, WEEKLY, MONTHLY, YEARLY; INTERVAL; BYDAY; BYMONTHDAY; COUNT ≤ 1000) and `until`, an inclusive local date. `start_local` is stored as the wall clock with no zone; a `next_run_at` that reads as it is its instant, so a fall-back hour's second pass survives `FromStored` (AI-1563). A repeat created with its start passed starts at its first occurrence after now, COUNT counted from there (`FromNow`, AI-1564); a reschedule that moves the start counts the same way, one that sends the stored start back (a reword, a repeat or until edit) keeps counting from it; a time of day alone (`09:00`) equal to the stored one is the stored start (`StoredClock`), a different one is a move (`MovesStartFrom`, AI-2018: `TestAStartMovesOnlyWhenItsClockReadingDiffers`, `TestARescheduleToAStartPassedRunsItsWholeCountFromNow`, `TestAnEditThatSendsTheStartBackKeepsCountingFromIt`, `TestAnEditResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart`, `TestTheAgentResendingTheStoredTimeOfDayKeepsCountingFromTheStoredStart`) | `Input`, `Schedule`, `Parse`, `FromStored`, `parseRepeat` (`scheduling.go:436`) | `at: "09:00"`, `repeat: "FREQ=MONTHLY;BYDAY=-1FR"`: last Friday of every month |
+| zone resolution | Which IANA zone a new task takes, first match wins: the call's argument, the session's, `users.timezone`, the config's `default_timezone`; none is `timezone_unknown`. `Local` is refused | `ResolveZone` (`scheduling.go:153`), `LoadZone` | Session opened with `timezone: "America/New_York"`, no argument: the task is in New York time |
+| due | When an occurrence came due, or when the hold on it ended; the worker's missed check and the call grace count lateness from it. The prompt's `due=` and `late=` count from the run's `scheduled_for` instead, or for a one-shot's scheduled run from its one occurrence, so a run an edit re-dued still states when it was due (`scheduledPrompt`, AI-1597) | `scheduledDelivery.Due`, `Scheduler.missed` | Held until 07:00: a 07:05 delivery is 5 min late to the worker, not 7 h 35 min |
+| command id | The id the follow-up turn is sent under, so a conversation runs it once | `"st_" + run.ID` (`DeliverScheduledTask`); a call's turn adds `_call`; a turn run again adds `_r1` (`replyCommand`) | `st_01JB...`, `st_01JB..._r1` |
+
+## Rules
+
+Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
+(`internal/scheduling/scheduler_test.go`), `StoreSuite` (`internal/store/scheduled_tasks_test.go`),
+`ScheduledTasksMigrationSuite` and `DataMoveSuite` (`internal/store`), `ScheduledTasksSuite`
+(`internal/api/scheduled_tasks_test.go`, `scheduled_phone_test.go`) and `DrainSuite`
+(`cmd/router`). All of them need the integration tag (see Run the tests).
+
+- **One occurrence, one claim, one run.** Claims run in one transaction under
+  `FOR UPDATE SKIP LOCKED`, against the database's clock, and insert the run in it.
+  `TestSchedulerSuite/TestTwoWorkersDeliverAnOccurrenceOnce`,
+  `TestStoreSuite/TestClaimingGivesEachDueTaskToOneWorker`,
+  `TestStoreSuite/TestAClaimInsertsOneRunPerOccurrence`.
+- **Every write after a claim goes through its `claim_id`.** A finish, renewal or hold under a
+  claim a pause, edit or delete took changes nothing on the task.
+  `TestStoreSuite/TestAFinishUnderAStolenClaimDoesNotAdvanceTheTask`,
+  `TestStoreSuite/TestARenewalExtendsOnlyTheClaimItHolds`,
+  `TestStoreSuite/TestAPostponeUnderAStolenClaimHoldsNothing`.
+- **A lost claim stops the delivery.** `TestSchedulerSuite/TestPausingATaskStopsItsDeliveryInFlight`,
+  `TestSchedulerSuite/TestAnEditedTaskIsNotRetriedByTheWorkerThatLostIt`.
+- **A run taken over keeps its id, so its command id.** A stale run is reclaimed under the same
+  row. `maxScheduledTaskRunAttempts` (3) counts claims: the first, the take-up after a
+  quiet-hours hold, and one after a lost worker. A third claim fails the run with
+  `delivery_failed` when no call was placed for it; when one was, the run records what the call
+  left. `TestStoreSuite/TestAStaleRunIsReclaimedUnderTheSameRun`,
+  `TestStoreSuite/TestAnOccurrenceWhoseWorkersKeepDyingIsFailedAtTheAttemptCap`,
+  `TestStoreSuite/TestTheAttemptCapRecordsWhatThePlacedCallLeft`,
+  `TestSchedulerSuite/TestACappedOccurrence*` (two tests).
+- **An occurrence holds a slot 20 min at most** (`occurrenceBudget`), and running out is
+  `timed_out`. `TestSchedulerSuite/TestAnOccurrenceThatOutlastsItsBudgetFails`,
+  `TestSchedulerSuite/TestAnOccurrenceThatOutlastsItsBudgetIsTimedOutEvenWhenDeliveryAnswersWithACodedFailure`.
+- **Late is missed, never replayed.** A one-shot delivers up to 24 h late, a repeat up to 1 h
+  (`oneShotGrace`, `repeatGrace`); older ones get a `missed` run each.
+  `TestSchedulerSuite/TestAOneShotMoreThanADayLateIsMissedNotDelivered`,
+  `TestSchedulerSuite/TestARecurringTaskSkipsOccurrencesOlderThanAnHour`,
+  `TestSchedulerSuite/TestReplayingAMissedRunKeepsTheFailureStreak`.
+- **Five failed occurrences in a row fail the task** (`maxConsecutiveFailures`). A run
+  failed `already_called` is not counted (`countsAsFailure`, AI-2404).
+  `TestSchedulerSuite/TestAFifthFailureInARowFailsTheTask`,
+  `TestSchedulerSuite/TestARunWhoseCallMayHaveCarriedItOutKeepsTheFailureStreak`,
+  `TestSchedulerSuite/TestAOneShotWhoseCallMayHaveCarriedItOutIsCompletedNotFailed`,
+  `TestSchedulerSuite/TestAnOccurrenceSettledAsCalledAlreadyBeforeItsAdvanceKeepsTheFailureStreak`.
+- **A final failure is not retried.** `TestSchedulerSuite/TestAFinalFailureIsNotRetried`,
+  `TestScheduledTasksSuite/TestAnOccurrenceIsFinalOnlyWhenEveryChannelsFailureIs`.
+- **Quiet hours hold, never fail, and age counts from the hold's end.** A run made by hand is
+  not held. `TestSchedulerSuite/TestAHeldTaskIsDeliveredWhenTheHoldEnds`,
+  `TestSchedulerSuite/TestAHeldOccurrenceIsCountedFromTheHoldAndNotFromWhenItCameDue`,
+  `TestScheduledTasksSuite/TestAQuietTaskIsHeldUntilItsQuietHoursEnd`.
+- **A pause or edit writes a running run `missed`, held or in flight (S4).** An edited active
+  one-shot comes due again as it now reads, unless its run placed a call: then it is completed.
+  Only an edit that leaves a one-shot active while it is delivered keeps its claim and run.
+  `TestStoreSuite/TestPausingATaskWritesItsHeldOccurrenceMissed`,
+  `TestScheduledTasksSuite/TestPausingATaskWritesTheOccurrenceItHeldMissed`,
+  `TestStoreSuite/TestAnEditedOneShotWhoseOccurrenceWasHeldComesDueAgainAsItNowReads`,
+  `TestStoreSuite/TestAnEditedOneShotBeingDeliveredKeepsItsClaimAndItsRun`,
+  `TestStoreSuite/TestAnEditedOneShotWhoseLostWorkerPlacedACallIsCompletedNotRungAgain`,
+  `TestStoreSuite/TestAOneShotMovedOffAnOccurrenceWhoseLostWorkerPlacedACallStaysAtItsNewTime`.
+- **A paused one-shot resumed after its time is completed with one `missed` run, error
+  `task_paused` (AI-1602)**, over the API and the tool alike; the tool result names the time in
+  the task's zone. `TestAPausedOneShotSleepsThroughItsTimeAsAMissedRun` (unit),
+  `TestScheduledTasksSuite/TestAOneShotResumedAfterItsTimeRecordsTheOccurrenceAsMissed`,
+  `TestScheduledTasksSuite/TestAOneShotTheAgentResumesAfterItsTimeRecordsTheOccurrenceAsMissed`,
+  `TestScheduledTasksSuite/TestAOneShotTheAgentResumesLateNamesTheMissedTimeInTheTasksZone`,
+  `TestScheduledTasksSuite/TestResumingALateOneShotTwiceRecordsItsOccurrenceOnce`.
+- **Any other task with no occurrence left is refused on resume and left as it was**: a
+  failed one-shot, a one-shot paused after its occurrence failed, a repeat past its until.
+  The API answers 400 `schedule_in_past` before it reads the config or the limit; the tool
+  refuses with the same code.
+  `TestScheduledTasksSuite/TestAFailedOneShotIsRefusedOnResumeUntilItIsRescheduled`,
+  `TestScheduledTasksSuite/TestAFailedRepeatPastItsLastTimeIsRefusedOnResume`,
+  `TestScheduledTasksSuite/TestARepeatingTaskPausedPastItsLastTimeIsRefusedOnResume`,
+  `TestScheduledTasksSuite/TestAOneShotPausedAfterItsOccurrenceFailedIsRefusedOnResume`,
+  `TestScheduledTasksSuite/TestATaskWithNoOccurrenceLeftIsRefusedBeforeItsLimitOrItsConfigIsAsked`,
+  `TestScheduledTasksSuite/TestTheAgentCannotResumeAFailedOneShotPastItsTime`.
+- **A call rings once, on an SMS number, never more than 15 min late, and only with ring and
+  call limit left in the occurrence (S5).** Too late is `missed` without a call; nobody
+  answering is `not_answered`, final, kept on the run for a worker that takes it over and for
+  a retry, whatever would stop that retry's call. A call placed whose end the run does not
+  record (delivered, or cut off with the worker) is `already_called`, and no channel after
+  `phone` is tried (`rangAlready`, AI-2021); a recorded end such as `not_answered` leaves the
+  next channel to carry the task. A call taken whose end a failed store write never recorded
+  (the give-back of a call not placed, or any reason write after the call was placed) is the
+  same. A run that ends `already_called` keeps the failure streak as it is and moves the task
+  on as a run that did not fail would: that call may have carried the task out (AI-2404).
+  `TestScheduledTasksSuite/TestAPhoneTaskMoreThanAQuarterHourLateIsMissedWithoutACall`,
+  `TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered`,
+  `TestScheduledTasksSuite/TestAnOccurrenceThatRangAlreadyIsNotRungAgainNorRetried`,
+  `TestScheduledTasksSuite/TestAUserWhoWritesOnlyOnWhatsAppIsNotRung`,
+  `TestScheduledTasksSuite/TestAnAgentOnlyOnWhatsAppHasNoLineToRingFrom`,
+  `TestScheduledTasksSuite/TestACallTheOccurrenceHasNoTimeLeftToRingAndHoldIsMissedWithoutACall`,
+  `TestScheduledTasksSuite/TestACallTheOccurrenceHasTimeToRingButNotToHoldIsMissedWithoutACall`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsNotAnswered`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWasPlacedIsNotTextedToo`,
+  `TestScheduledTasksSuite/TestAnOccurrenceTakenOverAfterItsCallWentUnansweredIsTextedOnTheNextChannel`,
+  `TestScheduledTasksSuite/TestAPlacedCallStopsTheChannelsAfterItWhenAnEarlierOneFailed`,
+  `TestStoreSuite/TestARunsCallKeepsTheReasonItEndedUnderForTheWorkerTakingItOver`,
+  `TestScheduledTasksSuite/TestARetryShortOfTimeAfterAnUnansweredCallIsNotAnswered`,
+  `TestScheduledTasksSuite/TestARetryAQuarterHourLateAfterAnUnansweredCallIsNotAnswered`,
+  `TestScheduledTasksSuite/TestARetryWhileTheUserIsOnACallAfterAnUnansweredCallIsNotAnswered`.
+- **A reply that was cancelled or interrupted runs again once; a finished one is read back
+  (AI-1558).** `replyCommand` reads the follow-up's state in the conversation (rebuilt from
+  Stream after a restart), not the run's `attempts`, which also count attempts that never
+  reached the turn. `st_<run>` cancelled or interrupted: the turn runs under `st_<run>_r1`, on
+  the retry or on the next channel; `_r1` cut off as well is read back as `reply_failed`. A
+  failed reply is not run again. A call's turn keeps `st_<run>_call`. A channel carries the
+  agent's reply only, never settled work's own words (`spokenOf`, AI-1559), so the first
+  attempt and a read-back send the same words.
+  `TestScheduledTasksSuite/TestATurnCancelledBeforeItsReplyRunsAgainOnTheRetry`,
+  `TestScheduledTasksSuite/TestATurnInterruptedByItsRouterStoppingRunsAgainOnTheRetry`,
+  `TestScheduledTasksSuite/TestATurnCancelledTwiceIsNotRunAThirdTime`,
+  `TestScheduledTasksSuite/TestTheConversationAfterACutOffTextChannelRunsTheTurnAgain`,
+  `TestScheduledTasksSuite/TestAReplyThatFailedIsNotWaitedOnWhenTheOccurrenceIsRetried`,
+  `TestScheduledTasksSuite/TestARetriedOccurrenceTextsTheReplyItAlreadyHas`,
+  `TestTelnyxChannelSuite/TestATaskWhoseTurnWasCancelledRunsAgainOnTheRetry`,
+  `TestSettledWorksOwnWordsAreNotCarriedButTheAgentsReplyIs` (unit).
+- **A repeat `Describe` would misstate is refused (S18)**; a stored one still runs.
+  `TestARepeatItsDescriptionWouldMisstateIsRefused` (unit and `ScheduledTasksSuite`),
+  `TestAStoredRepeatNowRefusedStillRuns` (unit).
+- **The active-task limit counts per user per config (S20).**
+  `TestStoreSuite/TestTheActiveLimitCountsTheTasksOnTheSameConfigOnly`,
+  `TestScheduledTasksSuite/TestTheActiveLimitCountsTheTasksOnTheirOwnAgentOnly`.
+- **A wall-clock time stays put across DST.** `TestADailyTaskHoldsItsWallClockAcrossDaylightSaving`,
+  `TestTheSpringGapMovesForwardInAmsterdam`, `TestTheFallOverlapTakesTheFirstOccurrenceInAmsterdam`
+  (unit).
+- **No zone is a refusal, not a guess.** `TestResolveZoneWithoutAnyZoneAsks` (unit),
+  `TestScheduledTasksSuite/TestATaskIsRefusedInWordsWhenNoZoneIsKnown`.
+- **A run moved earlier lands 15 min from now at the soonest** (`MinMove`).
+  `TestAMoveLandsNoSoonerThanMinMoveUnlessItKeepsTheCurrentRun` (unit),
+  `TestScheduledTasksSuite/TestANextSoonerThanAQuarterHourIsRefused`.
+- **The tools go only to verified users with scheduling on, outside incognito.**
+  `TestScheduledTasksSuite/TestGuestsAndAnonymousCallersAreNotOfferedTheTools`,
+  `TestScheduledTasksSuite/TestAnIncognitoSessionIsNotOfferedTheTools`,
+  `TestScheduledTasksSuite/TestAnAgentWithoutSchedulingOnIsNotOfferedTheTools`.
+- **A thread on a line of one person schedules for the person who wrote (AI-1842).** An SMS
+  (`telnyx`) or WhatsApp thread session (`api.threadSession`, `personalThreads`) is offered
+  the tools when its person writes, and not when someone else in the thread does; the task's `user_id` is the Stream user the bridge writes the person as
+  (`channelbridge.authorUserID`: per customer, line and person), `caller_kind` `server`, and
+  `channel_thread` its thread channel. A Linq (iMessage) chat is offered them while its
+  latest message says `data.chat.is_group` `false`; its person is that message's sender
+  (`channel_thread_people`), and a group chat, a chat whose message does not say and a
+  thread linked before the table are offered none. A Slack thread is shared and is offered none.
+  `TestTelnyxChannelSuite/TestAPersonTextingTheLineSchedulesATaskThatKeepsTheirThread`,
+  `TestTelnyxChannelSuite/TestTwoPeopleOnOneLineNeverReachEachOthersTasks`,
+  `TestTelnyxChannelSuite/TestTheSamePersonOnAnotherCustomersLineReachesNoneOfTheTasks`,
+  `TestTelnyxChannelSuite/TestSomeoneElseWritingInAPersonsThreadIsNotOfferedTheTools`,
+  `TestTelnyxChannelSuite/TestAZoneNamedInOneRoundIsTheNextRoundsTasks`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadSchedulesForThePersonWhoWrote`,
+  `TestLinqChannelSuite/TestALinqOneToOneChatSchedulesForThePersonWhoWrote`,
+  `TestLinqChannelSuite/TestALinqGroupChatIsNotOfferedTheTools`,
+  `TestLinqChannelSuite/TestALinqChatWhoseMessageDoesNotSayIsNotOfferedTheTools`,
+  `TestLinqChannelSuite/TestALinqChatThatBecomesAGroupLosesTheToolsAndItsTasks`,
+  `TestSlackChannelSuite/TestASlackThreadIsNotOfferedTheTools`.
+- **A task made in a thread is delivered back to that thread (AI-1843).** `deliverOnThread`
+  opens the thread's conversation as `answerThread` does (the session the backend keeps on the
+  channel, else one on the task's config, closed after the turn), under the thread's turn lease,
+  and runs the follow-up. It looks at the follow-up's reply every `replyPoll` (100 ms), so the
+  reply leaves as the turn ends (AI-2139). The delivery holds the reply back from `Bridge.Reply` (`Bridge.Hold`)
+  and sends it through the same path (`Bridge.Send`), so the run is `delivered_to` `sms` or
+  `whatsapp` only once the line took it: a refused send is `delivery_failed`, and its retry
+  sends the reply the thread holds, with its files (`Session.FollowUpFinished`), without a
+  second turn; a person who opted out by then is `channel_unreachable`, final, and a thread
+  removed by then is `thread_gone`, final. The task stores `deliver_to` `sms`, `whatsapp` or `imessage`
+  (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
+  Before the turn,
+  `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
+  person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), a tier limit (`tier_limit_reached`), WhatsApp
+  past 24 h since the person last wrote with no `after_window` template in the manifest
+  (`outside_window`, final). A thread row that is gone, of another customer, or of another person is
+  `thread_gone`, final. A task without `channel_thread` is delivered as before.
+  `TestTelnyxChannelSuite/TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread`,
+  `TestTelnyxChannelSuite/TestATaskReplyIsTextedAsSoonAsItsTurnEnds`,
+  `TestTelnyxChannelSuite/TestARetriedOccurrenceIsNotTextedTwice`,
+  `TestTelnyxChannelSuite/TestATaskWaitsForTheThreadsTurnAndLetsGoOfIt`,
+  `TestTelnyxChannelSuite/TestATaskIsCarriedInTheSessionTheBackendKeepsOnTheThread`,
+  `TestTelnyxChannelSuite/TestATaskWhoseTurnFailsTextsNothing`,
+  `TestTelnyxChannelSuite/TestATaskWhoseReplyTheLineRefusesIsSentOnTheRetry`,
+  `TestAFollowUpsFilesAreReadBackLiveAndAcrossRestart` (internal/conversation),
+  `TestTelnyxChannelSuite/TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFinally`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptsOutBeforeTheReplyGoesOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestAThreadTaskInItsQuietHoursIsHeld`,
+  `TestTelnyxChannelSuite/TestAThreadTasksDeliverToCannotChange`,
+  `TestTelnyxChannelSuite/TestAThreadTaskSaysItIsDeliveredOnTheThreadsChannel`,
+  `TestTelnyxChannelSuite/TestATaskScheduledInATasksTurnIsDeliveredOnTheThreadToo`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskSaysItIsDeliveredOnWhatsApp`,
+  `TestTelnyxChannelSuite/TestAPersonWhoOptedOutIsNotTextedAndTheTaskIsNotRetried`,
+  `TestTelnyxChannelSuite/TestATaskOnARemovedLineFailsFinally`,
+  `TestTelnyxChannelSuite/TestATaskWhoseThreadIsGoneFailsFinally`,
+  `TestTelnyxChannelSuite/TestATaskNeverReachesAnotherPersonsThread`,
+  `TestTelnyxChannelSuite/TestATaskReachesOnlyItsOwnCustomersThread`,
+  `TestTelnyxChannelSuite/TestATaskWithoutAThreadIsDeliveredAsBefore` (control),
+  `TestTelnyxSandboxSuite/TestATaskPastTheSandboxsDailyLimitIsHeldBack`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskWithinTheWindowIsSentOnTheThread`,
+  `TestWhatsAppChannelSuite/TestAWhatsAppThreadTaskPastTheWindowIsNotSent`,
+  `TestBridgeSuite/TestAWhatsAppReplyPastTheDayIsPastTheWindowUnlessTheManifestHasATemplate` (unit).
+- **A caller's own tool with a scheduling name keeps the name.**
+  `TestScheduledTasksSuite/TestACallersOwnScheduleTaskKeepsTheName`.
+- **Another user's task is a 404.** `TestScheduledTasksSuite/TestTheOwnerReachesATaskItsBackendMadeAndAnotherUserDoesNot`.
+- **A scheduled turn is never on the user's day.** `TestScheduledTasksSuite/TestADueTaskIsNotCountedOnItsUsersDay`.
+- **A call in progress is waited out**, and a session on another node is handed over.
+  `TestScheduledTasksSuite/TestATaskThatComesDueOnACallWaitsForTheCallToEnd`,
+  `TestScheduledTasksSuite/TestADueTaskIsHandedToTheNodeHoldingItsConversation`.
+- **The reply is written once; channels carry its words.**
+  `TestScheduledTasksSuite/TestARetriedOccurrenceTextsTheReplyItAlreadyHas`.
+- **A channel the user cannot be reached on falls back or is refused before the turn.**
+  `TestScheduledTasksSuite/TestAWhatsAppTaskOutsideItsWindowLandsInTheConversation` (falls
+  back), `TestScheduledTasksSuite/TestATaskForSomebodyWhoOptedOutRunsNoTurnForThem` (refused).
+- **Instructions are data, not orders.** `TestInstructionsCannotCloseTheirScheduledTaskBlock`
+  (`internal/api`, unit).
+- **The worker sleeps on the wake index.** `TestStoreSuite/TestTheNextWakeIsReadOffItsIndex`,
+  `TestScheduledTasksMigrationSuite/TestTheWakeIndexAppliesComesOffAndAppliesAgain`.
+- **A draining router finishes what it claimed.** `TestDrainSuite/TestTheDrainWaitsForAScheduledDeliveryInFlight`
+  (`cmd/router`), `TestSchedulerSuite/TestAStoppedWorkerClaimsNothingMoreButFinishesItsDelivery`.
+  A delivery waiting to retry does not hold the drain: it is left to its lease, and another router takes it up
+  (after the store's stale-run time, 10 min). `TestSchedulerSuite/TestADrainStopsARetryWaitAndLeavesTheRunToItsLease`.
+- **Config delete pauses, session delete deletes, data move carries.**
+  `TestScheduledTasksSuite/TestDeletingAConfigPausesItsTasks`,
+  `TestScheduledTasksSuite/TestDeletingASessionDeletesItsTasks`,
+  `TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns` (`internal/store`; `internal/api` has a suite of the same name).
+- **A moved task arrives paused and unclaimed.** The deployment it left delivers it until the cut-over,
+  so every import of a task, the copy and each change, writes `active` as `paused` and clears the claim
+  (`pauseImported`). `TestDataMoveSuite/TestAnActiveScheduledTaskArrivesPausedAndUnclaimed`,
+  `TestAScheduledTaskThatIsNotActiveKeepsItsState`, `TestAScheduledTaskChangeAppliedLaterArrivesPausedToo`.
+- **The cut-over resumes what the move paused, never what the user paused.** An import marks the task
+  `move_paused` when it was active at the source and clears the mark otherwise; `router replicate --resume
+  --as <app id>` (`ResumeMovedRows`) sets marked paused tasks active at the `next_run_at` they have,
+  after `SkipOccurrencesBeforeCutOver` moved a `next_run_at` at or before the cut-over to the first
+  occurrence after it, as a resume counts from now: the source delivered it after the last catch-up
+  or slept through it. One with none left is completed, a one-shot with its `missed` run. An occurrence
+  whose run the source held for quiet hours past the cut-over keeps its time, for the worker here to take over
+  (`TestReplicateResumeSuite/TestResumeDoesNotDeliverAgain*`, `TestResumeCloses*`, `TestResumeCompletes*`,
+  `TestResumeSkipsEvery*`, `TestResumeLeavesAnOccurrenceTheSourceHeld*`).
+  A pause or resume by the user (API) or the agent (`update_scheduled_task`) clears the mark, a pause of
+  a task the move paused included; any other edit keeps it. A marked task whose config is deleted or
+  missing here is left paused and unmarked by the cut-over itself, since the last catch-up marks a
+  task again whatever happened to its config here. A user holds at most `AgentScheduling.MaxActive()`
+  active tasks on a config, the limit the API resume and the agent's tools use: the cut-over resumes a
+  user's marked tasks oldest first while the room lasts, and leaves the rest paused and still marked,
+  counted in the command's output, so running it again resumes them once the user has made room.
+  `TestDataMoveSuite/TestTheCutOver*`, `TestATaskTheUser*`, `TestReplicateResumeSuite` (`cmd/router`),
+  `TestScheduledTasksSuite/TestATaskAMovePaused*` (`internal/api`),
+  `TestScheduleResumeSuite/TestATaskAMovePaused*` (`internal/session`).
+- **History is kept 90 days.** `PruneScheduledTasks` (daily, `pruneScheduledTasks` in `cmd/router`) deletes
+  runs finished, and completed or failed tasks last changed, over `ScheduledTasksKept` ago. An active or
+  paused task stays; its old runs do not. Each delete reads its table by an index
+  (`scheduled_task_runs_finished_idx`, `scheduled_tasks_pruned_idx`), and the delete's state test must
+  imply the tasks index's predicate (`TestPruneReadsItsIndexes`). `TestStoreSuite/TestPrune*` in
+  `internal/store/scheduled_tasks_prune_test.go`.
+
+## Run the tests
+
+The unit tests need nothing:
+
+```bash
+cd acceleration
+go test ./internal/scheduling/
+go test -run 'TestAPeerIsGivenLongEnough|TestInstructionsCannotClose|TestPlainInstructions|TestATurnThatSaidNothing|TestATaskIsRenderedWithout' ./internal/api/
+```
+
+The suites need Postgres and Redis (`docker compose up -d postgres redis` at the repo root:
+`:55432`, `:56379`). `internal/testenv` loads `internal/config/testing.yaml` over the shell,
+so `testing.yaml` wins over `ROUTER_POSTGRES_DSN` (`TestTheTestingFileWinsOverTheEnvironment`):
+
+1. Point `testing.yaml` at a database of your own whose name ends in `_test`, such as
+   `model_router_test_<slug>_test`. Never commit that edit. `SchedulerSuite` migrates and writes
+   that database as is. Some suites derive a database of their own from it with
+   `testenv.Database`, which puts the suite's name before `_test`
+   (`model_router_test_<slug>_test` becomes `model_router_store_test_<slug>_test`). They create
+   it on first use. `StoreSuite` drops the schema of its own (`internal/store/store_test.go:96`),
+   never of yours. `ScheduledTasksSuite` runs on `model_router_scheduled_tasks_test_<slug>_test`
+   and `TelnyxChannelSuite` on `model_router_telnyx_channel_test_<slug>_test`, and
+   `LinqChannelSuite` on `model_router_linq_channel_test_<slug>_test` (one of its tests renames a
+   table away)
+   (`RouterSuite.database`): a worker claims every task due in its database, so a worker of
+   another suite or package would take their tasks (AI-1555). Each of their tests deletes its
+   tasks when it ends, so the next test's worker finds none.
+2. Keep `redis.addr: localhost:56379` there: `ScheduledTasksSuite` skips without both
+   `ROUTER_POSTGRES_DSN` and `ROUTER_REDIS_ADDR` (`internal/api/router_suite_test.go:367`).
+3. Run one package at a time (`-p 1`), as the `parallel-agents` skill says:
+
+```bash
+cd acceleration
+grep dsn internal/config/testing.yaml        # your own *_test database
+go test -tags integration -p 1 -count=1 -run TestSchedulerSuite ./internal/scheduling/
+go test -tags integration -p 1 -count=1 -timeout 40m -run 'TestStoreSuite|TestScheduledTasksMigrationSuite' ./internal/store/
+go test -tags integration -p 1 -count=1 -run 'TestDataMoveSuite/TestScheduledTasksMoveWithTheirRuns' ./internal/store/
+go test -tags integration -p 1 -count=1 -run TestScheduledTasksSuite ./internal/api/
+go test -tags integration -p 1 -count=1 -run TestDrainSuite ./cmd/router/
+```
+
+The store command runs all of `StoreSuite`, more than 500 tests. It took 8 to 14 minutes on a
+loaded machine, and the default `go test` timeout is 10 minutes, so it sets `-timeout 40m`.
+Narrow to one test with `-run 'TestScheduledTasksSuite/TestACallNobodyPicksUpIsNotAnswered'`.

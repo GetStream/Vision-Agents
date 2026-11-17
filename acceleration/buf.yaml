@@ -1,0 +1,8 @@
+version: v2
+# The only protobuf here is what one node of a deployment asks another, so the module is
+# internal/node rather than the repository: nothing else in this module speaks it.
+modules:
+  - path: internal/node
+lint:
+  use:
+    - MINIMAL

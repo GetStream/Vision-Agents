@@ -1,0 +1,721 @@
+// Package twilio buys and operates phone numbers at Twilio.
+//
+// Twilio's number API is the 2010-era one: form-encoded requests, basic auth with the
+// account SID and auth token (or an API key SID and its secret), JSON responses. Inbound
+// calls reach an agent by pointing the number's voice webhook at TwiML that dials the Stream
+// trunk, and outbound calls are created with the same TwiML inline, because Stream cannot
+// dial out itself.
+package twilio
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"mime"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+)
+
+const (
+	accountSIDEnvVar = "TWILIO_ACCOUNT_SID"
+	authTokenEnvVar  = "TWILIO_AUTH_TOKEN"
+	apiKeySIDEnvVar  = "TWILIO_API_KEY_SID"
+)
+
+const (
+	defaultBaseURL    = "https://api.twilio.com"
+	defaultPricingURL = "https://pricing.twilio.com"
+	defaultTimeout    = 30 * time.Second
+)
+
+// pricesTTL is how long a country's prices are kept. Twilio changes them rarely, and a day
+// keeps a search to one extra call per country.
+const pricesTTL = 24 * time.Hour
+
+// errorBodyLimit caps how much of a failed response is read into an error message.
+const errorBodyLimit = 2048
+
+// callNotInProgress is Twilio refusing to change a call that is already over.
+const callNotInProgress = "21220"
+
+// addressRequired is Twilio's error for a number sold only with a verified address.
+const addressRequired = "21631"
+
+// microsPerDollar converts Twilio's dollar strings into the micros used everywhere else.
+const microsPerDollar = 1_000_000
+
+// maxRingSeconds is the longest Twilio will ring a number for.
+const maxRingSeconds = 600
+
+// Options configures a Provider. The credentials fall back to the environment.
+type Options struct {
+	// AccountSID defaults to TWILIO_ACCOUNT_SID.
+	AccountSID string
+	// APIKeySID defaults to TWILIO_API_KEY_SID.
+	APIKeySID string
+	// AuthToken defaults to TWILIO_AUTH_TOKEN. With APIKeySID set it is that key's secret.
+	AuthToken string
+	// BaseURL defaults to Twilio's API host.
+	BaseURL string
+	// PricingURL defaults to Twilio's pricing host.
+	PricingURL string
+	// Timeout bounds one call. Buying a number is slower than most, so this is generous.
+	Timeout time.Duration
+	// HTTPClient replaces the one built from Timeout.
+	HTTPClient *http.Client
+}
+
+// Provider is Twilio. It satisfies phone.Provider.
+type Provider struct {
+	accountSID string
+	// user is who requests are signed as: the API key when there is one, else the account.
+	user       string
+	authToken  string
+	baseURL    string
+	pricingURL string
+	client     *http.Client
+
+	mu     sync.Mutex
+	prices map[string]countryPrices
+}
+
+// countryPrices is what one number of each type costs a month in a country, in micros.
+type countryPrices struct {
+	micros  map[phone.NumberType]int64
+	fetched time.Time
+}
+
+// New validates the options and returns a Provider.
+func New(options Options) (*Provider, error) {
+	if options.AccountSID == "" {
+		options.AccountSID = os.Getenv(accountSIDEnvVar)
+	}
+	if options.AuthToken == "" {
+		options.AuthToken = os.Getenv(authTokenEnvVar)
+	}
+	if options.APIKeySID == "" {
+		options.APIKeySID = os.Getenv(apiKeySIDEnvVar)
+	}
+	if options.AccountSID == "" || options.AuthToken == "" {
+		return nil, stack.Wrap(errors.New("twilio: " + accountSIDEnvVar + " and " + authTokenEnvVar + " are required"))
+	}
+	if options.BaseURL == "" {
+		options.BaseURL = defaultBaseURL
+	}
+	if options.PricingURL == "" {
+		options.PricingURL = defaultPricingURL
+	}
+	if options.Timeout <= 0 {
+		options.Timeout = defaultTimeout
+	}
+	if options.HTTPClient == nil {
+		options.HTTPClient = &http.Client{Timeout: options.Timeout}
+	}
+
+	return &Provider{
+		accountSID: options.AccountSID,
+		user:       cmp.Or(options.APIKeySID, options.AccountSID),
+		authToken:  options.AuthToken,
+		baseURL:    strings.TrimSuffix(options.BaseURL, "/"),
+		pricingURL: strings.TrimSuffix(options.PricingURL, "/"),
+		client:     options.HTTPClient,
+		prices:     map[string]countryPrices{},
+	}, nil
+}
+
+// SearchNumbers returns numbers Twilio is offering in a country.
+func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
+	if search.Country == "" {
+		return nil, stack.Wrap(phone.Invalid(errors.New("twilio: a country is required to search for numbers")))
+	}
+
+	query := url.Values{}
+	if search.AreaCode != "" {
+		query.Set("AreaCode", search.AreaCode)
+	}
+	if search.Contains != "" {
+		query.Set("Contains", search.Contains)
+	}
+	if search.Locality != "" {
+		query.Set("InLocality", search.Locality)
+	}
+	if search.Limit > 0 {
+		query.Set("PageSize", strconv.Itoa(search.Limit))
+	}
+	// Twilio filters by capability with one flag each rather than a list, and only names
+	// the four every vendor has.
+	for _, capability := range search.Capabilities {
+		switch capability {
+		case phone.Voice:
+			query.Set("VoiceEnabled", "true")
+		case phone.SMS:
+			query.Set("SmsEnabled", "true")
+		case phone.MMS:
+			query.Set("MmsEnabled", "true")
+		case phone.Fax:
+			query.Set("FaxEnabled", "true")
+		}
+	}
+
+	kind := search.Type
+	if kind == "" {
+		kind = phone.Local
+	}
+	resource, ok := resources[kind]
+	if !ok {
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("twilio: does not sell %s numbers", kind)))
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/AvailablePhoneNumbers/%s/%s.json",
+		p.accountSID, strings.ToUpper(search.Country), resource)
+
+	var response availableNumbers
+	if err := p.get(ctx, path, query, &response); err != nil {
+		return nil, err
+	}
+
+	price := p.monthlyPrice(ctx, search.Country, kind)
+
+	offered := make([]phone.Available, 0, len(response.AvailablePhoneNumbers))
+	for _, number := range response.AvailablePhoneNumbers {
+		offered = append(offered, phone.Available{
+			E164:              number.PhoneNumber,
+			Vendor:            p.Vendor(),
+			Country:           number.ISOCountry,
+			Region:            number.Region,
+			Locality:          number.Locality,
+			Type:              kind,
+			Capabilities:      number.Capabilities.list(),
+			MonthlyCostMicros: price,
+		})
+	}
+	return offered, nil
+}
+
+// resources are the paths Twilio sells each kind of number under, since the type is part of
+// the URL rather than a filter.
+var resources = map[phone.NumberType]string{
+	phone.Local:    "Local",
+	phone.TollFree: "TollFree",
+	phone.Mobile:   "Mobile",
+}
+
+// pricedAs is the name Twilio's pricing gives each kind of number.
+var pricedAs = map[string]phone.NumberType{
+	"local":     phone.Local,
+	"toll free": phone.TollFree,
+	"mobile":    phone.Mobile,
+}
+
+// monthlyPrice is what Twilio charges a month for a number of this type in this country,
+// or zero when it cannot say. Search works without it, so a failure is logged, not returned.
+func (p *Provider) monthlyPrice(ctx context.Context, country string, kind phone.NumberType) int64 {
+	country = strings.ToUpper(country)
+
+	p.mu.Lock()
+	cached, ok := p.prices[country]
+	p.mu.Unlock()
+	if ok && time.Since(cached.fetched) < pricesTTL {
+		return cached.micros[kind]
+	}
+
+	var response numberPrices
+	if err := p.do(ctx, http.MethodGet, p.pricingURL, "/v1/PhoneNumbers/Countries/"+country, nil, nil, &response); err != nil {
+		slog.WarnContext(ctx, "twilio: no number prices", "country", country, "error", err)
+		return 0
+	}
+
+	// Micros are dollars, so a price in another currency is no price.
+	micros := map[phone.NumberType]int64{}
+	if response.PriceUnit == "USD" {
+		for _, price := range response.PhoneNumberPrices {
+			if known, ok := pricedAs[price.NumberType]; ok {
+				micros[known] = dollarsToMicros(price.CurrentPrice)
+			}
+		}
+	}
+
+	p.mu.Lock()
+	p.prices[country] = countryPrices{micros: micros, fetched: time.Now()}
+	p.mu.Unlock()
+	return micros[kind]
+}
+
+// Supports is everything except a state and an anchored prefix.
+//
+// Twilio's search takes a locality but has no state parameter, and its Contains matches
+// anywhere in the number rather than at the front. Claiming either would answer a search for
+// Colorado with numbers from anywhere, so those searches go to a vendor that can do them.
+func (p *Provider) Supports(filter phone.Filter) bool {
+	return filter != phone.FilterAdministrativeArea && filter != phone.FilterPrefix
+}
+
+// Dials everything but custom headers.
+//
+// Twilio's call takes a ring timeout and digits to press on answer as parameters. Headers
+// would have to go on the TwiML that bridges the call, and <Sip> has nowhere to put them.
+func (p *Provider) Dials(feature phone.CallFeature) bool {
+	return feature != phone.FeatureCustomHeaders
+}
+
+// BuyNumber buys a number, which is what starts Twilio charging for it. Twilio buys by
+// number, but its answer names neither the country nor the price, so both come from the
+// order and from the same price list the search quoted.
+func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
+	if order.E164 == "" {
+		return phone.Number{}, stack.Wrap(errors.New("twilio: a number is required"))
+	}
+
+	form := url.Values{"PhoneNumber": {order.E164}}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers.json", p.accountSID)
+
+	var bought incomingNumber
+	if err := p.post(ctx, path, form, &bought); err != nil {
+		if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == addressRequired {
+			return phone.Number{}, stack.Wrap(fmt.Errorf("%w: %w", phone.ErrAddressRequired, refused))
+		}
+		return phone.Number{}, err
+	}
+
+	country := cmp.Or(bought.ISOCountry, strings.ToUpper(order.Country))
+	price := dollarsToMicros(bought.MonthlyPrice)
+	if price == 0 && country != "" {
+		price = p.monthlyPrice(ctx, country, numberType(order.E164))
+	}
+	return phone.Number{
+		E164:              bought.PhoneNumber,
+		Vendor:            p.Vendor(),
+		Country:           country,
+		VendorID:          bought.SID,
+		Capabilities:      bought.Capabilities.list(),
+		MonthlyCostMicros: price,
+	}, nil
+}
+
+// tollFreeCodes are the North American toll-free area codes.
+var tollFreeCodes = []string{"800", "833", "844", "855", "866", "877", "888"}
+
+// numberType tells a toll-free number from a local one by its area code. Twilio's answer to
+// a purchase does not say, and the numbers sold are North American, where the code decides.
+func numberType(e164 string) phone.NumberType {
+	for _, code := range tollFreeCodes {
+		if strings.HasPrefix(e164, "+1"+code) {
+			return phone.TollFree
+		}
+	}
+	return phone.Local
+}
+
+// ReleaseNumber gives a number back, which is what stops the charge.
+func (p *Provider) ReleaseNumber(ctx context.Context, e164 string) error {
+	sid, err := p.sidFor(ctx, e164)
+	if err != nil {
+		return err
+	}
+
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers/%s.json", p.accountSID, sid)
+	return p.do(ctx, http.MethodDelete, p.baseURL, path, nil, nil, nil)
+}
+
+// ConfigureInbound points the number's voice webhook at TwiML that dials the Stream trunk,
+// so an incoming call is bridged straight to the agent.
+//
+// The TwiML is served inline through Twilio's echo endpoint rather than from a webhook of
+// this service's own: the instruction never varies per call, so a server that answers with
+// a constant would be one more thing to run and to be down.
+func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) error {
+	if err := inbound.Bridge.Validate(); err != nil {
+		return err
+	}
+	sid, err := p.sidFor(ctx, inbound.E164)
+	if err != nil {
+		return err
+	}
+
+	instructions, err := dialBridge(inbound.Bridge)
+	if err != nil {
+		return err
+	}
+
+	form := url.Values{
+		"VoiceUrl":    {echoURL(instructions)},
+		"VoiceMethod": {http.MethodGet},
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers/%s.json", p.accountSID, sid)
+	return p.do(ctx, http.MethodPost, p.baseURL, path, nil, form, nil)
+}
+
+// StopInbound clears the number's voice webhook, so a caller no longer reaches the trunk.
+func (p *Provider) StopInbound(ctx context.Context, e164 string) error {
+	sid, err := p.sidFor(ctx, e164)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers/%s.json", p.accountSID, sid)
+	return p.post(ctx, path, url.Values{"VoiceUrl": {""}}, nil)
+}
+
+// StreamLeg is the number's own line, with the call id on the leg.
+func (p *Provider) StreamLeg() phone.StreamLeg { return phone.StreamLegShared }
+
+// Dial places a call and bridges the answered leg into the Stream trunk. Stream's SIP is
+// inbound only, so the vendor originates and the agent is already waiting on the trunk.
+//
+// The ring timeout and the digits to press on answer are parameters on the call rather than
+// anything in the TwiML, because both concern the leg to the person: Timeout is how long to
+// ring them, and SendDigits is pressed at them once they answer, before the <Dial> to the
+// trunk runs.
+func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
+	if err := outbound.Validate(); err != nil {
+		return phone.Dialed{}, stack.Wrap(fmt.Errorf("twilio: %w", err))
+	}
+
+	instructions, err := dialBridge(outbound.Bridge.WithCallID(outbound.CallID))
+	if err != nil {
+		return phone.Dialed{}, err
+	}
+
+	form := url.Values{
+		"From": {outbound.From},
+		"To":   {outbound.To},
+		// Twiml carries the instruction inline, so answering does not have to fetch it.
+		"Twiml": {instructions},
+	}
+	if outbound.RingTimeout > 0 {
+		seconds := int(outbound.RingTimeout.Seconds())
+		if seconds > maxRingSeconds {
+			return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf(
+				"twilio: %ds is longer than the %ds twilio will ring for",
+				seconds, maxRingSeconds)))
+		}
+		form.Set("Timeout", strconv.Itoa(seconds))
+	}
+	if outbound.InitialDigits != "" {
+		form.Set("SendDigits", outbound.InitialDigits)
+	}
+	if outbound.StatusURL != "" {
+		form.Set("StatusCallback", outbound.StatusURL)
+		form.Set("StatusCallbackEvent", "completed")
+		form.Set("StatusCallbackMethod", http.MethodPost)
+	}
+	if outbound.MachineURL != "" {
+		form.Set("MachineDetection", "DetectMessageEnd")
+		form.Set("AsyncAmd", "true")
+		form.Set("AsyncAmdStatusCallback", outbound.MachineURL)
+		form.Set("AsyncAmdStatusCallbackMethod", http.MethodPost)
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls.json", p.accountSID)
+
+	var placed call
+	if err := p.post(ctx, path, form, &placed); err != nil {
+		return phone.Dialed{}, err
+	}
+	return phone.Dialed{VendorCallID: placed.SID, Status: placed.Status}, nil
+}
+
+// HangUp ends a call placed by Dial. Canceling is what stops a call that still rings, and
+// Twilio leaves an answered one up, so that one is completed in a second request
+// (https://www.twilio.com/docs/voice/api/call-resource#update-a-call-resource). A call that
+// is already over is not a failure: Twilio refuses it with 21220.
+func (p *Provider) HangUp(ctx context.Context, vendorCallID string) error {
+	if vendorCallID == "" {
+		return stack.Wrap(errors.New("twilio: hanging up needs the call to hang up"))
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls/%s.json", p.accountSID, url.PathEscape(vendorCallID))
+
+	var canceled call
+	if err := p.post(ctx, path, url.Values{"Status": {"canceled"}}, &canceled); err != nil {
+		return callOver(err)
+	}
+	if canceled.Status != "in-progress" {
+		return nil
+	}
+	return callOver(p.post(ctx, path, url.Values{"Status": {"completed"}}, nil))
+}
+
+// callOver reads Twilio's refusal of a call that has already ended as success.
+func callOver(err error) error {
+	if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == callNotInProgress {
+		return nil
+	}
+	return err
+}
+
+// ReadStatus reads the form Twilio posts to a call's StatusCallback. A CallStatus that does
+// not end the call is a report that is not final. SipResponseCode is the final SIP response,
+// sent with a final CallStatus (https://www.twilio.com/docs/voice/api/call-resource); one that
+// is no number is left out.
+func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("twilio: a call status is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("twilio: read a call status: %w", err))
+	}
+	word := form.Get("CallStatus")
+	if word == "" {
+		return phone.CallStatus{}, stack.Wrap(errors.New("twilio: a call status without a CallStatus"))
+	}
+	code, _ := strconv.Atoi(form.Get("SipResponseCode"))
+	return phone.CallStatus{Result: finalStatuses[word], Word: word, SIPCode: code}, nil
+}
+
+// ReadMachine reads the form Twilio posts to a call's AsyncAmdStatusCallback.
+func (p *Provider) ReadMachine(contentType string, body []byte) (phone.MachineReport, error) {
+	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
+		return phone.MachineReport{}, stack.Wrap(fmt.Errorf("twilio: a machine report is a form, not %q", contentType))
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return phone.MachineReport{}, stack.Wrap(fmt.Errorf("twilio: read a machine report: %w", err))
+	}
+	answeredBy := form.Get("AnsweredBy")
+	if answeredBy == "" {
+		return phone.MachineReport{}, stack.Wrap(errors.New("twilio: a machine report without an AnsweredBy"))
+	}
+	return phone.MachineReport{Machine: phone.MachineOf(answeredBy), Word: answeredBy}, nil
+}
+
+// finalStatuses are the CallStatus words that end a call.
+var finalStatuses = map[string]phone.CallResult{
+	"completed": phone.CallCompleted,
+	"busy":      phone.CallBusy,
+	"no-answer": phone.CallNoAnswer,
+	"failed":    phone.CallFailed,
+	"canceled":  phone.CallCanceled,
+}
+
+// SendDigits is not available at Twilio, and says so rather than half-doing it.
+//
+// Twilio has no action that presses digits on a leg that is already busy. The only way to
+// make tones is to give the leg new TwiML, and the TwiML the leg is running is the <Dial>
+// holding the agent on the call: replacing it presses the digit and drops the agent in the
+// same breath. Telnyx's call control does have such an action, which is why the contract
+// carries this at all, and Client reaches Twilio's own API for a deployment that decides
+// the trade is worth making.
+func (p *Provider) SendDigits(context.Context, string, string) error {
+	return stack.Wrap(fmt.Errorf("%w: twilio cannot press digits without ending the call they are "+
+		"pressed on", phone.ErrNotImplemented))
+}
+
+// Vendor is the name this provider is recorded under.
+func (p *Provider) Vendor() string { return "twilio" }
+
+// Client exposes the HTTP client, so a caller can reach parts of Twilio's API this does
+// not wrap without building a second client.
+func (p *Provider) Client() *http.Client { return p.client }
+
+// sidFor finds Twilio's own identifier for a number this account owns, which is what
+// changing or releasing it needs.
+func (p *Provider) sidFor(ctx context.Context, e164 string) (string, error) {
+	if e164 == "" {
+		return "", stack.Wrap(errors.New("twilio: a number is required"))
+	}
+
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers.json", p.accountSID)
+
+	var owned incomingNumbers
+	if err := p.get(ctx, path, url.Values{"PhoneNumber": {e164}}, &owned); err != nil {
+		return "", err
+	}
+	for _, number := range owned.IncomingPhoneNumbers {
+		if number.PhoneNumber == e164 {
+			return number.SID, nil
+		}
+	}
+	return "", stack.Wrap(fmt.Errorf("twilio: %s is not one of this account's numbers", e164))
+}
+
+func (p *Provider) get(ctx context.Context, path string, query url.Values, into any) error {
+	return p.do(ctx, http.MethodGet, p.baseURL, path, query, nil, into)
+}
+
+func (p *Provider) post(ctx context.Context, path string, form url.Values, into any) error {
+	return p.do(ctx, http.MethodPost, p.baseURL, path, nil, form, into)
+}
+
+func (p *Provider) do(ctx context.Context, method, base, path string, query, form url.Values, into any) error {
+	endpoint := base + path
+	if len(query) > 0 {
+		endpoint += "?" + query.Encode()
+	}
+
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
+	}
+	request.SetBasicAuth(p.user, p.authToken)
+	request.Header.Set("Accept", "application/json")
+	if form != nil {
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+
+	response, err := p.client.Do(request)
+	if err != nil {
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
+		return stack.Wrap(refusal(p.Vendor(), path, response.StatusCode, detail))
+	}
+
+	if into == nil {
+		return nil
+	}
+	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
+	}
+	return nil
+}
+
+// refusal is Twilio's error answer, with its code and message when the body is Twilio's JSON
+// and the body as it came otherwise.
+func refusal(vendor, path string, status int, body []byte) *phone.VendorError {
+	refused := &phone.VendorError{Vendor: vendor, Path: path, Status: status, Message: strings.TrimSpace(string(body))}
+	var answer struct {
+		Code    json.Number `json:"code"`
+		Message string      `json:"message"`
+	}
+	if json.Unmarshal(body, &answer) == nil && answer.Message != "" {
+		refused.Code = answer.Code.String()
+		refused.Message = answer.Message
+	}
+	return refused
+}
+
+// dialBridge renders the TwiML that connects a call to the Stream trunk.
+func dialBridge(bridge phone.Bridge) (string, error) {
+	if err := bridge.Validate(); err != nil {
+		return "", err
+	}
+
+	instructions := twiml{
+		Dial: twimlDial{
+			SIP: twimlSIP{
+				URI:      bridge.URI,
+				Username: bridge.Username,
+				Password: bridge.Password,
+			},
+		},
+	}
+	encoded, err := xml.Marshal(instructions)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("twilio: encode twiml: %w", err))
+	}
+	return xml.Header + string(encoded), nil
+}
+
+// echoURL wraps TwiML in Twilio's echo endpoint, which answers a webhook with whatever
+// was put in it. It is what lets a fixed instruction be configured without hosting it.
+func echoURL(instructions string) string {
+	return "https://twimlets.com/echo?Twiml=" + url.QueryEscape(instructions)
+}
+
+func dollarsToMicros(dollars string) int64 {
+	if dollars == "" {
+		return 0
+	}
+	amount, err := strconv.ParseFloat(dollars, 64)
+	if err != nil {
+		return 0
+	}
+	return int64(amount * microsPerDollar)
+}
+
+type twiml struct {
+	XMLName xml.Name  `xml:"Response"`
+	Dial    twimlDial `xml:"Dial"`
+}
+
+type twimlDial struct {
+	SIP twimlSIP `xml:"Sip"`
+}
+
+type twimlSIP struct {
+	URI      string `xml:",chardata"`
+	Username string `xml:"username,attr,omitempty"`
+	Password string `xml:"password,attr,omitempty"`
+}
+
+// capabilities is Twilio's per-number capability object, which is flags rather than a list.
+type capabilities struct {
+	Voice bool `json:"voice"`
+	SMS   bool `json:"SMS"`
+	MMS   bool `json:"MMS"`
+	Fax   bool `json:"fax"`
+}
+
+func (c capabilities) list() []phone.Capability {
+	var has []phone.Capability
+	if c.Voice {
+		has = append(has, phone.Voice)
+	}
+	if c.SMS {
+		has = append(has, phone.SMS)
+	}
+	if c.MMS {
+		has = append(has, phone.MMS)
+	}
+	if c.Fax {
+		has = append(has, phone.Fax)
+	}
+	return has
+}
+
+type availableNumbers struct {
+	AvailablePhoneNumbers []struct {
+		PhoneNumber  string       `json:"phone_number"`
+		ISOCountry   string       `json:"iso_country"`
+		Region       string       `json:"region"`
+		Locality     string       `json:"locality"`
+		Capabilities capabilities `json:"capabilities"`
+	} `json:"available_phone_numbers"`
+}
+
+type numberPrices struct {
+	PriceUnit         string `json:"price_unit"`
+	PhoneNumberPrices []struct {
+		NumberType   string `json:"number_type"`
+		CurrentPrice string `json:"current_price"`
+	} `json:"phone_number_prices"`
+}
+
+type incomingNumber struct {
+	SID          string       `json:"sid"`
+	PhoneNumber  string       `json:"phone_number"`
+	ISOCountry   string       `json:"iso_country"`
+	Capabilities capabilities `json:"capabilities"`
+	// Twilio does not quote a price on the number itself, so this is only set when a
+	// deployment's account exposes one.
+	MonthlyPrice string `json:"monthly_price"`
+}
+
+type incomingNumbers struct {
+	IncomingPhoneNumbers []incomingNumber `json:"incoming_phone_numbers"`
+}
+
+type call struct {
+	SID    string `json:"sid"`
+	Status string `json:"status"`
+}

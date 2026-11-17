@@ -1,0 +1,704 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/danielgtaylor/huma/v2"
+)
+
+// errNoKnowledge is what the paths say when the deployment has no knowledge provider. Filling
+// a base that nothing can read is not worth pretending to do.
+// MaxKnowledgeBody is the most an ingest reads. Documents ride whole in the body as text, so
+// a 5 MB file is more than Huma's 1 MB default would take; the rest is room for JSON
+// escaping.
+const MaxKnowledgeBody = 8 << 20
+
+// uploadReadTimeout is how long a large upload has to arrive. Huma gives a body 5 seconds,
+// which a document or recording near its limit outlasts on an ordinary connection.
+const uploadReadTimeout = 2 * time.Minute
+
+var errNoKnowledge = notConfigured("knowledge is not available: no provider configured")
+
+// errNoKnowledgeDocuments is what the document paths say on a deployment that cannot list
+// them: it takes a database to remember one and a knowledge base to remove it from.
+var errNoKnowledgeDocuments = notConfigured("knowledge documents are not available: no database or no knowledge provider configured")
+
+// errUnknownKnowledgeDocument is what a caller is told about a document that is not theirs,
+// which is the same thing they are told about one that never existed.
+var errUnknownKnowledgeDocument = APIError{
+	Type: ErrorTypeNotFound, Code: codeKnowledgeDocNotFound,
+	Message: "no such knowledge document",
+}
+
+// errUnknownKnowledgeBase is what a caller is told about a knowledge base they have nothing
+// in, which is the same thing another customer's base of that name is.
+var errUnknownKnowledgeBase = APIError{
+	Type: ErrorTypeNotFound, Code: codeKnowledgeBaseNotFound,
+	Message: "no such knowledge base",
+}
+
+// ingestKnowledge fills a knowledge base with what the business wrote down.
+//
+// The documents are cut into passages here rather than by the caller, so a file read off
+// disk by cmd/knowledge and one posted by an SDK are cut the same way and can replace each
+// other.
+func (s *Server) ingestKnowledge(ctx context.Context, request *ingestKnowledgeRequest) (*ingestKnowledgeResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.knowledge == nil {
+		return nil, errNoKnowledge
+	}
+	if request.Body == nil {
+		return nil, invalidRequest("a request body is required")
+	}
+
+	namespace := strings.TrimSpace(request.Body.Namespace)
+	if namespace == "" {
+		return nil, invalidRequest("a namespace is required, knowledge is never shared")
+	}
+
+	read, passages, err := s.fillKnowledge(ctx, customerID, "", namespace, request.Body.Documents, request.Body.ChunkSize)
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Info("filled a knowledge base",
+		"namespace", namespace, "documents", read, "passages", passages)
+	return &ingestKnowledgeResponse{Body: IngestedKnowledge{Namespace: namespace,
+		Documents: read,
+		Passages:  passages}}, nil
+}
+
+// listKnowledgeDocuments returns the documents the calling customer's knowledge bases were
+// filled with, most recently written first.
+func (s *Server) listKnowledgeDocuments(ctx context.Context, request *listKnowledgeDocumentsRequest) (*listKnowledgeDocumentsResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil || s.knowledge == nil {
+		return nil, errNoKnowledgeDocuments
+	}
+
+	namespace := ""
+	if request.Namespace.ptr() != nil {
+		namespace = strings.TrimSpace(*request.Namespace.ptr())
+	}
+
+	stored, err := s.store.CustomerKnowledgeDocuments(ctx, customerID, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	listed := make([]IndexedKnowledgeDocument, 0, len(stored))
+	for _, document := range stored {
+		listed = append(listed, indexedKnowledgeDocumentOf(document))
+	}
+	return &listKnowledgeDocumentsResponse{Body: listed}, nil
+}
+
+// getKnowledgeDocument returns one document with the text it was posted as.
+func (s *Server) getKnowledgeDocument(ctx context.Context, request *getKnowledgeDocumentRequest) (*getKnowledgeDocumentResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil || s.knowledge == nil {
+		return nil, errNoKnowledgeDocuments
+	}
+
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownKnowledgeDocument
+	}
+	read := indexedKnowledgeDocumentOf(document)
+	read.Text = &document.Text
+	return &getKnowledgeDocumentResponse{Body: read}, nil
+}
+
+// deleteKnowledgeDocument takes a document out of its knowledge base, passages and all.
+func (s *Server) deleteKnowledgeDocument(ctx context.Context, request *deleteKnowledgeDocumentRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil || s.knowledge == nil {
+		return nil, errNoKnowledgeDocuments
+	}
+
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownKnowledgeDocument
+	}
+	if err := s.removeKnowledgeDocument(ctx, document); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// deleteKnowledge deletes one of the calling customer's knowledge bases: everything the
+// provider holds of it, then the documents and pages it was filled from. One an agent reads is
+// kept, since the agent would go on looking things up in nothing.
+func (s *Server) deleteKnowledge(ctx context.Context, request *deleteKnowledgeRequest) (*struct{}, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil || s.knowledge == nil {
+		return nil, errNoKnowledgeDocuments
+	}
+	namespace := strings.TrimSpace(request.Namespace)
+	if namespace == "" {
+		return nil, invalidRequest("a namespace is required")
+	}
+
+	configs, err := s.store.CustomerAgentConfigs(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
+	var readers []string
+	for _, config := range configs {
+		if config.KnowledgeNamespace == namespace {
+			readers = append(readers, config.Name)
+		}
+	}
+	if len(readers) > 0 {
+		return nil, APIError{
+			Type: ErrorTypeConflict, Code: codeKnowledgeBaseInUse,
+			Message: "these agents read the knowledge base, so it is kept until they read another: " +
+				strings.Join(readers, ", "),
+		}
+	}
+
+	// The provider's copy goes first: a delete that failed there leaves the documents and pages
+	// listed, so the base can be deleted again. A page read whose write lands after the drop
+	// finds its page gone once the rows are, and takes the write back.
+	existed, err := s.knowledgeFor(ctx, customerID, "").Drop(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	documents, pages, err := s.store.DeleteKnowledgeBase(ctx, customerID, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if !existed && documents == 0 && pages == 0 {
+		return nil, errUnknownKnowledgeBase
+	}
+
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditKnowledge, ResourceID: namespace, ResourceName: namespace,
+		AgentID: s.agentOfKnowledge(ctx, customerID, namespace),
+		Action:  store.AuditDeleted,
+		Changes: auditDiff(map[string]any{"namespace": namespace, "documents": documents, "urls": pages}, nil),
+	})
+	return nil, nil
+}
+
+// listKnowledgeDocumentPassages reads back what a document was cut into.
+func (s *Server) listKnowledgeDocumentPassages(ctx context.Context, request *listKnowledgeDocumentPassagesRequest) (*listKnowledgeDocumentPassagesResponse, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return nil, errMissingCustomer
+	}
+	if s.store == nil || s.knowledge == nil {
+		return nil, errNoKnowledgeDocuments
+	}
+
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	if err != nil {
+		return nil, errUnknownKnowledgeDocument
+	}
+	passages, err := s.knowledgePassages(ctx, customerID, document.Namespace, document.Source, document.Passages)
+	if err != nil {
+		return nil, err
+	}
+	return &listKnowledgeDocumentPassagesResponse{Body: passages}, nil
+}
+
+// knowledgePassages reads a source's passages back in the order it was cut into them.
+func (s *Server) knowledgePassages(
+	ctx context.Context, customerID, namespace, source string, count int,
+) ([]KnowledgePassage, error) {
+	found, err := s.knowledgeFor(ctx, customerID, "").Fetch(ctx, namespace, ingest.IDs(source, 0, count))
+	if err != nil {
+		return nil, err
+	}
+	passages := make([]KnowledgePassage, 0, len(found))
+	for _, document := range found {
+		passages = append(passages, KnowledgePassage{Id: document.ID, Source: document.Source, Text: document.Text})
+	}
+	return passages, nil
+}
+
+// fillKnowledge cuts documents into passages and writes them, as work done in region: an
+// agent's, which a base kept in another refuses, or none, which writes where the base is
+// kept. The count of documents actually read can be less than what was sent: a file of only
+// whitespace is skipped.
+//
+// With a database, each document is recorded with how many passages it became, and what
+// a shorter version no longer covers is removed, so an edit does not leave its old tail
+// behind to be found. A document stored with the same text, cut into as many passages, is
+// already in the base and is not written again: writing is what knowledge costs, so a sync
+// that changed nothing in knowledge/ writes nothing and is not refused for money.
+func (s *Server) fillKnowledge(
+	ctx context.Context, customerID, region, namespace string, documents []KnowledgeDocument, chunkSize *int,
+) (_ int, _ int, err error) {
+	size := ingest.DefaultChunk
+	if chunkSize != nil && *chunkSize > 0 {
+		size = *chunkSize
+	}
+
+	// With their text, because that is what tells an unchanged document from an edited one,
+	// and what the entry below reports as having moved.
+	before := map[string]store.KnowledgeDocument{}
+	if s.store != nil {
+		stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
+		if err != nil {
+			return 0, 0, err
+		}
+		for _, document := range stored {
+			before[document.Source] = document
+		}
+	}
+
+	read, cut := 0, 0
+	var passages []knowledge.Document
+	var written []store.KnowledgeDocument
+	for _, document := range documents {
+		source := strings.TrimSpace(document.Source)
+		if source == "" {
+			return 0, 0, invalidRequest("every document needs a source, which is what its passages are keyed by")
+		}
+		// A document that is only whitespace is skipped rather than refused: a directory
+		// posted whole often has one in it, and failing the lot over it helps nobody.
+		if strings.TrimSpace(document.Text) == "" {
+			continue
+		}
+		split := ingest.Split(source, document.Text, size, s.knowledgeLimits)
+		read++
+		cut += len(split)
+		if was, had := before[source]; had && was.State == store.KnowledgeDocumentIndexed && was.Text == document.Text && was.Passages == len(split) {
+			continue
+		}
+		passages = append(passages, split...)
+		written = append(written, store.KnowledgeDocument{
+			CustomerID:  customerID,
+			Namespace:   namespace,
+			Source:      source,
+			Passages:    len(split),
+			Text:        document.Text,
+			ContentType: "text/markdown",
+			Bytes:       int64(len(document.Text)),
+		})
+	}
+
+	if cut == 0 {
+		return 0, 0, invalidRequest("there is nothing to read in these documents")
+	}
+	if len(written) == 0 {
+		return read, cut, nil
+	}
+	writer := s.knowledgeFor(ctx, customerID, region)
+	if s.store == nil {
+		if err := writer.Upsert(ctx, namespace, passages); err != nil {
+			return 0, 0, err
+		}
+		return read, cut, nil
+	}
+	// Refused before any row is written, so a refused ingest leaves nothing listed.
+	if err := writer.Admit(ctx); err != nil {
+		return 0, 0, err
+	}
+	if err := writer.Keep(ctx, namespace); err != nil {
+		return 0, 0, err
+	}
+
+	// Every row is saved before the passages, counting the old version's passages as well as
+	// the new one's, so a write that stops part way leaves a listed document whose delete
+	// removes every passage either version wrote.
+	indexed := 0
+	defer func() {
+		if err != nil {
+			s.failKnowledge(ctx, written[indexed:], before)
+		}
+	}()
+	for _, document := range written {
+		document.Passages = max(document.Passages, before[document.Source].Passages)
+		document.State = store.KnowledgeDocumentPending
+		if err = s.store.SaveKnowledgeDocument(ctx, &document); err != nil {
+			return 0, 0, err
+		}
+	}
+	if err = writer.Upsert(ctx, namespace, passages); err != nil {
+		return 0, 0, err
+	}
+
+	agentID := s.agentOfKnowledge(ctx, customerID, namespace)
+	for i := range written {
+		document := &written[i]
+		was, had := before[document.Source]
+		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
+		if err = writer.Delete(ctx, namespace, stale); err != nil {
+			return 0, 0, err
+		}
+		document.State = store.KnowledgeDocumentIndexed
+		if err = s.store.SaveKnowledgeDocument(ctx, document); err != nil {
+			return 0, 0, err
+		}
+		indexed++
+		action := store.AuditCreated
+		var previous any
+		if had {
+			action = store.AuditUpdated
+			previous = auditedKnowledgeOf(was)
+		}
+		s.audit(ctx, auditRecord{
+			ResourceType: store.AuditKnowledge, ResourceID: document.ID, ResourceName: document.Source,
+			AgentID: agentID, Action: action,
+			Changes: auditDiff(previous, auditedKnowledgeOf(*document)),
+		})
+	}
+	return read, cut, nil
+}
+
+// knowledgeWriteFailed is why a failed document failed, as its row tells the customer. The
+// provider's own error names the internal namespace, so it is logged with the request instead.
+const knowledgeWriteFailed = "the passages could not all be written: post the document again or delete it"
+
+// failKnowledge marks documents whose write stopped part way as failed, still counting every
+// passage either version may have written. It outlives the request, since a caller that hung
+// up is one way a write stops.
+func (s *Server) failKnowledge(ctx context.Context, documents []store.KnowledgeDocument, before map[string]store.KnowledgeDocument) {
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
+	for _, document := range documents {
+		document.Passages = max(document.Passages, before[document.Source].Passages)
+		document.State, document.Error = store.KnowledgeDocumentFailed, knowledgeWriteFailed
+		if err := s.store.SaveKnowledgeDocument(ctx, &document); err != nil {
+			s.logger.Warn("could not mark a knowledge document failed", "source", document.Source, "error", err)
+			return
+		}
+	}
+}
+
+// auditedKnowledgeOf is a document as a change records it: the text, because that is what
+// somebody edited, and the namespace it was filed under. The passage count is left out,
+// since it is the router's arithmetic rather than anybody's edit.
+func auditedKnowledgeOf(document store.KnowledgeDocument) map[string]any {
+	return map[string]any{
+		"namespace": document.Namespace,
+		"source":    document.Source,
+		"text":      document.Text,
+	}
+}
+
+// agentOfKnowledge is the agent a knowledge base belongs to, so a change to what an agent
+// reads is on that agent's own history. A directory sync names the base after the agent, so
+// the name is the link; a base filled under a name no agent goes by belongs to none, and
+// the change is recorded against the app instead.
+func (s *Server) agentOfKnowledge(ctx context.Context, customerID, namespace string) string {
+	if s.configs == nil || namespace == "" {
+		return ""
+	}
+	config, found, err := s.configs.AgentConfigByName(ctx, customerID, namespace)
+	if err != nil || !found {
+		return ""
+	}
+	return config.ID
+}
+
+// forgetKnowledge removes every document in a knowledge base that is not among these,
+// which is what a synced directory losing a file means.
+func (s *Server) forgetKnowledge(
+	ctx context.Context, customerID, namespace string, documents []KnowledgeDocument,
+) error {
+	kept := make(map[string]struct{}, len(documents))
+	for _, document := range documents {
+		if strings.TrimSpace(document.Text) != "" {
+			kept[strings.TrimSpace(document.Source)] = struct{}{}
+		}
+	}
+
+	stored, err := s.store.CustomerKnowledgeDocuments(ctx, customerID, namespace)
+	if err != nil {
+		return err
+	}
+	for _, document := range stored {
+		if _, ok := kept[document.Source]; ok {
+			continue
+		}
+		if err := s.removeKnowledgeDocument(ctx, document); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeKnowledgeDocument deletes a document's passages and then its row. The passages go
+// first: a document we have forgotten but are still answering out of is the failure worth
+// avoiding.
+func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.KnowledgeDocument) error {
+	ids := ingest.IDs(document.Source, 0, document.Passages)
+	if err := s.knowledgeFor(ctx, document.CustomerID, "").Delete(ctx, document.Namespace, ids); err != nil {
+		return err
+	}
+	if err := s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID); err != nil {
+		return err
+	}
+	if s.knowledgeFiles != nil {
+		if err := s.knowledgeFiles.Forget(ctx, document); err != nil {
+			s.logger.Warn("could not delete the file of a removed knowledge document", "id", document.ID, "error", err)
+		}
+	}
+	s.audit(ctx, auditRecord{
+		ResourceType: store.AuditKnowledge, ResourceID: document.ID, ResourceName: document.Source,
+		AgentID: s.agentOfKnowledge(ctx, document.CustomerID, document.Namespace),
+		Action:  store.AuditDeleted,
+		Changes: auditDiff(auditedKnowledgeOf(document), nil),
+	})
+	return nil
+}
+
+// knowledgeFor is the knowledge base as the request reads and writes it: every call is a
+// knowledge row of the customer's, under the key and user that asked, done in region. The
+// knowledge API's name none, and go where the base is kept; a sync's are its agent's.
+func (s *Server) knowledgeFor(ctx context.Context, customerID, region string) metered.OwnedKnowledge {
+	return s.knowledge.For(routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Region: region})
+}
+
+// indexedKnowledgeDocumentOf is the stored row as the API describes it.
+func indexedKnowledgeDocumentOf(document store.KnowledgeDocument) IndexedKnowledgeDocument {
+	state := KnowledgeDocumentState(document.State)
+	if state == "" {
+		state = KnowledgeDocumentStateIndexed
+	}
+	return IndexedKnowledgeDocument{
+		Id:          document.ID,
+		Namespace:   document.Namespace,
+		Source:      document.Source,
+		Passages:    document.Passages,
+		State:       state,
+		Error:       optional(document.Error),
+		Pages:       document.Pages,
+		ContentType: document.ContentType,
+		Bytes:       document.Bytes,
+		CreatedAt:   document.CreatedAt,
+		UpdatedAt:   document.UpdatedAt,
+	}
+}
+
+// registerKnowledge declares the operations served in knowledge.go.
+func (s *Server) registerKnowledge(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID:     "ingestKnowledge",
+		Method:          http.MethodPost,
+		Path:            "/v1/agents/knowledge",
+		MaxBodyBytes:    MaxKnowledgeBody,
+		BodyReadTimeout: uploadReadTimeout,
+		Summary:         "Fill a knowledge base with what the business wrote down",
+		Description: "The writing half of the lookup a config's knowledge_namespace gives an agent. Each " +
+			"document is cut into passages here rather than by the caller, so a file read off disk " +
+			"by the command and one posted by an SDK are cut the same way and can replace each " +
+			"other.\n" +
+			"Passages are keyed by the source and the position they came from, so posting a document " +
+			"again after editing it replaces that document's passages rather than leaving two " +
+			"versions of them to be found. A namespace is never shared between agents, and the " +
+			"caller names it.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The passages were written"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.ingestKnowledge)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteKnowledge",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/knowledge",
+		Summary:     "Delete a knowledge base",
+		Description: "Everything in it goes, for good: its passages, the documents it was filled with and the " +
+			"pages it was kept filled from. A knowledge base an agent config reads is refused with a 409 " +
+			"naming those agents, so no agent is left looking things up in nothing.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The knowledge base is gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict},
+	}, s.deleteKnowledge)
+	huma.Register(api, huma.Operation{
+		OperationID: "listKnowledgeDocuments",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/documents",
+		Summary:     "The documents a knowledge base was filled with",
+		Description: "What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge " +
+			"folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The customer's documents, most recently written first"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+	}, s.listKnowledgeDocuments)
+	huma.Register(api, huma.Operation{
+		OperationID: "getKnowledgeDocument",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/documents/{id}",
+		Summary:     "One document, with the text it was posted as",
+		Description: "What to start from when editing it: post it again under the same source to replace it. " +
+			"A document written before its text was kept comes back without one.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The document"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getKnowledgeDocument)
+	huma.Register(api, huma.Operation{
+		OperationID: "deleteKnowledgeDocument",
+		Method:      http.MethodDelete,
+		Path:        "/v1/agents/knowledge/documents/{id}",
+		Summary:     "Take a document out of a knowledge base",
+		Description: "The passages it was cut into are removed too, so the agent stops answering out of it.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The document and its passages are gone"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.deleteKnowledgeDocument)
+	huma.Register(api, huma.Operation{
+		OperationID: "listKnowledgeDocumentPassages",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/knowledge/documents/{id}/passages",
+		Summary:     "What a document was cut into, in order",
+		Description: "The passages as the agent finds them, which is what shows what a lookup can answer out " +
+			"of this document.\n" +
+			"Server-side only: it needs a server-side token, so it cannot be reached from an end " +
+			"user's device.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The passages"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.listKnowledgeDocumentPassages)
+}
+
+type ingestKnowledgeRequest struct {
+	Body *IngestKnowledgeRequest `required:"true"`
+}
+
+type ingestKnowledgeResponse struct {
+	Body IngestedKnowledge
+}
+
+type deleteKnowledgeRequest struct {
+	Namespace string `query:"namespace" required:"true" doc:"The knowledge base, as it was named when it was filled."`
+}
+
+type listKnowledgeDocumentsRequest struct {
+	Namespace optionalParam[string] `query:"namespace" doc:"One knowledge base. Omit to list every document the customer has."`
+}
+
+type listKnowledgeDocumentsResponse struct {
+	Body []IndexedKnowledgeDocument `nullable:"false"`
+}
+
+type getKnowledgeDocumentRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type getKnowledgeDocumentResponse struct {
+	Body IndexedKnowledgeDocument
+}
+
+type deleteKnowledgeDocumentRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type listKnowledgeDocumentPassagesRequest struct {
+	Id string `path:"id" doc:"The resource, as returned when it was created."`
+}
+
+type listKnowledgeDocumentPassagesResponse struct {
+	Body []KnowledgePassage `nullable:"false"`
+}
+
+// IndexedKnowledgeDocument is the IndexedKnowledgeDocument schema.
+type IndexedKnowledgeDocument struct {
+	Bytes       int64                  `json:"bytes" doc:"The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept."`
+	ContentType string                 `json:"content_type" doc:"The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept." example:"application/pdf"`
+	CreatedAt   time.Time              `json:"created_at"`
+	Error       *string                `json:"error,omitempty" doc:"Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good."`
+	Id          string                 `json:"id"`
+	Namespace   string                 `json:"namespace"`
+	Pages       int                    `json:"pages" doc:"How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet."`
+	Passages    int                    `json:"passages" doc:"How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote."`
+	Source      string                 `json:"source" doc:"What the document was posted as, and what its passages are keyed by." example:"pricing.md"`
+	State       KnowledgeDocumentState `json:"state"`
+	Text        *string                `json:"text,omitempty" doc:"The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none."`
+	UpdatedAt   time.Time              `json:"updated_at" doc:"When it was last written."`
+}
+
+func (*IndexedKnowledgeDocument) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["passages"].Format = ""
+	schema.Properties["pages"].Format = ""
+	return schema
+}
+
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.
+type KnowledgeDocumentState string
+
+// Defines values for KnowledgeDocumentState.
+const (
+	KnowledgeDocumentStateFailed  KnowledgeDocumentState = "failed"
+	KnowledgeDocumentStateIndexed KnowledgeDocumentState = "indexed"
+	KnowledgeDocumentStatePending KnowledgeDocumentState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeDocumentState enum.
+func (e KnowledgeDocumentState) Valid() bool {
+	switch e {
+	case KnowledgeDocumentStateFailed, KnowledgeDocumentStateIndexed, KnowledgeDocumentStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+func (KnowledgeDocumentState) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "KnowledgeDocumentState", "Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.", "pending", "indexed", "failed")
+}
+
+// IngestKnowledgeRequest is the IngestKnowledgeRequest schema.
+type IngestKnowledgeRequest struct {
+	ChunkSize *int                `json:"chunk_size,omitempty" doc:"Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own. A size under the router's minimum, 500 by default, is raised to it."`
+	Documents []KnowledgeDocument `json:"documents" minItems:"1" nullable:"false"`
+	Namespace string              `json:"namespace" doc:"The knowledge base to write into, which is what a config's knowledge_namespace names. Knowledge is never shared, so there is no default." example:"docs"`
+}
+
+func (*IngestKnowledgeRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["chunk_size"].Format = ""
+	return schema
+}
+
+// IngestedKnowledge is the IngestedKnowledge schema.
+type IngestedKnowledge struct {
+	Documents int    `json:"documents" doc:"How many documents were read."`
+	Namespace string `json:"namespace"`
+	Passages  int    `json:"passages" doc:"How many passages they were cut into and written as."`
+}
+
+func (*IngestedKnowledge) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["documents"].Format = ""
+	schema.Properties["passages"].Format = ""
+	return schema
+}

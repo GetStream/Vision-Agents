@@ -1,0 +1,443 @@
+from http import HTTPStatus
+from typing import Any, cast
+from urllib.parse import quote
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.error_response import ErrorResponse
+from ...models.modality import Modality
+from ...types import Response
+
+
+def _get_kwargs(
+    modality: Modality,
+) -> dict[str, Any]:
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/v1/{modality}/stream".format(
+            modality=quote(str(modality), safe=""),
+        ),
+    }
+
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Any | ErrorResponse | None:
+    if response.status_code == 101:
+        response_101 = cast(Any, None)
+        return response_101
+
+    if response.status_code == 401:
+        response_401 = ErrorResponse.from_dict(response.json())
+
+        return response_401
+
+    if response.status_code == 403:
+        response_403 = ErrorResponse.from_dict(response.json())
+
+        return response_403
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
+    if response.status_code == 500:
+        response_500 = ErrorResponse.from_dict(response.json())
+
+        return response_500
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[Any | ErrorResponse]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Response[Any | ErrorResponse]:
+    """Route one modality over a socket, for a pipeline running elsewhere
+
+     A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
+    offered a piece at a time: a caller running its own pipeline sends audio or text and gets
+    transcripts, audio or completions back, and the request is failed over and billed exactly as it
+    would be inside a session.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal
+    about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended`
+    (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs
+    nothing is still served; the socket then closes with 1008.
+    A server-side caller is told what each unit cost and when its organization's credit runs low; an end
+    user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry
+    `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is
+    recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance,
+    comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`),
+    says the organization's balance went down into that state while the socket was open, the values
+    X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at
+    once after `started` when it already is.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[Any | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        modality=modality,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Any | ErrorResponse | None:
+    """Route one modality over a socket, for a pipeline running elsewhere
+
+     A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
+    offered a piece at a time: a caller running its own pipeline sends audio or text and gets
+    transcripts, audio or completions back, and the request is failed over and billed exactly as it
+    would be inside a session.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal
+    about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended`
+    (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs
+    nothing is still served; the socket then closes with 1008.
+    A server-side caller is told what each unit cost and when its organization's credit runs low; an end
+    user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry
+    `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is
+    recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance,
+    comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`),
+    says the organization's balance went down into that state while the socket was open, the values
+    X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at
+    once after `started` when it already is.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Any | ErrorResponse
+    """
+
+    return sync_detailed(
+        modality=modality,
+        client=client,
+    ).parsed
+
+
+async def asyncio_detailed(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Response[Any | ErrorResponse]:
+    """Route one modality over a socket, for a pipeline running elsewhere
+
+     A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
+    offered a piece at a time: a caller running its own pipeline sends audio or text and gets
+    transcripts, audio or completions back, and the request is failed over and billed exactly as it
+    would be inside a session.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal
+    about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended`
+    (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs
+    nothing is still served; the socket then closes with 1008.
+    A server-side caller is told what each unit cost and when its organization's credit runs low; an end
+    user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry
+    `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is
+    recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance,
+    comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`),
+    says the organization's balance went down into that state while the socket was open, the values
+    X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at
+    once after `started` when it already is.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[Any | ErrorResponse]
+    """
+
+    kwargs = _get_kwargs(
+        modality=modality,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    modality: Modality,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Any | ErrorResponse | None:
+    """Route one modality over a socket, for a pipeline running elsewhere
+
+     A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does,
+    offered a piece at a time: a caller running its own pipeline sends audio or text and gets
+    transcripts, audio or completions back, and the request is failed over and billed exactly as it
+    would be inside a session.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. A model that refuses the session part way through hands it
+    to the next model routed for it, which is announced with another `started` frame naming its
+    `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech
+    takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each
+    audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and
+    two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an
+    `id` and anything from `LlmOptions` for that one response along with its `tools`, and return
+    `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the
+    response ended in, what it cost in tokens and how long the caller waited for the first of them.
+    `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
+    messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
+    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
+    correlate their content. Completed tool calls include the same replay fields; incomplete responses
+    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
+    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
+    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
+    models. A model that does not accept images is refused with an `error` frame naming the model and
+    the modality, before anything is billed. A response the prompt injection screen refused fails with
+    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
+    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
+    and are still billed for what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal
+    about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended`
+    (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or
+    `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs
+    nothing is still served; the socket then closes with 1008.
+    A server-side caller is told what each unit cost and when its organization's credit runs low; an end
+    user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry
+    `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is
+    recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance,
+    comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`),
+    says the organization's balance went down into that state while the socket was open, the values
+    X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at
+    once after `started` when it already is.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
+
+    Args:
+        modality (Modality): What kind of work was done. The first nine are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. decision_model is a decision model: it answers named questions
+            about a piece of text with a typed value and the probability behind it rather than with
+            prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Any | ErrorResponse
+    """
+
+    return (
+        await asyncio_detailed(
+            modality=modality,
+            client=client,
+        )
+    ).parsed

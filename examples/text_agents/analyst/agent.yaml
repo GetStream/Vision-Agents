@@ -1,0 +1,5 @@
+name: analyst
+description: A text agent whose subagent may run the code it writes.
+mode: text
+llm: llm-fast
+sandbox: daytona

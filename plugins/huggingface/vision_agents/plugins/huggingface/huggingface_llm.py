@@ -158,20 +158,22 @@ class HuggingFaceLLM(LLM):
 
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
-        if self._instructions:
-            messages.append({"role": "system", "content": self._instructions})
+        if self.instructions:
+            messages.append({"role": "system", "content": self.instructions})
 
         if self._conversation is not None:
             for message in self._conversation.messages:
-                messages.append({"role": message.role, "content": message.content})
+                messages.append(
+                    {"role": message.role, "content": message.named_content}
+                )
         return messages
 
     def _input_to_messages(self, input_value: Any) -> List[Dict[str, Any]]:
         """Convert input parameter to messages format for API compatibility."""
         messages: List[Dict[str, Any]] = []
 
-        if self._instructions:
-            messages.append({"role": "system", "content": self._instructions})
+        if self.instructions:
+            messages.append({"role": "system", "content": self.instructions})
 
         if isinstance(input_value, str):
             messages.append({"role": "user", "content": input_value})

@@ -1,145 +1,161 @@
-![VisionAgents](assets/repo_image.png)
+![StreamAgents](assets/stream_agents.png)
 
-# Open Vision Agents by Stream
+> [!NOTE]
+> Using Python for Agents no longer makes sense. 0.7 is a move to Go, with SDKs for other languages.
 
-[![Listed on TakoAPI](https://img.shields.io/badge/Listed%20on-TakoAPI-7c3aed)](https://takoapi.com/agents/getstream-vision-agents)
+Stream Agents is a Go backend for building voice, video and text agents.
+You can build AI/agentic apps like Muse, Decagon and Harvey in a day.
 
-[![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
-[![PyPI version](https://badge.fury.io/py/vision-agents.svg)](http://badge.fury.io/py/vision-agents)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)
-[![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/main/LICENSE)
-[![Discord](https://img.shields.io/discord/1108586339550638090)](https://discord.gg/RkhX9PxMS6)
-[![X (Twitter)](https://img.shields.io/badge/X-@visionagents__ai-000000?logo=x&logoColor=white)](https://x.com/visionagents_ai)
+#### It's faster to build agents:
 
-### Multi-modal AI agents that watch, listen, and understand video.
+1. Agents are defined in a folder structure + YAML
+2. SDKs handle chat/audio client and state
+3. All the components you need are integrated with sensible default. (Guardrails, Knowledge, Routing, Connectors, Sandboxes, skills, telephony)
 
-[Vision Agents](https://visionagents.ai/) give you the building blocks to create intelligent, low-latency video experiences powered by your models,
-your infrastructure, and your use cases.
+#### Performance is excellent:
 
-### Key Highlights
+1. Go runs with high concurrency and raw performance
+2. The edge acceleration offloads your backend and lowers latency
+3. Audio forwarding is optimized with WARP similar to OpenAI
 
-- **Video AI:** Built for real-time video AI. Combine YOLO, Roboflow, and others with Gemini/OpenAI in real-time.
-- **Low Latency:** Join quickly (500ms) and maintain audio/video latency under 30ms
-  using [Stream's edge network](https://getstream.io/video/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents).
-- **Open:** Built by Stream, but works with any video edge network.
-- **Native APIs:** Native SDK methods from OpenAI (`create response`), Gemini (`generate`), and Claude (
-  `create message`) — always access the latest LLM capabilities.
-- **SDKs:** SDKs for React, Android, iOS, Flutter, React Native, and Unity, powered by Stream's ultra-low-latency
-  network.
+#### Sovereign AI
 
-## Getting Started
+The combination of routing, persistence and memory makes it easy to switch the underlying models.
+Stay in control of how you use the frontier models, how costs scale and run on your own when it makes sense.
 
-**Step 1: Install via uv**
+## SDKs
 
-`uv add vision-agents`
+The heavy lifting is done in Go. But you can use the agents in any environment:
 
-**Step 2: (Optional) Install with extra integrations**
+Client side SDKs with Chat/Video/Audio support: Swift, Kotlin, React, Flutter, React Native
 
-`uv add "vision-agents[getstream, openai, elevenlabs, deepgram]"`
+Backend SDKs: Python, Go, Node, Ruby, PHP, .NET, Rust
 
-**Step 3: Obtain your Stream API credentials**
+## Quickstart
 
-Get a free API key from [Stream](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents). Developers receive **333,000 participant minutes** per month,
-plus extra credits via the Maker Program.
+Pick your backend language:
 
-Follow the [quickstart guide](https://visionagents.ai/introduction/quickstart) to build your first agent.
+* [Python](https://getstream.io/agents/docs/quickstart/?server=python)
+* [Go](https://getstream.io/agents/docs/quickstart/?server=go-golang)
+* [Node](https://getstream.io/agents/docs/quickstart/?server=javascript)
+* [Ruby](https://getstream.io/agents/docs/quickstart/?server=ruby)
+* [PHP](https://getstream.io/agents/docs/quickstart/?server=php)
+* [.NET](https://getstream.io/agents/docs/quickstart/?server=dotnet-csharp)
+* [Rust](https://getstream.io/agents/docs/quickstart/?server=rust)
 
-## See It In Action
 
-https://github.com/user-attachments/assets/d1258ac2-ca98-4019-80e4-41ec5530117e
+## Agent Folders and CLI
 
-This example shows you how to build golf coaching AI with YOLO and Gemini Live.
-Combining a fast object detection model (like YOLO) with a full realtime AI is useful for many different video AI use
-cases.
-For example: Drone fire detection, sports/video game coaching, physical therapy, workout coaching, just dance style
-games etc.
+The fastest way to define an agent is using the folder structure
 
-```python
-# partial example, full example: examples/02_golf_coach_example/golf_coach_example.py
-agent = Agent(
-    edge=getstream.Edge(),
-    agent_user=agent_user,
-    instructions="Read @golf_coach.md",
-    llm=gemini.Realtime(fps=10),
-    processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt", device="cuda")],
-)
+You can quickly create a folder using the CLI
+
+```bash
+curl -fsSL https://getstream.io/cli/beta/install.sh | bash
+getstream agents init my-agent --template text
 ```
 
-## Features
+The structure looks something like this:
 
-| **Feature**              | **Description**                                                                                         |
-|--------------------------|---------------------------------------------------------------------------------------------------------|
-| **Real-time WebRTC**     | Stream video directly to model providers for instant visual understanding.                              |
-| **Video Processing**     | Pluggable processor pipeline for YOLO, Roboflow, or custom PyTorch/ONNX models before/after LLM calls. |
-| **Turn Detection**       | Natural conversation flow with VAD, diarization, and smart turn-taking.                                 |
-| **Tool Calling & MCP**   | Execute code and APIs mid-conversation — Linear issues, weather, telephony, or any MCP server.          |
-| **Phone Integration**    | Inbound and outbound voice calls via Twilio or Telnyx with bidirectional audio streaming.               |
-| **RAG**                  | Retrieval-augmented generation with TurboPuffer/Qdrant vector search or Gemini FileSearch.                     |
-| **Memory**               | Agents recall context across turns and sessions via Stream Chat.                                        |
-| **Text Back-channel**    | Message the agent silently during a call — coaching overlays, silent instructions, etc.                 |
-| **Production Ready**     | Built-in HTTP server, Prometheus metrics, horizontal scaling, and Kubernetes deployment.                |
+```text
+agents/my-agent/
+  knowledge/       ← indexed markdown and URLs
+    faq.md
+    urls.yaml
+  skills/          ← skills loaded as needed
+    research.md
+  simulations/
+  agent.yaml       ← config for the agent
+  routing.yaml     ← routing
+  instructions.md  ← system prompt
+  guardrail.md     ← prevent abuse
+```
 
-## Out-of-the-Box Integrations
+After you create an agent you can quickly test it like this
 
-**LLMs:** [OpenAI](https://visionagents.ai/integrations/openai) · [Gemini](https://visionagents.ai/integrations/gemini) · [xAI](https://visionagents.ai/integrations/xai) · [OpenRouter](https://visionagents.ai/integrations/openrouter) · [Hugging Face](https://visionagents.ai/integrations/huggingface) · [Kimi AI](https://visionagents.ai/integrations/kimi) · [MiniMax](https://visionagents.ai/integrations/minimax) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx)
+```bash
+getstream agents test my-agent
+```
 
-**Realtime:** [OpenAI Realtime](https://visionagents.ai/integrations/openai) · [Gemini Live](https://visionagents.ai/integrations/gemini) · [AWS Nova Sonic](https://visionagents.ai/integrations/aws-bedrock) · [Qwen](https://visionagents.ai/integrations/qwen) · [Inworld](https://visionagents.ai/integrations/inworld)
+Note that you can also configure agents through the SDKs or dashboard.
 
-**STT:** [Deepgram](https://visionagents.ai/integrations/deepgram) · [AssemblyAI](https://www.assemblyai.com/docs/streaming/universal-3-pro) · [Fast-Whisper](https://visionagents.ai/integrations/fast-whisper) · [Fish Audio](https://visionagents.ai/integrations/fish) · [Wizper](https://visionagents.ai/integrations/wizper) · [Mistral Voxtral](https://visionagents.ai/integrations/mistral) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx)
+## Tool Calling
 
-**TTS:** [ElevenLabs](https://visionagents.ai/integrations/elevenlabs) · [Cartesia](https://visionagents.ai/integrations/cartesia) · [Deepgram](https://visionagents.ai/integrations/deepgram) · [AWS Polly](https://visionagents.ai/integrations/aws-polly) · [Pocket](https://visionagents.ai/integrations/pocket) · [Kokoro](https://visionagents.ai/integrations/kokoro) · [Inworld](https://visionagents.ai/integrations/inworld) · [Fish Audio](https://visionagents.ai/integrations/fish) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx)
+You can set up tool calling with any language. Here's a python example
 
-**Vision:** [Ultralytics](https://visionagents.ai/integrations/ultralytics) · [Roboflow](https://visionagents.ai/integrations/roboflow) · [Moondream](https://visionagents.ai/integrations/moondream) · [TwelveLabs](https://github.com/GetStream/Vision-Agents/tree/main/plugins/twelvelabs) · [NVIDIA](https://visionagents.ai/integrations/nvidia) · [Decart](https://visionagents.ai/integrations/decart)
+```golang
+package main
 
-**Avatars:** [LemonSlice](https://visionagents.ai/integrations/lemonslice)
+import (
+	"context"
+	"errors"
 
-**Turn Detection:** [Vogent](https://visionagents.ai/integrations/vogent) · [Smart Turn](https://visionagents.ai/integrations/smart-turn)
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
+)
 
-**Other:** [Twilio](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx/examples) · [TurboPuffer](https://visionagents.ai/guides/rag)
+func customerCaseLookup(ctx context.Context, _ struct{}) (any, error) {
+	user := tools.ToolCallContextFrom(ctx).User
+	if user.ID == "" {
+		return nil, errors.New("unknown user")
+	}
+	// pretend this calls your CRM
+	return crm.OpenCases(ctx, user.ID)
+}
 
-## Documentation
+func main() {
+	api, _ := client.New(stream.Backend{})
+	agent := api.Agent("my-agent")
+	tools.Register(agent.Tools(), "customer_case_lookup",
+		"Look up the user's open support cases", customerCaseLookup)
 
-Check out the full docs at [VisionAgents.ai](https://visionagents.ai/).
+	dispatch, _ := agents.NewDispatch(agents.DispatchOptions{})
+	dispatch.Host(agent, 0)
+	dispatch.Run(context.Background())
+}
+```
 
-**Quickstart:** [Voice AI](https://visionagents.ai/introduction/voice-agents) · [Video AI](https://visionagents.ai/introduction/video-agents)
+```python
+import asyncio
 
-**Guides:** [MCP & Function Calling](https://visionagents.ai/guides/mcp-tool-calling) · [Video Processors](https://visionagents.ai/guides/video-processors) · [Phone Calling](https://visionagents.ai/guides/calling) · [RAG](https://visionagents.ai/guides/rag) · [Testing](https://visionagents.ai/guides/testing)
+from vision_agents.core.llm import ToolCallContext
+from vision_agents.plugins import stream
 
-**Production:** [HTTP Server](https://visionagents.ai/guides/http-server) · [Deployment](https://visionagents.ai/guides/deployment) · [Kubernetes](https://visionagents.ai/guides/kubernetes-deployment) · [Horizontal Scaling](https://visionagents.ai/guides/horizontal-scaling) · [Prometheus Metrics](https://visionagents.ai/guides/prometheus-metrics)
+agent = stream.Client().agent("my-agent")
 
-## Examples
 
-| 🔮 Demo Applications                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |                                                                                         |
-|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
-| <br><h3>Voice Agents (Low Latency + RAG + File Search)</h3>Build fast voice agents that can reason over knowledge, search files, and respond in real time.<br><br>• Low-latency voice interactions<br>• Retrieval-augmented responses<br>• File and knowledge search<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example)                                                                                                                                                    | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Voice Agent Demo">               |
-| <br><h3>Realtime Coaching and Video Understanding</h3>Power interactive coaching flows with live pose tracking and processor pipelines for frame-by-frame understanding.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• Video processor pipeline support<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)                                                     | <img src="assets/demo_gifs/golf.gif" width="320" alt="Realtime Coaching Demo">                 |
-| <br><h3>Video Restyling and Avatars</h3>Use models like Decart Lucy to build virtual try-ons, stylized scenes, or give your agents a visual identity.<br><br>• Real-time video restyling<br>• Virtual try-on experiences<br>• Avatar-like visual presence<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example)                                                                                                    | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Video Restyling Demo">           |
-| <br><h3>Custom Video Models (Roboflow, YOLO, and More)</h3>Train and run custom computer vision models for security monitoring, moderation, and other domain-specific workflows.<br><br>• Bring your own CV models<br>• Real-time moderation pipelines<br>• Security and detection use cases<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/11_moderation_example) | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Custom Video Models Demo">          |
-| <br><h3>Tools, MCP, and Phone Calling</h3>Connect external APIs and services so agents can validate data and take real-world actions during live conversations.<br><br>• MCP and function calling support<br>• Twilio and Telnyx phone workflows<br>• Real-time fraud response automation<br><br> [>Phone + RAG example](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [>Telnyx phone examples](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx/examples) · [>Fraud workflow example](https://github.com/GetStream/Vision-Agents/tree/main/plugins/openai/examples/nemotron_example) | <img src="assets/demo_gifs/fraud_detection.gif" width="320" alt="Tools and Phone Demo"> |
+@agent.register()
+async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
+    "Look up the user's open support cases"
+    user = tool_call_context.user
+    if not user.id:
+        raise ValueError("unknown user")
+    # pretend this calls your CRM
+    return await crm.open_cases(user.id)
 
-## Community Highlights
 
-More involved demos built by the community and the Stream team - full applications that go beyond the in-repo examples and show what's possible with Vision Agents in production.
+dispatch = stream.Dispatch()
+dispatch.host(agent)
+asyncio.run(dispatch.run())
+```
 
-Got a demo you'd like featured? Open a PR or reach out on [Discord](https://discord.gg/RkhX9PxMS6).
+## Examples / What can you build
 
-- [Sales Assistant Demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) - a real-time AI meeting coach that lives on your desktop as a translucent macOS overlay. Built on Vision Agents and Flutter.
-- [Crashout Buddy](https://github.com/GetStream/crashout-buddy) - an emotionally aware voice agent demo built on Vision Agents and Stream Video.
-- [Cricket DRS AI](https://github.com/jaya6400/cricket-drs-ai) — AI-powered Decision Review System for 🏏 Women's Cricket using Gemini Live vision, YOLO pose detection, and real-time voice verdicts by [@jaya6400](https://github.com/jaya6400).
 
-## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md)
 
-Want to add your platform or provider? See [Create Your Own Plugin](https://visionagents.ai/integrations/create-your-own-plugin) or reach out to **nash@getstream.io**.
+## Features included
 
-## Current Limitations
-
-- Video AI struggles with small text — models may hallucinate scores, signs, etc.
-- Context degrades on longer sessions (~30s+) for continuous video understanding
-- Most use cases need a mix of specialized models (YOLO, Roboflow) with larger LLMs
-- Real-time models require audio/text to trigger responses — video alone won't prompt output
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=GetStream/vision-agents&type=timeline&legend=top-left)](https://www.star-history.com/#GetStream/vision-agents&type=timeline&legend=top-left)
+* Acceleration: Go + Edge servers means amazingly fast agents
+* Voice & Video
+* Routing for LLM and STT
+* Connectors for Slack/WhatsApp/Linear etc
+* Tools & MCP
+* Telephony
+* Cost controls
+* Memory & knowledge
+* Chat/agent persistence
+* Sandbox/VM
+* Search

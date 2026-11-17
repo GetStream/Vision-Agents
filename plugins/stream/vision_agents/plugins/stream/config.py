@@ -1,0 +1,568 @@
+import asyncio
+import logging
+from typing import Optional, TypeVar, Union
+
+from vision_agents.core.harness import Sandbox, Skill
+
+from ._backend import Backend
+from ._generated import AuthenticatedClient
+from ._generated.api.default import (
+    create_agent_config,
+    create_skill,
+    list_agent_configs,
+    list_connections,
+    list_skills,
+    sync_agent as sync_agent_request,
+    update_agent_config,
+    update_skill,
+)
+from ._generated.models import (
+    AgentChannels,
+    AgentConfig,
+    AgentConfigRequest,
+    AgentConnectorBinding,
+    AgentConnectorSelection,
+    AgentConnectorSelectionType,
+    AgentDispatch,
+    AgentMode,
+    AgentScheduling,
+    AgentTools,
+    ChannelIdentity,
+    ChannelLineRequest,
+    ConnectionOwnerType,
+    DispatchSetting,
+    ErrorResponse,
+    FloorControl,
+    Greeting,
+    GreetingMode,
+    Harness,
+    KnowledgeDocument,
+    KnowledgeUrlDeclaration,
+    SandboxOptions,
+    SimulationDeclaration,
+    SimulationDeclarationMode,
+    SimulationDeclarationTags,
+    SkillRequest,
+    SkillRequestFiles,
+    SessionVideo,
+    SyncAgentRequest,
+    SyncAgentRequestTags,
+    SyncAgentResult,
+)
+from ._generated.types import UNSET, Unset
+from ._generated.models import Sandbox as SandboxProvider
+from .folder import (
+    AGENT_STAMP,
+    ConnectorSettings,
+    Folder,
+    Settings,
+    Simulation,
+    find,
+    load,
+    read_stamp,
+    resolve,
+    write_stamp,
+)
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+async def sync_agent(
+    name: str,
+    path: Optional[str] = None,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> SyncAgentResult:
+    """Store an agent directory's instructions, skills, knowledge and settings.
+
+    Reads `examples/voice_agents/{name}/` (or `path`) and writes what it holds to the
+    acceleration server. What `agent.yaml` declares goes with it, so the models an agent
+    runs on are decided on disk. A hash of the directory is sent too: a second call with
+    the same files does nothing.
+
+    This always asks the server. `ensure_agent` is the one that answers out of
+    `.agent_sync` and does not.
+
+    Args:
+        name: What the agent is called, which is also its directory's name.
+        path: The directory to read. Defaults to `examples/voice_agents/{name}` walking up
+            from the current working directory.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        What the router stored, and whether it wrote anything.
+    """
+    folder = await asyncio.to_thread(_read_agent, name, path)
+    client = Backend(url=url, customer_id=customer_id).client()
+
+    skills = [
+        SkillRequest(
+            config_id="",
+            name=skill.name,
+            capture_video=skill.capture_video,
+            description=skill.description,
+            instructions=skill.instructions,
+            deadline_ms=int((skill.deadline_seconds or 0) * 1000),
+            files=_skill_files(skill),
+        )
+        for skill in folder.skills
+    ]
+    knowledge = [
+        KnowledgeDocument(source=document.source, text=document.text)
+        for document in folder.knowledge
+    ]
+
+    fingerprint = folder.hash()
+    body = SyncAgentRequest(name=folder.name, hash_=fingerprint)
+    if folder.instructions:
+        body.instructions = folder.instructions
+    if folder.guardrail:
+        body.guardrail = folder.guardrail
+    if skills:
+        body.skills = skills
+    if knowledge:
+        body.knowledge = knowledge
+    if folder.knowledge_urls:
+        pages = []
+        for page in folder.knowledge_urls:
+            declared = KnowledgeUrlDeclaration(url=page.url)
+            if page.title:
+                declared.title = page.title
+            if page.description:
+                declared.description = page.description
+            if page.refresh_hours:
+                declared.refresh_hours = page.refresh_hours
+            pages.append(declared)
+        body.knowledge_urls = pages
+    if folder.simulations is not None:
+        body.simulations = [_simulation(item) for item in folder.simulations]
+    await _declare_settings(body, folder.settings, client)
+
+    result = _answer(await sync_agent_request.asyncio(client=client, body=body))
+    await asyncio.to_thread(write_stamp, folder.path, AGENT_STAMP, fingerprint)
+    if result.unchanged:
+        logger.info("agent %s is already in sync", folder.name)
+    else:
+        logger.info("synced agent %s", folder.name)
+    if isinstance(result.warnings, list):
+        for warning in result.warnings:
+            logger.warning("synced agent %s with a warning: %s", folder.name, warning)
+    return result
+
+
+async def ensure_agent(
+    name: str,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> Optional[SyncAgentResult]:
+    """Store the agent directory called `name`, if there is one and it has changed.
+
+    This is what makes launching an agent enough. `.agent_sync` next to `agent.yaml`
+    holds the fingerprint of what was last stored, so a run that changed nothing costs a
+    file read rather than a request, and a name with no directory behind it is left to
+    whatever is already on the server.
+
+    Args:
+        name: The stored config, which is also the directory's name.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        What the router stored, or None when nothing needed storing.
+    """
+    path = await asyncio.to_thread(find, name)
+    if path is None:
+        return None
+
+    folder = await asyncio.to_thread(load, path)
+    stamped = await asyncio.to_thread(read_stamp, path, AGENT_STAMP)
+    if stamped == folder.hash():
+        logger.debug("%s is unchanged since it was last synced", path)
+        return None
+
+    return await sync_agent(name, path=str(path), url=url, customer_id=customer_id)
+
+
+async def define_agent(
+    name: str,
+    instructions: str = "",
+    llm: str = "",
+    subagent: str = "",
+    stt: str = "",
+    tts: str = "",
+    voice: str = "",
+    greeting: str = "",
+    skills: Optional[list[Skill]] = None,
+    knowledge: str = "",
+    vm: Optional[Union[Sandbox, type[Sandbox]]] = None,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    *,
+    video_source: Optional[str] = None,
+    video_max_frames: Optional[int] = None,
+) -> AgentConfig:
+    """Store an agent configuration, along with the skills it names.
+
+    A config is what a session can be created from by id, so the things worth deciding
+    once are decided once: which models answer, what the agent is told to be, what it may
+    hand to a slower model, and what it may look things up in.
+
+    Both the config and its skills are found by name first, so calling this twice edits
+    what is stored rather than storing another copy of it.
+
+    Args:
+        name: What the config is called, which is also how it is found again.
+        instructions: The system prompt.
+        llm: The model that answers.
+        subagent: The model a voice agent hands its skills to. Only for a voice
+            agent: a text agent runs everything on its llm.
+        video_source: Source used by skills that capture video.
+        video_max_frames: Number of retained frames to capture, from 1 to 8.
+        stt: The model that transcribes, for a config a call will use.
+        tts: The model that speaks, for a config a call will use.
+        voice: A provider's own voice id, or one of your voices by id or by name.
+            Prefix it with `custom:` to mean only yours: a name that is not one of
+            yours is then refused instead of passed to the provider's library.
+            A native (sts) agent takes the vendor's own voice name instead.
+        greeting: Said on joining, without going through the model.
+        skills: What the model may hand work to. A skill named here replaces a built-in
+            of the same name.
+        knowledge: The knowledge base the agent may look things up in.
+        vm: Where the subagent may run code it writes, as a `Sandbox` or the class itself,
+            so `vm=Daytona` reads the way it is meant to. Deciding it here rather than per
+            session is the point: which sandbox an agent is allowed is a property of the
+            agent. Without one the subagent works everything out in its head.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        The stored config, whose id is what a session names.
+    """
+    client = Backend(url=url, customer_id=customer_id).client()
+
+    named = skills or []
+    wanted = AgentConfigRequest(name=name)
+    if instructions:
+        wanted.instructions = instructions
+    if llm:
+        wanted.llm = llm
+    if subagent:
+        wanted.subagent = subagent
+    if video_source is not None or video_max_frames is not None:
+        wanted.video = SessionVideo()
+        if video_source is not None:
+            wanted.video.source = video_source
+        if video_max_frames is not None:
+            wanted.video.max_frames = video_max_frames
+    if stt:
+        wanted.stt = stt
+    if tts:
+        wanted.tts = tts
+    if voice:
+        wanted.voice = voice
+    if greeting:
+        wanted.greeting = Greeting(text=greeting)
+    if named:
+        wanted.skills = [skill.name for skill in named]
+    if knowledge:
+        wanted.knowledge_namespace = knowledge
+    if vm is not None:
+        box = vm() if isinstance(vm, type) else vm
+        wanted.sandbox = SandboxProvider(box.provider)
+
+    config: Optional[AgentConfig] = None
+    for stored in _answer(await list_agent_configs.asyncio(client=client)):
+        if stored.name == name:
+            logger.info("updating agent config %s", stored.id)
+            config = _answer(
+                await update_agent_config.asyncio(stored.id, client=client, body=wanted)
+            )
+            break
+    if config is None:
+        config = _answer(await create_agent_config.asyncio(client=client, body=wanted))
+
+    # The skills belong to the config, so they are written after it: a new agent has no id
+    # to hang them off until it has been stored.
+    if named:
+        await define_skills(named, config.id, client)
+    return config
+
+
+async def define_skills(
+    skills: list[Skill], config_id: str, client: AuthenticatedClient
+) -> list[Skill]:
+    """Store one config's skills, editing whichever is already under each name.
+
+    Args:
+        skills: What to store.
+        config_id: The config they belong to, which is what a name is unique within.
+        client: The router to store them in, from `Backend.client`.
+
+    Returns:
+        The skills as given, so this reads as a step in configuring an agent.
+    """
+    known = {
+        stored.name: stored.id
+        for stored in _answer(
+            await list_skills.asyncio(client=client, config_id=config_id)
+        )
+    }
+
+    for skill in skills:
+        body = SkillRequest(
+            config_id=config_id,
+            name=skill.name,
+            capture_video=skill.capture_video,
+            description=skill.description,
+            instructions=skill.instructions,
+            deadline_ms=int((skill.deadline_seconds or 0) * 1000),
+            files=_skill_files(skill),
+        )
+        if skill.name in known:
+            _answer(
+                await update_skill.asyncio(known[skill.name], client=client, body=body)
+            )
+        else:
+            _answer(await create_skill.asyncio(client=client, body=body))
+    logger.info("stored %d skills", len(skills))
+    return skills
+
+
+async def _declare_settings(
+    body: SyncAgentRequest, settings: Settings, client: AuthenticatedClient
+) -> None:
+    """Carry what `agent.yaml` declared onto the sync request.
+
+    Only what the file names is sent. A setting it says nothing about is left out rather
+    than sent blank, so the router leaves whatever is already stored.
+    """
+    if settings.mode:
+        body.mode = AgentMode(settings.mode)
+    if settings.region:
+        body.region = settings.region
+    if settings.stt:
+        body.stt = settings.stt
+    if settings.tts:
+        body.tts = settings.tts
+    if settings.sts is not None:
+        body.sts = settings.sts
+    if settings.voice:
+        body.voice = settings.voice
+    if settings.llm:
+        body.llm = settings.llm
+    if settings.harness:
+        body.harness = Harness(settings.harness)
+    if settings.subagent:
+        body.subagent = settings.subagent
+    if settings.video_max_frames:
+        body.video = SessionVideo(
+            source=settings.video_source, max_frames=settings.video_max_frames
+        )
+    if settings.dispatch is not None:
+        body.dispatch = AgentDispatch()
+        if "incoming_call" in settings.dispatch:
+            body.dispatch.incoming_call = DispatchSetting(
+                settings.dispatch["incoming_call"]
+            )
+        if "text" in settings.dispatch:
+            body.dispatch.text = DispatchSetting(settings.dispatch["text"])
+    if settings.search:
+        body.search = settings.search
+    if settings.image is not None:
+        body.image = settings.image
+    if settings.greeting is not None:
+        body.greeting = Greeting(text=settings.greeting.text)
+        if settings.greeting.mode:
+            body.greeting.mode = GreetingMode(settings.greeting.mode)
+    if settings.connectors is not None:
+        body.connectors = [
+            await _connector_binding(client, entry) for entry in settings.connectors
+        ]
+    if settings.tools is not None:
+        body.tools = AgentTools()
+        if settings.tools.progressive is not None:
+            body.tools.progressive = settings.tools.progressive
+    if settings.channels is not None:
+        declared = AgentChannels()
+        if settings.channels.whatsapp is not None:
+            declared.whatsapp = ChannelLineRequest(
+                number=settings.channels.whatsapp.number
+            )
+        if settings.channels.sms is not None:
+            declared.sms = ChannelLineRequest(number=settings.channels.sms.number)
+        if settings.channels.imessage is not None:
+            declared.imessage = ChannelLineRequest(
+                number=settings.channels.imessage.number
+            )
+        if settings.channels.identity:
+            declared.identity = ChannelIdentity(settings.channels.identity)
+        body.channels = declared
+    if settings.scheduling is not None:
+        scheduling = AgentScheduling()
+        if settings.scheduling.enabled is not None:
+            scheduling.enabled = settings.scheduling.enabled
+        if settings.scheduling.max_tasks_per_user is not None:
+            scheduling.max_tasks_per_user = settings.scheduling.max_tasks_per_user
+        if settings.scheduling.default_timezone:
+            scheduling.default_timezone = settings.scheduling.default_timezone
+        body.scheduling = scheduling
+    if settings.floor_control is not None:
+        # As written, each key only when named; empty is no choice again, which the router's
+        # default rules.
+        floor_control = FloorControl()
+        if settings.floor_control.model is not None:
+            floor_control.model = settings.floor_control.model
+        if settings.floor_control.max_wait_ms is not None:
+            floor_control.max_wait_ms = settings.floor_control.max_wait_ms
+        body.floor_control = floor_control
+    if settings.keyterms:
+        body.keyterms = settings.keyterms
+    if settings.sandbox:
+        body.sandbox = SandboxProvider(settings.sandbox)
+    if settings.sandbox_options is not None:
+        options = settings.sandbox_options
+        body.sandbox_options = SandboxOptions(
+            image=options.image,
+            setup=options.setup,
+            timeout_ms=int(options.timeout_seconds * 1000),
+            cpu=options.cpu,
+            memory_gb=options.memory_gb,
+            disk_gb=options.disk_gb,
+            network=options.network,
+            allowed_domains=options.allowed_domains,
+            network_allow_list=options.network_allow_list,
+        )
+    if settings.tags:
+        tags = SyncAgentRequestTags()
+        tags.additional_properties = dict(settings.tags)
+        body.tags = tags
+
+
+async def _connector_binding(
+    client: AuthenticatedClient, entry: ConnectorSettings
+) -> AgentConnectorBinding:
+    """One agent.yaml connector as the binding the sync request sends.
+
+    A name alone, or an object that names no connection, is a session binding. `connection`
+    is the app's connection: its id, or the label of exactly one of that connector's, read
+    across every page of the list.
+    """
+    if entry.connection:
+        selection = AgentConnectorSelection(
+            type_=AgentConnectorSelectionType.FIXED,
+            connection_id=await _fixed_connection_id(client, entry),
+        )
+    else:
+        selection = AgentConnectorSelection(type_=AgentConnectorSelectionType.SESSION)
+    return AgentConnectorBinding(
+        connection=selection,
+        connector_id=entry.connector or entry.name,
+        name=entry.name,
+        tools=[],
+        tool_patterns=list(entry.tools) if entry.tools is not None else ["*"],
+        required=UNSET if entry.required is None else entry.required,
+        sandbox=True if entry.sandbox else UNSET,
+        require_approval=UNSET
+        if entry.require_approval is None
+        else list(entry.require_approval),
+    )
+
+
+async def _fixed_connection_id(
+    client: AuthenticatedClient, entry: ConnectorSettings
+) -> str:
+    """The id `entry.connection` names: an exact id, else the one connection with that label."""
+    connector_id = entry.connector or entry.name
+    matched_id = ""
+    label_ids: list[str] = []
+    cursor: str | Unset = UNSET
+    seen: set[str] = set()
+    while True:
+        page = _answer(
+            await list_connections.asyncio(
+                client=client,
+                owner_type=ConnectionOwnerType.CONNECTION_OWNER_TYPE_APP,
+                connector_id=connector_id,
+                cursor=cursor,
+            )
+        )
+        for item in page.items or []:
+            if item.id == entry.connection:
+                matched_id = item.id
+            label = item.label
+            if not isinstance(label, Unset) and label == entry.connection:
+                label_ids.append(item.id)
+        nxt = page.next_cursor
+        if not page.has_more or isinstance(nxt, Unset) or not nxt or nxt in seen:
+            break
+        seen.add(nxt)
+        cursor = nxt
+    if matched_id:
+        return matched_id
+    if len(label_ids) == 1:
+        return label_ids[0]
+    if not label_ids:
+        raise ValueError(
+            f'agents: connector "{entry.name}": no app connection with id or label'
+            f' "{entry.connection}"'
+        )
+    raise ValueError(
+        f'agents: connector "{entry.name}": "{entry.connection}" matches'
+        f" {len(label_ids)} app connections"
+    )
+
+
+def _simulation(simulation: Simulation) -> SimulationDeclaration:
+    """A declared simulation as the sync request carries it, with the unset ones left out."""
+    declared = SimulationDeclaration(
+        name=simulation.name,
+        scenario=simulation.scenario,
+        assertion=simulation.assertion,
+    )
+    if simulation.mode:
+        declared.mode = SimulationDeclarationMode(simulation.mode)
+    if simulation.variations > 0:
+        declared.variations = simulation.variations
+    if simulation.max_turns > 0:
+        declared.max_turns = simulation.max_turns
+    for name in (
+        "caller_target",
+        "judge_target",
+        "caller_stt",
+        "caller_tts",
+        "caller_voice",
+    ):
+        if getattr(simulation, name):
+            setattr(declared, name, getattr(simulation, name))
+    if simulation.tags:
+        tags = SimulationDeclarationTags()
+        tags.additional_properties = dict(simulation.tags)
+        declared.tags = tags
+    return declared
+
+
+def _answer(answer: Union[T, ErrorResponse, None]) -> T:
+    """Return what the router sent, raising what it said went wrong instead."""
+    if isinstance(answer, ErrorResponse):
+        raise RuntimeError(answer.error.message)
+    if answer is None:
+        raise RuntimeError("the router did not answer")
+    return answer
+
+
+def _read_agent(name: str, path: Optional[str]) -> Folder:
+    """Load an agent directory, resolving `name` when no path was given."""
+    return load(path or resolve(name))
+
+
+def _skill_files(skill: Skill) -> Union[SkillRequestFiles, Unset]:
+    """The files a skill folder brings, or nothing for a skill that is one file."""
+    if not skill.files:
+        return UNSET
+    return SkillRequestFiles.from_dict(skill.files)

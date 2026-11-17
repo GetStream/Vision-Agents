@@ -1,0 +1,209 @@
+package llmrouter
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+)
+
+func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
+	var primaryStatus atomic.Int32
+	primaryStatus.Store(503)
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(int(primaryStatus.Load()))
+		fmt.Fprint(w, `{"error":{"message":"primary unavailable","type":"server_error"}}`)
+	}))
+	defer primary.Close()
+	requests := make(chan map[string]any, 4)
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		requests <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, claudeAnswer("Opus answer", 12, 3))
+	}))
+	defer backup.Close()
+	registry := NewRegistry()
+	registry.Register("openai", func(spec routing.Spec) (Provider, error) {
+		return Started(openai.New(openai.Options{APIKey: "test", BaseURL: primary.URL, Model: spec.Model}))
+	})
+	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "openai", Model: "gpt-5.6-luna", Languages: []string{"en"}}, {Provider: "anthropic", Model: "claude-opus-5", Languages: []string{"en"}}}, Aliases: map[string]routing.Alias{"docs-support": {Prefer: "openai/gpt-5.6-luna", Only: []string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"}}}}})
+	require.NoError(t, err)
+	defer router.Close()
+	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Target: "docs-support", Tags: routing.Tags{"project": "docs", "user_id": "user", "organization_id": "org"}})
+	require.NoError(t, err)
+	defer session.Close()
+	require.Equal(t, "openai", session.Provider())
+	params := llm.ResponseParams{Instructions: "Be helpful", Input: []llm.Message{{Role: llm.User, Content: "Remember our earlier context"}}, Tools: []llm.Tool{{Name: "search_docs", Parameters: map[string]any{"type": "object"}}}}
+	stream, err := session.Create(t.Context(), params)
+	require.NoError(t, err)
+	response, err := llm.Collect(stream)
+	require.NoError(t, err)
+	require.Equal(t, "Opus answer", response.OutputText)
+	require.Equal(t, "anthropic", response.Provider)
+	require.Equal(t, "claude-opus-5", response.Model)
+	require.Equal(t, int64(12), response.Usage.InputTokens)
+	request := <-requests
+	require.Equal(t, "claude-opus-5", request["model"])
+	require.Len(t, request["messages"], 1, "the instructions are Claude's system prompt, not a turn")
+	require.Len(t, request["tools"], 1)
+	require.Empty(t, session.children)
+	// A caller cancellation and invalid request must not become a second billable request.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = session.Create(ctx, params)
+	require.Error(t, err)
+	primaryStatus.Store(400)
+	_, err = session.Create(t.Context(), params)
+	require.Error(t, err)
+	require.Empty(t, requests)
+}
+
+func TestAProviderOutOfCreditFallsBack(t *testing.T) {
+	broke := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		fmt.Fprint(w, `{"error":{"message":"Your prepayment credits are depleted","type":"billing_error"}}`)
+	}))
+	defer broke.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, claudeAnswer("respond", 1, 1))
+	}))
+	defer backup.Close()
+	registry := NewRegistry()
+	registry.Register("gemini", func(spec routing.Spec) (Provider, error) {
+		return Started(openai.New(openai.Options{APIKey: "test", BaseURL: broke.URL, Model: spec.Model}))
+	})
+	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "gemini", Model: "gemini-3.8-flash", Languages: []string{"en"}}, {Provider: "anthropic", Model: "claude-haiku-5", Languages: []string{"en"}}}, Aliases: map[string]routing.Alias{"llm-flow": {Prefer: "gemini/gemini-3.8-flash"}}}})
+	require.NoError(t, err)
+	defer router.Close()
+	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Target: "llm-flow"})
+	require.NoError(t, err)
+	defer session.Close()
+	require.Equal(t, "gemini", session.Provider())
+
+	stream, err := session.Create(t.Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Party of four."}}})
+	require.NoError(t, err)
+	response, err := llm.Collect(stream)
+	require.NoError(t, err)
+	require.Equal(t, "anthropic", response.Provider)
+	require.Equal(t, "respond", response.OutputText)
+}
+
+func TestAPriorityListFallsBackInTheOrderItWasWritten(t *testing.T) {
+	var asked atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":{"message":"primary unavailable","type":"server_error"}}`)
+	}))
+	defer primary.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, claudeAnswer("Opus answer", 12, 3))
+	}))
+	defer backup.Close()
+	registry := NewRegistry()
+	registry.Register("openai", func(spec routing.Spec) (Provider, error) {
+		return Started(openai.New(openai.Options{APIKey: "test", BaseURL: primary.URL, Model: spec.Model}))
+	})
+	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
+	})
+	// Config order puts anthropic first, so only the list can send the first response to
+	// openai.
+	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "anthropic", Model: "claude-opus-5", Languages: []string{"en"}}, {Provider: "openai", Model: "gpt-5.6-luna", Languages: []string{"en"}}}}})
+	require.NoError(t, err)
+	defer router.Close()
+	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Providers: []string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"}})
+	require.NoError(t, err)
+	defer session.Close()
+	require.Equal(t, "openai", session.Provider())
+
+	stream, err := session.Create(t.Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Hello"}}})
+	require.NoError(t, err)
+	response, err := llm.Collect(stream)
+	require.NoError(t, err)
+	require.Equal(t, "Opus answer", response.OutputText)
+	require.Equal(t, "anthropic", response.Provider)
+	require.Positive(t, asked.Load(), "the first entry was asked before the second answered")
+}
+
+// allowing is a customer whose policies allow only the models named.
+type allowing []string
+
+func (a allowing) Admit(context.Context, routing.Owner) (routing.Admission, error) {
+	return routing.Admission{Models: a}, nil
+}
+
+func TestAFallbackNeverReachesAModelThePolicyDoesNotAllow(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":{"message":"primary unavailable","type":"server_error"}}`)
+	}))
+	defer primary.Close()
+	var asked atomic.Int32
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+	}))
+	defer backup.Close()
+	registry := NewRegistry()
+	registry.Register("openai", func(spec routing.Spec) (Provider, error) {
+		return Started(openai.New(openai.Options{APIKey: "test", BaseURL: primary.URL, Model: spec.Model}))
+	})
+	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
+	})
+	router, err := New(Options{Registry: registry, Gate: allowing{"openai/gpt-5.6-luna"}, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "openai", Model: "gpt-5.6-luna", Languages: []string{"en"}}, {Provider: "anthropic", Model: "claude-opus-5", Languages: []string{"en"}}}, Aliases: map[string]routing.Alias{"docs-support": {Prefer: "openai/gpt-5.6-luna", Only: []string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"}}}}})
+	require.NoError(t, err)
+	defer router.Close()
+	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Target: "docs-support"})
+	require.NoError(t, err)
+	defer session.Close()
+
+	_, err = session.Create(t.Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Hello"}}})
+
+	require.ErrorIs(t, err, routing.ErrModelNotAllowed)
+	require.Zero(t, asked.Load(), "the model the policy does not allow was never asked")
+}
+
+// claudeAnswer is a Messages API stream that says text, having read input tokens and
+// written output ones.
+func claudeAnswer(text string, input, output int) string {
+	events := []string{
+		fmt.Sprintf(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":%d,"output_tokens":1}}}`, input),
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, text),
+		`{"type":"content_block_stop","index":0}`,
+		fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":%d}}`, output),
+		`{"type":"message_stop"}`,
+	}
+	var stream string
+	for _, event := range events {
+		var typed struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal([]byte(event), &typed)
+		stream += "event: " + typed.Type + "\ndata: " + event + "\n\n"
+	}
+	return stream
+}
