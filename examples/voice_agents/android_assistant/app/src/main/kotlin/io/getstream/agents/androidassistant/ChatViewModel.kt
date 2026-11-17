@@ -5,6 +5,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.getstream.agents.androidassistant.components.TripComponents
 import io.getstream.chat.android.ai.a2ui.generativeui.A2UIRenderer
 import io.getstream.chat.android.ai.compose.conversation.AIAgentError
 import io.getstream.chat.android.ai.compose.conversation.AIConversationState
@@ -116,6 +117,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** The tools the agent may call, which run on this phone. */
     private val tools = DeviceTools(application).all
 
+    /** The phone's own views the agent can place in its UI, in the chat and on a call. */
+    private val components = TripComponents.load(application)
+
     private val format = MutableStateFlow(ReplyFormat.stored(application))
 
     /** How the agent writes its replies, which picks the renderer for their generated UI. */
@@ -172,7 +176,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** A host for the agent's UI, in either format, whose actions ask in this conversation. */
     private fun newUiHost(): AIUIHost =
-        AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer())) { action -> answer(action) }
+        AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer()), components = components) { action -> answer(action) }
 
     /** Sends what the person did in a reply's generated UI. */
     private fun answer(action: AIUIAction) {
