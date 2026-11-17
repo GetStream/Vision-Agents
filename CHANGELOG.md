@@ -2,6 +2,10 @@
 
 ## Features
 
+### The JavaScript SDK compiles `ui.format: a2ui`
+
+`loadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the same A2UI prompt as the Go SDK: the agent is told to answer with A2UI 1.0 in a ```` ```ui:a2ui@1.0 ```` block, with the catalog `getstream.io:app-catalog` that stream-chat-swift's renderer draws. `keep` names the basic catalog's components and functions, `patch_mode` is refused with `a2ui`, and a blueprint `example` is checked so it renders as written. Both SDKs are held to the same fixture, byte for byte.
+
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
 `AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
@@ -678,6 +682,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A customer's refused key no longer raises the operator's key_refused alert
+
+`router_keypool_refused_attempts_total` has a label `owner`: `ours` for a key the router read from its environment, `customer` for a customer's own, such as the key of their own model (`custom/<name>`) or the one they keep for a vendor (BYOK). The `key_refused` alert counts only `ours`: a customer's broken key is theirs to fix. An instance's `api_key_env` is read the way every key variable is (comma separated keys, then `NAME_1`, `NAME_2`), so its keys are the router's own: their refusals still alert, and their rate limits are kept in `router_vendor_rate_limited_total` and `router_vendor_ratelimit_remaining` under that variable (AI-2950).
 
 ### The key_refused alert says why a key was refused
 

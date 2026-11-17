@@ -5,10 +5,13 @@ package api
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +22,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // appLogSuite is a router whose log a test reads back.
@@ -248,9 +253,127 @@ func (s *LogAppSuite) TestTheAccessLineOfAnUnsampledRequestNamesNoTrace() {
 
 // Defect: a socket declares its auth type in the query, which the line read only from the header.
 func (s *LogAppSuite) TestTheAccessLineNamesTheAuthTypeASocketDeclaresInItsQuery() {
-	s.Equal("jwt", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=jwt", nil), "stream_auth_type"))
-	s.Equal("anonymous", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=anonymous", nil), "stream_auth_type"))
-	s.NotContains(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=server", nil), "stream_auth_type")
+	s.Equal("jwt", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/account?stream-auth-type=jwt", nil), "stream_auth_type"))
+	s.Equal("anonymous", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/account?stream-auth-type=anonymous", nil), "stream_auth_type"))
+	s.NotContains(s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/account?stream-auth-type=server", nil), "stream_auth_type")
+}
+
+// Defect: the load balancer's and kubelet's probes, every few seconds, wrote a line each and
+// crowded the log's real requests out.
+func (s *LogAppSuite) TestASuccessfulHealthProbeWritesNoAccessLine() {
+	server, logged := s.healthServer(false)
+
+	status := s.probed(server, http.MethodGet, "/health")
+
+	s.Equal(http.StatusOK, status)
+	s.NotContains(logged.String(), "served a request")
+}
+
+// Defect: the quiet rule swallowed a failing probe too, which a failing dependency shows up in.
+func (s *LogAppSuite) TestAFailingHealthProbeWritesItsAccessLine() {
+	server, logged := s.healthServer(true)
+
+	status := s.probed(server, http.MethodGet, "/health")
+
+	s.Equal(http.StatusServiceUnavailable, status)
+	line := s.lineIn(logged.String())
+	s.Contains(line, "level=ERROR")
+	s.Contains(line, " path=/health ")
+	s.Contains(line, " status=503 ")
+}
+
+// Defect: the quiet rule went by the status only, and a health probe answered below 400
+// whose handler recorded an error went unlogged.
+func (s *LogAppSuite) TestAHealthProbeWithARecordedErrorWritesItsAccessLine() {
+	line := s.servedAt("/health", func(w http.ResponseWriter, r *http.Request) {
+		recordFailure(r.Context(), errors.New("probe broke"), "")
+	})
+
+	s.Contains(line, " status=200 ")
+	s.Equal("probe broke", s.field(line, "error"))
+}
+
+// Defect: the quiet rule's limit was a server error, not 400, as chat's and the ticket's are.
+func (s *LogAppSuite) TestAHealthProbeAnsweredWithAClientErrorWritesItsAccessLine() {
+	line := s.servedAt("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadRequest) })
+
+	s.Contains(line, " status=400 ")
+}
+
+// Defect: the rule matched by prefix or suffix, or on every path, so a route that only looks
+// like the health check, or a method it does not serve, went unlogged.
+func (s *LogAppSuite) TestOnlyAnswersFromTheHealthRouteAreQuiet() {
+	for _, path := range []string{"/healthz", "/v1/agents/health", "/health/live", "/ready"} {
+		line := s.servedAt(path, func(http.ResponseWriter, *http.Request) {})
+
+		s.Contains(line, " path="+path+" ")
+		s.Contains(line, " status=200 ")
+	}
+	server, logged := s.healthServer(false)
+
+	s.Equal(http.StatusMethodNotAllowed, s.probed(server, http.MethodPost, "/health"))
+
+	s.Contains(s.lineIn(logged.String()), " status=405 ")
+}
+
+// Control: a request that is not a health probe is still logged when it succeeds.
+func (s *LogAppSuite) TestARequestThatIsNoHealthProbeIsLoggedWhenItSucceeds() {
+	line := s.sent(s.serverClient, http.MethodGet, "/v1/agents/skills", nil)
+
+	s.Contains(line, " path=/v1/agents/skills ")
+	s.Contains(line, " status=200 ")
+}
+
+// healthServer is a router with nothing but its health check, whose store is closed when
+// failing, as an unreachable database is, and the log it writes.
+func (s *LogAppSuite) healthServer(failing bool) (*Server, *lockedLog) {
+	logged := &lockedLog{}
+	options := Options{
+		Routers: map[routing.Modality]routing.Inspector{routing.LLM: idleInspector{}},
+		Logger:  slog.New(NewLogHandler(slog.NewTextHandler(logged, nil))),
+	}
+	if failing {
+		closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+		s.Require().NoError(err)
+		s.Require().NoError(closed.Close())
+		options.Store = closed
+	}
+	server, err := NewServer(options)
+	s.Require().NoError(err)
+	return server, logged
+}
+
+// probed is the status server answers a method request for path with. The line is written
+// by the time it returns.
+func (s *LogAppSuite) probed(server *Server, method, path string) int {
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(method, path, nil))
+	return recorder.Code
+}
+
+// servedAt is the access line withRequestLog writes for a GET of path that handler answers.
+func (s *LogAppSuite) servedAt(path string, handler http.HandlerFunc) string {
+	routes := chi.NewRouter()
+	routes.Get(path, handler)
+	id := s.utils.uuid()
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.Header.Set(RequestIDHeader, id)
+
+	withRequestID(s.router.withRequestLog(routes, routes)).ServeHTTP(httptest.NewRecorder(), request)
+
+	return s.lineOf(id)
+}
+
+// lineIn is the one access line in written, which fails the test when there is none or more.
+func (s *LogAppSuite) lineIn(written string) string {
+	var lines []string
+	for line := range strings.Lines(written) {
+		if strings.Contains(line, `msg="served a request"`) {
+			lines = append(lines, line)
+		}
+	}
+	s.Require().Len(lines, 1, written)
+	return lines[0]
 }
 
 // servedWithin is the access line withRequestLog writes for a GET whose request was prepared

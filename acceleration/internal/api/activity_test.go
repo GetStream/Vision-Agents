@@ -159,6 +159,15 @@ func (s *ActivitySuite) TestARefusalAnOperationsMiddlewareWroteIsCountedWithItsC
 	s.Equal(s.errorCode(payload), row.code)
 }
 
+// Defect: a successful health probe an app made with its own credential left out of the activity
+// record, since its access line is skipped (answeredHealthy) and the record was written after it.
+func (s *ActivitySuite) TestASuccessfulHealthProbeIsStillCounted() {
+	s.Require().Equal(http.StatusOK, s.serverClient.with(clientHeader, store.AuditSourceCLI).
+		do(http.MethodGet, "/health", nil, nil))
+
+	s.countedOnce(activity.AreaOther, store.AuditSourceCLI)
+}
+
 // Defect: a request nobody authenticated counted under an empty app, which is everybody's.
 func (s *ActivitySuite) TestARequestNobodyAuthenticatedIsNotCounted() {
 	asked := time.Now()

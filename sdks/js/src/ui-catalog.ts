@@ -1,9 +1,19 @@
 import { ConfigurationError } from "./errors.js";
+import { A2UI_BASIC_CATALOG } from "./generated/a2ui.js";
+import { A2UI_IDENTIFIER, compileA2UIPrompt } from "./ui-a2ui.js";
+import { checkBlueprint, extractFence, uiOpening, uiPascalName, uiRules, UI_BLUEPRINTS_HEADING } from "./ui-prompt.js";
+
+export { uiPascalName } from "./ui-prompt.js";
 
 /** Declarative `ui:` configuration in `agent.yaml`. */
 export interface UIDeclaration {
-  /** openui, the default. a2ui is refused: the compiled prompt teaches only OpenUI. */
-  format?: "openui";
+  /** openui, the default, or a2ui. */
+  format?: "openui" | "a2ui";
+  /**
+   * Restricts the built-in component catalog to the named components. In OpenUI their required
+   * child types come along; in A2UI it names the basic catalog's components and functions, and
+   * nothing else is offered.
+   */
   keep?: string[];
   components?: string;
   blueprints?: string;
@@ -81,15 +91,6 @@ const BUILTINS: readonly BuiltinComponent[] = [
 const PORTABLE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const IDENT_PATTERN = /^\$?[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Converts `snake_case` component names (`restaurant_card`) to `PascalCase` (`RestaurantCard`). */
-export function uiPascalName(snake: string): string {
-  return snake
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join("");
-}
-
 /** Validates portable components and compiles a deterministic, prefix-cache-safe system prompt section. */
 export function compileUIPrompt(
   settings: UIDeclaration,
@@ -97,10 +98,17 @@ export function compileUIPrompt(
   blueprints: readonly UIBlueprint[] = [],
   where = "ui",
 ): string {
-  if (settings.format && settings.format !== "openui") {
-    throw new ConfigurationError(`${where}: ui.format must be openui, not ${JSON.stringify(settings.format)}`);
+  if (settings.format && settings.format !== "openui" && settings.format !== "a2ui") {
+    throw new ConfigurationError(`${where}: ui.format must be openui or a2ui, not ${JSON.stringify(settings.format)}`);
   }
-  validatePortableComponents(components, where);
+  // The router and the apps merge only OpenUI patches; an A2UI reply writes a new surface.
+  if (settings.format === "a2ui" && settings.patchMode) {
+    throw new ConfigurationError(`${where}: ui.patch_mode is for openui: an A2UI reply writes its UI on a new surface`);
+  }
+  validatePortableComponents(components, settings.format, where);
+  if (settings.format === "a2ui") {
+    return compileA2UIPrompt(settings, components, blueprints, where);
+  }
 
   const byName = new Map(BUILTINS.map((b) => [b.name, b]));
   const customArity = new Map<string, number>();
@@ -152,17 +160,9 @@ export function compileUIPrompt(
   }
 
   for (const bp of blueprints) {
-    if (!bp.name.trim()) {
-      throw new ConfigurationError(`${where}: a blueprint needs a name`);
-    }
-    if (!bp.when.trim()) {
-      throw new ConfigurationError(`${where}: blueprint ${JSON.stringify(bp.name)} needs a when condition`);
-    }
-    if (bp.order.length === 0) {
-      throw new ConfigurationError(`${where}: blueprint ${JSON.stringify(bp.name)} needs an order list`);
-    }
+    checkBlueprint(bp, where);
     if (bp.example) {
-      const problems = validateOpenUIProgram(extractFence(bp.example), knownArity);
+      const problems = validateOpenUIProgram(extractFence(bp.example, "openui-lang"), knownArity);
       if (problems.length > 0) {
         throw new ConfigurationError(
           `${where}: blueprint ${JSON.stringify(bp.name)} example is invalid: ${problems.join("; ")}`,
@@ -171,19 +171,7 @@ export function compileUIPrompt(
     }
   }
 
-  const lines: string[] = [];
-  lines.push("## Interactive UI Generation", "");
-  if (settings.voiceUI) {
-    lines.push(
-      "When an answer benefits from interactive UI, first speak or write one concise sentence summarizing the key takeaway, then emit the UI in a single ```openui-lang fenced block. Never read component names or UI syntax aloud.",
-      "",
-    );
-  } else {
-    lines.push(
-      "When an answer benefits from interactive UI, first write one short sentence summarizing what the card shows, then write the whole UI in one ```openui-lang fenced block. On a voice call without a screen, speak concisely with no UI block.",
-      "",
-    );
-  }
+  const lines = uiOpening("openui-lang", settings.voiceUI);
 
   lines.push(
     "### Syntax & Streaming Invariants",
@@ -207,32 +195,30 @@ export function compileUIPrompt(
   }
 
   if (blueprints.length > 0) {
-    lines.push(
-      "",
-      "### Canonical Layout Blueprints (Predictability Rules)",
-      "Match similar prompts to the exact component sequence below so repeated asks produce a consistent layout:",
-    );
+    lines.push(...UI_BLUEPRINTS_HEADING);
     for (const bp of blueprints) {
       const suffix = bp.rules && bp.rules.length > 0 ? ` — ${bp.rules.join("; ")}` : "";
       lines.push(`- **${bp.name}** (when ${bp.when}): \`Card([${bp.order.join(" -> ")}])\`${suffix}`);
       if (bp.example) {
-        lines.push("", "```openui-lang", extractFence(bp.example).trim(), "```");
+        lines.push("", "```openui-lang", extractFence(bp.example, "openui-lang").trim(), "```");
       }
     }
   }
 
-  if (settings.rules && settings.rules.length > 0) {
-    lines.push("", "### Brand & Design Rules");
-    for (const rule of settings.rules) {
-      lines.push(`- ${rule.trim()}`);
-    }
-  }
+  lines.push(...uiRules(settings.rules));
 
   return lines.join("\n").trim();
 }
 
-function validatePortableComponents(components: readonly UIPortableComponent[], where: string): void {
-  const builtins = new Set(BUILTINS.map((b) => b.name));
+function validatePortableComponents(
+  components: readonly UIPortableComponent[],
+  format: UIDeclaration["format"],
+  where: string,
+): void {
+  // A2UI reserves Surface for the surface itself.
+  const builtins = new Set(
+    format === "a2ui" ? [...Object.keys(A2UI_BASIC_CATALOG.components), "Surface"] : BUILTINS.map((b) => b.name),
+  );
   const seen = new Set<string>();
   for (const comp of components) {
     if (!PORTABLE_NAME.test(comp.name)) {
@@ -262,6 +248,17 @@ function validatePortableComponents(components: readonly UIPortableComponent[], 
         throw new ConfigurationError(`${where}: component ${JSON.stringify(comp.name)} x-order names unknown property ${JSON.stringify(key)}`);
       }
     }
+    // An A2UI property is a key of the component's JSON object, which the renderers refuse
+    // unless it is an identifier.
+    if (format === "a2ui") {
+      for (const key of order) {
+        if (!A2UI_IDENTIFIER.test(key)) {
+          throw new ConfigurationError(
+            `${where}: component ${JSON.stringify(comp.name)} property ${JSON.stringify(key)} must be an identifier: letters, digits and _, not starting with a digit`,
+          );
+        }
+      }
+    }
   }
 }
 
@@ -289,19 +286,6 @@ function portableSignature(comp: UIPortableComponent): string {
     }
   }
   return `${uiPascalName(comp.name)}(${params.join(", ")}) — ${details.join(" ")}`;
-}
-
-function extractFence(example: string): string {
-  const marker = "```openui-lang\n";
-  const start = example.indexOf(marker);
-  if (start >= 0) {
-    const after = example.slice(start + marker.length);
-    const close = after.indexOf("\n```");
-    if (close >= 0) {
-      return after.slice(0, close);
-    }
-  }
-  return example;
 }
 
 /** Validates balanced delimiters, root assignment, component arity, and reference reachability in OpenUI Lang. */

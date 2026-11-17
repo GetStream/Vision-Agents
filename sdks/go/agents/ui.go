@@ -32,10 +32,12 @@ var (
 // UISettings configures an agent's dynamic UI catalog, component allowlist, custom
 // portable components, and canonical layout blueprints in agent.yaml.
 type UISettings struct {
-	// Format is openui, the default. a2ui is refused: the compiled prompt teaches only OpenUI.
+	// Format is openui, the default, or a2ui.
 	Format string `yaml:"format"`
-	// Keep restricts the built-in component catalog to the named components (plus their
-	// required child types), shrinking prompt prefill and improving model consistency.
+	// Keep restricts the built-in component catalog to the named components, shrinking prompt
+	// prefill and improving model consistency. In OpenUI their required child types come
+	// along; in A2UI it names the basic catalog's components and functions, and nothing else
+	// is offered.
 	Keep []string `yaml:"keep"`
 	// Components is a relative path inside the agent directory to a portable
 	// UIComponents.json file. Defaults to ui/components.json when that file exists.
@@ -70,8 +72,12 @@ func (u *UISettings) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode((*plain)(u)); err != nil {
 		return err
 	}
-	if u.Format != "" && u.Format != "openui" {
-		return fmt.Errorf("line %d: ui.format must be openui, not %q", keyLine(node, "format"), u.Format)
+	if u.Format != "" && u.Format != "openui" && u.Format != "a2ui" {
+		return fmt.Errorf("line %d: ui.format must be openui or a2ui, not %q", keyLine(node, "format"), u.Format)
+	}
+	// The router and the apps merge only OpenUI patches; an A2UI reply writes a new surface.
+	if u.Format == "a2ui" && u.PatchMode {
+		return fmt.Errorf("line %d: ui.patch_mode is for openui: an A2UI reply writes its UI on a new surface", keyLine(node, "patch_mode"))
 	}
 	return nil
 }
@@ -175,7 +181,7 @@ func loadUIPrompt(root string, settings UISettings) (string, error) {
 		if err := decoder.Decode(&components); err != nil {
 			return "", fmt.Errorf("agents: %s: %w", full, err)
 		}
-		if err := validateUIComponents(components); err != nil {
+		if err := validateUIComponents(components, settings.Format); err != nil {
 			return "", fmt.Errorf("agents: %s: %w", full, err)
 		}
 	}
@@ -274,10 +280,18 @@ func decodeBlueprints(raw []byte, file string) ([]UIBlueprint, error) {
 	return out, nil
 }
 
-func validateUIComponents(components []UIPortableComponent) error {
+func validateUIComponents(components []UIPortableComponent, format string) error {
 	builtins := make(map[string]struct{}, len(uiBuiltins))
-	for _, b := range uiBuiltins {
-		builtins[b.Name] = struct{}{}
+	if format == "a2ui" {
+		for name := range a2uiBasic.Components {
+			builtins[name] = struct{}{}
+		}
+		// A2UI reserves Surface for the surface itself.
+		builtins["Surface"] = struct{}{}
+	} else {
+		for _, b := range uiBuiltins {
+			builtins[b.Name] = struct{}{}
+		}
 	}
 	seen := make(map[string]struct{}, len(components))
 	for _, comp := range components {
@@ -304,11 +318,23 @@ func validateUIComponents(components []UIPortableComponent) error {
 				return fmt.Errorf("component %q x-order names unknown property %q", comp.Name, key)
 			}
 		}
+		// An A2UI property is a key of the component's JSON object, which the renderers refuse
+		// unless it is an identifier.
+		if format == "a2ui" {
+			for _, key := range comp.Parameters.Order {
+				if !a2uiIdentifier.MatchString(key) {
+					return fmt.Errorf("component %q property %q must be an identifier: letters, digits and _, not starting with a digit", comp.Name, key)
+				}
+			}
+		}
 	}
 	return nil
 }
 
 func compileUIPrompt(settings UISettings, components []UIPortableComponent, blueprints []UIBlueprint) (string, error) {
+	if settings.Format == "a2ui" {
+		return compileA2UIPrompt(settings, components, blueprints)
+	}
 	byName := make(map[string]uiBuiltin, len(uiBuiltins))
 	for _, b := range uiBuiltins {
 		byName[b.Name] = b
@@ -363,19 +389,14 @@ func compileUIPrompt(settings UISettings, components []UIPortableComponent, blue
 
 	for _, bp := range blueprints {
 		if bp.Example != "" {
-			if problems := checkOpenUIProgram(extractUIFence(bp.Example), arity); len(problems) > 0 {
+			if problems := checkOpenUIProgram(extractUIFence(bp.Example, "openui-lang"), arity); len(problems) > 0 {
 				return "", fmt.Errorf("agents: blueprint %q example is invalid: %s", bp.Name, strings.Join(problems, "; "))
 			}
 		}
 	}
 
 	var b strings.Builder
-	b.WriteString("## Interactive UI Generation\n\n")
-	if settings.VoiceUI {
-		b.WriteString("When an answer benefits from interactive UI, first speak or write one concise sentence summarizing the key takeaway, then emit the UI in a single ```openui-lang fenced block. Never read component names or UI syntax aloud.\n\n")
-	} else {
-		b.WriteString("When an answer benefits from interactive UI, first write one short sentence summarizing what the card shows, then write the whole UI in one ```openui-lang fenced block. On a voice call without a screen, speak concisely with no UI block.\n\n")
-	}
+	writeUIOpening(&b, "openui-lang", settings.VoiceUI)
 
 	b.WriteString("### Syntax & Streaming Invariants\n")
 	b.WriteString("1. Put `root = Card([...])` on the FIRST line so the card shell streams immediately.\n")
@@ -399,8 +420,7 @@ func compileUIPrompt(settings UISettings, components []UIPortableComponent, blue
 	}
 
 	if len(blueprints) > 0 {
-		b.WriteString("\n### Canonical Layout Blueprints (Predictability Rules)\n")
-		b.WriteString("Match similar prompts to the exact component sequence below so repeated asks produce a consistent layout:\n")
+		b.WriteString(uiBlueprintsHeading)
 		for _, bp := range blueprints {
 			b.WriteString(fmt.Sprintf("- **%s** (when %s): `Card([%s])`", bp.Name, strings.TrimSpace(bp.When), strings.Join(bp.Order, " -> ")))
 			if len(bp.Rules) > 0 {
@@ -410,22 +430,40 @@ func compileUIPrompt(settings UISettings, components []UIPortableComponent, blue
 			b.WriteByte('\n')
 			if bp.Example != "" {
 				b.WriteString("\n```openui-lang\n")
-				b.WriteString(strings.TrimSpace(extractUIFence(bp.Example)))
+				b.WriteString(strings.TrimSpace(extractUIFence(bp.Example, "openui-lang")))
 				b.WriteString("\n```\n")
 			}
 		}
 	}
 
-	if len(settings.Rules) > 0 {
-		b.WriteString("\n### Brand & Design Rules\n")
-		for _, rule := range settings.Rules {
-			b.WriteString("- ")
-			b.WriteString(strings.TrimSpace(rule))
-			b.WriteByte('\n')
-		}
-	}
+	writeUIRules(&b, settings.Rules)
 
 	return strings.TrimSpace(b.String()), nil
+}
+
+const uiBlueprintsHeading = "\n### Canonical Layout Blueprints (Predictability Rules)\n" +
+	"Match similar prompts to the exact component sequence below so repeated asks produce a consistent layout:\n"
+
+// writeUIOpening starts the section with when to answer with UI, in a block fenced with fence.
+func writeUIOpening(b *strings.Builder, fence string, voiceUI bool) {
+	b.WriteString("## Interactive UI Generation\n\n")
+	if voiceUI {
+		b.WriteString("When an answer benefits from interactive UI, first speak or write one concise sentence summarizing the key takeaway, then emit the UI in a single ```" + fence + " fenced block. Never read component names or UI syntax aloud.\n\n")
+	} else {
+		b.WriteString("When an answer benefits from interactive UI, first write one short sentence summarizing what the card shows, then write the whole UI in one ```" + fence + " fenced block. On a voice call without a screen, speak concisely with no UI block.\n\n")
+	}
+}
+
+func writeUIRules(b *strings.Builder, rules []string) {
+	if len(rules) == 0 {
+		return
+	}
+	b.WriteString("\n### Brand & Design Rules\n")
+	for _, rule := range rules {
+		b.WriteString("- ")
+		b.WriteString(strings.TrimSpace(rule))
+		b.WriteByte('\n')
+	}
 }
 
 func uiPascalName(snake string) string {
@@ -472,8 +510,10 @@ func formatPortableSignature(comp UIPortableComponent) string {
 	return fmt.Sprintf("%s(%s) — %s", uiPascalName(comp.Name), strings.Join(params, ", "), strings.Join(details, " "))
 }
 
-func extractUIFence(example string) string {
-	if _, after, ok := strings.Cut(example, "```openui-lang\n"); ok {
+// extractUIFence is the program in an example's block fenced with fence, or the example itself
+// when it has none.
+func extractUIFence(example, fence string) string {
+	if _, after, ok := strings.Cut(example, "```"+fence+"\n"); ok {
 		if body, _, closed := strings.Cut(after, "\n```"); closed {
 			return body
 		}

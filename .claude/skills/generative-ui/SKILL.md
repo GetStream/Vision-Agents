@@ -34,7 +34,7 @@ prefix stays cacheable across turns.
 name: concierge
 llm: llm-fast
 ui:
-  format: openui            # the default, and the only format there is a prompt for
+  format: openui            # the default, or a2ui
   keep: [CardHeader, Form, Chips, FollowUpBlock]   # built-ins to offer; their children come along
   components: ui/components.json   # default path; read when the file exists
   blueprints: ui/blueprints.yaml   # default path; read when the file exists
@@ -46,11 +46,11 @@ ui:
 
 | Key | What it does |
 | --- | --- |
-| `format` | `openui`. Anything else, `a2ui` included, is refused until there is an A2UI prompt to compile. |
-| `keep` | Restricts the built-in OpenUI catalog (`uiBuiltins` in `sdks/go/agents/ui.go`) to these names plus their required children (`Form` brings `FormControl`, `Buttons`, `Button`). `Card` is always in. Empty offers all of them. A name that is neither built in nor a custom component is refused. |
+| `format` | `openui`, the default, or `a2ui`. Anything else is refused. |
+| `keep` | OpenUI: restricts the built-in catalog (`uiBuiltins` in `sdks/go/agents/ui.go`) to these names plus their required children (`Form` brings `FormControl`, `Buttons`, `Button`); `Card` is always in. A2UI: names the basic catalog's components and functions to offer, and nothing else comes along, as stream-chat-swift's own prompt generator does. Empty offers all of them. A name that is neither built in nor a custom component is refused. |
 | `components` | The app's own components in the portable format every app reads (`UIComponents.json`): `name` (snake_case), `description`, `parameters` (JSON schema with `x-order`, the positional order), `events`, optional `slots`. Each becomes a PascalCase signature: `restaurant_card` -> `RestaurantCard(name: string, ...)`. |
-| `blueprints` | A YAML list of `name`, `when`, `order`, `rules`, `example`. Each is a line telling the model which components, in which order, for which kind of ask. An `example` is an OpenUI program, checked at load for unknown components, too many arguments and undefined or orphan references, with the line of the problem. |
-| `patch_mode` | Adds the rule to answer a refinement of the previous card with an `openui-patch` block of only the changed statements. |
+| `blueprints` | A YAML list of `name`, `when`, `order`, `rules`, `example`. Each is a line telling the model which components, in which order, for which kind of ask. An `example` is a program in the format, checked at load so it renders as written: OpenUI for unknown components, too many arguments and undefined or orphan references, with the line of the problem; A2UI as stream-chat-swift's `A2UIProgram` checks it, for messages it can't read, components and properties the catalog doesn't have, missing required properties, children never defined, components nothing holds, cycles and nesting past 50. |
+| `patch_mode` | OpenUI only: adds the rule to answer a refinement of the previous card with an `openui-patch` block of only the changed statements. Refused with `a2ui`, since only OpenUI patches are merged and an A2UI reply writes a new surface. |
 | `voice_ui` | Changes the opening rule from "no UI block on a voice call" to "one spoken sentence, then the card". |
 | `rules` | Appended as `### Brand & Design Rules`. |
 
@@ -63,13 +63,27 @@ note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an un
 (`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
 folder: `sdks/testdata/ui/concierge/` is compiled by a Go test and a JavaScript test, both held to
 `sdks/testdata/ui/concierge.instructions.txt`, which Go writes. An SDK that adds `ui:` checks itself
-against the same pair. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
+against the same pair. `a2ui` is compiled by Go (`sdks/go/agents/ui_a2ui.go`) and JavaScript
+(`sdks/js/src/ui-a2ui.ts`), both held to `sdks/testdata/ui/concierge-a2ui/` and
+`concierge-a2ui.instructions.txt`. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
 escapes inside quoted strings (`'it''s'`), empty list items, and `ui:` written as a flow mapping.
 
 ## How the model writes UI
 
 The compiled prompt asks for one short sentence, then the card in a ```` ```openui-lang ```` block,
-`root = Card([...])` first so the shell streams at once. The router's splitter
+`root = Card([...])` first so the shell streams at once. With `format: a2ui` the card is A2UI 1.0
+messages in a ```` ```ui:a2ui@1.0 ```` block, one JSON object per line: a `createSurface` naming the
+catalog `getstream.io:app-catalog`, the id the apps' A2UI renderers give the basic catalog with their
+own components, then `updateComponents`, `root` first. The prompt is the one stream-chat-swift's
+renderer writes for itself (`A2UIInstructions`): its protocol and guidelines, then the catalog as
+JSON Schema, the basic catalog's components and functions that `keep` names beside the app's own,
+each app component as the renderer has it (`PortableComponent`: its parameters as properties, its
+events joining its description). `sdks/go/agents/a2ui/` holds the basic catalog and the protocol as
+the renderer has them, which `a2ui/generate.sh` writes again from a stream-chat-swift checkout; a Go
+test holds the catalog to the one in `swift_assistant/a2ui/instructions.md`, which the renderer
+wrote, so regenerate both together. JavaScript carries the same three files as a module,
+`sdks/js/src/generated/a2ui.ts`, which `npm run a2ui` in `sdks/js` writes from Go's copies; run it
+after `generate.sh`, or a JavaScript test fails. The router's splitter
 (`acceleration/internal/agent/ui_stream.go`) reads:
 
 - ```` ```openui-lang ```` and ```` ```openui-patch ```` (OpenUI, replace or patch)

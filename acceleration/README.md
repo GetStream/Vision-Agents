@@ -1039,9 +1039,10 @@ llm:
 
 - `endpoint` is the base URL of that instance's regional API, in place of the vendor's
   default host.
-- `api_key_env` names the environment variable holding that instance's key, in place of the
-  vendor's own variable. It is read once at start, never logged, and a variable that is unset
-  or empty stops the router from starting.
+- `api_key_env` names the environment variable holding that instance's key, in place of the vendor's
+  own variable. It is read once at start, never logged, and the router fails to start when neither
+  the variable nor `NAME_1`, `NAME_2` and on holds a key. It is read as the vendor's own variable
+  is: keys comma separated, then `NAME_1`, `NAME_2` and on, all in one pool.
 - A factory says which of them it takes (`routing.OverrideBaseURL`, `OverrideAPIKey`), and the
   router refuses to start with an instance that sets one its factory would drop. The LLM
   factories of OpenAI, Anthropic, Gemini, xAI and DeepSeek take both; nothing else takes either
@@ -2106,8 +2107,9 @@ is left out when the request has none:
 A socket is logged once, when it closes, so its `duration` is how long the connection lived
 rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
 at error instead, because an access log at a busy deployment is the one stream nobody reads
-all of. A preflight is not logged, and the query string is never logged: a socket names its
-customer there and a telephony vendor names a token.
+all of. A preflight is not logged, nor is a `/health` probe answered below `400` with no error:
+the load balancer and kubelet ask every few seconds. A probe that fails is logged. The query
+string is never logged: a socket names its customer there and a telephony vendor names a token.
 
 ### Stream staff's operations (`/v1/ops`)
 

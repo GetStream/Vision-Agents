@@ -293,15 +293,20 @@ func (r *ring) from(source string) {
 	r.source = source
 }
 
-// countRefused counts a refused attempt under the pool's key variable, never its key.
+// countRefused counts a refused attempt under the pool's key variable, never its key, and under
+// whose key it is: the router's own when Env read the keys from a variable, else a customer's.
 func (r *ring) countRefused(status string) {
 	r.mu.Lock()
-	keyVar := r.keyVar
+	keyVar, source := r.keyVar, r.source
 	r.mu.Unlock()
 	if keyVar == "" {
 		keyVar = unnamedKeyVar
 	}
-	refusedAttempts.WithLabelValues(keyVar, status).Inc()
+	owner := customerOwner
+	if source != "" {
+		owner = ourOwner
+	}
+	refusedAttempts.WithLabelValues(keyVar, status, owner).Inc()
 }
 
 func (r *ring) resting(key string) bool {

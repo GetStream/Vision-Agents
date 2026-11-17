@@ -37,7 +37,7 @@ Leave out:
 ## Only what works
 
 - A page says only what a user can install and run today, and you saw work end to end: run every snippet, curl and command, against staging if needed. Reading the code confirms a name, not a behaviour
-- "Which SDKs support X" means released packages (npm, PyPI, Maven Central, pub.dev, the released CLI), not source on `accelerate`
+- "Which SDKs support X" means released packages (npm, PyPI, Maven Central, pub.dev, the released CLI), not source on `main`
 - Not proven yet? Leave it out and ticket it. Don't caveat it ("not tested yet")
 
 ## Where things live
