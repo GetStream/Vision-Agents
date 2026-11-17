@@ -63,8 +63,9 @@ note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an un
 (`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
 folder: `sdks/testdata/ui/concierge/` is compiled by a Go test and a JavaScript test, both held to
 `sdks/testdata/ui/concierge.instructions.txt`, which Go writes. An SDK that adds `ui:` checks itself
-against the same pair. Only Go compiles `a2ui` so far (`sdks/go/agents/ui_a2ui.go`), held to
-`sdks/testdata/ui/concierge-a2ui/` and `concierge-a2ui.instructions.txt`; JavaScript still refuses it. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
+against the same pair. `a2ui` is compiled by Go (`sdks/go/agents/ui_a2ui.go`) and JavaScript
+(`sdks/js/src/ui-a2ui.ts`), both held to `sdks/testdata/ui/concierge-a2ui/` and
+`concierge-a2ui.instructions.txt`. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
 escapes inside quoted strings (`'it''s'`), empty list items, and `ui:` written as a flow mapping.
 
 ## How the model writes UI
@@ -80,7 +81,9 @@ each app component as the renderer has it (`PortableComponent`: its parameters a
 events joining its description). `sdks/go/agents/a2ui/` holds the basic catalog and the protocol as
 the renderer has them, which `a2ui/generate.sh` writes again from a stream-chat-swift checkout; a Go
 test holds the catalog to the one in `swift_assistant/a2ui/instructions.md`, which the renderer
-wrote, so regenerate both together. The router's splitter
+wrote, so regenerate both together. JavaScript carries the same three files as a module,
+`sdks/js/src/generated/a2ui.ts`, which `npm run a2ui` in `sdks/js` writes from Go's copies; run it
+after `generate.sh`, or a JavaScript test fails. The router's splitter
 (`acceleration/internal/agent/ui_stream.go`) reads:
 
 - ```` ```openui-lang ```` and ```` ```openui-patch ```` (OpenUI, replace or patch)
