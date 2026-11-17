@@ -6,6 +6,92 @@ import Testing
 
 @MainActor
 @Suite struct AgentSessionTests {
+  /// The router refused the tools, so it offers none of them and nothing here answers them.
+  @Test func aToolTheRouterRefusedIsNotAnswered() async throws {
+    let server = try SessionServer(
+      answer: .init(
+        status: 409, headers: ["Content-Type": "application/json"],
+        body: #"{"error":{"message":"taken","type":"conflict","code":"conflict","doc_url":""}}"#))
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"), session: Self.session, tools: [])
+
+    await #expect(throws: AgentsError.self) { try await session.add(tools: [Self.reserveTable]) }
+
+    #expect(session.tools["reserve_table"] == nil)
+  }
+
+  /// Whether a request that never came back added the tools is unknown, and a call of one that
+  /// the router did add has to be answered.
+  @Test func aToolWhoseAddingWasNeverAnsweredIsStillAnswered() async throws {
+    let server = try SessionServer()
+    let url = try await server.url()
+    server.listener.cancel()
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"), session: Self.session, tools: [])
+
+    await #expect(throws: AgentsError.self) { try await session.add(tools: [Self.reserveTable]) }
+
+    #expect(session.tools["reserve_table"] != nil)
+  }
+
+  /// The router never replaces a tool the session has, so the handler answering that tool's
+  /// calls stays the one it was added with, even when the request's answer is lost.
+  @Test func aToolAddedUnderANameTheSessionHasKeepsItsHandler() async throws {
+    let server = try SessionServer()
+    let url = try await server.url()
+    server.listener.cancel()
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"), session: Self.session,
+      tools: [Self.reserveTable])
+    let other = AgentTool(name: "reserve_table", description: "Reserve a table elsewhere") { _ in
+      "Reserved elsewhere."
+    }
+
+    await #expect(throws: AgentsError.self) { try await session.add(tools: [other]) }
+
+    #expect(session.tools["reserve_table"]?.description == "Reserve a table")
+  }
+
+  /// An add whose answer was lost may or may not have reached the router, so another tool
+  /// under its name settles it first rather than leaving the first one answering calls the
+  /// router now makes of the second.
+  @Test func aToolWhoseAddingWasNeverAnsweredIsSettledBeforeAnotherTakesItsName() async throws {
+    let server = try SessionServer { method, _, body in
+      let described = body["tools"]?.arrayValue?.first?["description"]?.stringValue
+      switch (method, described) {
+      case ("POST", "Reserve a table"):
+        return .init(status: 200, headers: ["Content-Type": "application/json"], body: "not json")
+      case ("DELETE", _):
+        return .init(
+          status: 404, headers: ["Content-Type": "application/json"],
+          body: #"{"error":{"message":"no tool","type":"not_found","code":"not_found","doc_url":""}}"#)
+      default:
+        return .init(status: 204, headers: [:], body: "")
+      }
+    }
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"), session: Self.session, tools: [])
+    await #expect(throws: AgentsError.self) { try await session.add(tools: [Self.reserveTable]) }
+    let other = AgentTool(name: "reserve_table", description: "Reserve a table elsewhere") { _ in
+      "Reserved elsewhere."
+    }
+
+    try await session.add(tools: [other])
+
+    #expect(session.tools["reserve_table"]?.description == "Reserve a table elsewhere")
+  }
+
+  private static let session = Session(
+    .init(
+      agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",
+      modality: .text, state: .live, text: true, userId: "test"))
+
+  private static let reserveTable = AgentTool(name: "reserve_table", description: "Reserve a table") { _ in
+    "Reserved."
+  }
+
   @Test(arguments: ["get_video_frames", "server_lookup"], [false, true])
   func onlyLocallyOwnedToolsAreAnswered(remoteTool: String, localFailure: Bool) async throws {
     let server = try ToolEventServer(remoteTool: remoteTool)

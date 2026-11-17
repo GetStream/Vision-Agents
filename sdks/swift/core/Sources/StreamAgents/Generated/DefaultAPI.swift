@@ -422,6 +422,42 @@ class DefaultAPI: DefaultAPIEndpoints, @unchecked Sendable {
         }
     }
 
+    func addSessionTools(id: String, addSessionToolsRequest: AddSessionToolsRequest) async throws -> Void {
+        var path = "/v1/agents/sessions/{id}/tools"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "POST",
+            request: addSessionToolsRequest
+        )
+        _ = try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(EmptyResponse.self, from: $0)
+        }
+    }
+
+    func removeSessionTool(id: String, name: String) async throws -> Void {
+        var path = "/v1/agents/sessions/{id}/tools/{name}"
+
+                let idPreEscape = "\(APIHelper.mapValueToPathItem(id))"
+                let idPostEscape = idPreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "id"), with: idPostEscape, options: .literal, range: nil)
+                let namePreEscape = "\(APIHelper.mapValueToPathItem(name))"
+                let namePostEscape = namePreEscape.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+                path = path.replacingOccurrences(of: String(format: "{%@}", "name"), with: namePostEscape, options: .literal, range: nil)
+
+        let urlRequest = try makeRequest(
+            uriPath: path,
+            httpMethod: "DELETE"
+        )
+        _ = try await send(request: urlRequest) {
+            try self.jsonDecoder.decode(EmptyResponse.self, from: $0)
+        }
+    }
+
     func stopSessionVoice(id: String) async throws -> SessionPayload {
         var path = "/v1/agents/sessions/{id}/voice"
 
@@ -511,6 +547,10 @@ protocol DefaultAPIEndpoints {
     func rewindSession(id: String, rewindSessionRequest: RewindSessionRequest) async throws -> Void
 
     func stopSession(id: String) async throws -> Void
+
+    func addSessionTools(id: String, addSessionToolsRequest: AddSessionToolsRequest) async throws -> Void
+
+    func removeSessionTool(id: String, name: String) async throws -> Void
 
     func stopSessionVoice(id: String) async throws -> SessionPayload
 

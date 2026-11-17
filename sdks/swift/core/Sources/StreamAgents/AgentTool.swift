@@ -107,6 +107,23 @@ public struct AgentTool: Sendable {
     }
 }
 
+extension AgentTool {
+    var schema: SessionTool {
+        SessionTool(
+            approval: approval.map {
+                .init(
+                    allowTitle: $0.allowTitle, declineTitle: $0.declineTitle,
+                    message: $0.message, reasonArgument: $0.reasonArgument, title: $0.title)
+            },
+            description: description,
+            displayTitle: displayTitle,
+            executor: executor.map { .init(rawValue: $0.rawValue) },
+            name: name,
+            // A schema that is not an object describes no arguments the router can read.
+            parameters: parameters.map { $0.dictionaryValue ?? [:] })
+    }
+}
+
 /// What a tool gives the model: words, and pictures beside them, such as a photo the person
 /// picked or a frame from the camera.
 ///

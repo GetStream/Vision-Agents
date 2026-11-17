@@ -37,6 +37,9 @@ type ToolRequested struct {
 	// TurnID is the reply the call was made in.
 	TurnID string
 	Call   llm.ToolCall
+	// Tool is the tool as the reply was offered it: what the call is checked against, its
+	// approval included, until it settles, whatever the tools are changed to meanwhile.
+	Tool Tool
 }
 
 func (ToolRequested) isHarnessEvent() {}

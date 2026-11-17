@@ -823,26 +823,31 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
-			declared := harness.Tool{
-				Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
-				Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
-			}
-			if tool.Parameters != nil {
-				declared.Parameters = *tool.Parameters
-			}
-			if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
-				declared.Client = true
-			}
-			if approval := tool.Approval; approval != nil && approval.Title != "" {
-				declared.Approval = &harness.ToolApproval{
-					Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
-					AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
-				}
-			}
-			spec.Tools = append(spec.Tools, declared)
+			spec.Tools = append(spec.Tools, toolOf(tool))
 		}
 	}
 	return spec
+}
+
+// toolOf is one of the caller's tools as the session offers it.
+func toolOf(tool SessionTool) harness.Tool {
+	declared := harness.Tool{
+		Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
+		Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
+	}
+	if tool.Parameters != nil {
+		declared.Parameters = *tool.Parameters
+	}
+	if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
+		declared.Client = true
+	}
+	if approval := tool.Approval; approval != nil && approval.Title != "" {
+		declared.Approval = &harness.ToolApproval{
+			Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
+			AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
+		}
+	}
+	return declared
 }
 
 // sessionOf renders a session for the wire. Its instructions go only to a backend: they are

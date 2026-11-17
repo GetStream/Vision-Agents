@@ -2412,8 +2412,36 @@ export type paths = {
          */
         readonly get: operations["listSessionTools"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * Give a running session more of the caller's tools
+         * @description Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+         *
+         *     The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+         *
+         *     The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+         */
+        readonly post: operations["addSessionTools"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/tools/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Withdraw one of the caller's tools from a running session
+         * @description The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+         */
+        readonly delete: operations["removeSessionTool"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4729,6 +4757,11 @@ export type components = {
             readonly added: number;
             /** @description In the order sent. */
             readonly refused: readonly components["schemas"]["RefusedContact"][];
+        };
+        /** @description Tools to give a running session's caller. */
+        readonly AddSessionToolsRequest: {
+            /** @description The tools, each declared as it is when a session is created, and each named as no tool the caller already has. */
+            readonly tools: readonly components["schemas"]["SessionTool"][] | null;
         };
         readonly AddTrunkNumberRequest: {
             /** @description Required. ISO 3166-1 alpha-2 country code. */
@@ -17413,6 +17446,85 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 402: components["responses"]["PaymentRequired"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly addSessionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddSessionToolsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The model is offered them from the next turn */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly removeSessionTool: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+                /** @description The tool's name, as the caller declared it. */
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No call of it is in flight, and the model is no longer offered it */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];

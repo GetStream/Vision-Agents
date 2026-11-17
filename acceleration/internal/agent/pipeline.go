@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -35,7 +36,14 @@ type pipeline struct {
 	cancel      context.CancelFunc
 	running     sync.WaitGroup
 	writeFailed atomic.Bool
+	// speechEnded is set once a native pipeline's speech-to-speech session has stopped
+	// sending, before the agent recovers it (recoverNative).
+	speechEnded atomic.Bool
 }
+
+// ErrSpeechEnded refuses a change of tools whose speech-to-speech session ended while the
+// change waited for it: the agent is replacing the session, which the change would hold up.
+var ErrSpeechEnded = errors.New("agent: the speech-to-speech session ended while the tools were changing; try again")
 
 func newPipeline(parent context.Context, native bool) *pipeline {
 	ctx, cancel := context.WithCancel(parent)
@@ -128,7 +136,7 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 	if err != nil {
 		return stack.Wrap(err)
 	}
-	if err := a.quiesce(ctx); err != nil {
+	if err := a.quiesce(ctx, false); err != nil {
 		prep.close()
 		return stack.Wrap(err)
 	}
@@ -174,6 +182,92 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 		"stt", changed.STT, "tts", changed.TTS, "sts", changed.STS, "voice", changed.Voice)
 	a.emitter.Send(changed)
 	return nil
+}
+
+// SetTools replaces what the model may call. It waits for a turn boundary with no call of
+// any tool in flight, one answered as still running included, and holds the floor while it
+// changes them and runs changed: a call is only ever checked against the tools it was made
+// with, approval included, and changed puts whatever routes calls in step before the next
+// turn can make one. A speech-to-speech model that takes its tools only when it opens refuses
+// (sts.ErrToolsFixed), and then nothing changes and changed does not run.
+func (a *Agent) SetTools(ctx context.Context, tools harness.Tools, changed func()) error {
+	a.swapping.Lock()
+	defer a.swapping.Unlock()
+
+	a.mu.Lock()
+	closed, joined := a.closed, a.joined
+	a.mu.Unlock()
+	if closed {
+		return stack.Wrap(errors.New("agent: closed"))
+	}
+	if joined {
+		if err := a.quiesce(ctx, true); err != nil {
+			return err
+		}
+		defer func() {
+			a.mu.Lock()
+			a.toolsChanging = false
+			a.mu.Unlock()
+			a.switching.Store(false)
+		}()
+	}
+
+	before := a.availableTools()
+	a.toolsMu.Lock()
+	previous := a.options.Tools
+	a.options.Tools = tools
+	a.toolsMu.Unlock()
+
+	a.mu.Lock()
+	conversation, speech := a.harness, a.sts
+	a.mu.Unlock()
+	var err error
+	switch {
+	case a.native() && speech != nil:
+		// A native model has a harness only for the work it delegates.
+		var offered []llm.Tool
+		if offered, err = a.nativeTools(conversation != nil); err == nil {
+			err = speech.SetTools(offered)
+		}
+	case conversation != nil:
+		err = conversation.SetTools(a.availableTools())
+	}
+	if err != nil {
+		a.toolsMu.Lock()
+		a.options.Tools = previous
+		a.toolsMu.Unlock()
+		return stack.Wrap(err)
+	}
+	a.lapseChangedApprovals(before, a.availableTools())
+	changed()
+	return nil
+}
+
+// lapseChangedApprovals lets go of the calls waiting for a caller's yes whose tool is no
+// longer offered as it was when they were asked, as silence does: a yes to one would run the
+// tool as it is now, for a call the caller was asked about as it was.
+func (a *Agent) lapseChangedApprovals(before, after harness.Tools) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, waiting := range a.approvals {
+		was, _ := before.Lookup(waiting.call.Name)
+		if now, offered := after.Lookup(waiting.call.Name); offered && reflect.DeepEqual(was, now) {
+			continue
+		}
+		delete(a.approvals, id)
+		if a.lapsedApprovals == nil {
+			a.lapsedApprovals = map[string]string{}
+		}
+		a.lapsedApprovals[id] = waiting.call.Name
+	}
+}
+
+// tools is what the agent was given to offer, before availableTools drops what this call
+// cannot carry out.
+func (a *Agent) tools() harness.Tools {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
+	return a.options.Tools
 }
 
 // Native reports whether the session is held by one speech-to-speech model.
@@ -272,8 +366,11 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 
 // quiesce waits for a turn boundary: nothing being written, said or run on the caller's
 // behalf. It then holds the floor, so no turn starts and no audio is taken in while the
-// pipeline changes underneath.
-func (a *Agent) quiesce(ctx context.Context) error {
+// pipeline changes underneath. toolsDone also waits out a call answered as still running,
+// which no longer holds up a turn but is still being run, and a native reply whose opening
+// receiveSTS has seen and the consumer has not, and marks the tools changing under the same
+// lock, so native calls are refused until SetTools is done.
+func (a *Agent) quiesce(ctx context.Context, toolsDone bool) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -282,8 +379,16 @@ func (a *Agent) quiesce(ctx context.Context) error {
 			a.mu.Unlock()
 			return stack.Wrap(errors.New("agent: closed"))
 		}
+		// A session that ended mid-reply leaves the reply generating until recoverNative,
+		// which waits for the swap this holds, replaces the session.
+		if toolsDone && a.pipe != nil && a.pipe.speechEnded.Load() {
+			a.mu.Unlock()
+			return stack.Wrap(ErrSpeechEnded)
+		}
 		if !a.interrupting && a.recoveringVoice == nil && !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
-			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 {
+			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 &&
+			(!toolsDone || len(a.toolsRunning) == 0 && len(a.nativeResponses) == 0) {
+			a.toolsChanging = toolsDone
 			a.switching.Store(true)
 			a.mu.Unlock()
 			return nil
@@ -413,8 +518,10 @@ func (a *Agent) startNative(prep *prepared) {
 	}
 	a.voicePrompt, a.performs = "", false
 	a.nativeListening, a.nativeAwaiting = false, false
-	// The new session heard none of the old one's stops, so it owes no answer to one.
+	// The new session heard none of the old one's stops, so it owes no answer to one, and
+	// has opened no reply.
 	a.nativeAnswerDue = false
+	a.nativeResponses = nil
 	a.mu.Unlock()
 	a.nativeMode.Store(true)
 

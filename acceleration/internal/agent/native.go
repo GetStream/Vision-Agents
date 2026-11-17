@@ -162,6 +162,15 @@ func (a *Agent) unbind(participant stt.Participant) {
 func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- sts.Event) {
 	defer p.running.Done()
 	defer close(events)
+	// The session's replies end with it, completed or not, so none holds up a change of tools
+	// (quiesce), and a change waiting gives way to its recovery. It is over before a
+	// replacement is opened, which waits for p.running.
+	defer func() {
+		a.mu.Lock()
+		a.nativeResponses = nil
+		a.mu.Unlock()
+		p.speechEnded.Store(true)
+	}()
 	for event := range source {
 		switch typed := event.(type) {
 		case sts.ToolCall:
@@ -178,10 +187,27 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.nativeCalls[typed.CallID] = call
 			a.pendingTools++
 			a.running.Add(1)
+			// A call made while the tools change, or by a reply that opened while they did,
+			// may be of either set, so it is refused rather than run against the wrong one.
+			// Any other is admitted here, under the lock a change waits on, and counted
+			// pending, so no change starts until it settles.
+			certain, known := a.nativeResponses[typed.ResponseID]
+			unsure := a.toolsChanging || (known && !certain)
+			if unsure {
+				a.refuseCallLocked(call.ID, fmt.Errorf("agent: the model's tools were changing as it called %s; call it again", call.Name))
+			}
 			a.mu.Unlock()
 			requested := harness.ToolRequested{
 				TurnID: typed.ResponseID,
 				Call:   call,
+			}
+			// Taken as it arrives, so a change of tools while it runs leaves it its approval.
+			if tool, offered := a.offeredTool(call.Name); offered && !unsure {
+				requested.Tool = tool
+			} else if !unsure {
+				a.mu.Lock()
+				a.refuseCallLocked(call.ID, fmt.Errorf("agent: %s is not one of the model's tools", call.Name))
+				a.mu.Unlock()
 			}
 			ctx, cancel := a.prepareTool(requested)
 			go func() {
@@ -204,6 +230,10 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			// The first reply after the caller stopped answers them, even when a scheduled
 			// turn was typed in before it began: the server answers that turn after it.
 			a.mu.Lock()
+			if a.nativeResponses == nil {
+				a.nativeResponses = map[string]bool{}
+			}
+			a.nativeResponses[typed.ResponseID] = !a.toolsChanging
 			if a.nativeAnswerDue {
 				a.answerReply = typed.ResponseID
 			} else if a.scheduled {
@@ -233,6 +263,10 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			a.mu.Unlock()
 		case sts.AudioChunk:
 			a.goodbyeBegan(typed.ResponseID)
+		case sts.ResponseComplete:
+			a.mu.Lock()
+			delete(a.nativeResponses, typed.ResponseID)
+			a.mu.Unlock()
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
 			a.mu.Lock()

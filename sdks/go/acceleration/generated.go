@@ -3550,6 +3550,12 @@ type AddContactsResponse struct {
 	Refused []RefusedContact `json:"refused"`
 }
 
+// AddSessionToolsRequest Tools to give a running session's caller.
+type AddSessionToolsRequest struct {
+	// Tools The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
+	Tools *[]SessionTool `json:"tools"`
+}
+
 // AddTrunkNumberRequest defines model for AddTrunkNumberRequest.
 type AddTrunkNumberRequest struct {
 	// Country Required. ISO 3166-1 alpha-2 country code.
@@ -12043,6 +12049,9 @@ type SaySessionJSONRequestBody = SayRequest
 // SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
 type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
 
+// AddSessionToolsJSONRequestBody defines body for AddSessionTools for application/json ContentType.
+type AddSessionToolsJSONRequestBody = AddSessionToolsRequest
+
 // StartSessionVoiceJSONRequestBody defines body for StartSessionVoice for application/json ContentType.
 type StartSessionVoiceJSONRequestBody = StartSessionVoiceRequest
 
@@ -14552,6 +14561,39 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddSessionToolsWithBody Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionToolsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddSessionTools Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionTools(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveSessionTool Withdraw one of the caller's tools from a running session
+	//
+	// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+	RemoveSessionTool(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StopSessionVoice Stop voice on a session
 	//
@@ -19600,6 +19642,69 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionToolsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddSessionToolsWithBody Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *Client) AddSessionToolsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddSessionToolsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddSessionTools Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *Client) AddSessionTools(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddSessionToolsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveSessionTool Withdraw one of the caller's tools from a running session
+//
+// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+func (c *Client) RemoveSessionTool(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveSessionToolRequest(c.Server, id, name)
 	if err != nil {
 		return nil, err
 	}
@@ -29463,6 +29568,94 @@ func NewListSessionToolsRequest(server string, id string) (*http.Request, error)
 	return req, nil
 }
 
+// NewAddSessionToolsRequest calls the generic AddSessionTools builder with application/json body
+func NewAddSessionToolsRequest(server string, id string, body AddSessionToolsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddSessionToolsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewAddSessionToolsRequestWithBody constructs an http.Request for the AddSessionTools method, with any body, and a specified content type
+func NewAddSessionToolsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tools", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRemoveSessionToolRequest constructs an http.Request for the RemoveSessionTool method
+func NewRemoveSessionToolRequest(server string, id string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tools/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStopSessionVoiceRequest constructs an http.Request for the StopSessionVoice method
 func NewStopSessionVoiceRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -37382,6 +37575,41 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error)
+
+	// AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionToolsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error)
+
+	// AddSessionToolsWithResponse Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionToolsWithResponse(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error)
+
+	// RemoveSessionToolWithResponse Withdraw one of the caller's tools from a running session
+	//
+	// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+	RemoveSessionToolWithResponse(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*RemoveSessionToolResponse, error)
 
 	// StopSessionVoiceWithResponse Stop voice on a session
 	//
@@ -53391,6 +53619,215 @@ func (r ListSessionToolsResponse) ContentType() string {
 	return ""
 }
 
+// AddSessionToolsResponse204Headers the declared response headers of an HTTP 204 response for AddSessionTools
+type AddSessionToolsResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// AddSessionToolsResponse402Headers the declared response headers of an HTTP 402 response for AddSessionTools
+type AddSessionToolsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type AddSessionToolsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *AddSessionToolsResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *AddSessionToolsResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddSessionToolsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AddSessionToolsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AddSessionToolsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AddSessionToolsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AddSessionToolsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AddSessionToolsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddSessionToolsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AddSessionToolsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AddSessionToolsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddSessionToolsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddSessionToolsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddSessionToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RemoveSessionToolResponse204Headers the declared response headers of an HTTP 204 response for RemoveSessionTool
+type RemoveSessionToolResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// RemoveSessionToolResponse402Headers the declared response headers of an HTTP 402 response for RemoveSessionTool
+type RemoveSessionToolResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type RemoveSessionToolResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *RemoveSessionToolResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *RemoveSessionToolResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveSessionToolResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveSessionToolResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveSessionToolResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveSessionToolResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StopSessionVoiceResponse200Headers the declared response headers of an HTTP 200 response for StopSessionVoice
 type StopSessionVoiceResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -68973,6 +69410,59 @@ func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseListSessionToolsResponse(rsp)
+}
+
+// AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *ClientWithResponses) AddSessionToolsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error) {
+	rsp, err := c.AddSessionToolsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddSessionToolsResponse(rsp)
+}
+
+// AddSessionToolsWithResponse Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *ClientWithResponses) AddSessionToolsWithResponse(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error) {
+	rsp, err := c.AddSessionTools(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddSessionToolsResponse(rsp)
+}
+
+// RemoveSessionToolWithResponse Withdraw one of the caller's tools from a running session
+//
+// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+func (c *ClientWithResponses) RemoveSessionToolWithResponse(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*RemoveSessionToolResponse, error) {
+	rsp, err := c.RemoveSessionTool(ctx, id, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveSessionToolResponse(rsp)
 }
 
 // StopSessionVoiceWithResponse Stop voice on a session
@@ -88379,6 +88869,257 @@ func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsRespons
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListSessionToolsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAddSessionToolsResponse parses an HTTP response from a AddSessionToolsWithResponse call
+func ParseAddSessionToolsResponse(rsp *http.Response) (*AddSessionToolsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddSessionToolsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers AddSessionToolsResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers AddSessionToolsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemoveSessionToolResponse parses an HTTP response from a RemoveSessionToolWithResponse call
+func ParseRemoveSessionToolResponse(rsp *http.Response) (*RemoveSessionToolResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveSessionToolResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers RemoveSessionToolResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers RemoveSessionToolResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

@@ -107,6 +107,24 @@ func (s *AgentSuite) TestAYesAfterTheWaitAsksTheModelToCallTheToolAgain() {
 	s.never(func() bool { return len(s.runner.asked()) > 0 }, "a late yes ran the call")
 }
 
+func (s *AgentSuite) TestAYesToACallWhoseToolChangedSinceDoesNotRunIt() {
+	s.askedToApprove()
+	changed := s.agent.tools()
+	changed.Tools = slices.Clone(changed.Tools)
+	changed.Tools[0].Approval = &harness.ToolApproval{Title: "Book order {order} for tomorrow?"}
+	ctx, cancel := context.WithTimeout(s.ctx, settleFor)
+	defer cancel()
+	s.Require().NoError(s.agent.SetTools(ctx, changed, func() {}))
+	s.confirms(`{"tool_call_id":"call-1","allowed":true}`)
+
+	s.says(stt.Participant{ID: "alice"}, "yes please")
+
+	s.eventually(func() bool { return strings.Contains(s.historyWith(llm.ToolResult), "call lookup_order again") },
+		"the yes was not sent back to ask again")
+	s.never(func() bool { return len(s.runner.asked()) > 0 },
+		"a yes to a call asked about as the tool was ran the tool as it is now")
+}
+
 func (s *AgentSuite) TestConfirmToolCallIsOfferedOnlyWhenAToolNeedsApproval() {
 	s.ownsTools("")
 	s.join(true)
