@@ -4,7 +4,7 @@
 
 ### A running session takes more of its caller's tools, and gives them back
 
-`POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A tool named as one the caller has replaces it. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the agent offers from elsewhere is a 409, and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown.
+`POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A tool named as one the caller has replaces it. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the agent offers from elsewhere is a 409, and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown (#2044).
 
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
