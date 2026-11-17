@@ -53,6 +53,36 @@ import Testing
     #expect(session.tools["reserve_table"]?.description == "Reserve a table")
   }
 
+  /// An add whose answer was lost may or may not have reached the router, so another tool
+  /// under its name settles it first rather than leaving the first one answering calls the
+  /// router now makes of the second.
+  @Test func aToolWhoseAddingWasNeverAnsweredIsSettledBeforeAnotherTakesItsName() async throws {
+    let server = try SessionServer { method, _, body in
+      let described = body["tools"]?.arrayValue?.first?["description"]?.stringValue
+      switch (method, described) {
+      case ("POST", "Reserve a table"):
+        return .init(status: 200, headers: ["Content-Type": "application/json"], body: "not json")
+      case ("DELETE", _):
+        return .init(
+          status: 404, headers: ["Content-Type": "application/json"],
+          body: #"{"error":{"message":"no tool","type":"not_found","code":"not_found","doc_url":""}}"#)
+      default:
+        return .init(status: 204, headers: [:], body: "")
+      }
+    }
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"), session: Self.session, tools: [])
+    await #expect(throws: AgentsError.self) { try await session.add(tools: [Self.reserveTable]) }
+    let other = AgentTool(name: "reserve_table", description: "Reserve a table elsewhere") { _ in
+      "Reserved elsewhere."
+    }
+
+    try await session.add(tools: [other])
+
+    #expect(session.tools["reserve_table"]?.description == "Reserve a table elsewhere")
+  }
+
   private static let session = Session(
     .init(
       agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",

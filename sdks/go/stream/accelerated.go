@@ -222,13 +222,18 @@ type Pipeline struct {
 	session *acceleration.Session
 	// added are the functions AddTools gave the session after it opened, by name, each in the
 	// registry it was added in; they run here before the session's own of the same name.
-	added   map[string]*tools.Registry
-	socket  *Socket
-	events  chan Event
-	stop    context.CancelFunc
-	running sync.WaitGroup
-	watcher sync.WaitGroup
-	holds   holds
+	// withdrawn are the names RemoveTool took from the session, which its own no longer run,
+	// and unsettled the ones whose adding was never answered, which the router may or may not
+	// offer.
+	added     map[string]*tools.Registry
+	withdrawn map[string]bool
+	unsettled map[string]bool
+	socket    *Socket
+	events    chan Event
+	stop      context.CancelFunc
+	running   sync.WaitGroup
+	watcher   sync.WaitGroup
+	holds     holds
 
 	// changing runs one change of the session's tools at a time, across its request.
 	changing sync.Mutex
@@ -477,8 +482,9 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 	session := p.session
 	socket := p.socket
 	p.session = nil
-	// What AddTools gave was this session's alone, not the next one this pipeline watches.
-	p.added = nil
+	// What AddTools and RemoveTool changed was this session's alone, not the next one this
+	// pipeline watches.
+	p.added, p.withdrawn, p.unsettled = nil, nil, nil
 	p.mu.Unlock()
 
 	if session == nil {
@@ -653,6 +659,16 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	p.changing.Lock()
 	defer p.changing.Unlock()
 
+	// A name whose adding was never answered may or may not be the router's: it is withdrawn
+	// first, so the router and this process agree on which function it is.
+	for _, tool := range declared {
+		if p.isUnsettled(tool.Name) {
+			if err := p.withdraw(ctx, client, sessionID, tool.Name, true); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Run from before the router answers: the next turn can call one before the answer is here.
 	// A name already run here keeps its function, since the router refuses to add it again.
 	p.mu.Lock()
@@ -661,7 +677,7 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	}
 	var fresh []string
 	for _, tool := range declared {
-		if p.added[tool.Name] == nil && !p.functions.Holds(tool.Name) {
+		if p.added[tool.Name] == nil && (p.withdrawn[tool.Name] || !p.functions.Holds(tool.Name)) {
 			p.added[tool.Name] = more
 			fresh = append(fresh, tool.Name)
 		}
@@ -670,7 +686,16 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 
 	added, err := client.AddSessionToolsWithResponse(ctx, sessionID, acceleration.AddSessionToolsRequest{Tools: &declared})
 	if err != nil {
-		// The router may have added them, so their calls are still run here.
+		// The router may have added them, so their calls are still run here until a later
+		// change of the name settles it.
+		p.mu.Lock()
+		if p.unsettled == nil {
+			p.unsettled = map[string]bool{}
+		}
+		for _, name := range fresh {
+			p.unsettled[name] = true
+		}
+		p.mu.Unlock()
 		return fmt.Errorf("stream: adding tools to session %s: %w", sessionID, err)
 	}
 	if added.StatusCode() != http.StatusNoContent {
@@ -698,27 +723,50 @@ func (p *Pipeline) RemoveTool(ctx context.Context, name string) error {
 	}
 	p.changing.Lock()
 	defer p.changing.Unlock()
+	return p.withdraw(ctx, client, sessionID, name, p.isUnsettled(name))
+}
 
+// withdraw takes the tool called name from the session and from what runs here. absentIsFine
+// settles a name whose adding was never answered: the router having no tool by it is as good
+// as withdrawing it.
+func (p *Pipeline) withdraw(ctx context.Context, client *acceleration.ClientWithResponses, sessionID, name string, absentIsFine bool) error {
 	removed, err := client.RemoveSessionToolWithResponse(ctx, sessionID, name)
 	if err != nil {
 		return fmt.Errorf("stream: removing tool %s from session %s: %w", name, sessionID, err)
 	}
-	if removed.StatusCode() != http.StatusNoContent {
+	if removed.StatusCode() != http.StatusNoContent && !(absentIsFine && removed.StatusCode() == http.StatusNotFound) {
 		return NewRouterError(removed.HTTPResponse, removed.Body, "stream", "removing a tool", removed.Status())
 	}
 	p.mu.Lock()
 	delete(p.added, name)
+	delete(p.unsettled, name)
+	if p.withdrawn == nil {
+		p.withdrawn = map[string]bool{}
+	}
+	p.withdrawn[name] = true
 	p.mu.Unlock()
 	return nil
 }
 
+func (p *Pipeline) isUnsettled(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.unsettled[name]
+}
+
+// noFunctions runs nothing, for a tool the session withdrew.
+var noFunctions = tools.NewRegistry()
+
 // functionsFor is the registry that runs the tool called name: the one AddTools added it
-// in, else the session's own.
+// in, none once RemoveTool withdrew it, else the session's own.
 func (p *Pipeline) functionsFor(name string) *tools.Registry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if added := p.added[name]; added != nil {
 		return added
+	}
+	if p.withdrawn[name] {
+		return noFunctions
 	}
 	return p.functions
 }

@@ -121,7 +121,9 @@ def sync_detailed(
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
     the session offers that is not the caller's (the router's own, a connector's, a worker's or another
     agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its
-    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
+    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-
+    to-speech session that drops while the change waits is a 503, and the change can be asked again once
+    the session is back.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -171,7 +173,9 @@ def sync(
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
     the session offers that is not the caller's (the router's own, a connector's, a worker's or another
     agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its
-    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
+    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-
+    to-speech session that drops while the change waits is a 503, and the change can be asked again once
+    the session is back.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -216,7 +220,9 @@ async def asyncio_detailed(
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
     the session offers that is not the caller's (the router's own, a connector's, a worker's or another
     agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its
-    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
+    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-
+    to-speech session that drops while the change waits is a 503, and the change can be asked again once
+    the session is back.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -264,7 +270,9 @@ async def asyncio(
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
     the session offers that is not the caller's (the router's own, a connector's, a worker's or another
     agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its
-    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
+    tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-
+    to-speech session that drops while the change waits is a 503, and the change can be asked again once
+    the session is back.
 
     Args:
         id (str): The session, as returned when it was created.

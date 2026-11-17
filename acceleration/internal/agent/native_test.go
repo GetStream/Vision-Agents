@@ -785,6 +785,28 @@ func (s *AgentSuite) TestANativeCallOfAToolTheModelIsNotOfferedIsNotRun() {
 	s.Empty(runner.asked(), "a tool the model is not offered, and so asks no approval for, was run")
 }
 
+func (s *AgentSuite) TestAChangeOfToolsGivesWayWhenTheNativeSessionEndedMidReply() {
+	// A session that drops without settling its open reply leaves it generating until
+	// recoverNative replaces the session, which waits for the swap a change of tools holds.
+	s.joinNativeWithALookup()
+	s.agent.mu.Lock()
+	s.agent.generating = true
+	s.agent.nativeResponses = map[string]bool{"r1": true}
+	s.agent.pipe.speechEnded.Store(true)
+	s.agent.mu.Unlock()
+	defer func() {
+		s.agent.mu.Lock()
+		s.agent.generating = false
+		s.agent.mu.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(s.ctx, time.Second)
+	defer cancel()
+
+	err := s.agent.SetTools(ctx, harness.Tools{}, func() {})
+
+	s.ErrorIs(err, ErrSpeechEnded, "the change held the swap the session's recovery waits for")
+}
+
 // joinNativeWithALookup joins a native agent offered the caller's lookup_order, run by the
 // runner returned.
 func (s *AgentSuite) joinNativeWithALookup() (*nativePeer, *stubToolRunner) {

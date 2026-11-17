@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -118,7 +119,8 @@ func (s *Server) registerSessionTools(api huma.API) {
 			"403. A name the session offers that is not the caller's (the router's own, a connector's, a " +
 			"worker's or another agent's) is a 409. A session that is not running is a 404. A " +
 			"speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot " +
-			"be given more during the call: 400.",
+			"be given more during the call: 400. A speech-to-speech session that drops while the change " +
+			"waits is a 503, and the change can be asked again once the session is back.",
 		Responses: map[string]*huma.Response{"204": {Description: "The model is offered them from the next turn"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict},
@@ -190,6 +192,8 @@ func toolsChanged(err error) error {
 		return errNoCallerTool
 	case errors.Is(err, sts.ErrToolsFixed):
 		return errToolsFixed
+	case errors.Is(err, agent.ErrSpeechEnded):
+		return unavailable(agent.ErrSpeechEnded.Error())
 	default:
 		// What is left is the tools themselves, such as one with no description.
 		return invalidRequest(err.Error())

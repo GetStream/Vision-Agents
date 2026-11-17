@@ -49,6 +49,8 @@ public final class AgentSession: ObservableObject {
     private let socket: SessionSocket
     /// The tools whose calls are answered here, by name.
     private(set) var tools: [String: AgentTool]
+    /// The tools whose adding was never answered, so the router may or may not offer them.
+    private var unsettledTools: Set<String> = []
     /// Whether a change of tools is under way, and the ones waiting for it (`oneAtATime`).
     private var changingTools = false
     private var waitingToChangeTools: [CheckedContinuation<Void, Never>] = []
@@ -197,6 +199,11 @@ public final class AgentSession: ObservableObject {
     public func add(tools: [AgentTool]) async throws {
         guard !tools.isEmpty else { return }
         try await oneAtATime {
+            // A name whose adding was never answered may or may not be the router's: it is
+            // withdrawn first, so the router and this session agree on which tool it is.
+            for tool in tools where unsettledTools.contains(tool.name) {
+                try await withdraw(tool.name)
+            }
             // Answered from before the router says they are added: the next turn can call one
             // while that answer is still on its way here. A name already answered here keeps
             // its handler, since the router refuses to add it again.
@@ -209,12 +216,16 @@ public final class AgentSession: ObservableObject {
             do {
                 try await backend.call { @Sendable in try await $0.addSessionTools(id: id, addSessionToolsRequest: body) }
             } catch AgentsError.http(let failure) {
-                // Refused, so the router offers none of them. Any other failure leaves it
-                // unknown whether it does, and they stay answered.
+                // Refused, so the router offers none of them.
                 for tool in added {
                     self.tools[tool.name] = nil
                 }
                 throw AgentsError.http(failure)
+            } catch {
+                // Whether the router offers them is unknown, so they stay answered until a
+                // later add or remove of the name settles it.
+                unsettledTools.formUnion(added.map(\.name))
+                throw error
             }
         }
     }
@@ -224,10 +235,26 @@ public final class AgentSession: ObservableObject {
     /// arrive, and its handler goes.
     public func remove(toolNamed name: String) async throws {
         try await oneAtATime {
+            if unsettledTools.contains(name) {
+                try await withdraw(name)
+                return
+            }
             let id = session.id
             try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
             tools[name] = nil
         }
+    }
+
+    /// Withdraws a tool whose adding was never answered: the router having none by that name
+    /// settles it as well as withdrawing it does.
+    private func withdraw(_ name: String) async throws {
+        let id = session.id
+        do {
+            try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
+        } catch AgentsError.http(let failure) where failure.status == 404 {
+        }
+        tools[name] = nil
+        unsettledTools.remove(name)
     }
 
     /// Answers a call waiting in `approvals`.

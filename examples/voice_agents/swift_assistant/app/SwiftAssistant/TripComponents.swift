@@ -499,12 +499,32 @@ struct SeatSelector: View {
         _selected = State(initialValue: tables.first(where: \.available)?.id)
     }
 
-    /// The table this conversation reserved, which ends what the card is for.
-    private var reservation: Reservation? { chat?.reservation }
+    /// The booking of one of these tables, which ends what the card is for. The agent can
+    /// show the same tables again after it, and they show the booking too.
+    private var reservation: Reservation? {
+        chat?.reservation.flatMap { $0.tables == Set(tables.map(\.id)) ? $0 : nil }
+    }
 
     var body: some View {
+        Group {
+            if let reservation {
+                ReservationConfirmation(reservation: reservation)
+            } else {
+                picker
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: brand.cornerRadius))
+        .task {
+            guard let chat, reservation == nil else { return }
+            await chat.bring(Self.reserveTable(from: tables) { reservation in await chat.reserved(reservation) })
+        }
+    }
+
+    private var picker: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(reservation.map { "Reserved \($0.table) · \($0.code)" } ?? "Select a table zone")
+            Text("Select a table zone")
                 .font(.subheadline.weight(.semibold))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(tables, id: \.id) { table in
@@ -531,56 +551,88 @@ struct SeatSelector: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(table.available ? .primary : .tertiary)
-                    .disabled(!table.available || reservation != nil)
+                    .disabled(!table.available)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: brand.cornerRadius))
-        .task {
-            guard let chat, chat.reservation == nil else { return }
-            await chat.bring(Self.reserveTable { reservation in await chat.reserved(reservation) })
         }
     }
 
     /// What the tool the card brings is called.
     static let reserveTableTool = "reserve_table"
 
-    /// Reserves one of the card's tables, once the person says it may. `onReserved` hears the
-    /// reservation.
-    static func reserveTable(onReserved: @escaping @Sendable (Reservation) async -> Void) -> AgentTool {
+    /// Reserves one of the free tables a card offers, once the person says it may. `onReserved`
+    /// hears the reservation.
+    static func reserveTable(
+        from tables: [DiningTable], onReserved: @escaping @Sendable (Reservation) async -> Void
+    ) -> AgentTool {
         AgentTool(
             name: reserveTableTool,
-            description: "Reserves a table for tonight from the seat selector on the person's screen. "
-                + "Call it when they chose a table, such as by tapping one, with that table's id.",
+            description: "Reserves a table from the seat selector on the person's screen. Call it when "
+                + "they chose a table, such as by tapping one, with that table's id.",
             parameters: .strings(
                 [
                     "table_id": "the id of the table, as the seat selector shows it, such as T4",
-                    "summary": "the table and the party as they would read it, such as Terrace, for 4",
+                    "when": "the day and time of the booking as they would read it, such as tomorrow at 8pm",
+                    "summary": "the table, the party and the time as they would read it, such as Terrace, for 4, tomorrow at 8pm",
                 ],
-                required: ["table_id", "summary"]),
+                required: ["table_id", "when", "summary"]),
             displayTitle: "Reserving your table",
             approval: .init(
                 title: "Reserve this table?",
-                message: "Juno books it for tonight, under your name.",
+                message: "Juno books it under your name.",
                 reasonArgument: "summary",
                 allowTitle: "Reserve",
                 declineTitle: "Not now")
         ) { arguments in
-            let table = arguments["table_id"]?.stringValue ?? ""
-            guard !table.isEmpty else { throw ToolFailure("Say which table to reserve.") }
-            let reservation = Reservation(table: table, code: String(UUID().uuidString.prefix(6)))
+            let id = arguments["table_id"]?.stringValue ?? ""
+            let when = arguments["when"]?.stringValue ?? ""
+            guard let table = tables.first(where: { $0.id == id && $0.available }) else {
+                let free = tables.filter(\.available).map(\.id).joined(separator: ", ")
+                throw ToolFailure("\(id) is not a free table on the seat selector. The free ones are \(free).")
+            }
+            guard !when.isEmpty else { throw ToolFailure("Say when the table is for.") }
+            let reservation = Reservation(
+                table: table, when: when, code: String(UUID().uuidString.prefix(6)),
+                tables: Set(tables.map(\.id)))
             await onReserved(reservation)
-            return "Reserved table \(table) for tonight under \(Assistant.user.name ?? "their name"). "
-                + "The confirmation code is \(reservation.code)."
+            return "Reserved table \(table.id) (\(table.zone), for \(table.seatCount)) for \(when), under "
+                + "\(Assistant.user.name ?? "their name"). The confirmation code is \(reservation.code). The seat "
+                + "selector on their screen now shows this booking, so confirm it in a sentence and do not show "
+                + "or patch the seat selector again."
         }
     }
 }
 
-/// A table the seat selector's tool reserved.
+/// A booking the seat selector's tool made, and the tables of the card it was made from.
 struct Reservation: Sendable, Equatable {
-    let table: String
+    let table: DiningTable
+    let when: String
     let code: String
+    let tables: Set<String>
+}
+
+/// What a seat selector shows once one of its tables is booked.
+struct ReservationConfirmation: View {
+    let reservation: Reservation
+
+    @Environment(\.brand) private var brand
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(brand.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Table \(reservation.table.id) reserved")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(reservation.table.zone) · \(reservation.table.seatCount) people · \(reservation.when)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("Confirmation \(reservation.code)")
+                    .font(.footnote.monospaced())
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
 }

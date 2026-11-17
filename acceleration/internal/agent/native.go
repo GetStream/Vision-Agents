@@ -162,6 +162,15 @@ func (a *Agent) unbind(participant stt.Participant) {
 func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- sts.Event) {
 	defer p.running.Done()
 	defer close(events)
+	// The session's replies end with it, completed or not, so none holds up a change of tools
+	// (quiesce), and a change waiting gives way to its recovery. It is over before a
+	// replacement is opened, which waits for p.running.
+	defer func() {
+		a.mu.Lock()
+		a.nativeResponses = nil
+		a.mu.Unlock()
+		p.speechEnded.Store(true)
+	}()
 	for event := range source {
 		switch typed := event.(type) {
 		case sts.ToolCall:

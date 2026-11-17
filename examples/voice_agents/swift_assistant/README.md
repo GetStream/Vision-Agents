@@ -194,9 +194,10 @@ also the app's own views (`TripComponents.swift`). Tapping a free table asks to 
   screen: the card defines `reserve_table` (`SeatSelector.reserveTable` in `TripComponents.swift`)
   and gives it to the conversation's session the first time it shows, with
   `AgentSession.add(tools:)`. Tapping a free table then has the agent call it, which asks first
-  ("Reserve this table?"), and once you allow it the card shows the table and a confirmation
-  code. The card has done what it was for, so it takes the tool back with
-  `AgentSession.remove(toolNamed:)`. To see the difference, ask Juno to reserve a table before any
+  ("Reserve this table?") and takes only a free table from the card. Once you allow it the card
+  turns into the booking: the table, the time and a confirmation code, which it keeps if the
+  agent shows the same tables again. The card has done what it was for, so it takes the tool
+  back with `AgentSession.remove(toolNamed:)`. To see the difference, ask Juno to reserve a table before any
   seat selector is shown: it has no tool to do it with. The router's
   `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists `reserve_table` as
   `session` while the card's tool is given.

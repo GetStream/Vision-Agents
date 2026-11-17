@@ -2418,7 +2418,7 @@ export type paths = {
          *
          *     The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
          *
-         *     The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
+         *     The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
          */
         readonly post: operations["addSessionTools"];
         readonly delete?: never;

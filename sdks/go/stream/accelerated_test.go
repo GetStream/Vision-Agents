@@ -571,6 +571,63 @@ func TestAToolAddedUnderANameTheSessionHasKeepsItsFunction(t *testing.T) {
 	}
 }
 
+func TestAToolWithdrawnFromTheSessionsOwnRunsTheOneAddedInItsPlace(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}, Functions: reserveTable(t)})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	if err := pipeline.RemoveTool(t.Context(), "reserve_table"); err != nil {
+		t.Fatal(err)
+	}
+	if pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Fatal("a tool withdrawn from the session would still answer its calls")
+	}
+	replacement := reserveTable(t)
+
+	if err := pipeline.AddTools(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	if pipeline.functionsFor("reserve_table") != replacement {
+		t.Error("the session's own function answers the tool added in its place")
+	}
+}
+
+func TestAToolWhoseAddingWasNeverAnsweredIsSettledBeforeAnotherTakesItsName(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	backend.mu.Lock()
+	backend.toolsWith = -1
+	backend.mu.Unlock()
+	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err == nil {
+		t.Fatal("an add whose answer was lost reported success")
+	}
+	backend.mu.Lock()
+	backend.toolsWith = 0
+	backend.mu.Unlock()
+	replacement := reserveTable(t)
+
+	if err := pipeline.AddTools(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	backend.mu.Lock()
+	removed := backend.removed
+	backend.mu.Unlock()
+	if !slices.Equal(removed, []string{"reserve_table"}) {
+		t.Errorf("the router was asked to remove %v before the name was added again", removed)
+	}
+	if pipeline.functionsFor("reserve_table") != replacement {
+		t.Error("the function whose adding was never answered still answers the name's calls")
+	}
+}
+
 func TestLeavingForgetsTheToolsTheSessionWasGiven(t *testing.T) {
 	backend := newRouter(t, hold)
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})

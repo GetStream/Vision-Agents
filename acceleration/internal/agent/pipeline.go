@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -35,7 +36,14 @@ type pipeline struct {
 	cancel      context.CancelFunc
 	running     sync.WaitGroup
 	writeFailed atomic.Bool
+	// speechEnded is set once a native pipeline's speech-to-speech session has stopped
+	// sending, before the agent recovers it (recoverNative).
+	speechEnded atomic.Bool
 }
+
+// ErrSpeechEnded refuses a change of tools whose speech-to-speech session ended while the
+// change waited for it: the agent is replacing the session, which the change would hold up.
+var ErrSpeechEnded = errors.New("agent: the speech-to-speech session ended while the tools were changing; try again")
 
 func newPipeline(parent context.Context, native bool) *pipeline {
 	ctx, cancel := context.WithCancel(parent)
@@ -204,6 +212,7 @@ func (a *Agent) SetTools(ctx context.Context, tools harness.Tools, changed func(
 		}()
 	}
 
+	before := a.availableTools()
 	a.toolsMu.Lock()
 	previous := a.options.Tools
 	a.options.Tools = tools
@@ -229,8 +238,28 @@ func (a *Agent) SetTools(ctx context.Context, tools harness.Tools, changed func(
 		a.toolsMu.Unlock()
 		return stack.Wrap(err)
 	}
+	a.lapseChangedApprovals(before, a.availableTools())
 	changed()
 	return nil
+}
+
+// lapseChangedApprovals lets go of the calls waiting for a caller's yes whose tool is no
+// longer offered as it was when they were asked, as silence does: a yes to one would run the
+// tool as it is now, for a call the caller was asked about as it was.
+func (a *Agent) lapseChangedApprovals(before, after harness.Tools) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, waiting := range a.approvals {
+		was, _ := before.Lookup(waiting.call.Name)
+		if now, offered := after.Lookup(waiting.call.Name); offered && reflect.DeepEqual(was, now) {
+			continue
+		}
+		delete(a.approvals, id)
+		if a.lapsedApprovals == nil {
+			a.lapsedApprovals = map[string]string{}
+		}
+		a.lapsedApprovals[id] = waiting.call.Name
+	}
 }
 
 // tools is what the agent was given to offer, before availableTools drops what this call
@@ -349,6 +378,12 @@ func (a *Agent) quiesce(ctx context.Context, toolsDone bool) error {
 		if a.closed {
 			a.mu.Unlock()
 			return stack.Wrap(errors.New("agent: closed"))
+		}
+		// A session that ended mid-reply leaves the reply generating until recoverNative,
+		// which waits for the swap this holds, replaces the session.
+		if toolsDone && a.pipe != nil && a.pipe.speechEnded.Load() {
+			a.mu.Unlock()
+			return stack.Wrap(ErrSpeechEnded)
 		}
 		if !a.interrupting && a.recoveringVoice == nil && !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
 			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 &&
