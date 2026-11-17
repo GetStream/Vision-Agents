@@ -9,9 +9,11 @@ import {
 } from 'stream-chat-expo/ai-components';
 
 import uiComponents from '../agent/UIComponents.json';
+import { useBrand } from './Brand';
 
 // The trip planner's components, as the Swift, Android and web assistants describe them, from the
-// same `UIComponents.json` the agent's instructions are written from.
+// same `UIComponents.json` the agent's instructions are written from. Each wears the brand the
+// settings chose.
 const definitionOf = (name: string): AIUIComponentDefinition => {
   const definition = parseAIUIComponentDefinition(
     uiComponents.find((component) => component.name === name),
@@ -44,6 +46,7 @@ const PlaceCard = defineAIUIComponent<{ title: string; note?: string }>(
   definitionOf('place_card'),
   ({ args, context }) => {
     const summary = useWikipediaSummary(args.title);
+    const { brand } = useBrand();
     return (
       <Pressable
         accessibilityHint='Asks about the place'
@@ -51,7 +54,11 @@ const PlaceCard = defineAIUIComponent<{ title: string; note?: string }>(
         onPress={() =>
           context.emit('ask_about', `Tell me more about ${args.title}`, { title: args.title })
         }
-        style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          styles.card,
+          { borderRadius: brand.cornerRadius },
+          pressed && styles.pressed,
+        ]}
       >
         {summary?.thumbnail ? (
           <Image source={{ uri: summary.thumbnail.source }} style={styles.photo} />
@@ -78,28 +85,31 @@ type Place = { latitude: number; longitude: number; name: string };
 
 const TripMap = defineAIUIComponent<{ places: Place[] }>(
   definitionOf('trip_map'),
-  ({ args, context }) => (
-    <View style={styles.map}>
-      {args.places.map((place, index) => (
-        <Pressable
-          accessibilityRole='button'
-          key={`${place.name}-${index}`}
-          onPress={() =>
-            context.emit('select_place', `Tell me more about ${place.name}`, { name: place.name })
-          }
-          style={({ pressed }) => [styles.pin, pressed && styles.pressed]}
-        >
-          <Text style={styles.pinIndex}>{index + 1}</Text>
-          <Text numberOfLines={1} style={styles.pinName}>
-            {place.name}
-          </Text>
-          <Text style={styles.coordinates}>
-            {place.latitude.toFixed(3)}, {place.longitude.toFixed(3)}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  ),
+  ({ args, context }) => {
+    const { brand } = useBrand();
+    return (
+      <View style={[styles.map, { borderRadius: brand.cornerRadius }]}>
+        {args.places.map((place, index) => (
+          <Pressable
+            accessibilityRole='button'
+            key={`${place.name}-${index}`}
+            onPress={() =>
+              context.emit('select_place', `Tell me more about ${place.name}`, { name: place.name })
+            }
+            style={({ pressed }) => [styles.pin, pressed && styles.pressed]}
+          >
+            <Text style={[styles.pinIndex, { backgroundColor: brand.accent }]}>{index + 1}</Text>
+            <Text numberOfLines={1} style={styles.pinName}>
+              {place.name}
+            </Text>
+            <Text style={styles.coordinates}>
+              {place.latitude.toFixed(3)}, {place.longitude.toFixed(3)}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+  },
 );
 
 const dayOf = (date: Date) =>
@@ -107,14 +117,17 @@ const dayOf = (date: Date) =>
 
 const CalendarCheck = defineAIUIComponent<{ end: Date; start: Date }>(
   definitionOf('calendar_check'),
-  ({ args }) => (
-    <View style={styles.calendar}>
-      <Text style={styles.title}>
-        {dayOf(args.start)} – {dayOf(args.end)}
-      </Text>
-      <Text style={styles.note}>Your calendar stays on this phone.</Text>
-    </View>
-  ),
+  ({ args }) => {
+    const { brand } = useBrand();
+    return (
+      <View style={[styles.calendar, { borderRadius: brand.cornerRadius }]}>
+        <Text style={styles.title}>
+          {dayOf(args.start)} – {dayOf(args.end)}
+        </Text>
+        <Text style={styles.note}>Your calendar stays on this phone.</Text>
+      </View>
+    );
+  },
 );
 
 /** The app's components the agent can place in a reply's UI. */
@@ -148,7 +161,6 @@ const styles = StyleSheet.create({
   photoPlaceholder: { backgroundColor: '#f2f2f2' },
   pin: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingVertical: 6 },
   pinIndex: {
-    backgroundColor: '#005fff',
     borderRadius: 10,
     color: '#ffffff',
     fontSize: 12,
