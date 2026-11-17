@@ -491,6 +491,17 @@ func (s *Session) ContextTruncated() bool {
 // Tools are the ones this conversation offers the model, to add to.
 func (s *Session) Tools() *tools.Registry { return s.pipeline.Functions() }
 
+// AddTools gives this conversation the functions in more while it runs, for it alone, and
+// runs their calls here. See stream.Pipeline.AddTools.
+func (s *Session) AddTools(ctx context.Context, more *tools.Registry) error {
+	return s.pipeline.AddTools(ctx, more)
+}
+
+// RemoveTool withdraws one of this conversation's tools. See stream.Pipeline.RemoveTool.
+func (s *Session) RemoveTool(ctx context.Context, name string) error {
+	return s.pipeline.RemoveTool(ctx, name)
+}
+
 // Events yields what the backend did until the conversation ends, when the channel closes.
 func (s *Session) Events() <-chan stream.Event { return s.pipeline.Events() }
 

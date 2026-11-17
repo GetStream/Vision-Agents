@@ -594,18 +594,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
 		spec.ContextTruncated = truncated
-		displays := map[string]persistent.ToolDisplay{}
-		for _, tool := range spec.Tools {
-			display := persistent.ToolDisplay{Title: tool.DisplayTitle, Client: tool.Client}
-			if approval := tool.Approval; approval != nil {
-				display.Approval = &persistent.ToolApproval{
-					Title: approval.Title, Message: approval.Message, ReasonArgument: approval.ReasonArgument,
-					AllowTitle: approval.AllowTitle, DeclineTitle: approval.DeclineTitle,
-				}
-			}
-			displays[tool.Name] = display
-		}
-		conv.DescribeTools(displays)
+		conv.DescribeTools(toolDisplays(spec.Tools))
 		// A fork opens an empty channel of its own and then reads the parent's, so the model
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
@@ -778,6 +767,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if spec.ProgressiveTools {
 		tools, runner = progressively(tools, connectorTools, runner)
 	}
+	created.otherTools = slices.Clone(tools[len(spec.Tools):])
 
 	var toolStarted func(agent.ToolStarted)
 	if conv != nil {
@@ -790,9 +780,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if connectors != nil {
 		toolPolicy = connectors.toolPolicy
 	}
-	if policy := interruptible(tools, toolPolicy); policy != nil {
+	if policy := interruptible(created.otherTools, toolPolicy); policy != nil {
 		toolPolicy = policy
 	}
+	toolPolicy = created.toolPolicy(toolPolicy)
 	screening, err := m.guardrail(ctx, spec, stream.Identity)
 	if err != nil {
 		return nil, stack.Wrap(err)
@@ -872,7 +863,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Ender:              m.ender(created, spec, stream),
 			EndCallWhen:        spec.endCallWhen(),
 			ToolRunner:         runner,
-			Tools:              harness.Tools{Tools: tools},
+			Tools:              harness.Tools{Tools: created.offering(spec.Tools)},
 			Sandbox:            box,
 			Publish:            publisher(conv),
 			Tasks:              spec.Tasks,

@@ -2,6 +2,10 @@
 
 ## Features
 
+### A running session takes more of its caller's tools, and gives them back
+
+`POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A change waits for the turn in progress and every tool call in flight, so a call is only checked, and asks its approval, against the tools it was made with. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the caller already has, or the agent offers from elsewhere, is a 409 (to change a tool, remove it, then add it again), and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown (#2044).
+
 ### The JavaScript SDK draws a streaming card a statement at a time
 
 While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2042).

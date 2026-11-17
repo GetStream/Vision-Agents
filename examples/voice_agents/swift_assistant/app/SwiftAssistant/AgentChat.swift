@@ -50,6 +50,9 @@ final class AgentChat: AIConversationTransport {
     /// The brand the conversation's UI wears.
     private(set) var brand = Brand.chosen
 
+    /// The table the seat selector's tool reserved in this conversation, or nil.
+    private(set) var reservation: Reservation?
+
     /// The composer option that asks with a higher reasoning effort.
     static let thinkHarder = "think_harder"
 
@@ -70,6 +73,9 @@ final class AgentChat: AIConversationTransport {
     /// The session being opened, so asking while it opens waits for it rather than opening a
     /// second one.
     @ObservationIgnored private var opening: Task<AgentSession, any Error>?
+    /// The tools the cards in the conversation brought to its session, by name, so a card shown
+    /// again, such as after scrolling back to it, does not bring its tool twice.
+    @ObservationIgnored private var brought: Set<String> = []
 
     init(sessionID: String?) {
         self.sessionID = sessionID
@@ -121,6 +127,36 @@ final class AgentChat: AIConversationTransport {
         _ = try await session.responses.create(
             request.text, images: images,
             reasoningEffort: request.chatOption?.id == Self.thinkHarder ? "high" : nil)
+    }
+
+    /// Gives the agent a tool a card in the conversation brings, the first time the card shows.
+    /// A card is shown in a reply, so the conversation has its session by then.
+    func bring(_ tool: AgentTool) async {
+        guard let session, !brought.contains(tool.name) else { return }
+        brought.insert(tool.name)
+        do {
+            try await session.add(tools: [tool])
+        } catch {
+            brought.remove(tool.name)
+            failure = error.localizedDescription
+        }
+    }
+
+    /// Takes back a tool a card brought, once the card has done what it was for.
+    func withdraw(_ name: String) async {
+        guard let session, brought.remove(name) != nil else { return }
+        do {
+            try await session.remove(toolNamed: name)
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    /// Keeps the table the seat selector's tool reserved, and takes the tool back: the card has
+    /// done what it was for. The tool's answer does not wait for that.
+    func reserved(_ reservation: Reservation) {
+        self.reservation = reservation
+        Task { await withdraw(SeatSelector.reserveTableTool) }
     }
 
     /// Stops the reply in flight. What was written so far is kept.

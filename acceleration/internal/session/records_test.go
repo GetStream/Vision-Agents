@@ -61,6 +61,8 @@ func (r *heldRecorder) Chose(string, string, string, string) {}
 
 func (r *heldRecorder) ToolTimeout(string, string, int) {}
 
+func (r *heldRecorder) Offered(string, []store.ToolDefinition) {}
+
 func (r *heldRecorder) SawVideo(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

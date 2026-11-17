@@ -916,7 +916,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.VideoMaxFrames = override(spec.VideoMaxFrames, request.Video.MaxFrames)
 	}
 	if request.Tools != nil {
-		spec.Tools = append(spec.Tools, declaredTools(*request.Tools)...)
+		for _, tool := range *request.Tools {
+			spec.Tools = append(spec.Tools, toolOf(tool))
+		}
 	}
 	return spec
 }
@@ -925,23 +927,28 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 func declaredTools(tools []SessionTool) []harness.Tool {
 	declared := make([]harness.Tool, 0, len(tools))
 	for _, tool := range tools {
-		one := harness.Tool{
-			Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
-			Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
+		declared = append(declared, toolOf(tool))
+	}
+	return declared
+}
+
+// toolOf is one of the caller's tools as the session offers it.
+func toolOf(tool SessionTool) harness.Tool {
+	declared := harness.Tool{
+		Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
+		Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
+	}
+	if tool.Parameters != nil {
+		declared.Parameters = *tool.Parameters
+	}
+	if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
+		declared.Client = true
+	}
+	if approval := tool.Approval; approval != nil && approval.Title != "" {
+		declared.Approval = &harness.ToolApproval{
+			Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
+			AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
 		}
-		if tool.Parameters != nil {
-			one.Parameters = *tool.Parameters
-		}
-		if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
-			one.Client = true
-		}
-		if approval := tool.Approval; approval != nil && approval.Title != "" {
-			one.Approval = &harness.ToolApproval{
-				Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
-				AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
-			}
-		}
-		declared = append(declared, one)
 	}
 	return declared
 }

@@ -2115,7 +2115,7 @@ is left out when the request has none:
 | Field | What it is |
 | --- | --- |
 | `trace_id` | The trace of the request's span. None when tracing is off or the request was not sampled |
-| `operation_type` | The route's pattern, such as `/v1/agents/sessions/{id}`. None for a path no route serves |
+| `operation_type` | The operation the route serves, named as its `operationId` with a capital first letter, such as `GetSession`. `path` is the request path, with a token route's secret segment shown as `{token}`. None for a request no operation served: an unknown path, a method a route does not take, a request refused for a spent day (429). A route the spec leaves out (a vendor's hook, a peer call) has a name of its own, such as `PhoneHook` |
 | `error_code` | The `code` of the error the request was answered with |
 | `x_stream_client`, `stream_auth_type`, `user_agent` | The `X-Stream-Client`, `Stream-Auth-Type` and `User-Agent` headers, each cut to 256 bytes. `stream_auth_type` falls back to a socket's `stream-auth-type` query (`jwt` or `anonymous`) |
 | `request_size` | The request's `Content-Length`. None for a chunked body |

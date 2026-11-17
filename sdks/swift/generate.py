@@ -64,6 +64,7 @@ STALE = "Swift client is stale: run uv run sdks/swift/generate.py"
 # the app's own backend to ask for and to hand down. Holding the conversation is driven over
 # the session socket, which is hand-written rather than generated.
 OPERATIONS = [
+    "addSessionTools",
     "createGuestUser",
     "createResponse",
     "createSession",
@@ -78,6 +79,7 @@ OPERATIONS = [
     "listScheduledTasks",
     "pauseScheduledTask",
     "querySessions",
+    "removeSessionTool",
     "resumeScheduledTask",
     "rewindSession",
     "search",

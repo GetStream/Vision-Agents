@@ -16,6 +16,7 @@ from .activity_sessions import ActivitySessions
 from .activity_step import ActivityStep
 from .add_contacts_request import AddContactsRequest
 from .add_contacts_response import AddContactsResponse
+from .add_session_tools_request import AddSessionToolsRequest
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
@@ -671,6 +672,7 @@ __all__ = (
     "ActivityStep",
     "AddContactsRequest",
     "AddContactsResponse",
+    "AddSessionToolsRequest",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
     "AgentCalls",

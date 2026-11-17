@@ -63,6 +63,7 @@ struct ChatScreen: View {
                 Welcome()
             })
         .environment(\.brand, brand)
+        .environment(chat)
         .onAppear { chat.wear(brand) }
         .onChange(of: brand) { _, brand in chat.wear(brand) }
         .scrollDismissesKeyboard(.interactively)
