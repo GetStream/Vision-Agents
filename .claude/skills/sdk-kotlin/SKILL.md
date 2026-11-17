@@ -66,6 +66,15 @@ frames with no network; most new event handling belongs there.
 - The session owns a `CoroutineScope(SupervisorJob())` and `close()` cancels it. It is not tied
   to a screen; a `ViewModel` holding it is the usual home.
 - `CancellationException` is never caught and mapped. A screen going away is not a failure.
+- A reply's interactive UI (`ai_ui`) reaches the session's socket first, as `ui_delta` and
+  `ui_completed`, which `Conversation` folds onto the turn as `Turn.ui` (`TurnUI`), merging an
+  `openui` patch onto the turn before's card. While OpenUI streams, `TurnUI.content` holds only
+  its finished statements, so a card grows a part at a time. `LiveUI` shows it on the reply while
+  Chat is writing it and its own `ai_ui` isn't complete, by the rules in the `generative-ui`
+  skill: `observe` each conversation (it says whether what shows changed), and read each
+  message's custom data from `overlay(messages)`, by message id, into `AIUIDocument.from`. On a
+  call there is no channel; show the newest `Turn.ui` through its `customData`, with an
+  `AIUIHost` of its own.
 
 ## The generated models
 
