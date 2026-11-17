@@ -1474,8 +1474,8 @@ function parseUIDeclaration(indented: string[], inline: string, where: string): 
       case "format": {
         const fmt = scalar(val);
         if (fmt) {
-          if (fmt !== "openui") {
-            throw new ConfigurationError(`${where}: ui.format must be openui, not ${JSON.stringify(fmt)}`);
+          if (fmt !== "openui" && fmt !== "a2ui") {
+            throw new ConfigurationError(`${where}: ui.format must be openui or a2ui, not ${JSON.stringify(fmt)}`);
           }
           out.format = fmt;
         }
@@ -1512,6 +1512,10 @@ function parseUIDeclaration(indented: string[], inline: string, where: string): 
         break;
       }
     }
+  }
+  // The router and the apps merge only OpenUI patches; an A2UI reply writes a new surface.
+  if (out.format === "a2ui" && out.patchMode) {
+    throw new ConfigurationError(`${where}: ui.patch_mode is for openui: an A2UI reply writes its UI on a new surface`);
   }
   return out;
 }

@@ -2,6 +2,10 @@
 
 ## Features
 
+### The JavaScript SDK compiles `ui.format: a2ui`
+
+`loadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the same A2UI prompt as the Go SDK: the agent is told to answer with A2UI 1.0 in a ```` ```ui:a2ui@1.0 ```` block, with the catalog `getstream.io:app-catalog` that stream-chat-swift's renderer draws. `keep` names the basic catalog's components and functions, `patch_mode` is refused with `a2ui`, and a blueprint `example` is checked so it renders as written. Both SDKs are held to the same fixture, byte for byte.
+
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
 `AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
