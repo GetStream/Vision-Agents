@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"mime"
 	"net"
 	"net/http"
@@ -468,11 +467,10 @@ type Server struct {
 	// at least. 100 ms is not a delay a person waiting for a text notices.
 	replyPoll time.Duration
 
-	// serverSide matches the requests the spec marks server-side only. It holds no
-	// handlers: what is registered on it is the patterns, and matching one is the answer.
+	// serverSide matches the requests the spec marks server-side only. What is registered on
+	// it is the patterns, and matching one is the answer; its handlers only name the operation
+	// (operationName).
 	serverSide *http.ServeMux
-	// operations names the operation each route serves, for the access line (operationNames).
-	operations map[string]string
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
@@ -669,14 +667,11 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream}); err == nil {
 		server.chatCards = cards
 	}
-	document := server.newAPI(chi.NewRouter()).OpenAPI()
-	serverSide, err := serverSideRoutes(document)
+	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
 		return nil, err
 	}
 	server.serverSide = serverSide
-	server.operations = operationNames(specifiedOperations(document))
-	maps.Copy(server.operations, unspecifiedOperations)
 
 	// The subscriptions outlive every request, so they are held against the process
 	// rather than against a context a handler brought with it. Closing the Redis client
@@ -756,50 +751,50 @@ func (s *Server) Handler() http.Handler {
 		writeError(w, notFound("no such route"))
 	})
 	mux.MethodNotAllowed(methodNotAllowed)
-	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
-	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
-	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
-	mux.HandleFunc("GET /v1/data/export", s.exportData)
-	mux.HandleFunc("POST /v1/data/import", s.importData)
-	mux.HandleFunc("POST "+knowledgeFilesPath, s.uploadKnowledgeFile)
-	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
-	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
-	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
-	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
-	mux.HandleFunc("POST "+machinePeerPath, s.tellMachineForPeer)
-	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
-	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
-	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
-	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
-	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
-	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
-	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
-	mux.HandleFunc("POST /v1/phone/machine/{token}", s.receiveCallMachine)
-	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
-	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
-	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
-	mux.HandleFunc("POST "+telnyxEventsHookPath, s.receiveTelnyxEvent)
-	mux.HandleFunc("POST "+twilioEventsHookPath, s.receiveTwilioEvent)
-	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
-	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
-	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
-	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
-	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
-	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
-	mux.HandleFunc("GET "+ConnectorClientMetadataPath, s.serveConnectorClientMetadata)
-	mux.HandleFunc("POST "+connectorEventsPath+"{connector_id}", s.receiveConnectorEvent)
-	mux.HandleFunc("POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.receiveProviderAppEvent)
-	mux.HandleFunc("GET "+providerAppEventsPath+"{connector_id}/{provider_app_id}", s.answerProviderAppHandshake)
+	handle(mux, "GET /v1/agents/logs", "ListAgentLogs", s.listAgentLogs)
+	handle(mux, "GET /v1/agents/logs/stream", "StreamAgentLogs", s.streamAgentLogs)
+	handle(mux, "GET /v1/agents/logs/{id}", "GetAgentLog", s.getAgentLog)
+	handle(mux, "GET /v1/data/export", "ExportData", s.exportData)
+	handle(mux, "POST /v1/data/import", "ImportData", s.importData)
+	handle(mux, "POST "+knowledgeFilesPath, "UploadKnowledgeFile", s.uploadKnowledgeFile)
+	handle(mux, "GET /v1/data/changes", "ListDataChanges", s.listDataChanges)
+	handle(mux, "POST "+scheduledPeerPath, "ScheduledTaskDeliver", s.deliverScheduledForPeer)
+	handle(mux, "POST "+chatInboundPeerPath, "ChatInboundAnswer", s.answerChatInboundForPeer)
+	handle(mux, "POST "+unansweredPeerPath, "PhoneEndUnanswered", s.endUnansweredForPeer)
+	handle(mux, "POST "+machinePeerPath, "PhoneMachine", s.tellMachineForPeer)
+	handle(mux, "GET /v1/agents/sessions/{id}/events", "WatchSession", s.watchSession)
+	handle(mux, "GET /v1/agents/socket", "OpenSocketSession", s.openSocketSession)
+	handle(mux, "GET /v1/{modality}/stream", "StreamModality", s.streamModality)
+	handle(mux, "GET /v1/dispatch", "DispatchCalls", s.dispatchCalls)
+	handle(mux, "GET /v1/phone/answer/{token}", "PhoneAnswer", s.answerPhoneCall)
+	handle(mux, "POST /v1/phone/answer/{token}", "PhoneAnswer", s.answerPhoneCall)
+	handle(mux, "POST /v1/phone/status/{token}", "ReceiveCallStatus", s.receiveCallStatus)
+	handle(mux, "POST /v1/phone/machine/{token}", "ReceiveCallMachine", s.receiveCallMachine)
+	handle(mux, "POST "+phone.CallHookPath, "PhoneHook", s.receiveCallEvent)
+	handle(mux, "POST "+phone.CallHookPath+"/{app}", "PhoneHook", s.receiveCallEvent)
+	handle(mux, "POST "+telnyxCallHookPath, "ReceiveTelnyxCall", s.receiveTelnyxCall)
+	handle(mux, "POST "+telnyxEventsHookPath, "ReceiveTelnyxEvent", s.receiveTelnyxEvent)
+	handle(mux, "POST "+twilioEventsHookPath, "ReceiveTwilioEvent", s.receiveTwilioEvent)
+	handle(mux, "POST "+chat.MessageHookPath, "ChatHook", s.receiveMessageEvent)
+	handle(mux, "POST "+chat.MessageHookPath+"/{app}", "ChatHook", s.receiveMessageEvent)
+	handle(mux, "POST "+chatInboundPath, "ReceiveChatDelivery", s.receiveChatInbound)
+	handle(mux, "GET "+connectorLaunchPath+"{id}", "GetConnectorLaunchPage", s.serveConnectorLaunch)
+	handle(mux, "POST "+connectorLaunchPath+"{id}", "HandOffConnectorLaunch", s.handOffConnectorLaunch)
+	handle(mux, "GET "+ConnectorCallbackPath, "FinishConnectorConsent", s.finishConnectorConsent)
+	handle(mux, "GET "+ConnectorClientMetadataPath, "GetConnectorClientMetadata", s.serveConnectorClientMetadata)
+	handle(mux, "POST "+connectorEventsPath+"{connector_id}", "ReceiveConnectorEvent", s.receiveConnectorEvent)
+	handle(mux, "POST "+providerAppEventsPath+"{connector_id}/{provider_app_id}", "ReceiveProviderAppEvent", s.receiveProviderAppEvent)
+	handle(mux, "GET "+providerAppEventsPath+"{connector_id}/{provider_app_id}", "AnswerProviderAppHandshake", s.answerProviderAppHandshake)
 	// With connectors off (no transports) the proxy is no route at all, as before it existed.
 	if s.connectorTransports != nil {
 		for _, method := range proxyMethods {
-			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
+			handle(mux, method+" "+connectionProxyPath+"*", "ProxyConnection"+method[:1]+strings.ToLower(method[1:]), s.proxyConnection)
 		}
 	}
-	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
-	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
-	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
-	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
+	handle(mux, "POST "+mcpevents.Path+"{token}", "ReceiveConnectionEvent", s.receiveConnectionEvent)
+	handle(mux, "GET "+channels.HookPath+"{token}", "VerifyChannelHook", s.receiveChannelMessage)
+	handle(mux, "POST "+channels.HookPath+"{token}", "ReceiveChannelMessage", s.receiveChannelMessage)
+	handle(mux, "POST "+dlc.HookPath, "ReceiveDLCReport", s.receiveDLCReport)
 	s.newAPI(mux)
 	s.mux = mux
 	var handler http.Handler = mux
@@ -1066,7 +1061,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		if failure.trace != "" {
 			fields = append(fields, "stack", failure.trace)
 		}
-		fields = append(fields, s.accessFields(routes, r, recorder)...)
+		fields = append(fields, s.accessFields(r, recorder, failure.operation)...)
 		if recorder.status() >= http.StatusInternalServerError {
 			s.logger.ErrorContext(r.Context(), "served a request", fields...)
 			return
@@ -1094,18 +1089,17 @@ const maxLoggedValue = 256
 //
 // trace_id is logged for a sampled span only: the sampler's dropped span is never exported, so
 // its id would name a trace nobody can open.
-// operation_type is the id of the operation the route serves (operationNames), found by the
-// route's pattern (routeLabel) and never by the path, since a token route's path is its secret.
-// A request no operation served has none; a route the spec leaves out is named in
-// unspecifiedOperations. user_id is the end user's: a backend's request is its own, whichever
-// user it says it acts for. request_size is the declared Content-Length, so a chunked body
-// names none.
-func (s *Server) accessFields(routes *chi.Mux, r *http.Request, answered *loggedResponse) []any {
+// operation_type is the name the operation's handler gave itself (nameOperation), so a request
+// no handler took has none: an unknown path, a method its route does not take, a caller withQuota
+// refused. withServerSide names what it refuses. user_id is the end user's: a backend's request
+// is its own, whichever user it says it acts for. request_size is the declared Content-Length, so
+// a chunked body names none.
+func (s *Server) accessFields(r *http.Request, answered *loggedResponse, operation string) []any {
 	var fields []any
 	if span := trace.SpanContextFromContext(r.Context()); span.IsValid() && span.IsSampled() {
 		fields = append(fields, "trace_id", span.TraceID().String())
 	}
-	if operation := s.operations[r.Method+" "+routeLabel(routes, r)]; operation != "" {
+	if operation != "" {
 		fields = append(fields, "operation_type", operation)
 	}
 	if answered.refusal != "" {
@@ -1202,58 +1196,42 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	operations := specifiedOperations(document)
 
 	routes := http.NewServeMux()
-	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for _, operation := range operations {
 		// The connection proxy refuses a client-side caller itself (proxyConnection), on every
 		// path; with connectors off it is no route, and a 403 here would answer for it.
 		if operation.public || operation.open || strings.HasPrefix(operation.path, connectionProxyPath) {
 			continue
 		}
-		routes.Handle(operation.method+" "+operation.path, nothing)
+		routes.Handle(operation.method+" "+operation.path, operationName(pascalCase(operation.id)))
 	}
 	return routes, nil
 }
 
-// operationNames maps "METHOD pattern" of each of operations to its id with the first letter
-// upper-cased (getSession is GetSession), the way the Stream platform's access logs name a handler.
-// It is built once, so the access line looks an operation up instead of walking the spec. The
-// connection proxy is one route for every path under connectionProxyPath, which chi matches as
-// "*" where its operation says {path}.
-func operationNames(operations []operationSummary) map[string]string {
-	names := make(map[string]string, len(operations))
-	for _, operation := range operations {
-		pattern := operation.path
-		if strings.HasPrefix(pattern, connectionProxyPath) {
-			pattern = connectionProxyPath + "*"
-		}
-		names[operation.method+" "+pattern] = pascalCase(operation.id)
-	}
-	return names
+// handle registers handler for pattern on mux, naming its operation for the access line as a
+// huma operation is named (nameHumaOperation): with the id the spec declares for it, its first
+// letter upper-cased, or, for a route the spec leaves out, a name of its own.
+func handle(mux chi.Router, pattern, name string, handler http.HandlerFunc) {
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		nameOperation(r.Context(), name)
+		handler(w, r)
+	})
 }
 
-// unspecifiedOperations names the routes served by hand that the spec leaves out (see Handler),
-// by the same "METHOD pattern" key as operationNames. They are named for the access line only:
-// no operation is declared, so the spec and the clients do not change. A route added to Handler
-// without an operation takes a name here, which TestEveryRouteHasAnOperationName insists on.
-var unspecifiedOperations = map[string]string{
-	"POST " + scheduledPeerPath:               "ScheduledTaskDeliver",
-	"POST " + chatInboundPeerPath:             "ChatInboundAnswer",
-	"POST " + unansweredPeerPath:              "PhoneEndUnanswered",
-	"POST " + machinePeerPath:                 "PhoneMachine",
-	"GET /v1/phone/answer/{token}":            "PhoneAnswer",
-	"POST /v1/phone/answer/{token}":           "PhoneAnswer",
-	"POST " + phone.CallHookPath:              "PhoneHook",
-	"POST " + phone.CallHookPath + "/{app}":   "PhoneHook",
-	"POST " + chat.MessageHookPath:            "ChatHook",
-	"POST " + chat.MessageHookPath + "/{app}": "ChatHook",
-}
-
-// pascalCase is id with its first letter upper-cased.
+// pascalCase is id with its first letter upper-cased, the way the Stream platform's access logs
+// name a handler: getSession is GetSession.
 func pascalCase(id string) string {
 	if id == "" {
 		return ""
 	}
 	return strings.ToUpper(id[:1]) + id[1:]
+}
+
+// operationName is an entry of serverSideRoutes: serving it names the operation for the access
+// line, as its handler would have.
+type operationName string
+
+func (n operationName) ServeHTTP(_ http.ResponseWriter, r *http.Request) {
+	nameOperation(r.Context(), string(n))
 }
 
 // withServerSide refuses the generated operations only a backend may reach.
@@ -1269,10 +1247,10 @@ func pascalCase(id string) string {
 // not have. One that never authenticated is left to the handler's own 401.
 func (s *Server) withServerSide(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, matched := s.serverSide.Handler(r); matched != "" {
-			if s.refuseClientSide(w, r) {
-				return
-			}
+		if named, matched := s.serverSide.Handler(r); matched != "" && s.refuseClientSide(w, r) {
+			// The operation's handler, which names it, never runs: its entry here names it.
+			named.ServeHTTP(w, r)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})

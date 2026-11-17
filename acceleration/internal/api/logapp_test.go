@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -116,24 +117,30 @@ func (s *LogAppSuite) TestTheAccessLineOfARequestNoOperationServedNamesNoOperati
 	s.NotContains(wrongMethod, "operation_type")
 }
 
-// Defect: a route added to the router with no operation and no name in unspecifiedOperations,
-// which would log no operation_type, or a name kept for a route that no longer exists.
+// Defect: a route registered without its name (mux.HandleFunc rather than handle), which logs no
+// operation_type, or a hand route named otherwise than the id the spec declares for it.
 func (s *LogAppSuite) TestEveryRouteHasAnOperationName() {
-	var unnamed []string
-	walked := map[string]bool{}
+	declared := map[string]string{}
+	for _, operation := range specifiedOperations((&Server{}).newAPI(chi.NewRouter()).OpenAPI()) {
+		// chi matches the connection proxy as "*" where its operation says {path}.
+		path := strings.Replace(operation.path, connectionProxyPath+"{path}", connectionProxyPath+"*", 1)
+		declared[operation.method+" "+path] = pascalCase(operation.id)
+	}
+	parameter := regexp.MustCompile(`\{[^}]*\}`)
 	s.Require().NoError(chi.Walk(s.router.mux, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		// A probe that is answered is not logged (answeredHealthy).
+		if route == healthPath {
+			return nil
+		}
+		path := strings.ReplaceAll(parameter.ReplaceAllString(route, "probe"), "*", "probe")
+		name := s.field(s.sent(s.unauthenticatedClient, method, path, nil), "operation_type")
 		key := method + " " + route
-		walked[key] = true
-		if s.router.operations[key] == "" {
-			unnamed = append(unnamed, key)
+		s.NotEmpty(name, key)
+		if want, ok := declared[key]; ok {
+			s.Equal(want, name, key)
 		}
 		return nil
 	}))
-
-	s.Empty(unnamed, "routes with no operation name")
-	for key := range unspecifiedOperations {
-		s.True(walked[key], "%s names a route the router does not serve", key)
-	}
 }
 
 // Defect: a route the spec leaves out (the TeXML answer, a vendor's hook) logged no operation,

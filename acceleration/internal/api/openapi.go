@@ -352,6 +352,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
+	// First, so a request its next middleware refuses still names its operation.
+	api.UseMiddleware(nameHumaOperation)
 	api.UseMiddleware(s.requireStaffKey(api))
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
@@ -490,6 +492,13 @@ type operationSummary struct {
 	public bool
 	// open is an operation marked x-client-accessible.
 	open bool
+}
+
+// nameHumaOperation names the operation a huma.Register declared for the access line, by its id
+// with the first letter upper-cased (pascalCase).
+func nameHumaOperation(ctx huma.Context, next func(huma.Context)) {
+	nameOperation(ctx.Context(), pascalCase(ctx.Operation().OperationID))
+	next(ctx)
 }
 
 // specifiedOperations lists every operation document declares.
