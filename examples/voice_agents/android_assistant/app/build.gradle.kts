@@ -79,6 +79,8 @@ dependencies {
     implementation(libs.okhttp)
     // The connector sign-in opens in an Auth Tab, or a Custom Tab where the browser has none.
     implementation(libs.browser)
+    // The trip map, on OpenStreetMap's data, which needs no key.
+    implementation(libs.maplibre)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

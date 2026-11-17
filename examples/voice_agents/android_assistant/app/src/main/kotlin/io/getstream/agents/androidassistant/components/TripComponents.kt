@@ -36,6 +36,7 @@ object TripComponents {
 
     private fun component(definition: AIUIComponentDefinition): AIUIComponent? = when (definition.name) {
         "place_card" -> placeCard(definition)
+        "trip_map" -> tripMap(definition)
         "calendar_check" -> calendarCheck(definition)
         "restaurant_card" -> restaurantCard(definition)
         "availability_gauge" -> availabilityGauge(definition)

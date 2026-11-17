@@ -1,0 +1,225 @@
+@file:Suppress("MagicNumber") // The map's size, its pins and how they drop.
+
+package io.getstream.agents.androidassistant.components
+
+import android.annotation.SuppressLint
+import android.graphics.Color
+import android.graphics.RectF
+import android.view.MotionEvent
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.doOnLayout
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.getstream.chat.android.ai.compose.generativeui.AIUIComponent
+import io.getstream.chat.android.ai.compose.generativeui.AIUIComponentDefinition
+import io.getstream.chat.android.ai.openui.rendering.OpenUITheme
+import kotlinx.coroutines.delay
+import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapLibreMapOptions
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.Point
+
+/** A plan's map, which asks about a place when its pin is tapped. */
+internal fun tripMap(definition: AIUIComponentDefinition) = AIUIComponent(definition) { arguments, context ->
+    val places = arguments.objects("places").mapNotNull(TripPlace::from)
+    TripMap(places, dropsPins = context.isStreaming) { place ->
+        context.emit("select_place", label = "Tell me more about ${place.name}", payload = mapOf("name" to place.name))
+    }
+}
+
+private data class TripPlace(val name: String, val latitude: Double, val longitude: Double) {
+    companion object {
+        fun from(json: Map<*, *>): TripPlace? {
+            val name = (json["name"] as? String)?.takeIf { it.isNotEmpty() } ?: return null
+            return TripPlace(name, json.number("latitude") ?: return null, json.number("longitude") ?: return null)
+        }
+    }
+}
+
+// OpenFreeMap's style, on OpenStreetMap's data, which takes no key.
+private const val STYLE = "https://tiles.openfreemap.org/styles/liberty"
+private const val SOURCE = "trip-places"
+private const val PINS = "trip-pins"
+private const val NAMES = "trip-names"
+
+/**
+ * A plan's places on a map, in the brand's accent. Tapping a pin asks about the place. Drawn as
+ * the agent writes it, the map drops the places' pins one after another.
+ */
+@Composable
+private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (TripPlace) -> Unit) {
+    val theme = OpenUITheme.current
+    val accent = theme.colors.accent.toArgb()
+    val context = LocalContext.current
+    val touchSlop = with(LocalDensity.current) { 12.dp.toPx() }
+    val shownPlaces by rememberUpdatedState(places)
+    val select by rememberUpdatedState(onSelect)
+    var pinned by remember { mutableIntStateOf(if (dropsPins) 0 else places.size) }
+    var map by remember { mutableStateOf<MapLibreMap?>(null) }
+    var style by remember { mutableStateOf<Style?>(null) }
+
+    val view = remember {
+        MapLibre.getInstance(context)
+        // A TextureView, which scrolls and clips with the conversation as a SurfaceView does not.
+        MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true)).apply {
+            onCreate(null)
+            keepGestures()
+            getMapAsync { loaded ->
+                map = loaded
+                loaded.uiSettings.isRotateGesturesEnabled = false
+                loaded.uiSettings.isTiltGesturesEnabled = false
+                loaded.setStyle(Style.Builder().fromUri(STYLE)) { style = it.withPins(accent) }
+                loaded.addOnMapClickListener { point ->
+                    val at = loaded.projection.toScreenLocation(point)
+                    val area = RectF(at.x - touchSlop, at.y - touchSlop, at.x + touchSlop, at.y + touchSlop)
+                    val name = loaded.queryRenderedFeatures(area, PINS, NAMES).firstNotNullOfOrNull { it.getStringProperty("name") }
+                    val place = shownPlaces.firstOrNull { it.name == name } ?: return@addOnMapClickListener false
+                    select(place)
+                    true
+                }
+            }
+        }
+    }
+    view.FollowLifecycle()
+
+    // The first pin waits for the map to come in.
+    LaunchedEffect(places.size) {
+        while (pinned < places.size) {
+            delay(if (pinned == 0) 600 else 250)
+            pinned++
+        }
+    }
+    LaunchedEffect(map, places) {
+        val shown = map ?: return@LaunchedEffect
+        val bounds = region(places) ?: return@LaunchedEffect
+        view.doOnLayout { shown.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 0)) }
+    }
+    LaunchedEffect(style, places, pinned) {
+        style?.getSourceAs<GeoJsonSource>(SOURCE)?.setGeoJson(features(places.take(pinned)))
+    }
+    LaunchedEffect(style, accent) {
+        style?.getLayer(PINS)?.setProperties(PropertyFactory.circleColor(accent))
+    }
+
+    AndroidView(
+        factory = { view },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(220.dp)
+            .clip(RoundedCornerShape(theme.radius.large)),
+    )
+}
+
+/** Keeps a drag that starts on the map on the map, rather than scrolling the conversation. */
+@SuppressLint("ClickableViewAccessibility") // The map handles the touch itself; this only claims it.
+private fun MapView.keepGestures() {
+    setOnTouchListener { touched, event ->
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) touched.parent?.requestDisallowInterceptTouchEvent(true)
+        false
+    }
+}
+
+/** Starts, resumes, pauses and stops the map with the screen, and destroys it when it leaves. */
+@Composable
+private fun MapView.FollowLifecycle() {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(this, lifecycle) {
+        var state = Lifecycle.State.CREATED
+        fun moveTo(target: Lifecycle.State) {
+            if (state < Lifecycle.State.STARTED && target >= Lifecycle.State.STARTED) onStart()
+            if (state < Lifecycle.State.RESUMED && target >= Lifecycle.State.RESUMED) onResume()
+            if (state >= Lifecycle.State.RESUMED && target < Lifecycle.State.RESUMED) onPause()
+            if (state >= Lifecycle.State.STARTED && target < Lifecycle.State.STARTED) onStop()
+            state = target
+        }
+        val observer = LifecycleEventObserver { _, event -> moveTo(event.targetState.coerceAtLeast(Lifecycle.State.CREATED)) }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            moveTo(Lifecycle.State.CREATED)
+            onDestroy()
+        }
+    }
+}
+
+/** Adds the places' pins and names over the map, empty until the places are set. */
+private fun Style.withPins(accent: Int): Style = apply {
+    addSource(GeoJsonSource(SOURCE, FeatureCollection.fromFeatures(emptyList())))
+    addLayer(
+        CircleLayer(PINS, SOURCE).withProperties(
+            PropertyFactory.circleRadius(8f),
+            PropertyFactory.circleColor(accent),
+            PropertyFactory.circleStrokeWidth(2f),
+            PropertyFactory.circleStrokeColor(Color.WHITE),
+        ),
+    )
+    addLayer(
+        SymbolLayer(NAMES, SOURCE).withProperties(
+            PropertyFactory.textField(Expression.get("name")),
+            // A font the style's glyphs have.
+            PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+            PropertyFactory.textSize(12f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+            PropertyFactory.textOffset(arrayOf(0f, 1f)),
+            PropertyFactory.textColor(Color.BLACK),
+            PropertyFactory.textHaloColor(Color.WHITE),
+            PropertyFactory.textHaloWidth(1.5f),
+        ),
+    )
+}
+
+private fun features(places: List<TripPlace>): FeatureCollection = FeatureCollection.fromFeatures(
+    places.map { place ->
+        Feature.fromGeometry(Point.fromLngLat(place.longitude, place.latitude)).apply { addStringProperty("name", place.name) }
+    },
+)
+
+/** The region that shows every place, with some room around them, or null without places. */
+private fun region(places: List<TripPlace>): LatLngBounds? {
+    if (places.isEmpty()) return null
+    val south = places.minOf { it.latitude }
+    val north = places.maxOf { it.latitude }
+    val west = places.minOf { it.longitude }
+    val east = places.maxOf { it.longitude }
+    val latitudeSpan = maxOf(0.02, (north - south) * 1.8) / 2
+    val longitudeSpan = maxOf(0.02, (east - west) * 1.8) / 2
+    val latitude = (south + north) / 2
+    val longitude = (west + east) / 2
+    return LatLngBounds.from(
+        (latitude + latitudeSpan).coerceAtMost(85.0),
+        (longitude + longitudeSpan).coerceAtMost(180.0),
+        (latitude - latitudeSpan).coerceAtLeast(-85.0),
+        (longitude - longitudeSpan).coerceAtLeast(-180.0),
+    )
+}
