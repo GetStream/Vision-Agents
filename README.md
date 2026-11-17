@@ -172,16 +172,23 @@ asyncio.run(main())
 
 ## Simulations & Monitoring
 
-Test your agent before it reaches a user. In a simulation one model plays the caller from a
-scenario you write, your agent answers as it would in production, and a judge model checks your
-assertion. Once it's live, watch every call on the dashboard.
-See [simulations and evals](https://getstream.io/agents/docs/simulations-and-evals/).
+Agent [simulations](https://getstream.io/agents/docs/simulations-and-evals/) and [monitoring](https://getstream.io/agents/docs/agent-monitoring/) are built-in.
+
+
 
 <!-- dashboard screenshot -->
 
 ## Cost Transparency
 
-See what each conversation and agent cost, and what each model cost and how often it failed. Set daily, weekly and monthly spend limits in
+It's very easy for AI costs to spiral out of control. We aim to give you the tools you need to keep costs under control
+
+* It's extremely easy to switch model
+* Session monitoring shows you stats about token usage. So you can optimize tools/skills etc to reduce token usage
+* Aggregated stats show token usage for skills, tools across all your tools
+* [Tags](https://getstream.io/agents/docs/sessions/#models-cost-tags-and-incognito) allow you to track specific customers, products etc
+* Spending limits
+
+Set daily, weekly and monthly spend limits in
 USD on the organization, API keys, users, apps and teams.
 See [spend limits](https://getstream.io/agents/docs/spend-limits/).
 
