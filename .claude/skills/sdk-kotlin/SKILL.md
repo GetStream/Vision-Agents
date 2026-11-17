@@ -69,12 +69,14 @@ frames with no network; most new event handling belongs there.
 - A reply's interactive UI (`ai_ui`) reaches the session's socket first, as `ui_delta` and
   `ui_completed`, which `Conversation` folds onto the turn as `Turn.ui` (`TurnUI`), merging an
   `openui` patch onto the turn before's card. While OpenUI streams, `TurnUI.content` holds only
-  its finished statements, so a card grows a part at a time. `LiveUI` shows it on the reply while
-  Chat is writing it and its own `ai_ui` isn't complete, by the rules in the `generative-ui`
-  skill: `observe` each conversation (it says whether what shows changed), and read each
-  message's custom data from `overlay(messages)`, by message id, into `AIUIDocument.from`. On a
-  call there is no channel; show the newest `Turn.ui` through its `customData`, with an
-  `AIUIHost` of its own.
+  its finished statements, so a card grows a part at a time, and a turn has no `Turn.ui` until
+  one is finished. A turn that ends with no `ui_completed` (an interrupted reply) settles on
+  `responded` or `interrupted`: its UI is complete, with the last statement shown when it closed.
+  `LiveUI` shows it on the reply while Chat is writing it and its own `ai_ui` isn't complete, by
+  the rules in the `generative-ui` skill: `observe` each conversation (it says whether what shows
+  changed), and read each message's custom data from `overlay(messages)`, by message id, into
+  `AIUIDocument.from`. A call screen shows no channel; show the newest `Turn.ui` there through
+  its `customData`, with an `AIUIHost` of its own.
 
 ## The generated models
 

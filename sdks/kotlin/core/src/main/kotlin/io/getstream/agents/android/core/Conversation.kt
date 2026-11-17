@@ -279,8 +279,8 @@ public class Conversation private constructor(
  * anything is spoken, then `ui_completed`.
  *
  * The router writes the same UI on the reply's message in Stream Chat as `ai_ui`, later and less
- * often; [LiveUI] shows this one on the message until that one is complete. On a call, where
- * nothing is spoken of it, this is the only place it shows.
+ * often; [LiveUI] shows this one on the message until that one is complete. A call screen, which
+ * shows no channel and speaks none of it, shows this one itself.
  */
 public data class TurnUI(
     /** The format it is written in, such as `openui` or `a2ui`. */
