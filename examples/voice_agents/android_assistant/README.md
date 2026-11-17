@@ -99,7 +99,7 @@ or newer, generated UI replies 7.18.0, and `AIConversationState` 7.19.0: `stream
   which the agent never sees, read through `CalendarContract` once `READ_CALENDAR` is granted,
   asked for when the card first appears. The map (`TripMap.kt`) is MapLibre's OpenGL ES build
   (`android-sdk-opengl`, since the default `android-sdk` requires Vulkan) with OpenFreeMap's
-  liberty style, on OpenStreetMap's data, which needs no API key; its pins drop one after another
+  liberty style, or its dark one in dark mode, on OpenStreetMap's data, which needs no API key; its pins drop one after another
   while the reply streams in. Tapping a place card or a pin asks about the place. Ask "Where should we eat in
   Ohrid tonight?" for the other kind of card (`Booking.kt`): `restaurant_card` per venue, which
   asks for its menu when tapped, `availability_gauge` of how full the first one is and

@@ -3,7 +3,6 @@
 package io.getstream.agents.androidassistant.components
 
 import android.annotation.SuppressLint
-import android.graphics.Color
 import android.graphics.RectF
 import android.view.MotionEvent
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -59,17 +59,21 @@ internal fun tripMap(definition: AIUIComponentDefinition) = AIUIComponent(defini
     }
 }
 
-private data class TripPlace(val name: String, val latitude: Double, val longitude: Double) {
+internal data class TripPlace(val name: String, val latitude: Double, val longitude: Double) {
     companion object {
+        /** The place the agent wrote, or null while it is incomplete or off the globe. */
         fun from(json: Map<*, *>): TripPlace? {
             val name = (json["name"] as? String)?.takeIf { it.isNotEmpty() } ?: return null
-            return TripPlace(name, json.number("latitude") ?: return null, json.number("longitude") ?: return null)
+            val latitude = json.number("latitude")?.takeIf { it in -90.0..90.0 } ?: return null
+            val longitude = json.number("longitude")?.takeIf { it in -180.0..180.0 } ?: return null
+            return TripPlace(name, latitude, longitude)
         }
     }
 }
 
-// OpenFreeMap's style, on OpenStreetMap's data, which takes no key.
-private const val STYLE = "https://tiles.openfreemap.org/styles/liberty"
+// OpenFreeMap's styles, light and dark, on OpenStreetMap's data, which take no key.
+private const val LIGHT_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+private const val DARK_STYLE = "https://tiles.openfreemap.org/styles/dark"
 private const val SOURCE = "trip-places"
 private const val PINS = "trip-pins"
 private const val NAMES = "trip-names"
@@ -81,33 +85,47 @@ private const val NAMES = "trip-names"
 internal val LocalMapTouch = staticCompositionLocalOf<(Boolean) -> Unit> { {} }
 
 /**
- * A plan's places on a map, in the brand's accent. Tapping a pin asks about the place. Drawn as
- * the agent writes it, the map drops the places' pins one after another.
+ * A plan's places on a map, in the brand's accent, light or dark with the theme. Tapping a pin asks
+ * about the place. Drawn as the agent writes it, the map drops the places' pins one after another.
  */
 @Composable
 private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (TripPlace) -> Unit) {
     val theme = OpenUITheme.current
-    val accent = theme.colors.accent.toArgb()
+    val dark = theme.colors.surface.luminance() < 0.5f
+    val pins = PinColors(
+        fill = theme.colors.accent.toArgb(),
+        ring = theme.colors.surface.toArgb(),
+        label = theme.colors.textPrimary.toArgb(),
+    )
     val context = LocalContext.current
     val touchSlop = with(LocalDensity.current) { 12.dp.toPx() }
+    val margin = with(LocalDensity.current) { 8.dp.roundToPx() }
     val shownPlaces by rememberUpdatedState(places)
     val select by rememberUpdatedState(onSelect)
     val touching by rememberUpdatedState(LocalMapTouch.current)
+    val shownPins by rememberUpdatedState(pins)
     var pinned by remember { mutableIntStateOf(if (dropsPins) 0 else places.size) }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var style by remember { mutableStateOf<Style?>(null) }
 
     val view = remember {
         MapLibre.getInstance(context)
-        // A TextureView, which scrolls and clips with the conversation as a SurfaceView does not.
-        MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true)).apply {
+        val options = MapLibreMapOptions.createFromAttributes(context)
+            // A TextureView, which scrolls and clips with the conversation as a SurfaceView does not.
+            .textureMode(true)
+            // OpenStreetMap's and OpenFreeMap's credits stay behind the (i); MapLibre's logo would
+            // crowd a map this small.
+            .logoEnabled(false)
+            .attributionEnabled(true)
+            .attributionMargins(intArrayOf(margin, 0, 0, margin))
+        MapView(context, options).apply {
             onCreate(null)
             keepGestures { touching(it) }
+            showOnFirstFrame()
             getMapAsync { loaded ->
                 map = loaded
                 loaded.uiSettings.isRotateGesturesEnabled = false
                 loaded.uiSettings.isTiltGesturesEnabled = false
-                loaded.setStyle(Style.Builder().fromUri(STYLE)) { style = it.withPins(accent) }
                 loaded.addOnMapClickListener { point ->
                     val at = loaded.projection.toScreenLocation(point)
                     val area = RectF(at.x - touchSlop, at.y - touchSlop, at.x + touchSlop, at.y + touchSlop)
@@ -130,16 +148,32 @@ private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (Trip
             pinned++
         }
     }
+    // The camera is at the places before the first style is set, so a new map never asks for the
+    // tiles of the style's own camera, over the whole world.
     LaunchedEffect(map, places) {
         val shown = map ?: return@LaunchedEffect
         val bounds = region(places) ?: return@LaunchedEffect
         view.doOnLayout { shown.moveCamera(CameraUpdateFactory.newLatLngBounds(bounds, 0)) }
     }
+    // The style follows the theme on the same map, its pins added again on each.
+    LaunchedEffect(map, dark) {
+        val shown = map ?: return@LaunchedEffect
+        view.doOnLayout {
+            // The style before is unusable from here.
+            style = null
+            shown.setStyle(Style.Builder().fromUri(if (dark) DARK_STYLE else LIGHT_STYLE)) { style = it.withPins(shownPins) }
+        }
+    }
     LaunchedEffect(style, places, pinned) {
         style?.getSourceAs<GeoJsonSource>(SOURCE)?.setGeoJson(features(places.take(pinned)))
     }
-    LaunchedEffect(style, accent) {
-        style?.getLayer(PINS)?.setProperties(PropertyFactory.circleColor(accent))
+    LaunchedEffect(style, pins) {
+        style?.colorPins(pins)
+    }
+    // A map whose style never loads, as without a network, still shows rather than leave a gap.
+    LaunchedEffect(view) {
+        delay(3_000)
+        view.alpha = 1f
     }
 
     AndroidView(
@@ -169,6 +203,26 @@ private fun MapView.keepGestures(onTouch: (Boolean) -> Unit) {
     }
 }
 
+/**
+ * Keeps the map clear, over the card behind it, until it has drawn a frame of its style, rather
+ * than showing the empty view's black, or until the map fails to load.
+ */
+private fun MapView.showOnFirstFrame() {
+    alpha = 0f
+    getMapAsync { loaded ->
+        addOnDidFinishRenderingFrameListener(
+            object : MapView.OnDidFinishRenderingFrameListener {
+                override fun onDidFinishRenderingFrame(fully: Boolean, frameEncodingTime: Double, frameRenderingTime: Double) {
+                    if (loaded.style == null) return
+                    removeOnDidFinishRenderingFrameListener(this)
+                    animate().alpha(1f).setDuration(150)
+                }
+            },
+        )
+    }
+    addOnDidFailLoadingMapListener { alpha = 1f }
+}
+
 /** Starts, resumes, pauses and stops the map with the screen, and destroys it when it leaves. */
 @Composable
 private fun MapView.FollowLifecycle() {
@@ -192,15 +246,19 @@ private fun MapView.FollowLifecycle() {
     }
 }
 
+/**
+ * A pin's colours: the brand's accent inside a ring of the card's surface, and its name in the
+ * theme's text colour on a halo of that surface, so both read on the light map and the dark one.
+ */
+private data class PinColors(val fill: Int, val ring: Int, val label: Int)
+
 /** Adds the places' pins and names over the map, empty until the places are set. */
-private fun Style.withPins(accent: Int): Style = apply {
+private fun Style.withPins(colors: PinColors): Style = apply {
     addSource(GeoJsonSource(SOURCE, FeatureCollection.fromFeatures(emptyList())))
     addLayer(
         CircleLayer(PINS, SOURCE).withProperties(
             PropertyFactory.circleRadius(8f),
-            PropertyFactory.circleColor(accent),
             PropertyFactory.circleStrokeWidth(2f),
-            PropertyFactory.circleStrokeColor(Color.WHITE),
         ),
     )
     addLayer(
@@ -211,11 +269,15 @@ private fun Style.withPins(accent: Int): Style = apply {
             PropertyFactory.textSize(12f),
             PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
             PropertyFactory.textOffset(arrayOf(0f, 1f)),
-            PropertyFactory.textColor(Color.BLACK),
-            PropertyFactory.textHaloColor(Color.WHITE),
             PropertyFactory.textHaloWidth(1.5f),
         ),
     )
+    colorPins(colors)
+}
+
+private fun Style.colorPins(colors: PinColors) {
+    getLayer(PINS)?.setProperties(PropertyFactory.circleColor(colors.fill), PropertyFactory.circleStrokeColor(colors.ring))
+    getLayer(NAMES)?.setProperties(PropertyFactory.textColor(colors.label), PropertyFactory.textHaloColor(colors.ring))
 }
 
 private fun features(places: List<TripPlace>): FeatureCollection = FeatureCollection.fromFeatures(
@@ -224,11 +286,14 @@ private fun features(places: List<TripPlace>): FeatureCollection = FeatureCollec
     },
 )
 
-/** The region that shows every place, with some room around them, or null without places. */
-private fun region(places: List<TripPlace>): LatLngBounds? {
+/**
+ * The region that shows every place, with some room around them, or null without places. Places
+ * nearer a pole than the map reaches are shown at its edge.
+ */
+internal fun region(places: List<TripPlace>): LatLngBounds? {
     if (places.isEmpty()) return null
-    val south = places.minOf { it.latitude }
-    val north = places.maxOf { it.latitude }
+    val south = places.minOf { it.latitude }.coerceIn(-85.0, 85.0)
+    val north = places.maxOf { it.latitude }.coerceIn(-85.0, 85.0)
     val west = places.minOf { it.longitude }
     val east = places.maxOf { it.longitude }
     val latitudeSpan = maxOf(0.02, (north - south) * 1.8) / 2
