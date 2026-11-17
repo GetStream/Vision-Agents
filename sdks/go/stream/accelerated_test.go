@@ -46,7 +46,8 @@ type router struct {
 	stopWith int
 
 	// added are the tools the session was given after it opened, and removed the ones taken
-	// back, in order. toolsWith is the status both are answered with; zero is 204.
+	// back, in order. toolsWith is the status both are answered with; zero is 204, and a
+	// negative one drops the connection unanswered.
 	added     []acceleration.AddSessionToolsRequest
 	removed   []string
 	toolsWith int
@@ -104,13 +105,18 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		backend.mu.Lock()
 		status := backend.toolsWith
 		backend.mu.Unlock()
-		if status == 0 {
+		switch {
+		case status == 0:
 			w.WriteHeader(http.StatusNoContent)
-			return
+		case status < 0:
+			if connection, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_ = connection.Close()
+			}
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprintf(w, `{"error":{"type":"conflict","code":"conflict","message":"the router said %d"}}`, status)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = fmt.Fprintf(w, `{"error":{"type":"conflict","code":"conflict","message":"the router said %d"}}`, status)
 	}
 	mux.HandleFunc("POST /v1/agents/sessions/{id}/tools", func(w http.ResponseWriter, r *http.Request) {
 		var request acceleration.AddSessionToolsRequest
@@ -463,6 +469,9 @@ func TestAToolAddedWhileTheSessionRunsIsOfferedAndRunHere(t *testing.T) {
 		}
 		answered <- frame
 	})
+	// Released however the test ends, so the router's socket handler never holds up its Close.
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(added) }) })
 	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
 	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
 		t.Fatal(err)
@@ -472,7 +481,7 @@ func TestAToolAddedWhileTheSessionRunsIsOfferedAndRunHere(t *testing.T) {
 	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err != nil {
 		t.Fatal(err)
 	}
-	close(added)
+	release.Do(func() { close(added) })
 
 	backend.mu.Lock()
 	declared := backend.added
@@ -533,6 +542,51 @@ func TestARemovedToolIsNoLongerRunHere(t *testing.T) {
 	}
 	if pipeline.functionsFor("reserve_table").Holds("reserve_table") {
 		t.Error("a removed tool would still answer a call")
+	}
+}
+
+func TestAToolAddedUnderANameTheSessionHasKeepsItsFunction(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	first := reserveTable(t)
+	if err := pipeline.AddTools(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	// The answer is lost, which leaves the request's fate unknown here; the router never
+	// replaces a tool the session has.
+	backend.mu.Lock()
+	backend.toolsWith = -1
+	backend.mu.Unlock()
+
+	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err == nil {
+		t.Fatal("an add whose answer was lost reported success")
+	}
+
+	if pipeline.functionsFor("reserve_table") != first {
+		t.Error("the function first added no longer answers the tool's calls")
+	}
+}
+
+func TestLeavingForgetsTheToolsTheSessionWasGiven(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Error("a session left would hand its added tools to the next one")
 	}
 }
 

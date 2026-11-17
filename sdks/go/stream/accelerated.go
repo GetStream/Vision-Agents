@@ -477,6 +477,8 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 	session := p.session
 	socket := p.socket
 	p.session = nil
+	// What AddTools gave was this session's alone, not the next one this pipeline watches.
+	p.added = nil
 	p.mu.Unlock()
 
 	if session == nil {
@@ -627,7 +629,8 @@ func (p *Pipeline) runs() url.Values {
 }
 
 // AddTools gives the session the functions in more after it opened, for this session alone,
-// and runs their calls here. One named as a tool the session already has replaces it.
+// and runs their calls here. One named as a tool the session already has is refused: to change
+// one, RemoveTool it first, so that no call of it runs half under each.
 //
 // The router waits for the turn in progress, and every call in flight, to finish, and the
 // model is offered them from the next turn, so do not call this from inside one of the
@@ -651,14 +654,17 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	defer p.changing.Unlock()
 
 	// Run from before the router answers: the next turn can call one before the answer is here.
+	// A name already run here keeps its function, since the router refuses to add it again.
 	p.mu.Lock()
 	if p.added == nil {
 		p.added = map[string]*tools.Registry{}
 	}
-	replaced := map[string]*tools.Registry{}
+	var fresh []string
 	for _, tool := range declared {
-		replaced[tool.Name] = p.added[tool.Name]
-		p.added[tool.Name] = more
+		if p.added[tool.Name] == nil && !p.functions.Holds(tool.Name) {
+			p.added[tool.Name] = more
+			fresh = append(fresh, tool.Name)
+		}
 	}
 	p.mu.Unlock()
 
@@ -669,12 +675,8 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	}
 	if added.StatusCode() != http.StatusNoContent {
 		p.mu.Lock()
-		for name, before := range replaced {
-			if before == nil {
-				delete(p.added, name)
-			} else {
-				p.added[name] = before
-			}
+		for _, name := range fresh {
+			delete(p.added, name)
 		}
 		p.mu.Unlock()
 		return NewRouterError(added.HTTPResponse, added.Body, "stream", "adding tools", added.Status())

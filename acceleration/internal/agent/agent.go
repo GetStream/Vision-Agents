@@ -603,6 +603,13 @@ type Agent struct {
 	nativeListening bool
 	nativeAwaiting  bool
 	nativeCalls     map[string]llm.ToolCall
+	// nativeResponses are the native model's replies open as receiveSTS saw them, each true
+	// unless it opened while the tools were changing, when it may have been offered either
+	// set. toolsChanging is that change, from the turn boundary it waited for (quiesce) to its
+	// end (SetTools), and refusedCalls are the native calls refused for it, with why.
+	nativeResponses map[string]bool
+	toolsChanging   bool
+	refusedCalls    map[string]error
 	// goodbye is the reply a native model owes after being told end_call ran.
 	goodbye *goodbye
 	// nativeRetries counts replacements across the call; swapping protects it.

@@ -19,8 +19,8 @@ class AddSessionToolsRequest:
     """Tools to give a running session's caller.
 
     Attributes:
-        tools (list[SessionTool] | None): The tools, each declared as it is when a session is created. One named as a
-            tool the caller already has replaces it.
+        tools (list[SessionTool] | None): The tools, each declared as it is when a session is created, and each named as
+            no tool the caller already has.
     """
 
     tools: list[SessionTool] | None

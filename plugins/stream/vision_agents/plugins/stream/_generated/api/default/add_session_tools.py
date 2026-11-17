@@ -108,7 +108,9 @@ def sync_detailed(
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
     runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
-    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+    it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to
+    change a tool, remove it, which waits for its calls, then add the new one, so no call is run half
+    under each.
 
     The change waits for the turn in progress and every tool call in flight to finish, and the model is
     offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
@@ -156,7 +158,9 @@ def sync(
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
     runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
-    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+    it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to
+    change a tool, remove it, which waits for its calls, then add the new one, so no call is run half
+    under each.
 
     The change waits for the turn in progress and every tool call in flight to finish, and the model is
     offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
@@ -199,7 +203,9 @@ async def asyncio_detailed(
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
     runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
-    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+    it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to
+    change a tool, remove it, which waits for its calls, then add the new one, so no call is run half
+    under each.
 
     The change waits for the turn in progress and every tool call in flight to finish, and the model is
     offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
@@ -245,7 +251,9 @@ async def asyncio(
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
     runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
-    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+    it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to
+    change a tool, remove it, which waits for its calls, then add the new one, so no call is run half
+    under each.
 
     The change waits for the turn in progress and every tool call in flight to finish, and the model is
     offered the tools from the next turn: a call is only ever checked, and asks its approval, as the

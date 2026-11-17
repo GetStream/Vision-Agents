@@ -568,7 +568,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The tools, each declared as it is when a session is created. One named as a tool the caller already has replaces it.
+        /// The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tools")]
         public System.Collections.Generic.List<SessionTool>? Tools { get; set; } = default!;

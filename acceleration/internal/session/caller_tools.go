@@ -16,22 +16,26 @@ import (
 // router's own, a connector's, a worker's or another agent's.
 var ErrToolTaken = errors.New("session: the session offers a tool by that name that is not its caller's")
 
+// ErrCallerHasTool is a tool to add that the session's caller already has. A tool is changed
+// by removing it first, which waits for its calls, so no call runs half under each.
+var ErrCallerHasTool = errors.New("session: the session's caller already has a tool by that name")
+
 // ErrNoCallerTool is a tool to withdraw that the session's caller does not have.
 var ErrNoCallerTool = errors.New("session: the session's caller has no tool by that name")
 
 // AddTools gives the session's caller more tools while the session runs, as though they had
 // been declared when it opened, and their calls go to whoever runs the caller's tools. One
-// named as a tool the caller has replaces it. It waits for the turn in progress and every call
-// in flight to finish (agent.SetTools), and the model is offered them from the next turn.
+// named as a tool the caller already has is refused (ErrCallerHasTool). It waits for the turn
+// in progress and every call in flight to finish (agent.SetTools), and the model is offered
+// them from the next turn.
 func (s *Session) AddTools(ctx context.Context, tools []harness.Tool) error {
 	return s.changeTools(ctx, func(declared []harness.Tool) ([]harness.Tool, error) {
 		next := slices.Clone(declared)
 		for _, tool := range tools {
-			if at := slices.IndexFunc(next, named(tool.Name)); at >= 0 {
-				next[at] = tool
-			} else {
-				next = append(next, tool)
+			if slices.ContainsFunc(next, named(tool.Name)) {
+				return nil, stack.Wrap(fmt.Errorf("%w: %s", ErrCallerHasTool, tool.Name))
 			}
+			next = append(next, tool)
 		}
 		return next, nil
 	}, func(added map[string]bool) {

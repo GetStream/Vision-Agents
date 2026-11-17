@@ -196,7 +196,12 @@ func (a *Agent) SetTools(ctx context.Context, tools harness.Tools, changed func(
 		if err := a.quiesce(ctx, true); err != nil {
 			return err
 		}
-		defer a.switching.Store(false)
+		defer func() {
+			a.mu.Lock()
+			a.toolsChanging = false
+			a.mu.Unlock()
+			a.switching.Store(false)
+		}()
 	}
 
 	a.toolsMu.Lock()
@@ -333,7 +338,9 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 // quiesce waits for a turn boundary: nothing being written, said or run on the caller's
 // behalf. It then holds the floor, so no turn starts and no audio is taken in while the
 // pipeline changes underneath. toolsDone also waits out a call answered as still running,
-// which no longer holds up a turn but is still being run.
+// which no longer holds up a turn but is still being run, and a native reply whose opening
+// receiveSTS has seen and the consumer has not, and marks the tools changing under the same
+// lock, so native calls are refused until SetTools is done.
 func (a *Agent) quiesce(ctx context.Context, toolsDone bool) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
@@ -344,7 +351,9 @@ func (a *Agent) quiesce(ctx context.Context, toolsDone bool) error {
 			return stack.Wrap(errors.New("agent: closed"))
 		}
 		if !a.interrupting && a.recoveringVoice == nil && !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
-			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 && (!toolsDone || len(a.toolsRunning) == 0) {
+			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 &&
+			(!toolsDone || len(a.toolsRunning) == 0 && len(a.nativeResponses) == 0) {
+			a.toolsChanging = toolsDone
 			a.switching.Store(true)
 			a.mu.Unlock()
 			return nil
@@ -474,8 +483,10 @@ func (a *Agent) startNative(prep *prepared) {
 	}
 	a.voicePrompt, a.performs = "", false
 	a.nativeListening, a.nativeAwaiting = false, false
-	// The new session heard none of the old one's stops, so it owes no answer to one.
+	// The new session heard none of the old one's stops, so it owes no answer to one, and
+	// has opened no reply.
 	a.nativeAnswerDue = false
+	a.nativeResponses = nil
 	a.mu.Unlock()
 	a.nativeMode.Store(true)
 

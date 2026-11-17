@@ -737,6 +737,69 @@ func (s *AgentSuite) TestNativeDelegationSupersedesOldWorkAndStopsOnClose() {
 	s.Zero(countOf[TaskSettled](s.reported()), "cancelled work must not be delivered as an answer")
 }
 
+func (s *AgentSuite) TestANativeCallMadeWhileTheToolsChangeIsRefused() {
+	peer, runner := s.joinNativeWithALookup()
+	s.agent.mu.Lock()
+	s.agent.toolsChanging = true
+	s.agent.mu.Unlock()
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"lookup_order","arguments":"{\"order\":\"12\"}"}`)
+
+	ran := s.awaitToolRan()
+	s.ErrorContains(ran.Err, "changing")
+	s.Empty(runner.asked(), "a call that may be of either set of tools was run")
+}
+
+func (s *AgentSuite) TestANativeCallOfAReplyOpenedWhileTheToolsChangedIsRefusedAfter() {
+	peer, runner := s.joinNativeWithALookup()
+	s.agent.mu.Lock()
+	s.agent.toolsChanging = true
+	s.agent.mu.Unlock()
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		_, opened := s.agent.nativeResponses["r1"]
+		return opened
+	}, "the reply never opened")
+	s.agent.mu.Lock()
+	s.agent.toolsChanging = false
+	s.agent.mu.Unlock()
+
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"lookup_order","arguments":"{\"order\":\"12\"}"}`)
+
+	ran := s.awaitToolRan()
+	s.ErrorContains(ran.Err, "changing")
+	s.Empty(runner.asked(), "a reply that opened while the tools changed may have been offered the old ones")
+}
+
+func (s *AgentSuite) TestANativeCallOfAToolTheModelIsNotOfferedIsNotRun() {
+	peer, runner := s.joinNativeWithALookup()
+
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"refund_order","arguments":"{}"}`)
+
+	ran := s.awaitToolRan()
+	s.ErrorContains(ran.Err, "not one of the model's tools")
+	s.Empty(runner.asked(), "a tool the model is not offered, and so asks no approval for, was run")
+}
+
+// joinNativeWithALookup joins a native agent offered the caller's lookup_order, run by the
+// runner returned.
+func (s *AgentSuite) joinNativeWithALookup() (*nativePeer, *stubToolRunner) {
+	runner := &stubToolRunner{result: "it ships tomorrow"}
+	peer := s.joinNativeWith(func(options *Options) {
+		options.ToolRunner = runner
+		options.Tools = harness.Tools{Tools: []harness.Tool{{
+			Name: "lookup_order", Description: "find an order by its number",
+			Parameters: map[string]any{"type": "object"},
+		}}}
+	})
+	s.nativeFrame(peer, "session.update")
+	return peer, runner
+}
+
 func (s *AgentSuite) TestNativeToolCancellationBeforeExecution() {
 	s.joinNativeDelegating()
 	requested := harness.ToolRequested{TurnID: "r1", Call: llm.ToolCall{ID: "cancel-before-run", Name: delegateSkill, Arguments: `{"skill":"think","prompt":"Work out the booking total"}`}}

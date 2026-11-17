@@ -7,8 +7,7 @@ import StreamCore
 /// the signed-in user's data, or something only the phone knows, without any of it leaving
 /// the device. The router asks over the session socket and waits for the answer.
 public struct AgentTool: Sendable {
-    /// What the model calls it. Must be unique within a session: one added under a name the
-    /// session has replaces it.
+    /// What the model calls it. Must be unique within a session.
     public let name: String
 
     /// What it is for, in words the model reads to decide whether to call it.

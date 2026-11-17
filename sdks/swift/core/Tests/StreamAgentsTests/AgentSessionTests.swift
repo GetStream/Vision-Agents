@@ -35,6 +35,24 @@ import Testing
     #expect(session.tools["reserve_table"] != nil)
   }
 
+  /// The router never replaces a tool the session has, so the handler answering that tool's
+  /// calls stays the one it was added with, even when the request's answer is lost.
+  @Test func aToolAddedUnderANameTheSessionHasKeepsItsHandler() async throws {
+    let server = try SessionServer()
+    let url = try await server.url()
+    server.listener.cancel()
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"), session: Self.session,
+      tools: [Self.reserveTable])
+    let other = AgentTool(name: "reserve_table", description: "Reserve a table elsewhere") { _ in
+      "Reserved elsewhere."
+    }
+
+    await #expect(throws: AgentsError.self) { try await session.add(tools: [other]) }
+
+    #expect(session.tools["reserve_table"]?.description == "Reserve a table")
+  }
+
   private static let session = Session(
     .init(
       agentId: "test", callId: "", callType: "agent", createdAt: Date(), id: "test",

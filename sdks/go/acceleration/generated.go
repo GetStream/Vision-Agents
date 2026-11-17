@@ -3552,7 +3552,7 @@ type AddContactsResponse struct {
 
 // AddSessionToolsRequest Tools to give a running session's caller.
 type AddSessionToolsRequest struct {
-	// Tools The tools, each declared as it is when a session is created. One named as a tool the caller already has replaces it.
+	// Tools The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
 	Tools *[]SessionTool `json:"tools"`
 }
 
@@ -14564,7 +14564,7 @@ type ClientInterface interface {
 
 	// AddSessionToolsWithBody Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 	//
 	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
@@ -14577,7 +14577,7 @@ type ClientInterface interface {
 
 	// AddSessionTools Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 	//
 	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
@@ -19654,7 +19654,7 @@ func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...
 
 // AddSessionToolsWithBody Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 //
 // The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
@@ -19677,7 +19677,7 @@ func (c *Client) AddSessionToolsWithBody(ctx context.Context, id string, content
 
 // AddSessionTools Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 //
 // The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
@@ -37578,7 +37578,7 @@ type ClientWithResponsesInterface interface {
 
 	// AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 	//
 	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
@@ -37591,7 +37591,7 @@ type ClientWithResponsesInterface interface {
 
 	// AddSessionToolsWithResponse Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 	//
 	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
@@ -69414,7 +69414,7 @@ func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, 
 
 // AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 //
 // The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
@@ -69433,7 +69433,7 @@ func (c *ClientWithResponses) AddSessionToolsWithBodyWithResponse(ctx context.Co
 
 // AddSessionToolsWithResponse Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
 //
 // The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //

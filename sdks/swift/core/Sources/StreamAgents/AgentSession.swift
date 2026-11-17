@@ -191,15 +191,17 @@ public final class AgentSession: ObservableObject {
     /// The router waits for the reply in progress, and every call it made, to finish, and the
     /// model is offered the tools from the next turn. So do not wait for this from inside one of
     /// this session's tools: it waits for that call. A tool named as one this session already
-    /// has replaces it. Only a session this device opened takes tools from it, and a name the
+    /// has is refused: to change one, `remove(toolNamed:)` it first, so that no call of it runs
+    /// half under each. Only a session this device opened takes tools from it, and a name the
     /// agent has of its own, such as a connector's tool, is refused.
     public func add(tools: [AgentTool]) async throws {
         guard !tools.isEmpty else { return }
         try await oneAtATime {
-            let replaced = tools.map { self.tools[$0.name] }
             // Answered from before the router says they are added: the next turn can call one
-            // while that answer is still on its way here.
-            for tool in tools {
+            // while that answer is still on its way here. A name already answered here keeps
+            // its handler, since the router refuses to add it again.
+            let added = tools.filter { self.tools[$0.name] == nil }
+            for tool in added {
                 self.tools[tool.name] = tool
             }
             let id = session.id
@@ -209,8 +211,8 @@ public final class AgentSession: ObservableObject {
             } catch AgentsError.http(let failure) {
                 // Refused, so the router offers none of them. Any other failure leaves it
                 // unknown whether it does, and they stay answered.
-                for (tool, before) in zip(tools, replaced) {
-                    self.tools[tool.name] = before
+                for tool in added {
+                    self.tools[tool.name] = nil
                 }
                 throw AgentsError.http(failure)
             }

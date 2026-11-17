@@ -214,13 +214,14 @@ func (s *SessionToolsSuite) TestAToolGivenToARunningSessionIsListedAsTheCallersA
 	s.NotContains(s.toolSources(opened.Id), lookupOrder)
 }
 
-func (s *SessionToolsSuite) TestAToolGivenTwiceReplacesTheFirst() {
+func (s *SessionToolsSuite) TestAToolTheCallerAlreadyHasIsNotAddedAgain() {
 	opened := s.serverClient.createSession(textSession(nil))
 	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
 	again := s.lookupOrder()
 	again.Description = "find an order by its tracking code"
 
-	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, again))
+	s.Equal(http.StatusConflict, s.addTools(s.serverClient, opened.Id, again),
+		"changing a tool in place would run a call of it half under each declaration")
 
 	var offered OfferedTools
 	s.Require().Equal(http.StatusOK,
@@ -231,7 +232,7 @@ func (s *SessionToolsSuite) TestAToolGivenTwiceReplacesTheFirst() {
 			descriptions = append(descriptions, tool.Description)
 		}
 	}
-	s.Equal([]string{"find an order by its tracking code"}, descriptions)
+	s.Equal([]string{"find an order by its number"}, descriptions)
 }
 
 func (s *SessionToolsSuite) TestANameAWorkerHostsCannotBeTheCallersTool() {

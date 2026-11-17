@@ -3,7 +3,7 @@ import StreamCore
 
 /// Tools to give a running session's caller.
 final class AddSessionToolsRequest: Sendable, Codable, JSONEncodable {
-    /// The tools, each declared as it is when a session is created. One named as a tool the caller already has replaces it.
+    /// The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
     let tools: [SessionTool]?
 
     init(tools: [SessionTool]? = nil) {

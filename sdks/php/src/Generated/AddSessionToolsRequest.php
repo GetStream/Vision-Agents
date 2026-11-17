@@ -14,7 +14,7 @@ use GetStream\VisionAgents\Json;
 final readonly class AddSessionToolsRequest
 {
     public function __construct(
-        // The tools, each declared as it is when a session is created. One named as a tool the caller already has rep...
+        // The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
         /** @var list<SessionTool> */
         public array $tools,
     ) {

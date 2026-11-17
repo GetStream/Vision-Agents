@@ -36,7 +36,7 @@ type addSessionToolsRequest struct {
 
 // AddSessionToolsRequest is tools to give a running session's caller.
 type AddSessionToolsRequest struct {
-	Tools []SessionTool `json:"tools" minItems:"1" doc:"The tools, each declared as it is when a session is created. One named as a tool the caller already has replaces it."`
+	Tools []SessionTool `json:"tools" minItems:"1" doc:"The tools, each declared as it is when a session is created, and each named as no tool the caller already has."`
 }
 
 func (*AddSessionToolsRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -107,7 +107,8 @@ func (s *Server) registerSessionTools(api huma.API) {
 			"created, for tools that exist only partway through a conversation, such as the ones a card " +
 			"shown in it brings. Whoever runs the caller's tools is asked to run them over the events " +
 			"socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the " +
-			"caller already has replaces it.\n\n" +
+			"caller already has is refused with a 409: to change a tool, remove it, which waits for its " +
+			"calls, then add the new one, so no call is run half under each.\n\n" +
 			"The change waits for the turn in progress and every tool call in flight to finish, and the " +
 			"model is offered the tools from the next turn: a call is only ever checked, and asks its " +
 			"approval, as the tools were when it was made. So do not wait for this from inside a call " +
@@ -183,7 +184,7 @@ func toolsChanged(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, session.ErrToolTaken):
+	case errors.Is(err, session.ErrToolTaken), errors.Is(err, session.ErrCallerHasTool):
 		return conflict(err.Error())
 	case errors.Is(err, session.ErrNoCallerTool):
 		return errNoCallerTool

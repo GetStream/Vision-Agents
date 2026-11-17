@@ -628,11 +628,16 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	var left bool
 	var err error
 	// The tool as the call was offered it, so a change of tools since cannot take its
-	// approval away; a call that carries none is looked up as the tools are now.
-	tool, offered := requested.Tool, requested.Tool.Name != ""
-	if !offered {
-		tool, offered = a.offeredTool(requested.Call.Name)
+	// approval away; a call that carries none, run without the reply that asked for it, is
+	// looked up as the tools are now.
+	tool := requested.Tool
+	if tool.Name == "" {
+		tool, _ = a.offeredTool(requested.Call.Name)
 	}
+	a.mu.Lock()
+	refusal := a.refusedCalls[requested.Call.ID]
+	delete(a.refusedCalls, requested.Call.ID)
+	a.mu.Unlock()
 	// ran is whether the tool was called: the router refuses some calls itself, before it.
 	var ran bool
 	// What the caller said and the tools returned is checked against the whole call, not the
@@ -641,11 +646,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	record := a.record()
 	// What the operator told the agent is theirs to give too: an ID or number written in it.
 	told := a.told()
-	if !offered && a.native() {
-		// A speech-to-speech model can still ask for a tool it is no longer offered, which
-		// would otherwise run with no approval to ask; the harness drops such a call in a
-		// cascade.
-		err = fmt.Errorf("agent: %s is not one of the model's tools", requested.Call.Name)
+	if refusal != nil {
+		err = refusal
 	} else if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
@@ -903,6 +905,17 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 	// that hung up would strand the conversation the agent is still holding history for.
 	result, err := a.options.ToolRunner.Run(ctx, call)
 	return result, false, err
+}
+
+// refuseCallLocked has the native call id answered with why it was not run (executeTool),
+// rather than run. A speech-to-speech model can ask for a tool it is not offered, which would
+// otherwise run with no approval to ask; the harness drops such a call in a cascade. The
+// caller holds a.mu.
+func (a *Agent) refuseCallLocked(id string, why error) {
+	if a.refusedCalls == nil {
+		a.refusedCalls = map[string]error{}
+	}
+	a.refusedCalls[id] = why
 }
 
 // offeredTool is the tool called name as the model is offered it now, the native model's
