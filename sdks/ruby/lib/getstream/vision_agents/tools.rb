@@ -64,6 +64,23 @@ module GetStream
         @lock.synchronize { @tools.key?(name.to_s) }
       end
 
+      # The tools by these names, as they are now, in a Tools of their own: a function
+      # registered here afterwards is not in it.
+      def slice(*names)
+        Tools.new.adopt(held.slice(*names.map(&:to_s)))
+      end
+
+      # The tools but the ones by these names, as they are now, in a Tools of their own.
+      def except(*names)
+        Tools.new.adopt(held.except(*names.map(&:to_s)))
+      end
+
+      # These tools and other's, as they are now, in a Tools of their own. A name both have
+      # runs other's function.
+      def merge(other)
+        Tools.new.adopt(held.merge(other.held))
+      end
+
       # The tools as a session request declares them.
       def declarations
         @lock.synchronize do
@@ -87,6 +104,17 @@ module GetStream
         parsed = arguments.to_s.strip.empty? ? {} : JSON.parse(arguments)
         output = tool.timeout ? within(tool, parsed, tool_call_context) : invoke(tool, parsed, tool_call_context)
         output.is_a?(String) ? output : JSON.generate(output)
+      end
+
+      protected
+
+      def held
+        @lock.synchronize { @tools.dup }
+      end
+
+      def adopt(tools)
+        @lock.synchronize { @tools.merge!(tools) }
+        self
       end
 
       private

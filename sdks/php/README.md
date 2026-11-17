@@ -263,6 +263,23 @@ was cancelled or ran out of time keeps running with `$toolCallContext->cancelled
 its answer is dropped; pass `$toolCallContext->cancellation()` to Amp's I/O to have it stop
 with the call. A call the router addresses to another watcher (`run: false`) is left alone.
 
+A running session can be given more tools, for that session alone, and have them taken back:
+
+```php
+$session->addTools((new Tools())->register('reserve_table', 'Reserve a table', $schema, $reserve));
+$session->removeTool('reserve_table');
+```
+
+The router waits for the turn in progress and every tool call in flight, and offers the model
+the change from the next turn, so never call these from inside one of the session's own tools.
+A name the session already has is refused (409): remove it, then add it again. Only the kind
+of caller that opened the session may change its tools (403). Only a 4xx is a refusal: when
+`addTools` or `removeTool` fails any other way (its answer lost, `RouterException` with
+`status` 0; a gateway's 5xx; an answer that cannot be read), its calls are still run here until
+the next change of that name settles it. Closing the session forgets them. A fork is offered
+the tools the session has at that moment, and runs the same functions for them; it waits for a
+change in flight, so never fork from inside one of the session's own tools either.
+
 ## Phone
 
 ```php

@@ -118,6 +118,24 @@ final class Tools
     }
 
     /**
+     * A registry of its own, holding each tool as the registry named for it holds it now, so
+     * registering on that one later changes nothing here.
+     *
+     * @param array<string, Tools> $from the registry to copy each tool from, by the tool's name
+     * @internal for a session, which keeps the functions it was given
+     */
+    public static function copied(array $from): self
+    {
+        $copy = new self();
+        foreach ($from as $name => $tools) {
+            if (isset($tools->tools[$name])) {
+                $copy->tools[$name] = $tools->tools[$name];
+            }
+        }
+        return $copy;
+    }
+
+    /**
      * Runs one tool with the arguments the model sent, which are a JSON string on the wire.
      *
      * @throws ConfigurationException when there is no tool by that name or the arguments are not JSON

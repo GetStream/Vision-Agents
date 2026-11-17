@@ -929,6 +929,315 @@ void main() {
       });
     });
 
+    group('tools given while it runs', () {
+      const adding = 'POST /v1/agents/sessions/s1/tools';
+      const withdrawing = 'DELETE /v1/agents/sessions/s1/tools/reserve_table';
+      const forking = 'POST /v1/agents/sessions/s1/fork';
+      final taken = Answer(409, errorJson('conflict', 'tool_exists', 'reserve_table is taken'));
+      final noTool = Answer(404, errorJson('not_found', 'tool_not_found', 'no such tool'));
+      final now = AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon');
+
+      /// How many calls of `reserve_table` were run here, counted as each starts rather than
+      /// when it answers.
+      var reservations = 0;
+
+      AgentTool reserve(String where) => AgentTool(
+        name: 'reserve_table',
+        description: 'Reserve a table.',
+        run: (_) async {
+          reservations++;
+          return 'Reserved $where.';
+        },
+      );
+
+      /// What a call of `reserve_table` is answered with here, or null when nothing here runs
+      /// it. `now`, called straight after, always answers, and a call is run as it arrives, so
+      /// once `now` has answered a `reserve_table` run here is counted, however long it takes.
+      Future<String?> reserved(TestSocket socket) async {
+        final before = reservations;
+        socket
+          ..send('{"type":"tool_call","id":"c1","name":"reserve_table","arguments":"{}"}')
+          ..send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+        final answers = <Object?, Map<String, Object?>>{};
+        while (!answers.containsKey('c2')) {
+          final answer = await socket.next();
+          answers[answer['tool_call_id']] = answer;
+        }
+        if (reservations == before && !answers.containsKey('c1')) {
+          return null;
+        }
+        final reservation = answers['c1'] ?? await socket.next();
+        expect(reservation['tool_call_id'], 'c1');
+        return reservation['output'] as String;
+      }
+
+      test('are declared as when it opened, and answered before the router says so', () async {
+        final answered = Completer<void>();
+        router
+          ..answer(adding, const Answer(204))
+          ..hold(adding, answered.future);
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+
+        final added = chat.addTools([reserve('by the window')]);
+        await until(() => router.arrived.any((request) => request.path.endsWith('/tools')));
+
+        expect(router.last(adding).json, {
+          'tools': [
+            {'name': 'reserve_table', 'description': 'Reserve a table.'},
+          ],
+        });
+        expect(await reserved(socket), 'Reserved by the window.');
+        answered.complete();
+        await added;
+        expect(await reserved(socket), 'Reserved by the window.');
+        await chat.close();
+      });
+
+      test('one the router refused is not answered, since it offers none of them', () async {
+        router.answer(adding, taken);
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+
+        await expectLater(chat.addTools([reserve('here')]), throwsA(isA<RouterException>()));
+
+        expect(await reserved(socket), isNull);
+        await chat.close();
+      });
+
+      test('one whose adding got no answer is still answered, since it may be offered', () async {
+        router.answer(adding, const Answer.hangUp());
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+
+        await expectLater(chat.addTools([reserve('here')]), throwsA(isA<TransportException>()));
+
+        expect(await reserved(socket), 'Reserved here.');
+        await chat.close();
+      });
+
+      test('one named as a tool the session has leaves that tool answering', () async {
+        router.answer(adding, taken);
+        final chat = await agents.chat(SessionOptions(tools: [now, reserve('here')]));
+        final socket = await router.socket();
+
+        await expectLater(chat.addTools([reserve('elsewhere')]), throwsA(isA<RouterException>()));
+
+        expect(await reserved(socket), 'Reserved here.');
+        await chat.close();
+      });
+
+      test('a name whose adding got no answer is withdrawn before another takes it', () async {
+        router
+          ..answerInTurn(adding, [const Answer.hangUp(), const Answer(204)])
+          ..answer(withdrawing, noTool);
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+        await expectLater(chat.addTools([reserve('here')]), throwsA(isA<TransportException>()));
+
+        await chat.addTools([reserve('elsewhere')]);
+
+        expect(
+          [
+            for (final request in router.arrived)
+              if (request.path.contains('/tools')) '${request.method} ${request.path}',
+          ],
+          [adding, withdrawing, adding],
+        );
+        expect(await reserved(socket), 'Reserved elsewhere.');
+        await chat.close();
+      });
+
+      test('one whose adding failed in front of the router is withdrawn before another', () async {
+        // The router added it, and the gateway in front of it answered 502.
+        router
+          ..answerInTurn(adding, [const Answer(502, '<html>bad gateway</html>'), const Answer(204)])
+          ..answer(withdrawing, const Answer(204));
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+        await expectLater(chat.addTools([reserve('here')]), throwsA(isA<RouterException>()));
+        expect(await reserved(socket), 'Reserved here.');
+
+        await chat.addTools([reserve('elsewhere')]);
+
+        expect(
+          [
+            for (final request in router.arrived)
+              if (request.path.contains('/tools')) '${request.method} ${request.path}',
+          ],
+          [adding, withdrawing, adding],
+        );
+        expect(await reserved(socket), 'Reserved elsewhere.');
+        await chat.close();
+      });
+
+      test('one whose removing failed in front of the router is answered until settled', () async {
+        // The router withdrew it, and the gateway in front of it answered 504.
+        router.answerInTurn(withdrawing, [const Answer(504), noTool]);
+        final chat = await agents.chat(SessionOptions(tools: [now, reserve('here')]));
+        final socket = await router.socket();
+        await expectLater(chat.removeTool('reserve_table'), throwsA(isA<RouterException>()));
+        expect(await reserved(socket), 'Reserved here.');
+
+        await chat.removeTool('reserve_table');
+
+        expect(await reserved(socket), isNull);
+        await chat.close();
+      });
+
+      test('a name whose adding got no answer is removed when the router has none', () async {
+        router
+          ..answer(adding, const Answer.hangUp())
+          ..answer(withdrawing, noTool);
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+        await expectLater(chat.addTools([reserve('here')]), throwsA(isA<TransportException>()));
+
+        await chat.removeTool('reserve_table');
+
+        expect(await reserved(socket), isNull);
+        await chat.close();
+      });
+
+      test('one whose removing got no answer is answered until the router has none', () async {
+        router.answerInTurn(withdrawing, [const Answer.hangUp(), noTool]);
+        final chat = await agents.chat(SessionOptions(tools: [now, reserve('here')]));
+        final socket = await router.socket();
+        await expectLater(chat.removeTool('reserve_table'), throwsA(isA<TransportException>()));
+        expect(await reserved(socket), 'Reserved here.');
+
+        await chat.removeTool('reserve_table');
+
+        expect(await reserved(socket), isNull);
+        await chat.close();
+      });
+
+      test('a name whose removing got no answer is withdrawn before another takes it', () async {
+        router
+          ..answerInTurn(withdrawing, [const Answer.hangUp(), noTool])
+          ..answer(adding, const Answer(204));
+        final chat = await agents.chat(SessionOptions(tools: [now, reserve('here')]));
+        final socket = await router.socket();
+        await expectLater(chat.removeTool('reserve_table'), throwsA(isA<TransportException>()));
+
+        await chat.addTools([reserve('elsewhere')]);
+
+        expect(
+          [
+            for (final request in router.arrived)
+              if (request.path.contains('/tools')) '${request.method} ${request.path}',
+          ],
+          [withdrawing, withdrawing, adding],
+        );
+        expect(await reserved(socket), 'Reserved elsewhere.');
+        await chat.close();
+      });
+
+      test('removing one it opened with stops it answering and frees its name', () async {
+        router
+          ..answer(withdrawing, const Answer(204))
+          ..answer(adding, const Answer(204));
+        final chat = await agents.chat(SessionOptions(tools: [now, reserve('here')]));
+        final socket = await router.socket();
+
+        await chat.removeTool('reserve_table');
+        expect(await reserved(socket), isNull);
+        await chat.addTools([reserve('elsewhere')]);
+
+        expect(await reserved(socket), 'Reserved elsewhere.');
+        await chat.close();
+      });
+
+      test('change one at a time, so a refusal takes back only its own tool', () async {
+        router.answerInTurn(adding, [taken, const Answer(204)]);
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        final socket = await router.socket();
+
+        final first = chat.addTools([reserve('here')]);
+        final second = chat.addTools([reserve('elsewhere')]);
+
+        await expectLater(first, throwsA(isA<RouterException>()));
+        await second;
+        expect(await reserved(socket), 'Reserved elsewhere.');
+        await chat.close();
+      });
+
+      test('a fork is given them as they are now, as the router gives it them', () async {
+        router
+          ..answer(adding, const Answer(204))
+          ..answer(withdrawing, const Answer(204))
+          ..answer(forking, Answer(201, sessionJson(id: 's2')));
+        final chat = await agents.chat(SessionOptions(tools: [now, reserve('here')]));
+        await chat.addTools([
+          AgentTool(name: 'cancel_table', description: 'Cancel.', run: (_) async => 'Cancelled.'),
+        ]);
+        await chat.removeTool('reserve_table');
+
+        final fork = await chat.fork();
+        await fork.start();
+        final socket = await router.socket(1);
+
+        expect(await reserved(socket), isNull);
+        socket.send('{"type":"tool_call","id":"c3","name":"cancel_table","arguments":"{}"}');
+        expect((await socket.next())['output'], 'Cancelled.');
+        await fork.close();
+        await chat.close();
+      });
+
+      test('a fork withdraws a name the session never settled before another takes it', () async {
+        const forkAdding = 'POST /v1/agents/sessions/s2/tools';
+        const forkWithdrawing = 'DELETE /v1/agents/sessions/s2/tools/reserve_table';
+        // The router never added it, so the fork it copies has none either.
+        router
+          ..answer(adding, const Answer.hangUp())
+          ..answer(withdrawing, noTool)
+          ..answer(forking, Answer(201, sessionJson(id: 's2')))
+          ..answer(forkWithdrawing, noTool)
+          ..answer(forkAdding, const Answer(204));
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+        await expectLater(chat.addTools([reserve('here')]), throwsA(isA<TransportException>()));
+        final fork = await chat.fork();
+        // Settled in the session, the name is still the fork's to settle.
+        await chat.removeTool('reserve_table');
+
+        await fork.start();
+        await fork.addTools([reserve('elsewhere')]);
+
+        expect(
+          [
+            for (final request in router.arrived)
+              if (request.path.startsWith('/v1/agents/sessions/s2/tools'))
+                '${request.method} ${request.path}',
+          ],
+          [forkWithdrawing, forkAdding],
+        );
+        expect(await reserved(await router.socket(1)), 'Reserved elsewhere.');
+        await fork.close();
+        await chat.close();
+      });
+
+      test('a fork waits for a change under way, so it has none the router refused', () async {
+        final answered = Completer<void>();
+        router
+          ..answer(adding, taken)
+          ..hold(adding, answered.future)
+          ..answer(forking, Answer(201, sessionJson(id: 's2')));
+        final chat = await agents.chat(SessionOptions(tools: [now]));
+
+        final added = chat.addTools([reserve('here')]);
+        final forked = chat.fork();
+        await until(() => router.arrived.any((request) => request.path.endsWith('/tools')));
+        answered.complete();
+
+        await expectLater(added, throwsA(isA<RouterException>()));
+        final fork = await forked;
+        await fork.start();
+        expect(await reserved(await router.socket(1)), isNull);
+        await fork.close();
+        await chat.close();
+      });
+    });
+
     test('two readers of events each get every event', () async {
       final chat = await agents.chat();
       final socket = await router.socket();

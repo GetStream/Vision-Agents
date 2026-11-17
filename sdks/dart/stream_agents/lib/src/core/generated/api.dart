@@ -13,6 +13,16 @@ final class Operations {
 
   final Wire _wire;
 
+  /// Give a running session more of the caller's tools.
+  Future<void> addSessionTools({required String id, required AddSessionToolsRequest body}) async {
+    await _wire.send(
+      'POST',
+      '/v1/agents/sessions/${Uri.encodeComponent(id)}/tools',
+      operation: 'addSessionTools',
+      body: body.toJson(),
+    );
+  }
+
   /// Mint a guest so somebody can talk to an agent before signing up.
   Future<GuestUser> createGuestUser({GuestUserRequest? body}) async {
     final json = await _wire.send(
@@ -117,6 +127,15 @@ final class Operations {
     return SessionPage.fromJson(json);
   }
 
+  /// Withdraw one of the caller's tools from a running session.
+  Future<void> removeSessionTool({required String id, required String name}) async {
+    await _wire.send(
+      'DELETE',
+      '/v1/agents/sessions/${Uri.encodeComponent(id)}/tools/${Uri.encodeComponent(name)}',
+      operation: 'removeSessionTool',
+    );
+  }
+
   /// Go back to a response and carry on from there.
   Future<void> rewindSession({required String id, required RewindSessionRequest body}) async {
     await _wire.send(
@@ -173,6 +192,27 @@ final class Operations {
     );
     return Session.fromJson(json);
   }
+}
+
+/// Tools to give a running session's caller.
+final class AddSessionToolsRequest {
+  const AddSessionToolsRequest({required this.tools});
+
+  factory AddSessionToolsRequest.fromJson(Object? value) {
+    final json = _object(value, 'AddSessionToolsRequest');
+    return AddSessionToolsRequest(
+      tools: [
+        for (final item in _list(json['tools'], 'AddSessionToolsRequest.tools'))
+          SessionTool.fromJson(item),
+      ],
+    );
+  }
+
+  final List<SessionTool> tools;
+
+  Map<String, Object?> toJson() => {
+    'tools': [for (final item in tools) item.toJson()],
+  };
 }
 
 final class AgentResponse {

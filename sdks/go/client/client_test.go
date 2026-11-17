@@ -14,10 +14,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
@@ -44,6 +46,8 @@ type router struct {
 	items [][]acceleration.AgentResponseItem
 	// frames are what the session's socket was sent, close aside.
 	frames []map[string]any
+	// calls are the tool calls a session's socket sends once it opens, by session id.
+	calls map[string][]map[string]any
 }
 
 func newRouter(t *testing.T) *router {
@@ -132,6 +136,16 @@ func newRouter(t *testing.T) *router {
 			Id: "session-2", AgentId: "agent-1", UserId: "jean", State: "running",
 			ForkedFrom: ptr(r.PathValue("id")), CreatedAt: time.Now(),
 		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/tools", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/tools/{name}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +398,14 @@ func newRouter(t *testing.T) *router {
 			return
 		}
 		defer connection.Close()
+		backend.mu.Lock()
+		calls := backend.calls[r.PathValue("id")]
+		backend.mu.Unlock()
+		for _, call := range calls {
+			if err := connection.WriteJSON(call); err != nil {
+				return
+			}
+		}
 		for {
 			var frame map[string]any
 			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
@@ -1994,6 +2016,56 @@ func TestAForkInheritsTheParentsFunctions(t *testing.T) {
 	if len(registered) != 1 || registered[0].Name != "get_weather" {
 		t.Errorf("the fork offers %v", registered)
 	}
+}
+
+// SessionToolsSuite is what a conversation runs once its tools changed while it ran.
+type SessionToolsSuite struct {
+	suite.Suite
+	backend *router
+}
+
+func TestSessionToolsSuite(t *testing.T) {
+	suite.Run(t, new(SessionToolsSuite))
+}
+
+func (s *SessionToolsSuite) SetupTest() {
+	s.backend = newRouter(s.T())
+}
+
+// The router gives a fork of a running session the tools it has now, so the fork runs those:
+// the ones added since it opened, and not the ones taken back.
+func (s *SessionToolsSuite) TestAForkRunsTheToolsTheSessionHasNow() {
+	s.backend.calls = map[string][]map[string]any{"session-2": {
+		{"type": "tool_call", "id": "call-1", "name": "get_weather", "arguments": `{"location":"Oslo"}`},
+		{"type": "tool_call", "id": "call-2", "name": "reserve_table", "arguments": `{"location":"T4"}`},
+	}}
+	agent := s.backend.client(s.T()).Agent("docs")
+	var withdrawnRan atomic.Bool
+	s.Require().NoError(tools.Register(agent.Tools(), "get_weather", "What the weather is",
+		func(context.Context, struct{}) (any, error) {
+			withdrawnRan.Store(true)
+			return "raining", nil
+		}))
+	session, err := agent.Sessions.Create(s.T().Context(), SessionOptions{})
+	s.Require().NoError(err)
+	defer session.Close(s.T().Context())
+	added := tools.NewRegistry()
+	s.Require().NoError(register(added, "reserve_table"))
+	s.Require().NoError(session.AddTools(s.T().Context(), added))
+	s.Require().NoError(session.RemoveTool(s.T().Context(), "get_weather"))
+
+	forked, err := session.Fork(s.T().Context(), ForkOptions{})
+	s.Require().NoError(err)
+
+	want := map[string]any{"type": "tool_result", "tool_call_id": "call-2", "output": "raining in T4"}
+	s.Require().Eventually(func() bool {
+		s.backend.mu.Lock()
+		defer s.backend.mu.Unlock()
+		return slices.ContainsFunc(s.backend.frames, func(frame map[string]any) bool { return reflect.DeepEqual(frame, want) })
+	}, 5*time.Second, 10*time.Millisecond, "the fork's call of the added tool was not answered")
+	// Closing waits for every call the fork started, so one of the withdrawn tool has run by now.
+	s.Require().NoError(forked.Close(s.T().Context()))
+	s.False(withdrawnRan.Load(), "the fork ran a tool the session had withdrawn")
 }
 
 func TestTheModelIsOfferedTheAgentsFunctions(t *testing.T) {

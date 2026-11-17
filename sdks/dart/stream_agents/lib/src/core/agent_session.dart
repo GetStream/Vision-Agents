@@ -104,7 +104,18 @@ final class AgentSession {
 
   final Backend _backend;
   final Sessions _sessions;
+
+  /// The tools whose calls are answered here, by name.
   final Map<String, AgentTool> _tools;
+
+  /// The tools whose adding or removing got no answer that settles it, so the router may or
+  /// may not offer them: none at all, one that cannot be read, or a failure other than a 4xx,
+  /// which a gateway in front of the router can answer after the router made the change.
+  final Set<String> _unsettled = {};
+
+  /// The change of tools under way, which the next one waits for ([_oneAtATime]).
+  Future<void> _changingTools = Future.value();
+
   final _conversation = LiveValueController(const Conversation());
   final _connection = LiveValueController<Connection>(Connection.notStarted);
   final _approvals = LiveValueController<List<ToolApprovalRequest>>(const []);
@@ -255,6 +266,60 @@ final class AgentSession {
   void declineLogin(String toolCallId) =>
       _held().send(ToolApprovalCommand(toolCallId, allowed: false));
 
+  /// Gives the agent more of your tools while the conversation runs, such as the ones a card
+  /// shown in it brings. Their calls are answered here, as those of the tools the session was
+  /// opened with are.
+  ///
+  /// The router waits for the reply in progress, and every call it made, to finish, and the
+  /// model is offered the tools from the next turn. So do not wait for this from inside one of
+  /// this session's tools: it waits for that call. A tool named as one this session already
+  /// has is refused: to change one, [removeTool] it first, so that no call of it runs half
+  /// under each. Only a session this device opened takes tools from it, and a name the agent
+  /// has of its own, such as a connector's tool, is refused.
+  Future<void> addTools(List<AgentTool> tools) async {
+    if (tools.isEmpty) {
+      return;
+    }
+    await _oneAtATime(() async {
+      // A name whose adding was never answered may or may not be the router's: it is
+      // withdrawn first, so the router and this session agree on which tool it is.
+      for (final tool in tools) {
+        if (_unsettled.contains(tool.name)) {
+          await _withdraw(tool.name);
+        }
+      }
+      // Answered from before the router says they are added: the next turn can call one
+      // while that answer is still on its way here. A name already answered here keeps its
+      // handler, since the router refuses to add it again.
+      final added = <String>{};
+      for (final tool in tools) {
+        if (!_tools.containsKey(tool.name)) {
+          _tools[tool.name] = tool;
+          added.add(tool.name);
+        }
+      }
+      try {
+        await addSessionTools(_sessions, id, tools);
+      } on Object catch (error) {
+        if (error case RouterException(status: >= 400 && < 500)) {
+          // Refused, so the router offers none of them.
+          added.forEach(_tools.remove);
+        } else {
+          // Whether the router offers them is unknown, so they stay answered until a later
+          // add or remove of the name settles it.
+          _unsettled.addAll(added);
+        }
+        rethrow;
+      }
+    });
+  }
+
+  /// Withdraws one of your tools, one the session was opened with or one added since. The
+  /// router waits for the reply in progress, and every call it made, to finish, as [addTools]
+  /// does, so once this returns no call of the tool can still arrive, and its handler goes.
+  /// Its name can then be added again, with another tool.
+  Future<void> removeTool(String name) => _oneAtATime(() => _withdraw(name));
+
   /// Puts the agent on this session's own call, `agent:<session id>`, and returns [session]
   /// as it now is.
   Future<Session> startVoice() async => _session = await _sessions.startVoice(id);
@@ -293,15 +358,24 @@ final class AgentSession {
 
   /// Continues this conversation as a new session, leaving this one as it was.
   ///
-  /// The fork keeps this session's tools, since they are here in this process and a
-  /// conversation continued without them would offer the model tools it cannot run. It is
-  /// returned unstarted.
-  Future<AgentSession> fork([ForkOptions options = const ForkOptions()]) async => AgentSession(
-    await _sessions.fork(id, options),
-    backend: _backend,
-    sessions: _sessions,
-    tools: _tools.values.toList(),
-    interim: interim,
+  /// The fork keeps this session's tools as they are now, those added since it opened and not
+  /// those removed, as the router gives it them: they are here in this process, and a
+  /// conversation continued without them would offer the model tools it cannot run. One whose
+  /// adding or removing got no answer that settles it is unsettled in the fork too, so the
+  /// fork's own next change of it settles it. It is returned unstarted.
+  ///
+  /// It waits for a change of tools under way, so the router and the fork are given the same
+  /// ones, and that change waits for the reply in progress and every call it made. So do not
+  /// wait for this from inside one of this session's tools while its tools are changing: it
+  /// waits for that call.
+  Future<AgentSession> fork([ForkOptions options = const ForkOptions()]) => _oneAtATime(
+    () async => AgentSession(
+      await _sessions.fork(id, options),
+      backend: _backend,
+      sessions: _sessions,
+      tools: _tools.values.toList(),
+      interim: interim,
+    ).._unsettled.addAll(_unsettled),
   );
 
   /// Stops the session and closes the socket. Safe to call more than once, and while
@@ -362,6 +436,40 @@ final class AgentSession {
         rethrow;
       }
     }
+  }
+
+  /// Withdraws one of your tools and drops its handler. For a name whose adding or removing
+  /// was never settled, the router having none by that name settles it as well as
+  /// withdrawing it does. Refused with any other 4xx, the tool is left as it was.
+  Future<void> _withdraw(String name) async {
+    try {
+      await removeSessionTool(_sessions, id, name);
+    } on Object catch (error) {
+      switch (error) {
+        case RouterException(status: 404) when _unsettled.contains(name):
+          break;
+        case RouterException(status: >= 400 && < 500):
+          rethrow;
+        default:
+          // Whether the router still offers it is unknown, so it stays answered until a later
+          // add or remove of the name settles it.
+          _unsettled.add(name);
+          rethrow;
+      }
+    }
+    _tools.remove(name);
+    _unsettled.remove(name);
+  }
+
+  /// Runs one change of tools at a time, in the order they were asked for, and a fork between
+  /// them, so the fork is given the tools the router gives it. A handler is put in place
+  /// before the router is asked and taken back when it refuses, so two changes interleaved
+  /// across their requests could take back what the other put in place.
+  Future<T> _oneAtATime<T>(Future<T> Function() change) {
+    final changed = _changingTools.then((_) => change());
+    // The next change waits for this one to finish, however it finished.
+    _changingTools = changed.then((_) {}, onError: (Object _) {});
+    return changed;
   }
 
   void Function() _asked(String text) {

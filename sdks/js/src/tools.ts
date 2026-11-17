@@ -290,8 +290,26 @@ export class Tools {
       parameters,
       parse: isStandard(tool.parameters) ? tool.parameters["~standard"].validate : undefined,
       slots: tool.concurrency ? new Slots(tool.concurrency) : undefined,
+      shared: this.slots,
     });
     return this;
+  }
+
+  /**
+   * @internal The functions named, each as the `Tools` beside it registered it, in a `Tools` of
+   * their own that holds nothing else. Their calls still count against the cap of the one they
+   * were registered in.
+   */
+  static of(functions: Iterable<readonly [string, Tools]>): Tools {
+    const own = new Tools();
+    for (const [name, from] of functions) {
+      const registered = from.registered.get(name);
+      if (!registered) {
+        throw new ConfigurationError(`nothing is registered as ${name}`);
+      }
+      own.registered.set(name, registered);
+    }
+    return own;
   }
 
   /**
@@ -353,7 +371,7 @@ export class Tools {
     if (!registered) {
       throw new ConfigurationError(`nothing is registered as ${name}`);
     }
-    const { tool, parse, slots } = registered;
+    const { tool, parse, slots, shared } = registered;
 
     let input: unknown = {};
     if (args.trim()) {
@@ -401,7 +419,7 @@ export class Tools {
     try {
       // The function's own place first, so its calls waiting their turn hold none of the
       // places every other function needs.
-      for (const places of [slots, this.slots]) {
+      for (const places of [slots, shared]) {
         if (places) {
           await places.take(stopped);
           held.unshift(places);
@@ -490,6 +508,8 @@ interface Registered {
   parse: StandardToolSchema["~standard"]["validate"] | undefined;
   /** The places its calls run in, for a tool that caps them. */
   slots: Slots | undefined;
+  /** The places every call of the `Tools` it was registered in runs in. */
+  shared: Slots;
 }
 
 function isStandard(parameters: unknown): parameters is StandardToolSchema {

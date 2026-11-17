@@ -325,6 +325,28 @@ run = await api.simulations.run(simulation_id)
 run = await api.simulations.runs.get(run.id)
 ```
 
+A running session can be given more tools and have them taken back, for that session alone:
+
+```python
+from vision_agents.core.llm import FunctionRegistry
+
+more = FunctionRegistry()
+
+
+@more.register(description="Reserve a table")
+async def reserve_table(table: str) -> str:
+    return await bookings.reserve(table)
+
+
+await session.add_tools(more)  # offered from the next turn, run here
+await session.remove_tool("reserve_table")  # declared at open or added since
+```
+
+The router first waits for the turn in progress and every call in flight, so never await
+either from inside one of the session's functions. A name the session already has is a 409:
+remove it, then add it again. `stream.Accelerated` has the same two while it is on a call,
+and forgets what was added when it leaves.
+
 Lists page by cursor: each returns `items`, `has_more` and `next_cursor`.
 
 Anything the router refuses, a socket included, raises `RouterError` with the router's

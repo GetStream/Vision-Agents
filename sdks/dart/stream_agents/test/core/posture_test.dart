@@ -52,6 +52,8 @@ void main() {
       ..answer('POST $s/rewind', const Answer(204))
       ..answer('POST $s/stop', const Answer(204))
       ..answer('DELETE $s', const Answer(204))
+      ..answer('POST $s/tools', const Answer(204))
+      ..answer('DELETE $s/tools/now', const Answer(204))
       ..answer(
         'POST /v1/search',
         const Answer(200, {
@@ -78,6 +80,10 @@ void main() {
     await sessions.responses('s1').rewind('r1');
     await sessions.stop('s1');
     await sessions.delete('s1');
+    final chat = await agents.chat();
+    await chat.addTools([AgentTool(name: 'now', description: 'The time.', run: (_) async => '')]);
+    await chat.removeTool('now');
+    await chat.close();
     await agents.router().search('pricing');
     await agents.guestUser();
 
@@ -86,7 +92,7 @@ void main() {
         accessible.any((operation) => operation.$1 == method && operation.$2.hasMatch(path));
     expect(allowed('POST', '/v1/agents/sessions'), isTrue);
     expect(allowed('POST', '/v1/agents/calls/x/token'), isFalse);
-    expect(router.arrived, hasLength(16));
+    expect(router.arrived, hasLength(19));
     expect(
       [
         for (final request in router.arrived)
