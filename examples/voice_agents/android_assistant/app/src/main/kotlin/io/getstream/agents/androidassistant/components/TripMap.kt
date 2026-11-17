@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
@@ -74,6 +75,12 @@ private const val PINS = "trip-pins"
 private const val NAMES = "trip-names"
 
 /**
+ * Told whether a finger is on a trip map, so a screen-wide swipe, such as the drawer's, leaves the
+ * map's pans and pinches to the map.
+ */
+internal val LocalMapTouch = staticCompositionLocalOf<(Boolean) -> Unit> { {} }
+
+/**
  * A plan's places on a map, in the brand's accent. Tapping a pin asks about the place. Drawn as
  * the agent writes it, the map drops the places' pins one after another.
  */
@@ -85,6 +92,7 @@ private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (Trip
     val touchSlop = with(LocalDensity.current) { 12.dp.toPx() }
     val shownPlaces by rememberUpdatedState(places)
     val select by rememberUpdatedState(onSelect)
+    val touching by rememberUpdatedState(LocalMapTouch.current)
     var pinned by remember { mutableIntStateOf(if (dropsPins) 0 else places.size) }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var style by remember { mutableStateOf<Style?>(null) }
@@ -94,7 +102,7 @@ private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (Trip
         // A TextureView, which scrolls and clips with the conversation as a SurfaceView does not.
         MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true)).apply {
             onCreate(null)
-            keepGestures()
+            keepGestures { touching(it) }
             getMapAsync { loaded ->
                 map = loaded
                 loaded.uiSettings.isRotateGesturesEnabled = false
@@ -112,6 +120,8 @@ private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (Trip
         }
     }
     view.FollowLifecycle()
+    // A map that leaves under a finger, as a reply that finishes and is drawn again, sees no lift.
+    DisposableEffect(view) { onDispose { touching(false) } }
 
     // The first pin waits for the map to come in.
     LaunchedEffect(places.size) {
@@ -141,11 +151,20 @@ private fun TripMap(places: List<TripPlace>, dropsPins: Boolean, onSelect: (Trip
     )
 }
 
-/** Keeps a drag that starts on the map on the map, rather than scrolling the conversation. */
+/**
+ * Keeps a drag or a pinch that starts on the map on the map, rather than scrolling the
+ * conversation, and tells [onTouch] while a finger is on it.
+ */
 @SuppressLint("ClickableViewAccessibility") // The map handles the touch itself; this only claims it.
-private fun MapView.keepGestures() {
+private fun MapView.keepGestures(onTouch: (Boolean) -> Unit) {
     setOnTouchListener { touched, event ->
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) touched.parent?.requestDisallowInterceptTouchEvent(true)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                touched.parent?.requestDisallowInterceptTouchEvent(true)
+                onTouch(true)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> onTouch(false)
+        }
         false
     }
 }

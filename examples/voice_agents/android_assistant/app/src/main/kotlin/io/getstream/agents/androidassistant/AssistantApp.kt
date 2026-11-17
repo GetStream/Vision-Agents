@@ -29,6 +29,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.getstream.agents.androidassistant.components.LocalMapTouch
 import kotlinx.coroutines.launch
 
 /**
@@ -111,6 +113,9 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
     val replyFormat by chat.replyFormat.collectAsStateWithLifecycle()
     val brand by chat.brand.collectAsStateWithLifecycle()
     var isSettingsShown by rememberSaveable { mutableStateOf(false) }
+    // While a finger is on a reply's map, a sideways drag pans the map rather than opening the drawer.
+    var isMapTouched by remember { mutableStateOf(false) }
+    val mapTouch = remember { { touched: Boolean -> isMapTouched = touched } }
 
     if (isSettingsShown) {
         SettingsScreen(
@@ -126,7 +131,7 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
     ModalNavigationDrawer(
         drawerState = drawer,
         // Voice mode is over everything, the drawer's edge included.
-        gesturesEnabled = !voiceShown,
+        gesturesEnabled = !voiceShown && !isMapTouched,
         drawerContent = {
             ModalDrawerSheet {
                 ConversationList(
@@ -162,7 +167,9 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
             contentWindowInsets = WindowInsets(0),
         ) { padding ->
             key(screen) {
-                ChatScreen(chat, Modifier.padding(padding).consumeWindowInsets(padding))
+                CompositionLocalProvider(LocalMapTouch provides mapTouch) {
+                    ChatScreen(chat, Modifier.padding(padding).consumeWindowInsets(padding))
+                }
             }
         }
     }
