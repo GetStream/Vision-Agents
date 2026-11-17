@@ -8495,7 +8495,7 @@ export type components = {
             readonly initial_digits?: string;
             /** @description How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default. */
             readonly ring_timeout_seconds?: number;
-            /** @description The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. phone.agent_join_timeout after the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. */
+            /** @description The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off. */
             readonly session_id?: string;
             readonly tags?: {
                 readonly [key: string]: string;
@@ -8503,7 +8503,7 @@ export type components = {
             readonly to: string;
         };
         readonly PlacedCall: {
-            /** @description The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. phone.agent_join_timeout after the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. */
+            /** @description The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off. */
             readonly session_id?: string;
             /** @description The vendor's own word for where the call is, e.g. "queued". */
             readonly status: string;

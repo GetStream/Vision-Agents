@@ -44,8 +44,8 @@ class PlaceCallRequest:
         session_id (str | Unset): The session that holds the call: the answered leg is routed into its call,
             agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen,
             since two calls from the same number are two conversations. Open the session under this id with start_voice.
-            phone.agent_join_timeout after the answer, the router asks Stream who is in the call. If only the person is
-            there, it ends the call. If Stream does not answer, the call continues.
+            After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is
+            there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
         tags (PlaceCallRequestTags | Unset):
     """
 

@@ -2521,9 +2521,10 @@ on.
 
 `POST /v1/phone/calls` makes its own trunk and routing rule and pins the rule to a call, so
 the answered leg lands somewhere an agent can be waiting. The response says which call that
-is, and an agent that is not in it hears nothing when the person picks up. `phone.agent_join_timeout`
-(10 s by default) after the answer, the router asks Stream who is in the call. If only the
-person is there, it ends the call. If Stream does not answer, the call continues.
+is, and an agent that is not in it hears nothing when the person picks up. After
+`phone.agent_join_timeout` (10 s by default) from the answer, the router asks Stream who is in
+the call. If only the person is there, it ends the call. If Stream does not answer, the call
+continues. `0` turns this check off.
 
 Vendors do not agree on what a call can be asked for, so a provider declares which terms its
 API can express and a call naming one it cannot is refused rather than placed without it. A
