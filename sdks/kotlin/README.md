@@ -249,8 +249,8 @@ chat.responses.rewind(turns[0])
 val branch = agents.attach(chat.fork(ForkOptions(responseId = turns[0].id)).id)
 ```
 
-A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
-is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
+A session, typed or spoken, is kept in Stream Chat unless it is `incognito`, and a conversation
+kept there is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
 brought back. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 

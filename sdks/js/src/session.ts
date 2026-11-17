@@ -330,7 +330,7 @@ export class Session {
     return this.created.id;
   }
 
-  /** The conversation replies are written into, for a text session that is not incognito. */
+  /** The conversation replies are written into, typed or spoken. Empty for an incognito session. */
   get conversationId(): string {
     return this.created.conversation_id ?? "";
   }
@@ -884,8 +884,8 @@ export class Session {
     const channel = this.created.conversation_id ?? "";
     if (!channel) {
       throw new ConfigurationError(
-        "this session keeps no transcript, so there is no channel to read: only a text " +
-          "session has one, and an incognito session never does",
+        "this session keeps no transcript, so there is no channel to read: an incognito " +
+          "session never has one",
       );
     }
     // The wire writes the channel as type:id, which is what the backend calls a

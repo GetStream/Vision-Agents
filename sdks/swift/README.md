@@ -11,7 +11,7 @@ It has no views. The views are Stream Chat's AI components, the `StreamChatAI` l
 same `stream-chat-swift` package, which render what the router writes into a conversation's
 channel: the reply streaming in, each round of the model's reasoning, each tool call, and the
 question a tool asks before it runs. Add `StreamChatAI` to the app target beside
-`StreamAgents`; it needs Xcode 27 to add with SPM.
+`StreamAgents`; it builds with Xcode 26 from `stream-chat-swift` 5.17.0.
 
 iOS 15 is the floor. `AgentSession` and `VoiceSession` are `ObservableObject`s, so a view holds
 one with `@StateObject` or `@ObservedObject`, and observing a `VoiceSession` follows its
@@ -46,7 +46,7 @@ _ = try await session.responses.create("And on Sundays?")
 let voice = try await VoiceSession.start(agents: agents, agent: "myagent")
 await voice.join()
 
-// The Stream Chat channel the text session is kept in.
+// The Stream Chat channel the session is kept in.
 let channel = try await session.chat()
 ```
 
@@ -186,7 +186,8 @@ let approver = AIToolApprover(userID: user.id, clientID: AIClientIdentity.instal
 
 In a conversation kept in Stream Chat the call's step carries the question, and
 `AIMessagePartView` asks it with `AIToolApprovalView` for whoever the approver says is signed in.
-On a call there is no channel: show `session.approvals` yourself, with `AIToolApprovalCard`.
+On a call screen that does not show the channel, show `session.approvals` yourself, with
+`AIToolApprovalCard`.
 The router addresses a client tool's question to the install the message came from, which a
 device cannot name yet, so declare a tool that asks first with the default executor.
 
@@ -253,8 +254,8 @@ harder.modelOverwrites = ModelOverwrites(llm: "llm-thinking", thinking: .high)
 let compared = try await session.fork(harder)   // follow it with attach(sessionID:)
 ```
 
-A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
-cannot be rewound, since its transcript would bring the turns back; fork it at the response
+A session, typed or spoken, is kept in Stream Chat unless it is `incognito`, and a conversation
+kept there cannot be rewound, since its transcript would bring the turns back; fork it at the response
 instead. An open `AgentSession` keeps the transcript it
 already showed, so reload it from `responses` after a rewind.
 
