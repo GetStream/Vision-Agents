@@ -253,6 +253,11 @@ func (s *MeteringSuite) TestAWaitOfZeroInTheConfigEndsNoCall() {
 	})
 	s.Require().NoError(err)
 	s.service = service
+	// A wait that ends at once, so a check that runs ends the call inside neverEnded's window,
+	// whatever timeout the service took.
+	done := make(chan time.Time)
+	close(done)
+	s.service.agentWait = func(time.Duration) <-chan time.Time { return done }
 	placed := s.place()
 	s.deployment.PutCallParticipants(placed.CallType, placed.CallID, chattest.Participant{UserID: person, UserSessionID: personSession})
 
