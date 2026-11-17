@@ -144,10 +144,13 @@ func (s *LogAppSuite) TestTheAccessLineOfARouteWithNoOperationNamesItsLogOnlyNam
 	answer := s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/phone/answer/"+token, nil)
 	hook := s.sent(s.unauthenticatedClient, http.MethodPost, "/v1/phone/hooks/stream/"+s.utils.uuid(), nil)
 
+	chatHook := s.sent(s.unauthenticatedClient, http.MethodPost, "/v1/chat/hooks/stream", nil)
+
 	s.Contains(answer, "path=/v1/phone/answer/{token}")
 	s.Equal("PhoneAnswer", s.field(answer, "operation_type"))
 	s.NotContains(answer, token)
 	s.Equal("PhoneHook", s.field(hook, "operation_type"))
+	s.Equal("ChatHook", s.field(chatHook, "operation_type"))
 }
 
 // Defect: the code left off a refusal, or another code than the one the caller was told.
