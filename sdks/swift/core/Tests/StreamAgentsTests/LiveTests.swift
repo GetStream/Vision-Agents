@@ -80,6 +80,48 @@ struct LiveTests {
         #expect(await asked.orders.first?.uppercased() == "A-1042")
     }
 
+    /// A tool given to the session after it opened is offered from the next question, and its
+    /// call runs here as one the session opened with does.
+    @Test func aToolAddedWhileTheConversationRunsIsCalledAndAnswered() async throws {
+        let asked = Asked()
+        let session = try await Live.agents.chat(agent: Live.agent)
+        await session.start()
+        defer { Task { await session.close() } }
+
+        try await session.add(tools: [lookupOrder(asked)])
+        _ = try await session.responses.create("Look up order A-1042 and tell me what is in it.")
+
+        try await until(30) { await asked.orders.isEmpty == false }
+        #expect(await asked.orders.first?.uppercased() == "A-1042")
+    }
+
+    /// A tool withdrawn is not offered again, so the model answers without calling it.
+    @Test func aToolRemovedIsNotCalled() async throws {
+        let asked = Asked()
+        let session = try await Live.agents.chat(agent: Live.agent, tools: [lookupOrder(asked)])
+        await session.start()
+        defer { Task { await session.close() } }
+
+        try await session.remove(toolNamed: "lookup_order")
+        let turn = try await session.responses.create("Look up order A-1042 and tell me what is in it.")
+
+        try await until(30) {
+            (try? await session.responses.list().items.first { $0.id == turn.id }?.status) == .completed
+        }
+        #expect(await asked.orders.isEmpty)
+    }
+
+    private func lookupOrder(_ asked: Asked) -> AgentTool {
+        AgentTool(
+            name: "lookup_order",
+            description: "Look up one of the caller's orders by its order number.",
+            parameters: .strings(["order_id": "the order number"], required: ["order_id"])
+        ) { arguments in
+            await asked.record(arguments["order_id"]?.stringValue ?? "")
+            return "Order A-1042: 2 wool throws, 78.00, delivered 14 August, unopened."
+        }
+    }
+
     /// Asking over HTTP gets an answer the router writes down, without the socket.
     @Test func askingThroughResponsesGetsAnAnswerWrittenDown() async throws {
         let session = try await Live.agents.agent(Live.agent).sessions.create(SessionOptions())

@@ -42,6 +42,8 @@ type recordWrite struct {
 	// model is offered.
 	session *store.AgentSession
 	tools   []store.ToolDefinition
+	// offered is the session whose model is now offered tools.
+	offered string
 	// closed is the session that ended, closedAt when and endReason why.
 	closed    string
 	closedAt  time.Time
@@ -84,6 +86,8 @@ type recorder interface {
 	Voiced(id, callID, callType string)
 	// Chose says a login in the conversation chose a connection for the binding called name.
 	Chose(customerID, id, name, connectionID string)
+	// Offered says the session's model is now offered tools, after its caller's changed.
+	Offered(id string, tools []store.ToolDefinition)
 	// Flush waits until everything said so far has been written, which is what reading the
 	// conversation back straight after it happened needs.
 	Flush(ctx context.Context) error
@@ -139,6 +143,11 @@ func newSessionRecorder(pgStore *store.Store, logger *slog.Logger) *sessionRecor
 // Opened queues the row for a session that has just started.
 func (r *sessionRecorder) Opened(row store.AgentSession, tools []store.ToolDefinition) {
 	r.queueWrite(recordWrite{session: &row, tools: tools})
+}
+
+// Offered queues what a session's model is now offered.
+func (r *sessionRecorder) Offered(id string, tools []store.ToolDefinition) {
+	r.queueWrite(recordWrite{offered: id, tools: tools})
 }
 
 // Closed queues the time a session ended.
@@ -354,6 +363,10 @@ func (r *sessionRecorder) write(write recordWrite) {
 			return
 		}
 		if err := r.store.SaveSessionTools(ctx, write.session.ID, write.tools); err != nil {
+			r.logger.Error("could not record the session's tools", "error", err)
+		}
+	case write.offered != "":
+		if err := r.store.SaveSessionTools(ctx, write.offered, write.tools); err != nil {
 			r.logger.Error("could not record the session's tools", "error", err)
 		}
 	case write.closed != "":

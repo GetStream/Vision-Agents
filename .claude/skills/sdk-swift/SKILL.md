@@ -82,6 +82,9 @@ task owns the object that owns the task, and `deinit` never runs to cancel it.
   generated value into one of ours instead.
 - Answering a tool call must not depend on anybody consuming a public event stream. It happens
   inside `AgentSession`.
+- A tool added while the session runs (`add(tools:)`) answers calls before the router says it
+  is added: the model can be offered it, and call it, while that answer is on its way. A failed
+  add takes the handler back; `remove(toolNamed:)` drops it only once the router has.
 - A tool with an `approval` is not run when its call arrives. The call waits in
   `AgentSession.approvals` until `decide` sends `tool_approval`; then the tool runs (allowed) or
   the call is answered with an error (declined), since the router wants a `tool_result` either

@@ -253,7 +253,7 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
 	reply, unsaid := a.replyLocked(history)
 	heard, measured := a.replyHeardLocked(reply, time.Now())
-	tools := a.options.Tools.Tools
+	tools := a.tools().Tools
 	a.mu.Unlock()
 	return harness.FlowTurn{
 		Instructions: instructions,

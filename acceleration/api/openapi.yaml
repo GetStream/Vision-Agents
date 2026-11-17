@@ -430,6 +430,19 @@ components:
         - added
         - refused
       type: object
+    AddSessionToolsRequest:
+      description: Tools to give a running session's caller.
+      properties:
+        tools:
+          description: The tools, each declared as it is when a session is created. One named as a tool the caller already has replaces it.
+          items:
+            $ref: '#/components/schemas/SessionTool'
+          minItems: 1
+          nullable: true
+          type: array
+      required:
+        - tools
+      type: object
     AddTrunkNumberRequest:
       properties:
         country:
@@ -19603,6 +19616,107 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: List the tools a session's model is offered
+    post:
+      description: |-
+        Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+
+        The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
+      operationId: addSessionTools
+      parameters:
+        - description: The session, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddSessionToolsRequest'
+        required: true
+      responses:
+        "204":
+          description: The model is offered them from its next request
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Give a running session more of the caller's tools
+      x-client-accessible: true
+  /v1/agents/sessions/{id}/tools/{name}:
+    delete:
+      description: 'The model is no longer offered the tool from its next request. A call it made before still goes to the caller to answer. Only the caller''s own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.'
+      operationId: removeSessionTool
+      parameters:
+        - description: The session, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session, as returned when it was created.
+            type: string
+        - description: The tool's name, as the caller declared it.
+          in: path
+          name: name
+          required: true
+          schema:
+            description: The tool's name, as the caller declared it.
+            type: string
+      responses:
+        "204":
+          description: The model is no longer offered it
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Withdraw one of the caller's tools from a running session
+      x-client-accessible: true
   /v1/agents/sessions/{id}/voice:
     delete:
       description: The agent finishes what it is saying, leaves the call and carries the conversation on in writing, with everything said on the call. Stopping voice on a session held in writing changes nothing. Stopping the session is what ends it.

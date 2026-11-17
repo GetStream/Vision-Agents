@@ -112,7 +112,7 @@ func (a *Agent) approvalQuestion(tool harness.Tool) string {
 
 // asksApproval reports whether any tool on offer asks before it runs.
 func (a *Agent) asksApproval() bool {
-	for _, tool := range a.options.Tools.Tools {
+	for _, tool := range a.tools().Tools {
 		if a.approvalQuestion(tool) != "" {
 			return true
 		}
@@ -126,7 +126,7 @@ func (a *Agent) offersConfirm() bool {
 	if a.options.ToolRunner == nil || !a.asksApproval() {
 		return false
 	}
-	_, taken := a.options.Tools.Lookup(confirmTool)
+	_, taken := a.tools().Lookup(confirmTool)
 	return !taken
 }
 

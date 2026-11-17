@@ -7,7 +7,8 @@ import StreamCore
 /// the signed-in user's data, or something only the phone knows, without any of it leaving
 /// the device. The router asks over the session socket and waits for the answer.
 public struct AgentTool: Sendable {
-    /// What the model calls it. Must be unique within a session.
+    /// What the model calls it. Must be unique within a session: one added under a name the
+    /// session has replaces it.
     public let name: String
 
     /// What it is for, in words the model reads to decide whether to call it.
@@ -104,6 +105,23 @@ public struct AgentTool: Sendable {
             name: name, description: description, parameters: parameters, executor: executor,
             displayTitle: displayTitle, approval: approval
         ) { ToolOutput(text: try await run($0)) }
+    }
+}
+
+extension AgentTool {
+    var schema: SessionTool {
+        SessionTool(
+            approval: approval.map {
+                .init(
+                    allowTitle: $0.allowTitle, declineTitle: $0.declineTitle,
+                    message: $0.message, reasonArgument: $0.reasonArgument, title: $0.title)
+            },
+            description: description,
+            displayTitle: displayTitle,
+            executor: executor.map { .init(rawValue: $0.rawValue) },
+            name: name,
+            // A schema that is not an object describes no arguments the router can read.
+            parameters: parameters.map { $0.dictionaryValue ?? [:] })
     }
 }
 

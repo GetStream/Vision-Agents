@@ -649,6 +649,26 @@ func (h *Harness) SetSubagent(open func(context.Context) (*llmrouter.Session, er
 	}
 }
 
+// SetTools replaces what the model is offered from its next request. A call the model asked
+// for before the change is still run; one it asks for afterwards of a tool no longer offered
+// is dropped, as one it invented would be.
+func (h *Harness) SetTools(tools Tools) error {
+	if err := tools.Validate(); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.options.Tools = tools
+	h.mu.Unlock()
+	return nil
+}
+
+// offered is what the model is offered now, for a reader outside h.mu.
+func (h *Harness) offered() Tools {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.options.Tools
+}
+
 // SetOverwrites changes how the model answers from the next turn and the next task.
 func (h *Harness) SetOverwrites(overwrites llmoptions.LLM) {
 	h.mu.Lock()
@@ -703,7 +723,7 @@ func WithImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 // agent's job, because a tool acts on the call and the harness does not know there is one.
 func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
 	for _, call := range calls {
-		tool, known := h.options.Tools.Lookup(call.Name)
+		tool, known := h.offered().Lookup(call.Name)
 		if !known {
 			h.logger.Debug("the model asked for a tool that does not exist", "tool", call.Name)
 			continue
@@ -887,7 +907,7 @@ func (h *Harness) act(turnID string, found directive) {
 		if cancelled {
 			return
 		}
-		if _, offered := h.options.Tools.Lookup(found.skill); offered {
+		if _, offered := h.offered().Lookup(found.skill); offered {
 			h.emitter.Send(ToolDropped{Name: found.skill})
 			return
 		}
@@ -977,7 +997,7 @@ func (h *Harness) act(turnID string, found directive) {
 // then go quiet waiting for a colleague who is not coming. A name that is a tool is run
 // as one. Anything else is a note, so the next turn can tell the caller rather than hang.
 func (h *Harness) actUnknown(turnID string, found directive) {
-	if tool, offered := h.options.Tools.Lookup(found.skill); offered {
+	if tool, offered := h.offered().Lookup(found.skill); offered {
 		if strings.TrimSpace(found.body) == "" {
 			return
 		}
@@ -1006,7 +1026,7 @@ func (h *Harness) actUnknown(turnID string, found directive) {
 // actCall runs a tool the model called in a tag rather than as a tool call, with the tag's
 // attributes as its arguments, or its body when it has none.
 func (h *Harness) actCall(turnID string, found directive) {
-	tool, offered := h.options.Tools.Lookup(found.skill)
+	tool, offered := h.offered().Lookup(found.skill)
 	if !offered {
 		h.logger.Debug("the model called a tool that does not exist", "tool", found.skill)
 		h.mu.Lock()

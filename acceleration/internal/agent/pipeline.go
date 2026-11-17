@@ -176,6 +176,49 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 	return nil
 }
 
+// SetTools replaces what the model may call, from its next request: a reply being written
+// finishes with the tools it started with. A speech-to-speech model that takes its tools only
+// when it opens refuses (sts.ErrToolsFixed), and then nothing changes.
+func (a *Agent) SetTools(tools harness.Tools) error {
+	a.swapping.Lock()
+	defer a.swapping.Unlock()
+
+	a.toolsMu.Lock()
+	previous := a.options.Tools
+	a.options.Tools = tools
+	a.toolsMu.Unlock()
+
+	a.mu.Lock()
+	conversation, speech := a.harness, a.sts
+	a.mu.Unlock()
+	var err error
+	switch {
+	case a.native() && speech != nil:
+		// A native model has a harness only for the work it delegates.
+		var offered []llm.Tool
+		if offered, err = a.nativeTools(conversation != nil); err == nil {
+			err = speech.SetTools(offered)
+		}
+	case conversation != nil:
+		err = conversation.SetTools(a.availableTools())
+	}
+	if err != nil {
+		a.toolsMu.Lock()
+		a.options.Tools = previous
+		a.toolsMu.Unlock()
+		return stack.Wrap(err)
+	}
+	return nil
+}
+
+// tools is what the agent was given to offer, before availableTools drops what this call
+// cannot carry out.
+func (a *Agent) tools() harness.Tools {
+	a.toolsMu.RLock()
+	defer a.toolsMu.RUnlock()
+	return a.options.Tools
+}
+
 // Native reports whether the session is held by one speech-to-speech model.
 func (a *Agent) Native() bool { return a.native() }
 

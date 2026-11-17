@@ -1,5 +1,6 @@
 import EventKit
 import MapKit
+import StreamAgents
 import StreamChatAI
 import SwiftUI
 
@@ -477,11 +478,19 @@ struct DiningTable: Decodable, Hashable {
 
 /// A venue's tables, by zone and seats. Tapping a free one chooses it and asks to reserve it;
 /// a taken one can't be tapped.
+///
+/// The card brings its own tool, `reserve_table`: the agent has no way to book a table until a
+/// card offering tables is on the screen, so the card gives the conversation's session the tool
+/// the first time it shows (`AgentSession.add(tools:)`), and takes it back once a table is
+/// reserved (`AgentSession.remove(toolNamed:)`).
 struct SeatSelector: View {
     let tables: [DiningTable]
     let onSelect: (DiningTable) -> Void
 
     @Environment(\.brand) private var brand
+    /// The conversation the card is shown in, which holds the session its tool is given to. Nil
+    /// where the card is shown outside one.
+    @Environment(AgentChat.self) private var chat: AgentChat?
     @State private var selected: String?
 
     init(tables: [DiningTable], onSelect: @escaping (DiningTable) -> Void) {
@@ -490,9 +499,12 @@ struct SeatSelector: View {
         _selected = State(initialValue: tables.first(where: \.available)?.id)
     }
 
+    /// The table this conversation reserved, which ends what the card is for.
+    private var reservation: Reservation? { chat?.reservation }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Select a table zone")
+            Text(reservation.map { "Reserved \($0.table) · \($0.code)" } ?? "Select a table zone")
                 .font(.subheadline.weight(.semibold))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(tables, id: \.id) { table in
@@ -519,7 +531,7 @@ struct SeatSelector: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(table.available ? .primary : .tertiary)
-                    .disabled(!table.available)
+                    .disabled(!table.available || reservation != nil)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
@@ -527,5 +539,48 @@ struct SeatSelector: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: brand.cornerRadius))
+        .task {
+            guard let chat, chat.reservation == nil else { return }
+            await chat.bring(Self.reserveTable { reservation in await chat.reserved(reservation) })
+        }
     }
+
+    /// What the tool the card brings is called.
+    static let reserveTableTool = "reserve_table"
+
+    /// Reserves one of the card's tables, once the person says it may. `onReserved` hears the
+    /// reservation.
+    static func reserveTable(onReserved: @escaping @Sendable (Reservation) async -> Void) -> AgentTool {
+        AgentTool(
+            name: reserveTableTool,
+            description: "Reserves a table for tonight from the seat selector on the person's screen. "
+                + "Call it when they chose a table, such as by tapping one, with that table's id.",
+            parameters: .strings(
+                [
+                    "table_id": "the id of the table, as the seat selector shows it, such as T4",
+                    "summary": "the table and the party as they would read it, such as Terrace, for 4",
+                ],
+                required: ["table_id", "summary"]),
+            displayTitle: "Reserving your table",
+            approval: .init(
+                title: "Reserve this table?",
+                message: "Juno books it for tonight, under your name.",
+                reasonArgument: "summary",
+                allowTitle: "Reserve",
+                declineTitle: "Not now")
+        ) { arguments in
+            let table = arguments["table_id"]?.stringValue ?? ""
+            guard !table.isEmpty else { throw ToolFailure("Say which table to reserve.") }
+            let reservation = Reservation(table: table, code: String(UUID().uuidString.prefix(6)))
+            await onReserved(reservation)
+            return "Reserved table \(table) for tonight under \(Assistant.user.name ?? "their name"). "
+                + "The confirmation code is \(reservation.code)."
+        }
+    }
+}
+
+/// A table the seat selector's tool reserved.
+struct Reservation: Sendable, Equatable {
+    let table: String
+    let code: String
 }

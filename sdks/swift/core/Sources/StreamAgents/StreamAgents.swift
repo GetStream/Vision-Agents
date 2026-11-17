@@ -252,20 +252,7 @@ public struct StreamAgents: Sendable {
             tags: options.tags.isEmpty ? nil : options.tags,
             timezone: options.timezone,
             title: options.title,
-            tools: options.tools.map {
-                SessionTool(
-                    approval: $0.approval.map {
-                        .init(
-                            allowTitle: $0.allowTitle, declineTitle: $0.declineTitle,
-                            message: $0.message, reasonArgument: $0.reasonArgument, title: $0.title)
-                    },
-                    description: $0.description,
-                    displayTitle: $0.displayTitle,
-                    executor: $0.executor.map { .init(rawValue: $0.rawValue) },
-                    name: $0.name,
-                    // A schema that is not an object describes no arguments the router can read.
-                    parameters: $0.parameters.map { $0.dictionaryValue ?? [:] })
-            },
+            tools: options.tools.map(\.schema),
             tts: options.tts,
             voice: options.voice)
 

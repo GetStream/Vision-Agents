@@ -55,12 +55,12 @@ const defaultToolTimeout = 30 * time.Second
 // work, and the agent apologises for it the same way it would for a failed transfer.
 type bridge struct {
 	timeout time.Duration
-	// timeouts is the tools that name their own, in place of timeout.
-	timeouts map[string]time.Duration
 	// ask publishes the request and reports whether anyone was there to receive it.
 	ask func(ToolCall) error
 
 	mu sync.Mutex
+	// timeouts is the tools that name their own, in place of timeout.
+	timeouts map[string]time.Duration
 	// pending is one channel per call in flight, keyed by the id the model gave it.
 	pending map[string]pendingTool
 	closed  bool
@@ -86,26 +86,36 @@ func newBridge(timeout time.Duration, tools []harness.Tool, ask func(ToolCall) e
 	if timeout <= 0 {
 		timeout = defaultToolTimeout
 	}
+	b := &bridge{
+		timeout: timeout,
+		ask:     ask,
+		pending: map[string]pendingTool{},
+	}
+	b.setTimeouts(tools)
+	return b
+}
+
+// setTimeouts takes the timeouts tools name for themselves, in place of the ones before.
+func (b *bridge) setTimeouts(tools []harness.Tool) {
 	timeouts := map[string]time.Duration{}
 	for _, tool := range tools {
 		if tool.Timeout > 0 {
 			timeouts[tool.Name] = tool.Timeout
 		}
 	}
-	return &bridge{
-		timeout:  timeout,
-		timeouts: timeouts,
-		ask:      ask,
-		pending:  map[string]pendingTool{},
-	}
+	b.mu.Lock()
+	b.timeouts = timeouts
+	b.mu.Unlock()
 }
 
 // Run carries one tool call out to the caller and waits for the answer.
 func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	b.mu.Lock()
 	timeout := b.timeout
 	if own, named := b.timeouts[call.Name]; named {
 		timeout = own
 	}
+	b.mu.Unlock()
 	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	answer := make(chan toolResult, 1)

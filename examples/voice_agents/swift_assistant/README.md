@@ -141,7 +141,8 @@ a change), and `go run ./configure` again, which binds both:
 - **Tools on the phone**: `get_local_context` (date, time, timezone), `get_location` (asks
   first), `list_events` (EventKit), `add_reminder` (asks first), `send_email` (asks first,
   showing who it goes to). Calendar, reminders and location each need the phone's permission
-  too.
+  too. A seat selector card adds `reserve_table` while it is shown (see
+  [Interactive UI](#interactive-ui)).
 
 ## Interactive UI
 
@@ -189,6 +190,16 @@ Ask "Where should we eat in Ohrid tonight?" for the other kind of card: a `Resta
 venue, an `AvailabilityGauge` of how full the first one is and a `SeatSelector` of its tables,
 also the app's own views (`TripComponents.swift`). Tapping a free table asks to reserve it.
 
+- **A card brings its own tool.** The agent cannot book a table until a seat selector is on the
+  screen: the card defines `reserve_table` (`SeatSelector.reserveTable` in `TripComponents.swift`)
+  and gives it to the conversation's session the first time it shows, with
+  `AgentSession.add(tools:)`. Tapping a free table then has the agent call it, which asks first
+  ("Reserve this table?"), and once you allow it the card shows the table and a confirmation
+  code. The card has done what it was for, so it takes the tool back with
+  `AgentSession.remove(toolNamed:)`. To see the difference, ask Juno to reserve a table before any
+  seat selector is shown: it has no tool to do it with. The router's
+  `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists `reserve_table` as
+  `session` while the card's tool is given.
 - **The UI streams in over the socket.** The router sends a reply's UI on the session's socket
   as the model writes it (`ui_delta`, then `ui_completed`), apart from the words people read or
   hear, and writes it on the reply's message in Chat later, on a slower tick. `AgentChat` reads

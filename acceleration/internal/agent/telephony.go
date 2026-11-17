@@ -901,7 +901,7 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 func (a *Agent) availableTools() harness.Tools {
 	var available harness.Tools
 	draws := a.draws()
-	for _, tool := range a.options.Tools.Tools {
+	for _, tool := range a.tools().Tools {
 		if draws && tool.Name == GenerateImageTool {
 			continue
 		}
@@ -951,7 +951,7 @@ func (a *Agent) loadsSkills() bool {
 	if !a.options.Text || a.options.SubagentTarget != "" || len(a.options.Skills.Skills) == 0 {
 		return false
 	}
-	_, declared := a.options.Tools.Lookup(harness.LoadSkillTool)
+	_, declared := a.tools().Lookup(harness.LoadSkillTool)
 	return !declared
 }
 
@@ -999,7 +999,7 @@ func (a *Agent) runsCode() bool {
 	if !a.options.Text || a.options.SubagentTarget != "" || a.options.Sandbox == nil {
 		return false
 	}
-	_, declared := a.options.Tools.Lookup(sandbox.ToolName)
+	_, declared := a.tools().Lookup(sandbox.ToolName)
 	return !declared
 }
 

@@ -47,7 +47,7 @@ public final class AgentSession: ObservableObject {
     /// Where the session lives and who is asking, for the chat channel to connect as.
     let backend: Backend
     private let socket: SessionSocket
-    private let tools: [String: AgentTool]
+    private var tools: [String: AgentTool]
     private var pump: Task<Void, Never>?
     /// Whoever is reading `events()`, each with a stream of their own, or nil once the session
     /// has stopped and there is nothing more to read.
@@ -178,6 +178,41 @@ public final class AgentSession: ObservableObject {
     /// was. Follow the fork with `StreamAgents.attach(sessionID:)`.
     public func fork(_ options: ForkOptions = ForkOptions()) async throws -> Session {
         try await StreamAgents(backend: backend).fork(sessionID: session.id, options)
+    }
+
+    /// Gives the agent more of your tools while the conversation runs, such as the ones a card
+    /// shown in it brings. The model is offered them from its next request, and their calls are
+    /// answered here, as those of the tools the session was opened with are.
+    ///
+    /// A tool named as one this session already has replaces it. Only a session this device
+    /// opened takes tools from it, and a name the agent has of its own, such as a connector's
+    /// tool, is refused.
+    public func add(tools: [AgentTool]) async throws {
+        guard !tools.isEmpty else { return }
+        let replaced = tools.map { self.tools[$0.name] }
+        // Answered from before the router says they are added: the model can be offered them,
+        // and call one, while the answer is still on its way here.
+        for tool in tools {
+            self.tools[tool.name] = tool
+        }
+        let id = session.id
+        let body = AddSessionToolsRequest(tools: tools.map(\.schema))
+        do {
+            try await backend.call { @Sendable in try await $0.addSessionTools(id: id, addSessionToolsRequest: body) }
+        } catch {
+            for (tool, before) in zip(tools, replaced) {
+                self.tools[tool.name] = before
+            }
+            throw error
+        }
+    }
+
+    /// Withdraws one of your tools: the model is no longer offered it from its next request. A
+    /// call of it already running here finishes and is answered.
+    public func remove(toolNamed name: String) async throws {
+        let id = session.id
+        try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
+        tools[name] = nil
     }
 
     /// Answers a call waiting in `approvals`.

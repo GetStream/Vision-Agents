@@ -301,6 +301,8 @@ type Agent struct {
 	switching atomic.Bool
 	// swapping serialises swaps.
 	swapping sync.Mutex
+	// toolsMu guards options.Tools, which SetTools replaces while turns read it.
+	toolsMu sync.RWMutex
 
 	llm *llmrouter.Session
 	// replies is where every reply in flight is fanned in to, so the one goroutine that
@@ -2158,7 +2160,7 @@ func (a *Agent) ask(ready candidate) {
 	if participant == "" {
 		participant = a.speakerLocked(ready.Participant).label
 	}
-	tools := a.options.Tools.Tools
+	tools := a.tools().Tools
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the

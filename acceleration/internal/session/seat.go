@@ -4,7 +4,6 @@ import (
 	"slices"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 )
 
 // Seat is who a watcher is and which of the session's tools it runs.
@@ -25,7 +24,7 @@ type Seat struct {
 // whatever a browser says it holds. A name nobody declared, such as the video frames a
 // phone hands over, goes to every watcher that did not say otherwise.
 func (s *Session) seatRuns(seat Seat, name string) bool {
-	declared := slices.ContainsFunc(s.spec.Tools, func(tool harness.Tool) bool { return tool.Name == name })
+	declared := slices.ContainsFunc(s.declaredTools(), named(name))
 	if declared && s.spec.CallerKind == auth.KindServer && seat.Owner.Kind != auth.KindServer {
 		return false
 	}
