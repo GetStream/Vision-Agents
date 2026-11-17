@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // The person a placed call rings, as Stream names their phone, and the user session it joins with.
@@ -104,29 +106,37 @@ func (s *MeteringSuite) TestAnAgentThatJoinsWithinTheWaitKeepsTheCall() {
 	s.Zero(s.logs.count("INFO", noAgent))
 }
 
-// Stream lists every kind of participant alike. A second phone of the same number is another
-// user session, so it is someone else too.
-func (s *MeteringSuite) TestACallWithSomeoneBesidesThePhoneIsNeverEnded() {
-	for name, other := range map[string]chattest.Participant{
-		"router agent":             {UserID: "agent-1", UserSessionID: "agent-session"},
-		"app user":                 {UserID: "user-42", UserSessionID: "user-session"},
-		"a phone of another":       {UserID: "sip-+15125550199", UserSessionID: "phone-session-2"},
-		"a phone of the same user": {UserID: person, UserSessionID: "phone-session-2"},
-	} {
-		s.Run(name, func() {
-			s.SetupTest()
-			waits := s.agentWaits()
-			placed := s.place()
-			s.deployment.PutCallParticipants(placed.CallType, placed.CallID,
-				chattest.Participant{UserID: person, UserSessionID: personSession}, other)
+// keptWith answers a placed call with other in it beside the phone, and checks that the call
+// continues.
+func (s *MeteringSuite) keptWith(other chattest.Participant) {
+	waits := s.agentWaits()
+	placed := s.place()
+	s.deployment.PutCallParticipants(placed.CallType, placed.CallID,
+		chattest.Participant{UserID: person, UserSessionID: personSession}, other)
 
-			s.answered(placed.CallType, placed.CallID, personSession)
-			s.waitEnds(waits)
+	s.answered(placed.CallType, placed.CallID, personSession)
+	s.waitEnds(waits)
 
-			s.checked("DEBUG", someoneElse)
-			s.False(s.endedAtStream(placed.CallType, placed.CallID))
-		})
-	}
+	s.checked("DEBUG", someoneElse)
+	s.False(s.endedAtStream(placed.CallType, placed.CallID))
+}
+
+func (s *MeteringSuite) TestACallWithARouterAgentInItContinues() {
+	s.keptWith(chattest.Participant{UserID: "agent-1", UserSessionID: "agent-session"})
+}
+
+func (s *MeteringSuite) TestACallWithAnAppUserInItContinues() {
+	s.keptWith(chattest.Participant{UserID: "user-42", UserSessionID: "user-session"})
+}
+
+func (s *MeteringSuite) TestACallWithAnotherPhoneInItContinues() {
+	s.keptWith(chattest.Participant{UserID: "sip-+15125550199", UserSessionID: "phone-session-2"})
+}
+
+// Participants are told apart by user session, so the same number on a second session is
+// someone else.
+func (s *MeteringSuite) TestACallWithTheSamePhoneUserOnAnotherSessionContinues() {
+	s.keptWith(chattest.Participant{UserID: person, UserSessionID: "phone-session-2"})
 }
 
 func (s *MeteringSuite) TestACallThePersonLeftDuringTheWaitIsLeftAlone() {
@@ -172,18 +182,90 @@ func (s *MeteringSuite) TestAPhoneThatJoinedBeforeItsLegWasWrittenIsCheckedToo()
 	s.Eventually(func() bool { return s.endedAtStream(defaultCallType, callID) }, 5*time.Second, 10*time.Millisecond)
 }
 
-// A call that arrived is not one the router placed: the inbound side is checked when it arrives.
-func (s *MeteringSuite) TestACallThatArrivedIsNotChecked() {
-	waits := 0
+// noWait has every agent check run at once, so a check that should not start ends the call
+// before neverEnded looks.
+func (s *MeteringSuite) noWait() {
+	done := make(chan time.Time)
+	close(done)
 	s.service.agentJoinTimeout = 10 * time.Second
-	s.service.agentWait = func(time.Duration) <-chan time.Time {
-		waits++
-		return make(chan time.Time)
-	}
+	s.service.agentWait = func(time.Duration) <-chan time.Time { return done }
+}
+
+// neverEnded checks, over a bounded time, that the call is not ended and that no end is logged.
+func (s *MeteringSuite) neverEnded(callType, callID string) {
+	s.Never(func() bool { return s.endedAtStream(callType, callID) || s.logs.count("INFO", noAgent) > 0 },
+		500*time.Millisecond, 10*time.Millisecond)
+}
+
+// A call that arrived is not one the router placed: the inbound side is checked when it arrives.
+func (s *MeteringSuite) TestACallThatArrivedIsNotCheckedWhenItsCallerJoins() {
+	s.noWait()
 	callID := "call-" + uuid.NewString()
+	s.deployment.PutCallParticipants(defaultCallType, callID, chattest.Participant{UserID: "sip-+15125550125", UserSessionID: "caller-1"})
 	s.arrived(callID)
 
 	s.joined(defaultCallType, callID, "caller-1", "+15125550125")
 
-	s.Zero(waits)
+	s.neverEnded(defaultCallType, callID)
+}
+
+// Most calls that arrive open their leg with the caller already in it.
+func (s *MeteringSuite) TestACallThatArrivedWithItsCallerIsNotChecked() {
+	s.noWait()
+	callID := "call-" + uuid.NewString()
+	s.deployment.PutCallParticipants(defaultCallType, callID, chattest.Participant{UserID: "sip-+15125550125", UserSessionID: "caller-1"})
+
+	s.service.OpenLeg(s.ctx, routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound}},
+		store.CallLeg{CallType: defaultCallType, CallID: callID, StreamSessionID: "session-1", ParticipantSession: "caller-1",
+			Vendor: s.vendor.vendor, Direction: store.Inbound, LocalNumber: s.e164, RemoteNumber: "+15125550125", Country: "US"}, true)
+
+	s.neverEnded(defaultCallType, callID)
+}
+
+// The setting reaches a real timer: a service built from its options, with no test timer, ends
+// an empty call.
+func (s *MeteringSuite) TestTheWaitSetInTheOptionsEndsAnEmptyCall() {
+	service, err := NewService(ServiceOptions{
+		Registry: s.service.registry, Store: s.store, Recorder: s.recorder, Now: s.clock.now,
+		Apps: s.service.apps, Gate: s.service.gate, Logger: s.service.logger,
+		AgentJoinTimeout: 20 * time.Millisecond,
+	})
+	s.Require().NoError(err)
+	s.service = service
+	placed := s.place()
+	s.deployment.PutCallParticipants(placed.CallType, placed.CallID, chattest.Participant{UserID: person, UserSessionID: personSession})
+
+	s.answered(placed.CallType, placed.CallID, personSession)
+
+	s.Eventually(func() bool { return s.endedAtStream(placed.CallType, placed.CallID) }, 5*time.Second, 10*time.Millisecond)
+}
+
+// A router that stops does not end a call after it said it stopped.
+func (s *MeteringSuite) TestCloseStopsAWaitingCheck() {
+	waits := s.agentWaits()
+	placed := s.place()
+	s.deployment.PutCallParticipants(placed.CallType, placed.CallID, chattest.Participant{UserID: person, UserSessionID: personSession})
+	s.answered(placed.CallType, placed.CallID, personSession)
+
+	s.Require().NoError(s.service.Close(s.ctx))
+
+	select {
+	case waits <- time.Now():
+		s.Fail("a check still waited after Close")
+	case <-time.After(500 * time.Millisecond):
+	}
+	s.False(s.endedAtStream(placed.CallType, placed.CallID))
+}
+
+// Stream answers a call whose session has not started with no session at all. The check must
+// not crash the router on it.
+func (s *MeteringSuite) TestACallWithNoSessionIsLeftAlone() {
+	waits := s.agentWaits()
+	placed := s.place()
+	s.answered(placed.CallType, placed.CallID, personSession)
+
+	s.waitEnds(waits)
+
+	s.checked("DEBUG", phoneGone)
+	s.False(s.endedAtStream(placed.CallType, placed.CallID))
 }
