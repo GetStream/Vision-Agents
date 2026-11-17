@@ -59,6 +59,8 @@ func (r *heldRecorder) Described(string, string, string, string, map[string]any)
 
 func (r *heldRecorder) Chose(string, string, string, string) {}
 
+func (r *heldRecorder) ToolTimeout(string, string, int) {}
+
 func (r *heldRecorder) Offered(string, []store.ToolDefinition) {}
 
 func (r *heldRecorder) SawVideo(id string) {

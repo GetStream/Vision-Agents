@@ -2314,6 +2314,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/resume": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Carry a conversation on, with the caller's tool settings
+         * @description Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+         */
+        readonly post: operations["resumeSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/rewind": {
         readonly parameters: {
             readonly query?: never;
@@ -7425,7 +7445,7 @@ export type components = {
             /** @description Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. */
             readonly response_id?: string;
             readonly title?: string;
-            /** @description How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession. */
+            /** @description How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession. */
             readonly tool_timeout_ms?: number;
         };
         readonly GeneratedImage: {
@@ -9219,6 +9239,13 @@ export type components = {
              * @description How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
              */
             readonly max_messages?: number;
+        };
+        /** @description What a caller carrying a conversation on says about its tools, over what it ran with. */
+        readonly ResumeSessionRequest: {
+            /** @description How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds. */
+            readonly tool_timeout_ms?: number;
+            /** @description The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on. */
+            readonly tools?: readonly components["schemas"]["SessionTool"][];
         };
         /**
          * @description Who moved a use case: the app, Stream staff or the vendor.
@@ -17257,6 +17284,44 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentResponseItemPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly resumeSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ResumeSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Session"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

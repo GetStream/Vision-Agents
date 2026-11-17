@@ -166,6 +166,9 @@ type commandRecord struct {
 
 var ErrCommandNotFound = errors.New("command not found")
 
+// ErrAlreadyOpen is a conversation another session holds open.
+var ErrAlreadyOpen = errors.New("conversation is already open")
+
 var ErrCommandConflict = errors.New("command ID was already used with different content")
 
 // ErrResponseRunning is a follow-up refused because a reply is still being written.
@@ -681,7 +684,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		agentID = c.data.Agent
 		if c.active {
 			c.mu.Unlock()
-			return nil, nil, false, stack.Wrap(errors.New("conversation is already open"))
+			return nil, nil, false, stack.Wrap(ErrAlreadyOpen)
 		}
 		in := c.data.StreamApp
 		c.mu.Unlock()

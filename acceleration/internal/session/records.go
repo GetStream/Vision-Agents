@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -65,6 +66,8 @@ type recordWrite struct {
 	voiced *voiced
 	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
 	chose *chose
+	// timed is a running session given a new tool_timeout_ms, nil otherwise.
+	timed *timed
 }
 
 // recorder is what a session needs of the writer behind it, which is less than the writer
@@ -86,6 +89,9 @@ type recorder interface {
 	Voiced(id, callID, callType string)
 	// Chose says a login in the conversation chose a connection for the binding called name.
 	Chose(customerID, id, name, connectionID string)
+	// ToolTimeout says the session was given a new tool_timeout_ms while it ran, by a caller
+	// of kind.
+	ToolTimeout(id, kind string, milliseconds int)
 	// Offered says the session's model is now offered tools, after its caller's changed.
 	Offered(id string, tools []store.ToolDefinition)
 	// Flush waits until everything said so far has been written, which is what reading the
@@ -175,6 +181,18 @@ type chose struct {
 // Chose queues a connection a login chose, behind the row it changes, as Described does.
 func (r *sessionRecorder) Chose(customerID, id, name, connectionID string) {
 	r.queueWrite(recordWrite{chose: &chose{customerID, id, name, connectionID}})
+}
+
+// timed is the tool_timeout_ms a running session was given.
+type timed struct {
+	id, kind     string
+	milliseconds int
+}
+
+// ToolTimeout queues a running session's new tool_timeout_ms behind the row it changes, so a
+// reopen's own row, written first, cannot write the old one back over it.
+func (r *sessionRecorder) ToolTimeout(id, kind string, milliseconds int) {
+	r.queueWrite(recordWrite{timed: &timed{id, kind, milliseconds}})
 }
 
 // SawVideo queues that a session became a video one, behind the row it changes.
@@ -396,6 +414,11 @@ func (r *sessionRecorder) write(write recordWrite) {
 		if err := r.store.ChooseSessionConnection(ctx, c.customerID, c.id, c.name, c.connectionID); err != nil {
 			r.logger.Error("could not record the connection a login chose", "session", c.id, "error", err)
 		}
+	case write.timed != nil:
+		t := write.timed
+		if err := r.store.SetSessionToolTimeout(ctx, t.id, t.kind, t.milliseconds); err != nil {
+			r.logger.Error("could not record the session's tool timeout", "session", t.id, "error", err)
+		}
 	case write.sawVideo != "":
 		if err := r.store.SawVideo(ctx, write.sawVideo); err != nil {
 			r.logger.Error("could not record the session's video", "session", write.sawVideo, "error", err)
@@ -447,6 +470,8 @@ func sessionRow(created *Session) store.AgentSession {
 		ModelOverwrites: spec.ModelOverwrites,
 		ResumeHistory:   spec.ResumeHistory,
 		FloorControl:    spec.FloorControl,
+		ToolTimeoutMs:   spec.ToolTimeoutMs,
+		CallerTools:     StoredTools(spec.Tools),
 		ForkedFrom:      spec.ForkedFrom,
 		ReturnURL:       spec.ReturnURL,
 		State:           store.SessionRunning,
@@ -483,4 +508,44 @@ func toolRows(created *Session) []store.ToolDefinition {
 		})
 	}
 	return rows
+}
+
+// StoredTools are a caller's declared tools as a session's row keeps them, nil for none.
+func StoredTools(tools []harness.Tool) []store.CallerTool {
+	var stored []store.CallerTool
+	for _, tool := range tools {
+		kept := store.CallerTool{
+			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			Client: tool.Client, DisplayTitle: tool.DisplayTitle, Interruptible: tool.Interruptible,
+			TimeoutMs: tool.Timeout.Milliseconds(),
+		}
+		if approval := tool.Approval; approval != nil {
+			kept.Approval = &store.CallerToolApproval{
+				Title: approval.Title, Message: approval.Message, ReasonArgument: approval.ReasonArgument,
+				AllowTitle: approval.AllowTitle, DeclineTitle: approval.DeclineTitle,
+			}
+		}
+		stored = append(stored, kept)
+	}
+	return stored
+}
+
+// DeclaredTools are the tools a session's row keeps as its caller declared them, nil for none.
+func DeclaredTools(stored []store.CallerTool) []harness.Tool {
+	var tools []harness.Tool
+	for _, kept := range stored {
+		tool := harness.Tool{
+			Name: kept.Name, Description: kept.Description, Parameters: kept.Parameters,
+			Client: kept.Client, DisplayTitle: kept.DisplayTitle, Interruptible: kept.Interruptible,
+			Timeout: time.Duration(kept.TimeoutMs) * time.Millisecond,
+		}
+		if approval := kept.Approval; approval != nil {
+			tool.Approval = &harness.ToolApproval{
+				Title: approval.Title, Message: approval.Message, ReasonArgument: approval.ReasonArgument,
+				AllowTitle: approval.AllowTitle, DeclineTitle: approval.DeclineTitle,
+			}
+		}
+		tools = append(tools, tool)
+	}
+	return tools
 }

@@ -6628,7 +6628,7 @@ type ForkSessionRequest struct {
 	ResponseId *string `json:"response_id,omitempty"`
 	Title      *string `json:"title,omitempty"`
 
-	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession.
 	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
 }
 
@@ -8572,6 +8572,15 @@ type ResumeHistory struct {
 
 	// MaxMessages How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
 	MaxMessages *int64 `json:"max_messages,omitempty"`
+}
+
+// ResumeSessionRequest What a caller carrying a conversation on says about its tools, over what it ran with.
+type ResumeSessionRequest struct {
+	// ToolTimeoutMs How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds.
+	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
+
+	// Tools The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on.
+	Tools *[]SessionTool `json:"tools,omitempty"`
 }
 
 // ReviewActor Who moved a use case: the app, Stream staff or the vendor.
@@ -12040,6 +12049,9 @@ type RespondSessionJSONRequestBody = RespondRequest
 // CreateResponseJSONRequestBody defines body for CreateResponse for application/json ContentType.
 type CreateResponseJSONRequestBody = CreateResponseRequest
 
+// ResumeSessionJSONRequestBody defines body for ResumeSession for application/json ContentType.
+type ResumeSessionJSONRequestBody = ResumeSessionRequest
+
 // RewindSessionJSONRequestBody defines body for RewindSession for application/json ContentType.
 type RewindSessionJSONRequestBody = RewindSessionRequest
 
@@ -14485,6 +14497,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 	ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeSessionWithBody Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeSession Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSession(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RewindSessionWithBody Go back to a response and carry on from there
 	//
@@ -19486,6 +19516,44 @@ func (c *Client) GetResponseBranch(ctx context.Context, id string, responseId st
 // Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 func (c *Client) ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListResponseSiblingsRequest(c.Server, id, responseId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeSessionWithBody Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *Client) ResumeSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeSession Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *Client) ResumeSession(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -29359,6 +29427,53 @@ func NewListResponseSiblingsRequest(server string, id string, responseId string,
 	return req, nil
 }
 
+// NewResumeSessionRequest calls the generic ResumeSession builder with application/json body
+func NewResumeSessionRequest(server string, id string, body ResumeSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResumeSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewResumeSessionRequestWithBody constructs an http.Request for the ResumeSession method, with any body, and a specified content type
+func NewResumeSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRewindSessionRequest calls the generic RewindSession builder with application/json body
 func NewRewindSessionRequest(server string, id string, body RewindSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -37495,6 +37610,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 	ListResponseSiblingsWithResponse(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*ListResponseSiblingsResponse, error)
+
+	// ResumeSessionWithBodyWithResponse Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error)
+
+	// ResumeSessionWithResponse Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSessionWithResponse(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error)
 
 	// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 	//
@@ -53101,6 +53234,114 @@ func (r ListResponseSiblingsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListResponseSiblingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ResumeSessionResponse200Headers the declared response headers of an HTTP 200 response for ResumeSession
+type ResumeSessionResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ResumeSessionResponse402Headers the declared response headers of an HTTP 402 response for ResumeSession
+type ResumeSessionResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ResumeSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ResumeSessionResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ResumeSessionResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeSessionResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResumeSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResumeSessionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ResumeSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResumeSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResumeSessionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ResumeSessionResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResumeSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeSessionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -69282,6 +69523,36 @@ func (c *ClientWithResponses) ListResponseSiblingsWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseListResponseSiblingsResponse(rsp)
+}
+
+// ResumeSessionWithBodyWithResponse Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *ClientWithResponses) ResumeSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error) {
+	rsp, err := c.ResumeSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeSessionResponse(rsp)
+}
+
+// ResumeSessionWithResponse Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *ClientWithResponses) ResumeSessionWithResponse(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error) {
+	rsp, err := c.ResumeSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeSessionResponse(rsp)
 }
 
 // RewindSessionWithBodyWithResponse Go back to a response and carry on from there
@@ -88258,6 +88529,132 @@ func ParseListResponseSiblingsResponse(rsp *http.Response) (*ListResponseSibling
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListResponseSiblingsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseResumeSessionResponse parses an HTTP response from a ResumeSessionWithResponse call
+func ParseResumeSessionResponse(rsp *http.Response) (*ResumeSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ResumeSessionResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ResumeSessionResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
