@@ -656,6 +656,7 @@ func (s *PausesSuite) TestAPauseOverTheAgentIsAskedAboutOnceItIsQuiet() {
 	s.say(280, true)
 	s.pausing(200)
 	s.pausing(300)
+	s.idle()
 	decisions, _, _ := s.counts()
 	s.Equal(2, decisions, "one check while the caller talked over the agent, and one at the pause, whose ruling stands while it talks on")
 	s.agent.speaks(false)
