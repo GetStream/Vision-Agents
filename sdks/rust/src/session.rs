@@ -111,7 +111,8 @@ struct Changes {
     added: HashMap<String, Tools>,
     /// The names withdrawn from the session, which its own no longer run.
     withdrawn: HashSet<String>,
-    /// The names whose adding was never answered, which the router may or may not offer.
+    /// The names whose last change the router has not answered, which it may or may not
+    /// offer: one in flight, or one whose answer was lost or never waited for.
     unsettled: HashSet<String>,
 }
 
@@ -272,14 +273,20 @@ impl Session {
 
     /// Gives this running session the functions in `tools`, for this session alone, and runs
     /// their calls here. One named as a tool the session already has is refused: to change
-    /// one, [`Session::remove_tool`] it first, so that no call runs half under each.
+    /// one, [`Session::remove_tool`] it first, so that no call runs half under each. The
+    /// functions are kept as they are now: registering in `tools` afterwards changes nothing
+    /// here.
     ///
     /// The router waits for the turn in progress and every call in flight to finish, and the
     /// model is offered them from the next turn, so do not call this from inside one of this
     /// session's functions. Only the kind of caller that opened the session may, and one
     /// change of its tools runs at a time.
     pub async fn add_tools(&self, tools: Tools) -> Result<()> {
-        let declared = tools.declared();
+        // A copy, so that registering in the caller's registry afterwards cannot change what
+        // a name this session runs does.
+        let copy = Tools::new();
+        tools.copy_into(&copy, |_| true);
+        let declared = copy.declared();
         if declared.is_empty() {
             return Err(Error::configuration("there are no tools to add"));
         }
@@ -289,13 +296,14 @@ impl Session {
         // withdrawn first, so the router and this process agree on which function it is.
         for tool in &declared {
             if self.unsettled(&tool.name) {
-                self.withdraw(&tool.name, true).await?;
+                self.withdraw(&tool.name).await?;
             }
         }
 
         // Run from before the router answers: the next turn can call one before the answer is
         // here. A name already run here keeps its function, since the router refuses to add
-        // it again.
+        // it again. Each is unsettled until the answer is here, since a caller who stops
+        // waiting for it runs nothing after the request.
         let mut fresh = Vec::new();
         {
             let mut changes = self.shared.changes.lock().expect("tools");
@@ -303,7 +311,8 @@ impl Session {
                 if !changes.added.contains_key(&tool.name)
                     && (changes.withdrawn.contains(&tool.name) || !self.tools.has(&tool.name))
                 {
-                    changes.added.insert(tool.name.clone(), tools.clone());
+                    changes.added.insert(tool.name.clone(), copy.clone());
+                    changes.unsettled.insert(tool.name.clone());
                     fresh.push(tool.name.clone());
                 }
             }
@@ -313,15 +322,14 @@ impl Session {
             tools: Some(declared),
         };
         let added = self.client.add_session_tools(self.id(), &request).await;
-        if let Err(error) = &added {
+        // Without an answer the router may have added them, so their calls are still run here
+        // until a later change of the name settles it.
+        if matches!(added, Ok(()) | Err(Error::Router(_))) {
             let mut changes = self.shared.changes.lock().expect("tools");
             for name in fresh {
-                if matches!(error, Error::Router(_)) {
+                changes.unsettled.remove(&name);
+                if added.is_err() {
                     changes.added.remove(&name);
-                } else {
-                    // The router may have added them, so their calls are still run here until
-                    // a later change of the name settles it.
-                    changes.unsettled.insert(name);
                 }
             }
         }
@@ -334,18 +342,38 @@ impl Session {
     /// this session's functions either.
     pub async fn remove_tool(&self, name: &str) -> Result<()> {
         let _changing = self.changing.lock().await;
-        self.withdraw(name, self.unsettled(name)).await
+        self.withdraw(name).await
     }
 
-    /// Takes the tool called `name` from the session and from what runs here. `absent_is_fine`
-    /// settles a name whose adding was never answered: the router having no tool by it is as
-    /// good as withdrawing it.
-    async fn withdraw(&self, name: &str, absent_is_fine: bool) -> Result<()> {
-        match self.client.remove_session_tool(self.id(), name).await {
-            Err(error) if !(absent_is_fine && error.status() == Some(404)) => return Err(error),
-            _ => {}
-        }
+    /// Takes the tool called `name` from the session and from what runs here. For a name
+    /// whose last change was never answered, the router having no tool by it is as good as
+    /// withdrawing it.
+    async fn withdraw(&self, name: &str) -> Result<()> {
+        // Unsettled until the router answers: it may withdraw the tool though the answer never
+        // gets here, and a caller who stops waiting runs nothing after the request.
+        let was_unsettled = !self
+            .shared
+            .changes
+            .lock()
+            .expect("tools")
+            .unsettled
+            .insert(name.into());
+        let withdrawn = self.client.remove_session_tool(self.id(), name).await;
         let mut changes = self.shared.changes.lock().expect("tools");
+        match withdrawn {
+            Ok(()) => {}
+            Err(error) if was_unsettled && error.status() == Some(404) => {}
+            // Refused: the router still has the tool as it was.
+            Err(error @ Error::Router(_)) => {
+                if !was_unsettled {
+                    changes.unsettled.remove(name);
+                }
+                return Err(error);
+            }
+            // No answer: its function still runs here until a later change of the name
+            // settles it.
+            Err(error) => return Err(error),
+        }
         changes.added.remove(name);
         changes.unsettled.remove(name);
         changes.withdrawn.insert(name.into());
@@ -452,17 +480,31 @@ impl Session {
     /// The parent is untouched and keeps its transcript. `response_id` branches from the end
     /// of that response rather than from where the parent is now, which is also how a
     /// conversation kept in Stream Chat is taken back to an earlier point. The fork runs this
-    /// session's functions: a conversation continued without them would offer the model
-    /// tools nothing can run.
+    /// session's functions as they are now, as its own: the ones it opened with less those
+    /// [`Session::remove_tool`] withdrew, and those [`Session::add_tools`] added, since the
+    /// router gives a running session's fork its tools as they are. A conversation continued
+    /// without them would offer the model tools nothing can run. A change of the tools in
+    /// progress is waited for.
     pub async fn fork(&self, request: &types::ForkSessionRequest) -> Result<Session> {
+        // Copied and asked for under the change lock, so the fork runs the tools the router
+        // copies.
+        let changing = self.changing.lock().await;
+        let tools = self.current_tools();
         let forked = self.client.fork_session(self.id(), Some(request)).await?;
-        Session::watching(
-            &self.client,
-            forked,
-            self.tools.clone(),
-            WatchOptions::default(),
-        )
-        .await
+        drop(changing);
+        Session::watching(&self.client, forked, tools, WatchOptions::default()).await
+    }
+
+    /// A registry of the functions that run this session's tools now.
+    fn current_tools(&self) -> Tools {
+        let current = Tools::new();
+        let changes = self.shared.changes.lock().expect("tools");
+        self.tools
+            .copy_into(&current, |name| !changes.withdrawn.contains(name));
+        for (name, added) in &changes.added {
+            added.copy_into(&current, |each| each == name);
+        }
+        current
     }
 
     /// Resolves once the conversation has ended.

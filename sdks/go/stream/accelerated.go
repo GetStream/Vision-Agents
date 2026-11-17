@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -223,8 +224,8 @@ type Pipeline struct {
 	// added are the functions AddTools gave the session after it opened, by name, each in the
 	// registry it was added in; they run here before the session's own of the same name.
 	// withdrawn are the names RemoveTool took from the session, which its own no longer run,
-	// and unsettled the ones whose adding was never answered, which the router may or may not
-	// offer.
+	// and unsettled the ones whose adding or removing was never answered, which the router may
+	// or may not offer.
 	added     map[string]*tools.Registry
 	withdrawn map[string]bool
 	unsettled map[string]bool
@@ -700,8 +701,8 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	p.changing.Lock()
 	defer p.changing.Unlock()
 
-	// A name whose adding was never answered may or may not be the router's: it is withdrawn
-	// first, so the router and this process agree on which function it is.
+	// A name whose last change was never answered may or may not be the router's: it is
+	// withdrawn first, so the router and this process agree on which function it is.
 	for _, tool := range declared {
 		if p.isUnsettled(tool.Name) {
 			if err := p.withdraw(ctx, client, sessionID, tool.Name, true); err != nil {
@@ -729,14 +730,7 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	if err != nil {
 		// The router may have added them, so their calls are still run here until a later
 		// change of the name settles it.
-		p.mu.Lock()
-		if p.unsettled == nil {
-			p.unsettled = map[string]bool{}
-		}
-		for _, name := range fresh {
-			p.unsettled[name] = true
-		}
-		p.mu.Unlock()
+		p.unsettle(fresh...)
 		return fmt.Errorf("stream: adding tools to session %s: %w", sessionID, err)
 	}
 	if added.StatusCode() != http.StatusNoContent {
@@ -767,12 +761,37 @@ func (p *Pipeline) RemoveTool(ctx context.Context, name string) error {
 	return p.withdraw(ctx, client, sessionID, name, p.isUnsettled(name))
 }
 
+// Fork is the pipeline to watch a fork of the session with, once ask has asked the router for
+// it. With no Functions in config, the fork runs the session's tools as they are now, as its
+// own: the ones it opened with less those RemoveTool withdrew, and the ones AddTools added,
+// those whose change was never answered included. That is what the router gives a fork of a
+// running session, and no change of them starts until ask returns, so both copy the same ones.
+func (p *Pipeline) Fork(config Config, ask func() error) (*Pipeline, error) {
+	p.changing.Lock()
+	defer p.changing.Unlock()
+	if err := ask(); err != nil {
+		return nil, err
+	}
+	if config.Functions != nil {
+		return Accelerated(config), nil
+	}
+	config.Functions = p.functions
+	forked := Accelerated(config)
+	p.mu.Lock()
+	forked.added, forked.withdrawn = maps.Clone(p.added), maps.Clone(p.withdrawn)
+	p.mu.Unlock()
+	return forked, nil
+}
+
 // withdraw takes the tool called name from the session and from what runs here. absentIsFine
-// settles a name whose adding was never answered: the router having no tool by it is as good
-// as withdrawing it.
+// settles a name whose last change was never answered: the router having no tool by it is as
+// good as withdrawing it.
 func (p *Pipeline) withdraw(ctx context.Context, client *acceleration.ClientWithResponses, sessionID, name string, absentIsFine bool) error {
 	removed, err := client.RemoveSessionToolWithResponse(ctx, sessionID, name)
 	if err != nil {
+		// The router may have withdrawn it, so its calls are still run here until a later
+		// change of the name settles it.
+		p.unsettle(name)
 		return fmt.Errorf("stream: removing tool %s from session %s: %w", name, sessionID, err)
 	}
 	if removed.StatusCode() != http.StatusNoContent && !(absentIsFine && removed.StatusCode() == http.StatusNotFound) {
@@ -793,6 +812,19 @@ func (p *Pipeline) isUnsettled(name string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.unsettled[name]
+}
+
+// unsettle marks names whose change got no answer, so the next change of each withdraws it
+// first and takes the router having no tool by it as done.
+func (p *Pipeline) unsettle(names ...string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.unsettled == nil {
+		p.unsettled = map[string]bool{}
+	}
+	for _, name := range names {
+		p.unsettled[name] = true
+	}
 }
 
 // noFunctions runs nothing, for a tool the session withdrew.

@@ -108,7 +108,8 @@ final class AgentSession {
   /// The tools whose calls are answered here, by name.
   final Map<String, AgentTool> _tools;
 
-  /// The tools whose adding was never answered, so the router may or may not offer them.
+  /// The tools whose adding or removing was never answered, so the router may or may not
+  /// offer them.
   final Set<String> _unsettled = {};
 
   /// The change of tools under way, which the next one waits for ([_oneAtATime]).
@@ -315,13 +316,7 @@ final class AgentSession {
   /// router waits for the reply in progress, and every call it made, to finish, as [addTools]
   /// does, so once this returns no call of the tool can still arrive, and its handler goes.
   /// Its name can then be added again, with another tool.
-  Future<void> removeTool(String name) => _oneAtATime(() async {
-    if (_unsettled.contains(name)) {
-      return _withdraw(name);
-    }
-    await removeSessionTool(_sessions, id, name);
-    _tools.remove(name);
-  });
+  Future<void> removeTool(String name) => _oneAtATime(() => _withdraw(name));
 
   /// Puts the agent on this session's own call, `agent:<session id>`, and returns [session]
   /// as it now is.
@@ -361,15 +356,19 @@ final class AgentSession {
 
   /// Continues this conversation as a new session, leaving this one as it was.
   ///
-  /// The fork keeps this session's tools, since they are here in this process and a
-  /// conversation continued without them would offer the model tools it cannot run. It is
-  /// returned unstarted.
-  Future<AgentSession> fork([ForkOptions options = const ForkOptions()]) async => AgentSession(
-    await _sessions.fork(id, options),
-    backend: _backend,
-    sessions: _sessions,
-    tools: _tools.values.toList(),
-    interim: interim,
+  /// The fork keeps this session's tools as they are now, those added since it opened and not
+  /// those removed, as the router gives it them: they are here in this process, and a
+  /// conversation continued without them would offer the model tools it cannot run. It waits
+  /// for a change of tools under way, so the router and the fork are given the same ones. It
+  /// is returned unstarted.
+  Future<AgentSession> fork([ForkOptions options = const ForkOptions()]) => _oneAtATime(
+    () async => AgentSession(
+      await _sessions.fork(id, options),
+      backend: _backend,
+      sessions: _sessions,
+      tools: _tools.values.toList(),
+      interim: interim,
+    ),
   );
 
   /// Stops the session and closes the socket. Safe to call more than once, and while
@@ -432,24 +431,31 @@ final class AgentSession {
     }
   }
 
-  /// Withdraws a tool whose adding was never answered: the router having none by that name
-  /// settles it as well as withdrawing it does.
+  /// Withdraws one of your tools and drops its handler. For a name whose adding or removing
+  /// was never answered, the router having none by that name settles it as well as
+  /// withdrawing it does.
   Future<void> _withdraw(String name) async {
     try {
       await removeSessionTool(_sessions, id, name);
     } on RouterException catch (error) {
-      if (error.status != 404) {
+      if (error.status != 404 || !_unsettled.contains(name)) {
         rethrow;
       }
+    } on Object {
+      // Whether the router still offers it is unknown, so it stays answered until a later
+      // add or remove of the name settles it.
+      _unsettled.add(name);
+      rethrow;
     }
     _tools.remove(name);
     _unsettled.remove(name);
   }
 
-  /// Runs one change of tools at a time, in the order they were asked for. A handler is put
-  /// in place before the router is asked and taken back when it refuses, so two changes
-  /// interleaved across their requests could take back what the other put in place.
-  Future<void> _oneAtATime(Future<void> Function() change) {
+  /// Runs one change of tools at a time, in the order they were asked for, and a fork between
+  /// them, so the fork is given the tools the router gives it. A handler is put in place
+  /// before the router is asked and taken back when it refuses, so two changes interleaved
+  /// across their requests could take back what the other put in place.
+  Future<T> _oneAtATime<T>(Future<T> Function() change) {
     final changed = _changingTools.then((_) => change());
     // The next change waits for this one to finish, however it finished.
     _changingTools = changed.then((_) {}, onError: (Object _) {});

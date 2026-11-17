@@ -311,6 +311,10 @@ struct SessionServer {
         let headers: [String: String]
         let body: String
 
+        /// No answer at all: the connection closes once the request has arrived, as though it
+        /// dropped on the way back.
+        static let dropped = Answer(status: 0, headers: [:], body: "")
+
         /// The session `s1`, on the call named `callID` or held in writing when it is empty.
         static func session(status: Int, callID: String) -> Answer {
             Answer(
@@ -433,6 +437,7 @@ struct SessionServer {
     }
 
     private static func respond(_ connection: NWConnection, _ answer: Answer) {
+        guard answer.status != 0 else { return connection.cancel() }
         let body = Data(answer.body.utf8)
         var head = "HTTP/1.1 \(answer.status) \(HTTPURLResponse.localizedString(forStatusCode: answer.status))\r\n"
         for (name, value) in answer.headers.sorted(by: { $0.key < $1.key }) {

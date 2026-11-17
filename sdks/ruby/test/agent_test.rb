@@ -1141,11 +1141,19 @@ class TestSessions < LocalRouterTest
   # Opens a session of an agent with tools, and the lambda that has the router call a tool on
   # it by name: it answers what came back, or nil when nothing did.
   def session_asked(id = "sess_1", tools: VA::Tools.new)
+    script, ask = asking
+    serve_session(id, &script)
+    [client.agent("docs", tools: tools).sessions.create, ask]
+  end
+
+  # A session socket's script that has the router call tools by name, and the lambda that
+  # names one: it answers what came back, or nil when nothing did.
+  def asking
     calls = Thread::Queue.new
     answers = Thread::Queue.new
     (@calls ||= []) << calls
     asked = 0
-    serve_session(id) do |peer|
+    script = lambda do |peer|
       while (name = calls.pop)
         peer.send_frame(type: "tool_call", id: "call_#{asked += 1}", name: name, arguments: "{}")
         answers << peer.receive_type("tool_result", timeout: 0.3)
@@ -1155,7 +1163,19 @@ class TestSessions < LocalRouterTest
       calls << name
       answers.pop(timeout: 5)&.slice("output", "error")
     end
-    [client.agent("docs", tools: tools).sessions.create, ask]
+    [script, ask]
+  end
+
+  # Has the router withdraw reserve_table the first time it is asked and drop the connection
+  # unanswered; from then on it has no tool by that name.
+  def withdrawn_unanswered
+    withdrawn = false
+    @router.on(:delete, RESERVE_TABLE) do
+      next [404, LocalRouter.failure("not_found", "tool_not_found", "no reserve_table")] if withdrawn
+
+      withdrawn = true
+      raise IOError, "dropped"
+    end
   end
 
   def test_a_tool_added_while_the_session_runs_is_declared_and_run_here
@@ -1303,6 +1323,115 @@ class TestSessions < LocalRouterTest
     refute overlapped, "two changes of the session's tools were sent at once"
     assert_equal 2, @router.seen(:post, ADDED).size
     session.close
+  end
+
+  def test_a_tool_whose_removal_got_no_answer_runs_here_until_it_is_removed_again
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+    withdrawn_unanswered
+    session.add_tools(tool("reserve_table", "Reserved T4."))
+
+    assert_equal 0, assert_raises(VA::RouterError) { session.remove_tool("reserve_table") }.status
+    assert_equal 1, @router.seen(:delete, RESERVE_TABLE).size, "the removal was sent again"
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+
+    assert_nil session.remove_tool("reserve_table")
+    assert_nil ask.call("reserve_table")
+    session.close
+  end
+
+  def test_a_tool_whose_removal_got_no_answer_is_withdrawn_before_another_function_takes_its_name
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+    withdrawn_unanswered
+    session.add_tools(tool("reserve_table", "Reserved T4."))
+    assert_raises(VA::RouterError) { session.remove_tool("reserve_table") }
+
+    session.add_tools(tool("reserve_table", "Reserved T9."))
+
+    assert_equal %w[POST DELETE DELETE POST],
+                 @router.requests.select { |request| request.path.start_with?(ADDED) }.map(&:method)
+    assert_equal({ "output" => "Reserved T9." }, ask.call("reserve_table"))
+    session.close
+  end
+
+  def test_an_add_given_up_on_in_flight_runs_here_until_another_takes_its_name
+    session, ask = session_asked
+    held = Thread::Queue.new
+    adds = 0
+    @router.on(:post, ADDED) do
+      # The first is held past the caller's patience, so whether the router took it is unknown.
+      held.pop(timeout: 5) if (adds += 1) == 1
+      [204, nil]
+    end
+    @router.on(:delete, RESERVE_TABLE, status: 204)
+
+    assert_raises(Timeout::Error) { Timeout.timeout(0.2) { session.add_tools(tool("reserve_table", "Reserved T4.")) } }
+    held << true
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+    session.add_tools(tool("reserve_table", "Reserved T9."))
+
+    assert_equal %w[POST DELETE POST],
+                 @router.requests.select { |request| request.path.start_with?(ADDED) }.map(&:method)
+    assert_equal({ "output" => "Reserved T9." }, ask.call("reserve_table"))
+    session.close
+  end
+
+  def test_a_removal_given_up_on_in_flight_runs_here_until_it_is_removed_again
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+    held = Thread::Queue.new
+    removals = 0
+    @router.on(:delete, RESERVE_TABLE) do
+      # The first is held past the caller's patience and then withdrawn; from then on the router
+      # has no tool by that name.
+      next [404, LocalRouter.failure("not_found", "tool_not_found", "no reserve_table")] if (removals += 1) > 1
+
+      held.pop(timeout: 5)
+      [204, nil]
+    end
+    session.add_tools(tool("reserve_table", "Reserved T4."))
+
+    assert_raises(Timeout::Error) { Timeout.timeout(0.2) { session.remove_tool("reserve_table") } }
+    held << true
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+
+    assert_nil session.remove_tool("reserve_table")
+    assert_nil ask.call("reserve_table")
+    session.close
+  end
+
+  def test_an_added_tool_keeps_its_function_when_the_callers_tools_change
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+    extra = tool("reserve_table", "Reserved T4.")
+    session.add_tools(extra)
+
+    extra.register("reserve_table", description: "Runs reserve_table") { "Reserved T9." }
+
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+    session.close
+  end
+
+  def test_a_fork_runs_the_tools_the_session_has_when_it_is_forked
+    parent, = session_asked(tools: tool("weather", "clear"))
+    @router.on(:post, ADDED, status: 204)
+    @router.on(:delete, "/v1/agents/sessions/sess_1/tools/weather", status: 204)
+    @router.on(:post, "/v1/agents/sessions/sess_1/fork", body: { "id" => "sess_2" })
+    script, ask = asking
+    @router.on_socket("/v1/agents/sessions/sess_2/events") do |peer|
+      script.call(peer)
+      peer.close
+    end
+    parent.add_tools(tool("reserve_table", "Reserved T4."))
+    parent.remove_tool("weather")
+
+    fork = parent.fork
+
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+    assert_nil ask.call("weather")
+    fork.close
+    parent.close
   end
 end
 

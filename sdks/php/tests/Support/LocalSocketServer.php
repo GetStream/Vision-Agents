@@ -46,6 +46,8 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
      *     last repeated; -1 drops the connection unanswered, and one not listed is a 404
      */
     public array $answers = [];
+    /** @var array<string, array<string, mixed>> the body a success of `METHOD /path` carries */
+    public array $bodies = [];
     /** @var list<string> each plain HTTP request, as `METHOD /path body` */
     public array $requests = [];
     /** Seconds a plain HTTP request waits for its answer. */
@@ -146,7 +148,7 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
             return new Response(500);
         }
         if ($status < 400) {
-            return new Response($status);
+            return isset($this->bodies[$key]) ? new Response($status, ['content-type' => 'application/json'], Json::encode($this->bodies[$key])) : new Response($status);
         }
         return new Response($status, ['content-type' => 'application/json'], Json::encode(Rows::failure('invalid_request', "the router said {$status}")));
     }

@@ -49,7 +49,8 @@ public final class AgentSession: ObservableObject {
     private let socket: SessionSocket
     /// The tools whose calls are answered here, by name.
     private(set) var tools: [String: AgentTool]
-    /// The tools whose adding was never answered, so the router may or may not offer them.
+    /// The tools whose adding or removal was never answered, so the router may or may not offer
+    /// them.
     private var unsettledTools: Set<String> = []
     /// Whether a change of tools is under way, and the ones waiting for it (`oneAtATime`).
     private var changingTools = false
@@ -199,8 +200,8 @@ public final class AgentSession: ObservableObject {
     public func add(tools: [AgentTool]) async throws {
         guard !tools.isEmpty else { return }
         try await oneAtATime {
-            // A name whose adding was never answered may or may not be the router's: it is
-            // withdrawn first, so the router and this session agree on which tool it is.
+            // A name whose adding or removal was never answered may or may not be the router's:
+            // it is withdrawn first, so the router and this session agree on which tool it is.
             for tool in tools where unsettledTools.contains(tool.name) {
                 try await withdraw(tool.name)
             }
@@ -232,26 +233,27 @@ public final class AgentSession: ObservableObject {
 
     /// Withdraws one of your tools. The router waits for the reply in progress, and every call it
     /// made, to finish, as `add(tools:)` does, so once this returns no call of the tool can still
-    /// arrive, and its handler goes.
+    /// arrive, and its handler goes. If the answer is lost the handler stays, since the router
+    /// may still offer the tool, until the next remove or add of the name settles it.
     public func remove(toolNamed name: String) async throws {
-        try await oneAtATime {
-            if unsettledTools.contains(name) {
-                try await withdraw(name)
-                return
-            }
-            let id = session.id
-            try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
-            tools[name] = nil
-        }
+        try await oneAtATime { try await withdraw(name) }
     }
 
-    /// Withdraws a tool whose adding was never answered: the router having none by that name
-    /// settles it as well as withdrawing it does.
+    /// Withdraws a tool and drops its handler once the router has. A name whose adding or removal
+    /// was never answered is settled by the router having none by it as well as by withdrawing it.
     private func withdraw(_ name: String) async throws {
         let id = session.id
         do {
             try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
-        } catch AgentsError.http(let failure) where failure.status == 404 {
+        } catch AgentsError.http(let failure) where failure.status == 404 && unsettledTools.contains(name) {
+        } catch AgentsError.http(let failure) {
+            // Refused, so the router offers the tool as it did.
+            throw AgentsError.http(failure)
+        } catch {
+            // Whether the router still offers it is unknown, so it stays answered until a later
+            // add or remove of the name settles it.
+            unsettledTools.insert(name)
+            throw error
         }
         tools[name] = nil
         unsettledTools.remove(name)

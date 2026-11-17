@@ -20,6 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -394,6 +395,29 @@ class AgentSessionTest {
     private fun AgentSession.toolRequests() =
         router.requests.filter { it.path.startsWith("/v1/agents/sessions/$id/tools") }.map { "${it.method} ${it.path}" }
 
+    /**
+     * Answers the session's tool requests as the router does for `reserve_table`, which it offers
+     * to begin with when [offered]. The first request [losing] names is acted on and hung up on
+     * before its answer, and a copy of it sent after is answered as one would be: 409 or 404.
+     */
+    private fun offering(offered: Boolean, losing: String): (Arrived) -> Reply {
+        val offers = AtomicBoolean(offered)
+        val lost = AtomicBoolean(false)
+        return {
+            val adding = it.method == "POST"
+            when {
+                !offers.compareAndSet(!adding, adding) ->
+                    if (adding) {
+                        Reply(409, envelope("conflict", "conflict", "the session has a tool named reserve_table"))
+                    } else {
+                        Reply(404, envelope("not_found", "not_found", "no tool by that name"))
+                    }
+                it.method == losing && !lost.getAndSet(true) -> Reply(hangUp = true)
+                else -> Reply(204)
+            }
+        }
+    }
+
     @Test
     fun `a tool the router refused is not answered here`() = runBlocking {
         val chat = agents.chat()
@@ -407,12 +431,13 @@ class AgentSessionTest {
     }
 
     @Test
-    fun `a tool whose adding got no answer is still answered, since the router may offer it`() = runBlocking {
+    fun `an add whose answer is lost is not sent again, and its tool is still answered since the router may offer it`() = runBlocking {
         val chat = agents.chat()
-        router.answer = { Reply(hangUp = true) }
+        router.answer = offering(offered = false, losing = "POST")
 
         assertFailsWith<AgentsException.Transport> { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
 
+        assertEquals(listOf("POST /v1/agents/sessions/s1/tools"), chat.toolRequests())
         assertEquals("Reserve at Chez Nous?", heldFor(chat))
         chat.close()
     }
@@ -438,8 +463,39 @@ class AgentSessionTest {
         chat.addTools(listOf(reserve("Reserve at the Ritz?")))
 
         assertEquals(
-            listOf("DELETE /v1/agents/sessions/s1/tools/reserve_table", "POST /v1/agents/sessions/s1/tools"),
-            chat.toolRequests().takeLast(2),
+            listOf(
+                "POST /v1/agents/sessions/s1/tools",
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
+                "POST /v1/agents/sessions/s1/tools",
+            ),
+            chat.toolRequests(),
+        )
+        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `an add cancelled while it waits for its answer leaves the name to be withdrawn before another tool takes it`() = runBlocking {
+        val chat = agents.chat()
+        val answering = CountDownLatch(1)
+        router.answer = {
+            answering.await(5, TimeUnit.SECONDS)
+            Reply(204)
+        }
+        val adding = async { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+        until { chat.toolRequests().isNotEmpty() }
+
+        adding.cancelAndJoin()
+        answering.countDown()
+        chat.addTools(listOf(reserve("Reserve at the Ritz?")))
+
+        assertEquals(
+            listOf(
+                "POST /v1/agents/sessions/s1/tools",
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
+                "POST /v1/agents/sessions/s1/tools",
+            ),
+            chat.toolRequests(),
         )
         assertEquals("Reserve at the Ritz?", heldFor(chat))
         chat.close()
@@ -455,6 +511,42 @@ class AgentSessionTest {
         chat.removeTool("reserve_table")
 
         assertNull(heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a removal whose answer is lost is not sent again, and removing the name again settles it though the router has none`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(reserve("Reserve at Chez Nous?"))))
+        router.answer = offering(offered = true, losing = "DELETE")
+
+        assertFailsWith<AgentsException.Transport> { chat.removeTool("reserve_table") }
+        assertEquals(listOf("DELETE /v1/agents/sessions/s1/tools/reserve_table"), chat.toolRequests())
+        assertEquals("Reserve at Chez Nous?", heldFor(chat))
+        chat.decide("c1", allowed = false)
+
+        chat.removeTool("reserve_table")
+
+        assertNull(heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a name whose removal got no answer is withdrawn before another tool takes it`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(reserve("Reserve at Chez Nous?"))))
+        router.answer = offering(offered = true, losing = "DELETE")
+        assertFailsWith<AgentsException.Transport> { chat.removeTool("reserve_table") }
+
+        chat.addTools(listOf(reserve("Reserve at the Ritz?")))
+
+        assertEquals(
+            listOf(
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
+                "POST /v1/agents/sessions/s1/tools",
+            ),
+            chat.toolRequests(),
+        )
+        assertEquals("Reserve at the Ritz?", heldFor(chat))
         chat.close()
     }
 

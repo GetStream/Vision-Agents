@@ -94,7 +94,10 @@ left as they are, and no other session gets these:
 
 ```ruby
 extra = GetStream::VisionAgents::Tools.new
-extra.register("reserve_table", description: "Reserve a table") { |args| tables.reserve(args["table"]) }
+extra.register("reserve_table", description: "Reserve a table",
+               parameters: { type: "object", properties: { table: { type: "string" } }, required: ["table"] }) do |args|
+  tables.reserve(args["table"])
+end
 session.add_tools(extra)
 session.remove_tool("reserve_table")
 ```
@@ -102,9 +105,9 @@ session.remove_tool("reserve_table")
 The router waits for the turn in progress and every call in flight, and the model is offered the
 change from the next turn, so neither is called from inside one of the session's tools. A name
 the session already has is refused with a 409: remove it, then add it again. `remove_tool` takes
-the agent's own tools too, and the name can then be added with another function. An add whose
-answer was lost (`RouterError#status` 0) keeps its tools running here until the name is changed
-again.
+the agent's own tools too, and the name can then be added with another function. An add or a
+removal whose answer was lost (`RouterError#status` 0) keeps its tools running here until the
+name is changed again.
 
 ## Credentials
 

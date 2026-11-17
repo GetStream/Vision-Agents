@@ -116,8 +116,10 @@ await session.RemoveToolAsync("reserve_table");
 The router waits for the turn in progress and every call in flight, so never await either from
 inside one of the session's tools. A name the session already has is refused (409): remove it,
 then add it again. One of the agent's tools that is removed runs nothing in that session until a
-function is added under its name. When the answer to an add is lost (`RouterException.Status`
-0), its functions keep running here, and the next add or remove of the name settles it.
+function is added under its name. When the answer to an add or a remove is lost
+(`RouterException.Status` 0, or the call cancelled), the function added, or the one being removed,
+keeps running here, and the next add or remove of the name settles it. A fork runs the tools the
+session has when it forks.
 
 A stored config is changed in place, and only what is set is sent:
 

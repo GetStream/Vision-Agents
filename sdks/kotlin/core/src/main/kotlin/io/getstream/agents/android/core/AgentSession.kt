@@ -67,8 +67,8 @@ public class AgentSession internal constructor(
     /** The tools whose calls are answered here, by name. */
     private val tools = ConcurrentHashMap(tools.associateBy { it.name })
     /**
-     * The tools whose adding was never answered, so the router may or may not offer them. Read
-     * and written holding [changing].
+     * The tools whose adding or removing was never answered, so the router may or may not offer
+     * them. Read and written holding [changing].
      */
     private val unsettled = mutableSetOf<String>()
     /** Held through a change of tools, so that one runs at a time, in the order they were asked for. */
@@ -270,6 +270,7 @@ public class AgentSession internal constructor(
                     listOf("v1", "agents", "sessions", id, "tools"),
                     answer = null,
                     body = wire.encodeToString(AddSessionToolsRequest.serializer(), AddSessionToolsRequest(tools.map { it.schema })),
+                    once = true,
                 )
             } catch (e: AgentsException.Http) {
                 // Refused, so the router offers none of them.
@@ -291,6 +292,9 @@ public class AgentSession internal constructor(
      * [addTools] does, so once this returns no call of the tool can still arrive and its handler
      * goes; never call it from inside one of this session's tools. A name this session has no
      * tool by is a 404. A name withdrawn can be added again, with another handler.
+     *
+     * A request that gets no answer may or may not have withdrawn it, so its calls are still
+     * answered here until removing or adding the name again settles it.
      */
     public suspend fun removeTool(name: String) {
         changing.withLock { withdraw(name) }
@@ -317,13 +321,18 @@ public class AgentSession internal constructor(
 
     /**
      * Asks the router to withdraw a tool, and lets its handler go once it has. For a name whose
-     * adding was never answered, the router having no tool by it settles it as well.
+     * adding or removing was never answered, the router having no tool by it settles it as well.
      */
     private suspend fun withdraw(name: String) {
         try {
-            backend.send<Unit>(HttpMethod.Delete, listOf("v1", "agents", "sessions", id, "tools", name), answer = null)
+            backend.send<Unit>(HttpMethod.Delete, listOf("v1", "agents", "sessions", id, "tools", name), answer = null, once = true)
         } catch (e: AgentsException.Http) {
             if (e.status != 404 || name !in unsettled) throw e
+        } catch (e: Throwable) {
+            // No answer, cancelled waiting for one included: the router may still offer it, so
+            // its calls stay answered until a later remove or add of the name settles it.
+            unsettled += name
+            throw e
         }
         tools.remove(name)
         unsettled.remove(name)

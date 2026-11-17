@@ -47,10 +47,14 @@ type router struct {
 
 	// added are the tools the session was given after it opened, and removed the ones taken
 	// back, in order. toolsWith is the status both are answered with; zero is 204, and a
-	// negative one drops the connection unanswered.
-	added     []acceleration.AddSessionToolsRequest
-	removed   []string
-	toolsWith int
+	// negative one drops the connection unanswered. removeWith, when set, answers a removal in
+	// its place. heard, when set, is closed as the next change arrives, which is then left
+	// unanswered until the caller gives up on it.
+	added      []acceleration.AddSessionToolsRequest
+	removed    []string
+	toolsWith  int
+	removeWith int
+	heard      chan struct{}
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -101,10 +105,16 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		_, _ = fmt.Fprintf(w, `{"error":{"type":"internal","code":"stop_%d","message":"the router said %d"}}`, status, status)
 	})
 
-	answerTools := func(w http.ResponseWriter) {
+	answerTools := func(w http.ResponseWriter, r *http.Request, status int) {
 		backend.mu.Lock()
-		status := backend.toolsWith
+		heard := backend.heard
+		backend.heard = nil
 		backend.mu.Unlock()
+		if heard != nil {
+			close(heard)
+			<-r.Context().Done()
+			return
+		}
 		switch {
 		case status == 0:
 			w.WriteHeader(http.StatusNoContent)
@@ -126,14 +136,19 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		}
 		backend.mu.Lock()
 		backend.added = append(backend.added, request)
+		status := backend.toolsWith
 		backend.mu.Unlock()
-		answerTools(w)
+		answerTools(w, r, status)
 	})
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/tools/{name}", func(w http.ResponseWriter, r *http.Request) {
 		backend.mu.Lock()
 		backend.removed = append(backend.removed, r.PathValue("name"))
+		status := backend.toolsWith
+		if backend.removeWith != 0 {
+			status = backend.removeWith
+		}
 		backend.mu.Unlock()
-		answerTools(w)
+		answerTools(w, r, status)
 	})
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
@@ -626,6 +641,155 @@ func TestAToolWhoseAddingWasNeverAnsweredIsSettledBeforeAnotherTakesItsName(t *t
 	if pipeline.functionsFor("reserve_table") != replacement {
 		t.Error("the function whose adding was never answered still answers the name's calls")
 	}
+}
+
+func TestARemovalWhoseAnswerWasLostIsSettledByTheNextOne(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}, Functions: reserveTable(t)})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	// The router withdraws the tool and the answer is lost.
+	backend.mu.Lock()
+	backend.removeWith = -1
+	backend.mu.Unlock()
+	if err := pipeline.RemoveTool(t.Context(), "reserve_table"); err == nil {
+		t.Fatal("a removal whose answer was lost reported success")
+	}
+	backend.mu.Lock()
+	sent := len(backend.removed)
+	backend.removeWith = http.StatusNotFound
+	backend.mu.Unlock()
+	if sent != 1 {
+		t.Fatalf("the removal reached the router %d times, so a resent one could answer for it", sent)
+	}
+	if !pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Fatal("a tool the router may still offer no longer answers its calls")
+	}
+
+	if err := pipeline.RemoveTool(t.Context(), "reserve_table"); err != nil {
+		t.Fatalf("removing a tool the router had already withdrawn answered %v", err)
+	}
+
+	if pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Error("a removed tool would still answer a call")
+	}
+}
+
+func TestAToolWhoseRemovalWasNeverAnsweredIsSettledBeforeItIsAddedAgain(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err != nil {
+		t.Fatal(err)
+	}
+	backend.mu.Lock()
+	backend.removeWith = -1
+	backend.mu.Unlock()
+	if err := pipeline.RemoveTool(t.Context(), "reserve_table"); err == nil {
+		t.Fatal("a removal whose answer was lost reported success")
+	}
+	backend.mu.Lock()
+	backend.removeWith = http.StatusNotFound
+	backend.mu.Unlock()
+	replacement := reserveTable(t)
+
+	if err := pipeline.AddTools(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	backend.mu.Lock()
+	removed := backend.removed
+	backend.mu.Unlock()
+	if !slices.Equal(removed, []string{"reserve_table", "reserve_table"}) {
+		t.Errorf("the router was asked to remove %v before the name was added again", removed)
+	}
+	if pipeline.functionsFor("reserve_table") != replacement {
+		t.Error("the function whose removal was never answered still answers the name's calls")
+	}
+}
+
+func TestARemovalGivenUpOnInFlightIsSettledByTheNextOne(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}, Functions: reserveTable(t)})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	ctx := cancelledOnArrival(t, backend)
+
+	if err := pipeline.RemoveTool(ctx, "reserve_table"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a removal given up on answered %v", err)
+	}
+	if !pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Fatal("a tool the router may still offer no longer answers its calls")
+	}
+	backend.mu.Lock()
+	backend.removeWith = http.StatusNotFound
+	backend.mu.Unlock()
+
+	if err := pipeline.RemoveTool(t.Context(), "reserve_table"); err != nil {
+		t.Fatalf("removing a tool the router had already withdrawn answered %v", err)
+	}
+}
+
+func TestAnAddGivenUpOnInFlightKeepsItsFunctionUntilTheNameIsSettled(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	ctx := cancelledOnArrival(t, backend)
+	first := reserveTable(t)
+
+	if err := pipeline.AddTools(ctx, first); !errors.Is(err, context.Canceled) {
+		t.Fatalf("an add given up on answered %v", err)
+	}
+	if pipeline.functionsFor("reserve_table") != first {
+		t.Fatal("a tool the router may have taken no longer answers its calls")
+	}
+	backend.mu.Lock()
+	backend.removeWith = http.StatusNotFound
+	backend.mu.Unlock()
+	replacement := reserveTable(t)
+
+	if err := pipeline.AddTools(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	backend.mu.Lock()
+	removed := backend.removed
+	backend.mu.Unlock()
+	if !slices.Equal(removed, []string{"reserve_table"}) {
+		t.Errorf("the router was asked to remove %v before the name was added again", removed)
+	}
+	if pipeline.functionsFor("reserve_table") != replacement {
+		t.Error("the function of the add given up on still answers the name's calls")
+	}
+}
+
+// cancelledOnArrival is a context the caller gives up on once the router has the next change
+// of the tools, which it never answers.
+func cancelledOnArrival(t *testing.T, backend *router) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	heard := make(chan struct{})
+	backend.mu.Lock()
+	backend.heard = heard
+	backend.mu.Unlock()
+	go func() {
+		select {
+		case <-heard:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx
 }
 
 func TestLeavingForgetsTheToolsTheSessionWasGiven(t *testing.T) {

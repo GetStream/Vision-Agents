@@ -9,7 +9,7 @@ import { Speech } from "./speech.js";
 import { ConversationState } from "./state.js";
 import type { ChatClient, VideoClient } from "./stream.js";
 import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
-import type { ToolApproval, Tools } from "./tools.js";
+import { type ToolApproval, Tools } from "./tools.js";
 
 /**
  * How many events are held for one reader of `events()` that has not taken them yet, and for
@@ -222,7 +222,7 @@ export class Session {
    * The functions `addTools` gave this session after it opened, by name, each in the `Tools` it
    * was added in; they run here before the session's own of the same name. `withdrawn` are the
    * names `removeTool` took from the session, which its own no longer run, and `unsettled` the
-   * ones whose adding was never answered, which the router may or may not offer.
+   * ones whose adding or withdrawing was never answered, which the router may or may not offer.
    */
   private readonly added = new Map<string, Tools>();
   private readonly withdrawn = new Set<string>();
@@ -599,7 +599,9 @@ export class Session {
    * Withdraws one of your functions, whether the session was opened with it or it was added
    * since. The router waits as it does for `addTools`, so once this resolves no call of it is in
    * flight and none can be made, and it is no longer run here; do not wait for this from inside
-   * one of this session's functions either. A name you have no tool by is a 404.
+   * one of this session's functions either. A name you have no tool by is a 404. When the answer
+   * is lost, the function goes on being run here, and removing or adding the name again
+   * withdraws it first, a 404 then being as good.
    */
   removeTool(name: string): Promise<void> {
     return this.oneAtATime(() => this.withdraw(name, this.unsettled.has(name)));
@@ -634,22 +636,31 @@ export class Session {
    * The history comes across by default. The fork writes into a channel of its own, so the
    * two do not end up interleaved in one transcript with no way to tell which turn belonged
    * to which. An incognito parent cannot be forked, because there is nothing to fork from.
+   *
+   * The router gives the fork the tools this session offers when it forks, those `addTools`
+   * added included and those `removeTool` withdrew left out, and the fork runs the functions
+   * this session runs for them as its own, unless given `tools`. A change of them under way is
+   * finished first, so do not wait for this from inside one of this session's functions.
    */
   async fork(options: ForkOptions = {}): Promise<Session> {
     const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
-    const forked = await this.client.post("/v1/agents/sessions/{id}/fork", {
-      path: { id: this.id },
-      body: {
-        ...rest,
-        ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
-      },
-    });
     // The fork inherits the parent's tools unless it was given its own: the functions are
     // here in this process, and a conversation continued without them would offer the model
-    // tools it cannot run.
-    const inherited = tools ?? this.tools;
+    // tools it cannot run. They are read, and the fork asked for, between changes of them, so
+    // the fork runs the ones the router copied.
+    const [forked, inherited] = await this.oneAtATime(async () => {
+      const inherited = tools ?? this.current();
+      const forked = await this.client.post("/v1/agents/sessions/{id}/fork", {
+        path: { id: this.id },
+        body: {
+          ...rest,
+          ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
+        },
+      });
+      return [forked, inherited] as const;
+    });
     return Session.startWatching(this.client, forked, {
-      ...(inherited ? { tools: inherited } : {}),
+      tools: inherited,
       ...(interim === undefined ? {} : { interim }),
       ...(decisions === undefined ? {} : { decisions }),
       // A fork of a conversation nothing is watching is not watched either, unless the
@@ -875,22 +886,32 @@ export class Session {
    * function is put in place before the router is asked and taken back when it refuses, so two
    * changes interleaved across their requests could take back what the other put in place.
    */
-  private oneAtATime(change: () => Promise<void>): Promise<void> {
+  private oneAtATime<T>(change: () => Promise<T>): Promise<T> {
     const changed = this.changing.then(change);
-    this.changing = changed.catch(() => undefined);
+    this.changing = changed.then(() => undefined, () => undefined);
     return changed;
   }
 
   /**
    * Takes the tool called `name` from the session and from what runs here. `absentIsFine`
-   * settles a name whose adding was never answered: the router having no tool by it is as good
-   * as withdrawing it.
+   * settles a name whose adding or withdrawing was never answered: the router having no tool
+   * by it is as good as withdrawing it.
    */
   private async withdraw(name: string, absentIsFine: boolean): Promise<void> {
     try {
-      await this.client.delete("/v1/agents/sessions/{id}/tools/{name}", { path: { id: this.id, name } });
+      // Not retried: sent again after its answer was lost, the 404 would say the router had no
+      // tool by the name when it was this request that withdrew it.
+      await this.client.delete("/v1/agents/sessions/{id}/tools/{name}", {
+        path: { id: this.id, name },
+        idempotent: false,
+      });
     } catch (cause) {
       if (!(absentIsFine && cause instanceof RouterError && cause.status === 404)) {
+        // Unanswered, the router may have withdrawn it, so it is still run here until a later
+        // change of the name settles it.
+        if (!(cause instanceof RouterError && cause.status !== 0)) {
+          this.unsettled.add(name);
+        }
         throw cause;
       }
     }
@@ -905,6 +926,23 @@ export class Session {
    */
   private functionsFor(name: string): Tools | undefined {
     return this.added.get(name) ?? (this.withdrawn.has(name) ? undefined : this.tools);
+  }
+
+  /**
+   * The functions that run the session's tools now, in a `Tools` of their own: those it was
+   * opened with less the ones withdrawn, and the ones added since, a name whose change was
+   * never answered included.
+   */
+  private current(): Tools {
+    const running = new Map<string, Tools>();
+    const names = [...(this.tools?.declared() ?? []).map(({ name }) => name), ...this.added.keys()];
+    for (const name of names) {
+      const functions = this.functionsFor(name);
+      if (functions) {
+        running.set(name, functions);
+      }
+    }
+    return Tools.of(running);
   }
 
   /** Tells `conversation` which calls are waiting now. */

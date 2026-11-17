@@ -82,12 +82,12 @@ module GetStream
         @heard = false
         @ended = false
         @running = {}
-        # added are the functions add_tools gave the session after it opened, by name, each in
-        # the Tools it was added in; they run here before the agent's own of the same name.
-        # withdrawn are the names remove_tool took from the session, which the agent's own no
-        # longer run, and unsettled the ones whose adding was never answered, which the router
-        # may or may not offer.
-        @added = {}
+        # added are the functions add_tools gave the session after it opened, copied from the
+        # caller's into a Tools of the session's own; they run here before the agent's own of
+        # the same name. withdrawn are the names remove_tool took from the session, which the
+        # agent's own no longer run, and unsettled the ones whose adding or withdrawing was never
+        # answered, which the router may or may not offer.
+        @added = Tools.new
         @withdrawn = {}
         @unsettled = {}
         # One change of the session's tools at a time, across its request.
@@ -139,9 +139,10 @@ module GetStream
 
       # Continues this conversation as a new one, held in writing.
       #
-      # The parent is untouched. The fork inherits this session's tools, since they are here
-      # in this process and a conversation continued without them would offer the model tools
-      # nothing can run.
+      # The parent is untouched. The fork runs this session's tools as they are now, the ones
+      # it opened with less the ones remove_tool took and with the ones add_tools gave it, as
+      # its own: the router gives the fork the same tools, and a conversation continued without
+      # their functions would offer the model tools nothing can run.
       #
       # @param response_id [String] carry the history only up to the end of this response,
       #   so the fork branches from there. A persistent conversation cannot be rewound; this
@@ -150,8 +151,13 @@ module GetStream
       #   description, project_id, custom, model_overwrites, incognito, messages.
       def fork(response_id: nil, **options)
         body = options.merge(response_id: response_id && Responses.id_of(response_id))
-        forked = @client.post("/v1/agents/sessions/{id}/fork", path: { id: id }, body: body)
-        Session.watching(@client, forked, tools: @tools, **@options)
+        # Copied, and the fork asked for, between changes of the tools, so the router copies
+        # the same ones.
+        tools, forked = @changing.synchronize do
+          [@lock.synchronize { @tools.except(*@withdrawn.keys).merge(@added) },
+           @client.post("/v1/agents/sessions/{id}/fork", path: { id: id }, body: body)]
+        end
+        Session.watching(@client, forked, tools: tools, **@options)
       end
 
       # Changes this session only: its title, description, custom labels, models or voice,
@@ -176,10 +182,12 @@ module GetStream
       # model is offered them from the next turn, so do not call this from inside one of the
       # session's tools. Only the kind of caller that opened the session may.
       #
-      # @param more [Tools] the functions to add.
+      # @param more [Tools] the functions to add, as they are now: one registered in it later
+      #   is not run in their place.
       # @raise [RouterError] when the router refused them, or with status 0 when its answer was
       #   lost, in which case their calls are still run here until the name is changed again.
       def add_tools(more)
+        more = Tools.new.merge(more)
         declared = more.declarations
         raise ConfigurationError, "there are no tools to add" if declared.empty?
 
@@ -193,19 +201,22 @@ module GetStream
           # here. A name already run here keeps its function, since the router refuses to add
           # it again.
           fresh = @lock.synchronize do
-            names.reject { |name| @added.key?(name) || (!@withdrawn[name] && @tools&.include?(name)) }
-                 .each { |name| @added[name] = more }
+            names.reject { |name| @added.include?(name) || (!@withdrawn[name] && @tools&.include?(name)) }
+                 .tap { |picked| @added = @added.merge(more.slice(*picked)) }
           end
+          answered = false
           begin
             @client.post("/v1/agents/sessions/{id}/tools", path: { id: id }, body: { tools: declared })
-          rescue Error => e
-            # Refused, the router has none of them. Without an answer it may have them all, so
-            # their calls are still run here until a later change of the name settles it.
-            refused = e.is_a?(RouterError) && e.status.positive?
-            @lock.synchronize do
-              fresh.each { |name| refused ? @added.delete(name) : (@unsettled[name] = true) }
-            end
+            answered = true
+          rescue RouterError => e
+            # Refused, the router has none of them.
+            answered = e.status.positive?
+            @lock.synchronize { @added = @added.except(*fresh) } if answered
             raise
+          ensure
+            # Without an answer, lost or given up on, the router may have them all, so their
+            # calls are still run here until a later change of the name settles it.
+            @lock.synchronize { fresh.each { |name| @unsettled[name] = true } } unless answered
           end
         end
         nil
@@ -216,7 +227,9 @@ module GetStream
       # this returns no call of the tool is in flight and none can be made: do not call it from
       # inside one of the session's tools.
       #
-      # @raise [RouterError] 404 when the session has no tool by that name.
+      # @raise [RouterError] 404 when the session has no tool by that name, or with status 0 when
+      #   the answer was lost, in which case its calls are still run here until the name is
+      #   changed again.
       def remove_tool(name)
         name = name.to_s
         @changing.synchronize { withdraw(name, absent_is_fine: unsettled?(name)) }
@@ -371,16 +384,25 @@ module GetStream
       end
 
       # Takes the tool called name from the session and from what runs here. absent_is_fine
-      # settles a name whose adding was never answered: the router having no tool by it is as
-      # good as withdrawing it.
+      # settles a name whose last change was never answered: the router having no tool by it is
+      # as good as withdrawing it.
       def withdraw(name, absent_is_fine:)
+        answered = false
         begin
-          @client.delete("/v1/agents/sessions/{id}/tools/{name}", path: { id: id, name: name })
+          # Sent once: one sent again would be answered 404 for the tool the first withdrew.
+          @client.delete("/v1/agents/sessions/{id}/tools/{name}", path: { id: id, name: name }, resend: false)
+          answered = true
         rescue RouterError => e
-          raise unless absent_is_fine && e.status == 404
+          answered = e.status.positive?
+          raise unless answered && absent_is_fine && e.status == 404
+        ensure
+          # Without an answer, lost or given up on, the router may or may not have withdrawn it:
+          # its function still runs here, and the name is withdrawn again, a 404 accepted,
+          # before it changes next.
+          @lock.synchronize { @unsettled[name] = true } unless answered
         end
         @lock.synchronize do
-          @added.delete(name)
+          @added = @added.except(name)
           @unsettled.delete(name)
           @withdrawn[name] = true
         end
@@ -391,10 +413,10 @@ module GetStream
         @lock.synchronize { @unsettled.key?(name) }
       end
 
-      # The Tools that run the tool called name: the ones add_tools added it in, none once
-      # remove_tool withdrew it, else the agent's own.
+      # The Tools that run the tool called name: the session's own once add_tools added it, none
+      # once remove_tool withdrew it, else the agent's.
       def tools_for(name)
-        @lock.synchronize { @added[name] || (@tools unless @withdrawn[name]) }
+        @lock.synchronize { @added.include?(name) ? @added : (@tools unless @withdrawn[name]) }
       end
 
       def reply(frame)

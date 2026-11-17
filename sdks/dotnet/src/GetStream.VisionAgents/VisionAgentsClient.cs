@@ -199,6 +199,15 @@ public sealed class VisionAgentsClient : IDisposable
     public Task DeleteAsync(string path, CancellationToken cancellationToken = default) =>
         SendAsync<Nothing>(HttpMethod.Delete, path, null, null, cancellationToken);
 
+    /// <summary>
+    /// DELETEs a path once. HttpClient sends a request without a body again when its connection
+    /// closes before any answer, taking it for an idle connection the server had dropped, so a
+    /// deletion the router made would come back a 404; one with a body, even an empty one, it
+    /// never sends again, and a lost answer stays lost.
+    /// </summary>
+    internal Task DeleteOnceAsync(string path, CancellationToken cancellationToken) =>
+        SendAsync<Nothing>(HttpMethod.Delete, path, null, new ByteArrayContent([]), cancellationToken);
+
     /// <summary>Disposes the <see cref="HttpClient"/> if this client created it.</summary>
     public void Dispose()
     {
@@ -227,7 +236,7 @@ public sealed class VisionAgentsClient : IDisposable
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         if (body is not null)
         {
-            request.Content = new StringContent(
+            request.Content = body as HttpContent ?? new StringContent(
                 JsonSerializer.Serialize(body, body.GetType(), Json.Options), Encoding.UTF8, "application/json");
         }
 

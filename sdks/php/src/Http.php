@@ -18,6 +18,7 @@ use Http\Discovery\Psr18ClientDiscovery;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
 use Psr\Http\Message\StreamFactoryInterface;
+use WeakMap;
 
 /**
  * Finding a PSR-18 client and the PSR-17 factories that go with it.
@@ -29,6 +30,9 @@ use Psr\Http\Message\StreamFactoryInterface;
  */
 final class Http
 {
+    /** @var ?WeakMap<ClientInterface, ClientInterface> each Amp client `client()` built, to the same one without its retries */
+    private static ?WeakMap $sentOnce = null;
+
     public static function client(): ClientInterface
     {
         return self::found(static function (): ClientInterface {
@@ -39,12 +43,26 @@ final class Http
                 // backoff, so a router that is down took eighteen seconds to say so.
                 $amp = (new HttpClientBuilder())
                     ->usingPool(new UnlimitedConnectionPool(new DefaultConnectionFactory(new DnsSocketConnector())))
-                    ->intercept(new SetRequestTimeout(10, 10, 120, 120))
-                    ->build();
-                return new PsrHttpClient($amp, new PsrAdapter(Psr17FactoryDiscovery::findRequestFactory(), Psr17FactoryDiscovery::findResponseFactory()));
+                    ->intercept(new SetRequestTimeout(10, 10, 120, 120));
+                $adapter = new PsrAdapter(Psr17FactoryDiscovery::findRequestFactory(), Psr17FactoryDiscovery::findResponseFactory());
+                $client = new PsrHttpClient($amp->build(), $adapter);
+                self::$sentOnce ??= new WeakMap();
+                self::$sentOnce[$client] = new PsrHttpClient($amp->retry(0)->build(), $adapter);
+                return $client;
             }
             return Psr18ClientDiscovery::find();
         });
+    }
+
+    /**
+     * The client to send a request with that must not be sent twice. Amp's sends a GET, PUT or
+     * DELETE again when the connection drops before the answer, and the second answer is read
+     * as the first's; this is the same client, on the same connections, without that. A client
+     * the app passed in is used as it is.
+     */
+    public static function sentOnce(ClientInterface $http): ClientInterface
+    {
+        return self::$sentOnce[$http] ?? $http;
     }
 
     public static function requests(): RequestFactoryInterface

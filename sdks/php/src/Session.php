@@ -4,14 +4,13 @@ declare(strict_types=1);
 
 namespace GetStream\VisionAgents;
 
-use Amp\Sync\LocalMutex;
-use Closure;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\AddSessionToolsRequest;
 use GetStream\VisionAgents\Generated\ForkSessionRequest;
 use GetStream\VisionAgents\Generated\SayRequest;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
+use GetStream\VisionAgents\Worker\OneAtATime;
 use GetStream\VisionAgents\Worker\Watch;
 
 /**
@@ -27,11 +26,14 @@ final class Session
     public readonly Responses $responses;
     private bool $closed = false;
     private bool $voice;
+    /** The functions the session was opened with: its agent's, or a fork's copy of its parent's. */
+    private ?Tools $opening;
     /**
-     * The functions `addTools` gave this session, by name, each in the `Tools` it came in; they
-     * run before the agent's own of the same name. `withdrawn` are the names `removeTool` took,
-     * which the agent's own no longer run, and `unsettled` the ones whose adding got no answer,
-     * which the router may or may not offer.
+     * The functions `addTools` gave this session, by name, each in a `Tools` of the session's
+     * own, copied when it was added; they run before the opening ones of the same name.
+     * `withdrawn` are the names `removeTool` took, whose opening ones no longer run, and
+     * `unsettled` the ones whose adding or withdrawing got no answer, which the router may or
+     * may not offer.
      *
      * @var array<string, Tools>
      */
@@ -40,8 +42,12 @@ final class Session
     private array $withdrawn = [];
     /** @var array<string, true> */
     private array $unsettled = [];
-    /** Runs one change of the session's tools at a time, across its requests. */
-    private ?LocalMutex $changing = null;
+    /**
+     * Runs one change of the session's tools at a time, across its requests. A handler is put
+     * in place before the router is asked and taken back when it refuses, so two changes
+     * interleaved could take back what the other put in place.
+     */
+    private readonly OneAtATime $changing;
 
     /**
      * @param ?Agent $agent the agent that opened it, or null for one found by id
@@ -53,6 +59,8 @@ final class Session
     ) {
         $this->responses = new Responses($client, $created->id);
         $this->voice = $created->callId !== '';
+        $this->opening = $agent?->tools;
+        $this->changing = new OneAtATime();
     }
 
     /**
@@ -140,11 +148,20 @@ final class Session
      * What a fork is for is asking the same question differently: from here on with a harder
      * model, of a different agent, or from an earlier answer (`responseId`). The parent is
      * untouched and keeps its own transcript. An incognito parent cannot be forked.
+     *
+     * The router gives the fork the tools this session has now, those added included and those
+     * removed left out, and the fork runs the same functions for them here, as the ones it was
+     * opened with: changing the tools of one afterwards leaves the other's alone.
      */
     public function fork(?ForkSessionRequest $options = null): self
     {
-        $forked = $this->client->post('/v1/agents/sessions/{id}/fork', ['id' => $this->id()], body: ($options ?? new ForkSessionRequest())->toArray());
-        return new self($this->client, SessionRow::fromArray(Json::asObject($forked)), $this->agent);
+        // Between changes, so the router copies the tools the fork is given here.
+        return $this->changing->run(function () use ($options): self {
+            $forked = $this->client->post('/v1/agents/sessions/{id}/fork', ['id' => $this->id()], body: ($options ?? new ForkSessionRequest())->toArray());
+            $fork = new self($this->client, SessionRow::fromArray(Json::asObject($forked)), $this->agent);
+            $fork->opening = $this->current();
+            return $fork;
+        });
     }
 
     /**
@@ -247,9 +264,9 @@ final class Session
         if ($declared === []) {
             throw new ConfigurationException('there are no tools to add');
         }
-        $this->oneAtATime(function () use ($tools, $declared): void {
-            // A name whose adding got no answer may or may not be the router's: it is withdrawn
-            // first, so the router and this process agree on which function it is.
+        $this->changing->run(function () use ($tools, $declared): void {
+            // A name whose adding or withdrawing got no answer may or may not be the router's:
+            // it is withdrawn first, so the router and this process agree on which function it is.
             foreach ($declared as $tool) {
                 if (isset($this->unsettled[$tool->name])) {
                     $this->withdraw($tool->name, true);
@@ -257,11 +274,12 @@ final class Session
             }
             // Run from before the router answers: the next turn can call one before the answer
             // is here. A name already run here keeps its function, since the router refuses to
-            // add it again.
+            // add it again. Each is copied, so a function registered on `$tools` later under its
+            // name is not run in its place.
             $fresh = [];
             foreach ($declared as $tool) {
-                if (!isset($this->added[$tool->name]) && (isset($this->withdrawn[$tool->name]) || $this->agent?->tools->has($tool->name) !== true)) {
-                    $this->added[$tool->name] = $tools;
+                if (!isset($this->added[$tool->name]) && (isset($this->withdrawn[$tool->name]) || $this->opening?->has($tool->name) !== true)) {
+                    $this->added[$tool->name] = Tools::copied([$tool->name => $tools]);
                     $fresh[] = $tool->name;
                 }
             }
@@ -288,24 +306,27 @@ final class Session
      * the tool is in flight and none can arrive; do not call it from inside one of this
      * session's tools.
      *
-     * @throws RouterException 404 when the session has no tool by that name or is not running
+     * @throws RouterException 404 when the session has no tool by that name or is not running,
+     *     or when its answer was lost (`status` 0); its calls are then still run here until the
+     *     name is changed again
      */
     public function removeTool(string $name): void
     {
-        $this->oneAtATime(function () use ($name): void {
+        $this->changing->run(function () use ($name): void {
             $this->withdraw($name, isset($this->unsettled[$name]));
         });
     }
 
     /**
      * The functions that run the tool called `$name` in this process: the ones `addTools` gave
-     * the session, none once `removeTool` took it, else the agent's; null when none here has it.
+     * the session, none once `removeTool` took it, else the ones it was opened with; null when
+     * none here has it.
      *
      * @internal for the session's watcher
      */
     public function toolsFor(string $name): ?Tools
     {
-        $tools = $this->added[$name] ?? (isset($this->withdrawn[$name]) ? null : $this->agent?->tools);
+        $tools = $this->added[$name] ?? (isset($this->withdrawn[$name]) ? null : $this->opening);
         return $tools?->has($name) === true ? $tools : null;
     }
 
@@ -318,9 +339,6 @@ final class Session
         if ($this->closed) {
             return;
         }
-        $this->closed = true;
-        // What addTools and removeTool changed was this session's alone.
-        $this->added = $this->withdrawn = $this->unsettled = [];
         try {
             $this->client->post('/v1/agents/sessions/{id}/stop', ['id' => $this->id()]);
         } catch (RouterException $failed) {
@@ -328,6 +346,11 @@ final class Session
                 throw $failed;
             }
         }
+        // Only once it has stopped: a session that failed to is still running its tools, and
+        // closing it again is asked again.
+        $this->closed = true;
+        // What addTools and removeTool changed was this session's alone.
+        $this->added = $this->withdrawn = $this->unsettled = [];
     }
 
     public function closed(): bool
@@ -342,14 +365,20 @@ final class Session
 
     /**
      * Takes the tool called `$name` from the session and from what runs here. `$absentIsFine`
-     * settles a name whose adding got no answer: the router having no tool by it is as good as
-     * withdrawing it.
+     * settles an unsettled name: the router having no tool by it is as good as withdrawing it.
      */
     private function withdraw(string $name, bool $absentIsFine): void
     {
         try {
-            $this->client->delete('/v1/agents/sessions/{id}/tools/{name}', ['id' => $this->id(), 'name' => $name]);
+            // Sent once: a resent DELETE the router already applied is answered 404.
+            $this->client->request('DELETE', '/v1/agents/sessions/{id}/tools/{name}', ['id' => $this->id(), 'name' => $name], resend: false);
         } catch (RouterException $failed) {
+            if ($failed->status === 0) {
+                // The router may have withdrawn it, so its calls are still run here until a
+                // later change of the name settles it.
+                $this->unsettled[$name] = true;
+                throw $failed;
+            }
             if (!$absentIsFine || $failed->status !== 404) {
                 throw $failed;
             }
@@ -359,20 +388,18 @@ final class Session
     }
 
     /**
-     * Runs one change of the session's tools at a time. A handler is put in place before the
-     * router is asked and taken back when it refuses, so two changes interleaved across their
-     * requests could take back what the other put in place. Only Amp's client suspends a fiber
-     * mid-request, and Amp brings amphp/sync with it.
-     *
-     * @param Closure(): void $change
+     * The functions that run the session's tools now, in a registry of their own: the opening
+     * ones but those withdrawn, and the added ones.
      */
-    private function oneAtATime(Closure $change): void
+    private function current(): Tools
     {
-        $lock = class_exists(LocalMutex::class) ? ($this->changing ??= new LocalMutex())->acquire() : null;
-        try {
-            $change();
-        } finally {
-            $lock?->release();
+        $opening = $this->opening ?? new Tools();
+        $from = [];
+        foreach ($opening->declared() as $tool) {
+            if (!isset($this->withdrawn[$tool->name])) {
+                $from[$tool->name] = $opening;
+            }
         }
+        return Tools::copied($this->added + $from);
     }
 }

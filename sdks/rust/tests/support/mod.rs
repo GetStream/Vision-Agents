@@ -150,7 +150,8 @@ impl Server {
 
     /// Answers `method path` with `status` and `body`. A path ending in `*` answers every
     /// path it prefixes. Registering the same route again queues the answers in order; the
-    /// last one keeps being given. A `status` of 0 drops the connection unanswered.
+    /// last one keeps being given. A `status` of 0 drops the connection unanswered, and one of
+    /// 1 never answers, as a router waiting for a turn to end does.
     pub fn route(&self, method: Method, path: &str, status: u16, body: Value) -> &Self {
         if body.is_null() {
             return self.route_raw(method, path, status, &[], "");
@@ -321,6 +322,7 @@ async fn handle(
             Err::<Bytes, _>(std::io::Error::other("the connection dropped"))
         }))
         .into_response(),
+        Some((1, _, _)) => std::future::pending().await,
         Some((status, headers, body)) => {
             let mut response = (StatusCode::from_u16(status).unwrap(), body).into_response();
             for (name, value) in headers {

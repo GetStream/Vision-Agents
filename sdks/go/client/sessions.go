@@ -589,8 +589,9 @@ type ForkOptions struct {
 	// that ended has the router's default of 30 seconds.
 	ToolTimeout time.Duration
 
-	// Tools are the fork's own. Nil inherits this session's, since a conversation continued
-	// without them would offer the model tools nothing can run.
+	// Tools are the fork's own. Nil inherits this session's as they are now, the ones AddTools
+	// added and not the ones RemoveTool withdrew, since the router offers the fork those and a
+	// conversation continued without them would offer the model tools nothing can run.
 	Tools  *tools.Registry
 	Logger *slog.Logger
 }
@@ -602,7 +603,8 @@ type ForkOptions struct {
 // there. The parent is untouched and keeps its own transcript; the fork writes its own, so
 // continuing a conversation twice gives two readable transcripts rather than one with both
 // halves interleaved. An incognito conversation cannot be forked, because there is nothing to
-// fork from.
+// fork from. AddTools and RemoveTool wait for a fork being asked for, so the fork is given the
+// tools the router copies into it. See stream.Pipeline.Fork.
 func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, error) {
 	api, err := s.client.api()
 	if err != nil {
@@ -635,26 +637,28 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		request.ToolTimeoutMs = &milliseconds
 	}
 
-	forked, err := api.ForkSessionWithResponse(ctx, s.ID(), request)
-	if err != nil {
-		return nil, fmt.Errorf("client: forking the session %s: %w", s.ID(), err)
-	}
-	if forked.JSON201 == nil {
-		return nil, failure("forking the session "+s.ID(), forked.HTTPResponse, forked.Body)
-	}
-
-	functions := options.Tools
-	if functions == nil {
-		functions = s.pipeline.Functions()
-	}
 	// The fork is a conversation of its own with its own socket, so it gets its own pipeline
 	// rather than moving this one onto it: the parent is still being held.
-	pipeline := stream.Accelerated(stream.Config{
+	var forked *acceleration.Session
+	pipeline, err := s.pipeline.Fork(stream.Config{
 		Backend:   s.client.backend,
-		Functions: functions,
+		Functions: options.Tools,
 		Logger:    options.Logger,
+	}, func() error {
+		answered, err := api.ForkSessionWithResponse(ctx, s.ID(), request)
+		if err != nil {
+			return fmt.Errorf("client: forking the session %s: %w", s.ID(), err)
+		}
+		if answered.JSON201 == nil {
+			return failure("forking the session "+s.ID(), answered.HTTPResponse, answered.Body)
+		}
+		forked = answered.JSON201
+		return nil
 	})
-	if err := pipeline.Watch(ctx, forked.JSON201); err != nil {
+	if err != nil {
+		return nil, err
+	}
+	if err := pipeline.Watch(ctx, forked); err != nil {
 		return nil, err
 	}
 
@@ -662,7 +666,7 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 	if options.Agent != "" && options.Agent != agent.name {
 		agent = s.client.Agent(options.Agent)
 	}
-	return newSession(s.client, agent, pipeline, forked.JSON201), nil
+	return newSession(s.client, agent, pipeline, forked), nil
 }
 
 // Chat is Stream Chat, opened on this conversation's transcript.

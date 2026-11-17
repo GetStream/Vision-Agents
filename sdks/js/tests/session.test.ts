@@ -906,6 +906,11 @@ describe("Session", () => {
 
   describe("functions given while it runs", () => {
     const TOOLS = "/v1/agents/sessions/sess_1/tools";
+    const FORK = "/v1/agents/sessions/sess_1/fork";
+    const forked = {
+      status: 201,
+      body: { id: "sess_2", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" },
+    };
     const refusal = (status: number, code: string) => ({
       status,
       body: { error: { message: `the router said ${status}`, type: "conflict", code } },
@@ -999,12 +1004,54 @@ describe("Session", () => {
       await assert.rejects(session.addTools(reserving("Reserved")), (cause: unknown) =>
         cause instanceof RouterError && cause.status === 0,
       );
+      // Sent again, it would be refused with a 409 and read as never added.
+      assert.equal(router.requestsTo("POST", TOOLS).length, 1);
       // The router may have added it, and the model is waiting on whatever it calls.
       assert.equal(await reservation(connection), "Reserved T4.");
 
       await session.removeTool("reserve_table");
 
       assert.equal(await reservation(connection), undefined);
+      await session.close();
+    });
+
+    it("keeps running a function whose removal got no answer, and takes a 404 as withdrawn next time", async () => {
+      const [session, connection] = await opened(own().register(reserveTable("Held")));
+      // The router withdraws it and the answer is lost: asked again, it has no tool by the name.
+      router.serve("DELETE", `${TOOLS}/reserve_table`, (_, calls) =>
+        calls === 0 ? { drop: true } : refusal(404, "tool_not_found"),
+      );
+
+      await assert.rejects(session.removeTool("reserve_table"), (cause: unknown) =>
+        cause instanceof RouterError && cause.status === 0,
+      );
+      // Sent again, the 404 would be read as the session never having had it.
+      assert.equal(router.requestsTo("DELETE", `${TOOLS}/reserve_table`).length, 1);
+      // The router may still offer it, and the model is waiting on whatever it calls.
+      assert.equal(await reservation(connection), "Held T4.");
+
+      await session.removeTool("reserve_table");
+
+      assert.equal(await reservation(connection), undefined);
+      await session.close();
+    });
+
+    it("withdraws a name whose removal got no answer before adding it again, and runs the new function", async () => {
+      const [session, connection] = await opened(own());
+      router.serve("POST", TOOLS, { status: 204 });
+      await session.addTools(reserving("Reserved"));
+      router.serve("DELETE", `${TOOLS}/reserve_table`, { drop: true });
+      await assert.rejects(session.removeTool("reserve_table"));
+      // The router did withdraw it, so it takes the name again rather than refusing it.
+      router.serve("DELETE", `${TOOLS}/reserve_table`, refusal(404, "tool_not_found"));
+
+      await session.addTools(reserving("Booked"));
+
+      assert.deepEqual(
+        router.received.filter(({ path }) => path.startsWith(TOOLS)).map(({ method, path }) => `${method} ${path}`),
+        [`POST ${TOOLS}`, `DELETE ${TOOLS}/reserve_table`, `DELETE ${TOOLS}/reserve_table`, `POST ${TOOLS}`],
+      );
+      assert.equal(await reservation(connection), "Booked T4.");
       await session.close();
     });
 
@@ -1077,6 +1124,95 @@ describe("Session", () => {
       await assert.rejects(refused, (cause: unknown) => cause instanceof RouterError && cause.status === 409);
       await added;
       assert.equal(await reservation(connection), "Booked T4.");
+      await session.close();
+    });
+
+    it("hands a fork the functions it runs now, since the router copies the tools it offers now", async () => {
+      const [session] = await opened(own().register(reserveTable("Held")));
+      router.serve("POST", TOOLS, { status: 204 });
+      router.serve("DELETE", `${TOOLS}/reserve_table`, { status: 204 });
+      router.serve("POST", FORK, forked);
+      const cancel = new Tools().register({ name: "cancel_table", description: "Cancel a table", run: () => "Cancelled." });
+      await session.addTools(cancel);
+      await session.removeTool("reserve_table");
+
+      const forking = session.fork();
+      const forkConnection = await router.socket();
+      const fork = await forking;
+
+      // lookup, which the fork runs too, answered first would mean cancel_table was left alone.
+      forkConnection.send({ type: "tool_call", id: "cancel_1", name: "cancel_table", arguments: "{}" });
+      forkConnection.send({ type: "tool_call", id: "lookup_0", name: "lookup", arguments: "{}" });
+      const first = await forkConnection.next();
+      assert.deepEqual([first["tool_call_id"], first["output"]], ["cancel_1", "Cancelled."]);
+      assert.equal((await forkConnection.next())["output"], "found");
+      assert.equal(await reservation(forkConnection), undefined);
+      await fork.close();
+      await session.close();
+    });
+
+    it("forks once a change of its tools under way is done, so the fork runs what the router copied", async () => {
+      const [session] = await opened(own().register(reserveTable("Held")));
+      let answer = (): void => undefined;
+      const answering = new Promise<void>((resolve) => {
+        answer = resolve;
+      });
+      router.serve("DELETE", `${TOOLS}/reserve_table`, async () => {
+        await answering;
+        return { status: 204 };
+      });
+      router.serve("POST", FORK, forked);
+      const removing = session.removeTool("reserve_table");
+      await until(() => router.requestsTo("DELETE", `${TOOLS}/reserve_table`).length === 1);
+
+      const forking = session.fork();
+      answer();
+      await removing;
+      const forkConnection = await router.socket();
+      const fork = await forking;
+
+      assert.equal(await reservation(forkConnection), undefined);
+      await fork.close();
+      await session.close();
+    });
+
+    it("runs a fork's calls within the cap on calls at once that its functions were given", async () => {
+      let release = (): void => undefined;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started = 0;
+      const capped = new Tools().setConcurrency(1).register({
+        name: "lookup",
+        description: "Look it up",
+        run: async () => {
+          started += 1;
+          await released;
+          return "found";
+        },
+      });
+      const [session, connection] = await opened(capped);
+      router.serve("POST", TOOLS, { status: 204 });
+      router.serve("POST", FORK, forked);
+      await session.addTools(reserving("Reserved"));
+      const forking = session.fork();
+      const forkConnection = await router.socket();
+      const fork = await forking;
+
+      // The session's call takes the one place. The fork's waits for it, and a call of the
+      // function added in a `Tools` of its own does not: frames are read in order, so once that
+      // one is answered the fork has read the call waiting.
+      connection.send({ type: "tool_call", id: "lookup_1", name: "lookup", arguments: "{}" });
+      await until(() => started === 1);
+      forkConnection.send({ type: "tool_call", id: "lookup_2", name: "lookup", arguments: "{}" });
+      forkConnection.send({ type: "tool_call", id: "reserve_1", name: "reserve_table", arguments: '{"table":"T4"}' });
+      assert.equal((await forkConnection.next())["output"], "Reserved T4.");
+      assert.equal(started, 1);
+
+      release();
+      assert.equal((await forkConnection.next())["output"], "found");
+      assert.equal((await connection.next())["output"], "found");
+      await fork.close();
       await session.close();
     });
 

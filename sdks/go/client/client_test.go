@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,8 @@ type router struct {
 	items [][]acceleration.AgentResponseItem
 	// frames are what the session's socket was sent, close aside.
 	frames []map[string]any
+	// calls are the tool calls a session's socket sends once it opens, by session id.
+	calls map[string][]map[string]any
 }
 
 func newRouter(t *testing.T) *router {
@@ -132,6 +135,16 @@ func newRouter(t *testing.T) *router {
 			Id: "session-2", AgentId: "agent-1", UserId: "jean", State: "running",
 			ForkedFrom: ptr(r.PathValue("id")), CreatedAt: time.Now(),
 		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/tools", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/tools/{name}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +354,14 @@ func newRouter(t *testing.T) *router {
 			return
 		}
 		defer connection.Close()
+		backend.mu.Lock()
+		calls := backend.calls[r.PathValue("id")]
+		backend.mu.Unlock()
+		for _, call := range calls {
+			if err := connection.WriteJSON(call); err != nil {
+				return
+			}
+		}
 		for {
 			var frame map[string]any
 			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
@@ -1897,6 +1918,68 @@ func TestAForkInheritsTheParentsFunctions(t *testing.T) {
 	registered := forked.Tools().List()
 	if len(registered) != 1 || registered[0].Name != "get_weather" {
 		t.Errorf("the fork offers %v", registered)
+	}
+}
+
+// The router gives a fork of a running session the tools it has now, so the fork runs those:
+// the ones added since it opened, and not the ones taken back.
+func TestAForkRunsTheToolsTheSessionHasNow(t *testing.T) {
+	backend := newRouter(t)
+	backend.calls = map[string][]map[string]any{"session-2": {
+		{"type": "tool_call", "id": "call-1", "name": "get_weather", "arguments": `{"location":"Oslo"}`},
+		{"type": "tool_call", "id": "call-2", "name": "reserve_table", "arguments": `{"location":"T4"}`},
+	}}
+	agent := backend.client(t).Agent("docs")
+	var withdrawnRan atomic.Bool
+	err := tools.Register(agent.Tools(), "get_weather", "What the weather is",
+		func(context.Context, struct{}) (any, error) {
+			withdrawnRan.Store(true)
+			return "raining", nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+	added := tools.NewRegistry()
+	if err := register(added, "reserve_table"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTools(t.Context(), added); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.RemoveTool(t.Context(), "get_weather"); err != nil {
+		t.Fatal(err)
+	}
+
+	forked, err := session.Fork(t.Context(), ForkOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"type": "tool_result", "tool_call_id": "call-2", "output": "raining in T4"}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		backend.mu.Lock()
+		sent := slices.Clone(backend.frames)
+		backend.mu.Unlock()
+		if slices.ContainsFunc(sent, func(frame map[string]any) bool { return reflect.DeepEqual(frame, want) }) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the fork's call of the added tool was not answered: %v", sent)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Closing waits for every call the fork started, so one of the withdrawn tool has run by now.
+	if err := forked.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if withdrawnRan.Load() {
+		t.Error("the fork ran a tool the session had withdrawn")
 	}
 }
 

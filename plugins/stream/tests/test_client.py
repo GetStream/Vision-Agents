@@ -1297,6 +1297,80 @@ class TestSessions:
             f"answered DELETE {tools}/lookup_order",
         ]
 
+    async def test_a_tool_whose_removal_got_no_answer_is_run_until_a_404_settles_it(
+        self,
+        session: stream.Session,
+        router: Router,
+        reserve_table: FunctionRegistry,
+    ):
+        await session.add_tools(reserve_table)
+        # The router withdrew it before the connection dropped, so asking again is a 404.
+        router.tools_with = [-1, 404]
+        with pytest.raises(httpx.TransportError):
+            await session.remove_tool("reserve_table")
+        kept = await router.ran("reserve_table")
+
+        await session.remove_tool("reserve_table")
+
+        assert kept == "Reserved T4."
+        assert await router.ran("reserve_table") is None
+
+    async def test_a_name_whose_removal_got_no_answer_is_withdrawn_before_it_is_added_again(
+        self,
+        session: stream.Session,
+        router: Router,
+        reserve_table: FunctionRegistry,
+        window_table: FunctionRegistry,
+    ):
+        await session.add_tools(reserve_table)
+        router.tools_with = [-1, 404]
+        with pytest.raises(httpx.TransportError):
+            await session.remove_tool("reserve_table")
+
+        await session.add_tools(window_table)
+
+        tools = "/v1/agents/sessions/session-1/tools"
+        assert [line for line in router.asked if tools in line] == [
+            f"POST {tools}",
+            f"DELETE {tools}/reserve_table",
+            f"DELETE {tools}/reserve_table",
+            f"POST {tools}",
+        ]
+        assert await router.ran("reserve_table") == "Reserved T4 by the window."
+
+    async def test_a_removal_cancelled_while_the_router_has_it_is_settled_by_the_next(
+        self,
+        session: stream.Session,
+        router: Router,
+        reserve_table: FunctionRegistry,
+    ):
+        await session.add_tools(reserve_table)
+        # The caller gives up while the router waits for the turn in progress, and the router
+        # withdraws it all the same, so asking again is a 404.
+        router.tools_take = 0.5
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(session.remove_tool("reserve_table"), 0.1)
+        router.tools_take = 0
+        router.tools_with = [404]
+
+        await session.remove_tool("reserve_table")
+
+        assert await router.ran("reserve_table") is None
+
+    async def test_a_function_registered_under_an_added_name_afterwards_is_not_run(
+        self,
+        session: stream.Session,
+        router: Router,
+        reserve_table: FunctionRegistry,
+    ):
+        await session.add_tools(reserve_table)
+
+        @reserve_table.register(name="reserve_table", description="Reserve a table")
+        async def reserve_window_table(table: str) -> str:
+            return f"Reserved {table} by the window."
+
+        assert await router.ran("reserve_table") == "Reserved T4."
+
 
 class TestResponses:
     async def test_asking_something_names_the_turn_it_is_answered_as(
@@ -1623,6 +1697,51 @@ class TestFork:
             await session.close()
 
         assert forked.functions.list_functions() == ["get_weather"]
+
+    async def test_a_fork_runs_the_tools_its_parent_has_now(
+        self, docs: stream.Agent, router: Router, reserve_table: FunctionRegistry
+    ):
+        @docs.register(description="Release a table")
+        async def release_table(table: str) -> str:
+            return f"Released {table}."
+
+        session = await docs.sessions.create(stream.SessionOptions())
+        try:
+            await session.add_tools(reserve_table)
+            await session.remove_tool("release_table")
+            forked = await session.fork()
+            try:
+                added = await router.ran("reserve_table")
+                removed = await router.ran("release_table")
+            finally:
+                await forked.close()
+        finally:
+            await session.close()
+
+        assert added == "Reserved T4."
+        assert removed is None
+
+    async def test_a_fork_waits_for_a_change_of_its_parents_tools(
+        self, docs: stream.Agent, router: Router
+    ):
+        @docs.register(description="Release a table")
+        async def release_table(table: str) -> str:
+            return f"Released {table}."
+
+        session = await docs.sessions.create(stream.SessionOptions())
+        try:
+            router.tools_take = 0.2
+            _, forked = await asyncio.gather(
+                session.remove_tool("release_table"), session.fork()
+            )
+            try:
+                released = await router.ran("release_table")
+            finally:
+                await forked.close()
+        finally:
+            await session.close()
+
+        assert released is None
 
     async def test_the_model_is_offered_the_agents_functions(
         self, api: stream.Client, router: Router

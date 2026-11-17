@@ -406,8 +406,9 @@ the reply in progress and every call in flight before either answers, and the mo
 the change from its next turn, so neither is awaited from inside one of the session's functions.
 A name the session already has is refused with a 409: to change a function, remove it, then add
 it again. Only the kind of caller that opened the session may change its tools (403 otherwise),
-and an add whose answer was lost keeps its functions running until the name is added or removed
-again.
+and an add or a removal whose answer was lost keeps the function running until the name is added
+or removed again. `session.fork()` runs the functions the session runs when it forks, which are
+the tools the router copies to the fork.
 
 ## Agent dispatch
 

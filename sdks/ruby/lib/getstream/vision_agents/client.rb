@@ -53,8 +53,11 @@ module GetStream
         request(:patch, template, path: path, query: query, body: body)
       end
 
-      def delete(template, path: {}, query: {})
-        request(:delete, template, path: path, query: query)
+      # @param resend [Boolean] false for a request whose lost answer must reach the caller as
+      #   lost: Net::HTTP otherwise sends a DELETE again, once, when its connection drops before
+      #   the answer, and the second answer is read as the first's.
+      def delete(template, path: {}, query: {}, resend: true)
+        request(:delete, template, path: path, query: query, resend: resend)
       end
 
       # Opens one of the router's sockets. OpenAPI stops at the upgrade, so what is said on it
@@ -152,7 +155,7 @@ module GetStream
 
       private
 
-      def request(method, template, path:, query:, body: nil)
+      def request(method, template, path:, query:, body: nil, resend: true)
         operation = operation_for(method, template)
         raise ConfigurationError, "#{template} is a socket; open it with #socket" if operation[:socket]
 
@@ -166,12 +169,13 @@ module GetStream
           started.body = payload
         end
 
-        answer(operation, send_request(operation, target, started))
+        answer(operation, send_request(operation, target, started, resend))
       end
 
-      def send_request(operation, target, request)
+      def send_request(operation, target, request, resend)
         Net::HTTP.start(target.host, target.port, use_ssl: target.scheme == "https",
                                                   open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT) do |http|
+          http.max_retries = 0 unless resend
           http.request(request)
         end
       rescue SystemCallError, IOError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError => e

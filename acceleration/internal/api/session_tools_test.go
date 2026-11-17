@@ -214,6 +214,25 @@ func (s *SessionToolsSuite) TestAToolGivenToARunningSessionIsListedAsTheCallersA
 	s.NotContains(s.toolSources(opened.Id), lookupOrder)
 }
 
+// The SDKs watch a fork with the tools its parent has now, which holds only while the router
+// forks a running session with them rather than with the ones it opened with.
+func (s *SessionToolsSuite) TestAForkOfARunningSessionIsOfferedTheToolsItHasNow() {
+	request := textSession(nil)
+	request.Tools = &[]SessionTool{{Name: "check_stock", Description: "check an item is in stock"}}
+	opened := s.serverClient.createSession(request)
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/tools/check_stock", nil, nil))
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+
+	sources := s.toolSources(forked.Id)
+	s.Equal("session", sources[lookupOrder], "the tool added while the parent ran")
+	s.NotContains(sources, "check_stock", "the tool the parent opened with and withdrew")
+}
+
 func (s *SessionToolsSuite) TestAToolTheCallerAlreadyHasIsNotAddedAgain() {
 	opened := s.serverClient.createSession(textSession(nil))
 	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))

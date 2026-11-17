@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Testing
+import os
 
 @testable import StreamAgents
 
@@ -81,6 +82,59 @@ import Testing
     try await session.add(tools: [other])
 
     #expect(session.tools["reserve_table"]?.description == "Reserve a table elsewhere")
+  }
+
+  /// The router may have withdrawn a tool whose removal was never answered, so asking again
+  /// settles it when the router has none by that name, rather than failing.
+  @Test func aToolWhoseRemovalWasNeverAnsweredIsRemovedByAskingAgain() async throws {
+    let server = try Self.losingTheFirstRemoval()
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"), session: Self.session,
+      tools: [Self.reserveTable])
+    await #expect(throws: AgentsError.self) { try await session.remove(toolNamed: "reserve_table") }
+    #expect(session.tools["reserve_table"] != nil, "the router may still offer it")
+
+    try await session.remove(toolNamed: "reserve_table")
+
+    #expect(session.tools["reserve_table"] == nil)
+  }
+
+  /// A removal whose answer was lost may or may not have reached the router, so another tool
+  /// under its name settles it first rather than leaving the first one answering calls the
+  /// router now makes of the second.
+  @Test func aToolWhoseRemovalWasNeverAnsweredIsSettledBeforeAnotherTakesItsName() async throws {
+    let server = try Self.losingTheFirstRemoval()
+    defer { server.listener.cancel() }
+    let session = AgentSession(
+      backend: Backend(url: try await server.url(), customerID: "test"), session: Self.session,
+      tools: [Self.reserveTable])
+    await #expect(throws: AgentsError.self) { try await session.remove(toolNamed: "reserve_table") }
+    let other = AgentTool(name: "reserve_table", description: "Reserve a table elsewhere") { _ in
+      "Reserved elsewhere."
+    }
+
+    try await session.add(tools: [other])
+
+    #expect(session.tools["reserve_table"]?.description == "Reserve a table elsewhere")
+  }
+
+  /// A router that withdraws the tool on the first removal but drops the connection before
+  /// answering, so every removal after it finds no tool by that name.
+  private static func losingTheFirstRemoval() throws -> SessionServer {
+    let removals = OSAllocatedUnfairLock(initialState: 0)
+    return try SessionServer { method, _, _ in
+      guard method == "DELETE" else { return .init(status: 204, headers: [:], body: "") }
+      let first = removals.withLock {
+        $0 += 1
+        return $0 == 1
+      }
+      return first
+        ? .dropped
+        : .init(
+          status: 404, headers: ["Content-Type": "application/json"],
+          body: #"{"error":{"message":"no tool","type":"not_found","code":"not_found","doc_url":""}}"#)
+    }
   }
 
   private static let session = Session(

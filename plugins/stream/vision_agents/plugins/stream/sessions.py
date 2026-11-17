@@ -673,8 +673,12 @@ class Session:
         both halves interleaved. An incognito conversation cannot be forked, because there is
         nothing to fork from.
 
-        The fork inherits this session's functions: they are here in this process, and a
-        conversation continued without them would offer the model tools nothing can run.
+        The fork inherits the functions this session runs now: they are here in this process,
+        and a conversation continued without them would offer the model tools nothing can run.
+        The router gives the fork the tools this session has when it is asked, so those are
+        the ones ``add_tools`` gave it and not the ones ``remove_tool`` took back, and a
+        change in progress is waited for. They are the fork's own from then on: changing this
+        session's tools later does not change the fork's.
         """
         options = options or ForkOptions()
         request = ForkSessionRequest()
@@ -697,11 +701,16 @@ class Session:
         # rather than left out: an absent field and a true one mean the same thing.
         request.messages = options.messages
 
-        row = await _unwrapped(
-            fork_session.asyncio(self.id, client=self._backend.client(), body=request),
-            f"forking the session {self.id}",
-        )
-        return await Session.watching(self._backend, row, self._functions, options)
+        # Asked while no change can come between the functions copied here and the tools the
+        # router copies there.
+        async with self._session_tools.current() as functions:
+            row = await _unwrapped(
+                fork_session.asyncio(
+                    self.id, client=self._backend.client(), body=request
+                ),
+                f"forking the session {self.id}",
+            )
+        return await Session.watching(self._backend, row, functions, options)
 
     async def update(
         self,
@@ -940,10 +949,11 @@ class _SessionTools:
     def __init__(self, backend: Backend, functions: FunctionRegistry):
         self._backend = backend
         self._functions = functions
-        # added are the functions add gave the session, by name, each in the registry it was
-        # added in; they run before the session's own of the same name. withdrawn are the
-        # names remove took from the session, which its own no longer run, and unsettled the
-        # ones whose adding was never answered, which the router may or may not offer.
+        # added are the functions add gave the session, by name, each in a copy of the registry
+        # it was added in, so registering into that one later changes nothing here; they run
+        # before the session's own of the same name. withdrawn are the names remove took from
+        # the session, which its own no longer run, and unsettled the ones whose adding or
+        # removing was never answered, which the router may or may not offer.
         self._added: dict[str, FunctionRegistry] = {}
         self._withdrawn: set[str] = set()
         self._unsettled: set[str] = set()
@@ -962,14 +972,30 @@ class _SessionTools:
             return _NO_FUNCTIONS
         return self._functions
 
+    @contextlib.asynccontextmanager
+    async def current(self) -> AsyncIterator[FunctionRegistry]:
+        """The functions that run the session's tools now, which no change replaces until
+        the block ends: the ones it opened with less those withdrawn, and those added,
+        unsettled ones included."""
+        async with self._changing:
+            current = FunctionRegistry()
+            for name, function in self._functions.functions.items():
+                if name not in self._withdrawn:
+                    current.functions[name] = function
+            for name, added in self._added.items():
+                current.functions[name] = added.functions[name]
+            yield current
+
     async def add(self, session_id: str, more: FunctionRegistry) -> None:
         """Give the session the functions in ``more``. See ``Session.add_tools``."""
-        declared = _tools(more)
+        added = FunctionRegistry()
+        added.functions.update(more.functions)
+        declared = _tools(added)
         if not declared:
             raise ValueError("there are no tools to add")
         async with self._changing:
-            # A name whose adding was never answered may or may not be the router's: it is
-            # withdrawn first, so the router and this process agree on which function it is.
+            # A name whose last change was never answered may or may not be the router's: it
+            # is withdrawn first, so the router and this process agree on which function it is.
             for tool in declared:
                 if tool.name in self._unsettled:
                     await self._withdraw(session_id, tool.name, absent_is_fine=True)
@@ -983,7 +1009,7 @@ class _SessionTools:
                 if tool.name not in self.functions_for(tool.name).functions
             ]
             for name in fresh:
-                self._added[name] = more
+                self._added[name] = added
             try:
                 await _asked(
                     add_session_tools.asyncio_detailed(
@@ -1014,8 +1040,8 @@ class _SessionTools:
     async def _withdraw(self, session_id: str, name: str, absent_is_fine: bool) -> None:
         """Take the tool called ``name`` from the session and from what runs here.
 
-        ``absent_is_fine`` settles a name whose adding was never answered: the router having
-        no tool by it is as good as withdrawing it.
+        ``absent_is_fine`` settles a name whose adding or removing was never answered: the
+        router having no tool by it is as good as withdrawing it.
         """
         try:
             await _deleted(
@@ -1027,6 +1053,11 @@ class _SessionTools:
         except RouterError as refused:
             if not (absent_is_fine and refused.status == 404):
                 raise
+        except BaseException:
+            # The answer was lost and the router may have withdrawn it, so its calls are
+            # still run here until a later change of the name settles it.
+            self._unsettled.add(name)
+            raise
         self._added.pop(name, None)
         self._unsettled.discard(name)
         self._withdrawn.add(name)
