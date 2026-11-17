@@ -20,12 +20,11 @@ and each test imports only its own area and the barrels it reaches. Core's and c
 import no Flutter. `test/area_boundaries_test.dart` fails on a file that breaks one of those
 rules.
 
-Until it is on pub.dev, an app depends on it by git:
+An app depends on it from [pub.dev](https://pub.dev/packages/stream_agents):
 
 ```yaml
 dependencies:
-  stream_agents:
-    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/stream_agents}
+  stream_agents: ^0.7.0
 ```
 
 ## Using it
