@@ -366,10 +366,13 @@ func (s *FloorSuite) TestANoisyTailWithARunOpenAsksForItsFinal() {
 	for sent := 0; s.askedForFinals() == 0; sent += 20 {
 		s.Require().Less(sent, 4000, "the held check ends the turn")
 		s.say(20, true)
+		// A check that ended the turn asks for the final off its own goroutine (settle), so the
+		// next frame waits for that too: the turn ended at this frame.
 		s.Eventually(func() bool {
 			s.transcriber.mu.Lock()
-			defer s.transcriber.mu.Unlock()
-			return !s.transcriber.still.inFlight
+			out, ended := s.transcriber.still.inFlight, s.transcriber.pause.ended != nil
+			s.transcriber.mu.Unlock()
+			return !out && (!ended || s.askedForFinals() > 0)
 		}, 5*time.Second, time.Millisecond)
 	}
 	s.noFinal()
