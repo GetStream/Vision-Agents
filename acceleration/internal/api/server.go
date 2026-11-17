@@ -1096,7 +1096,7 @@ const maxLoggedValue = 256
 // its id would name a trace nobody can open.
 // operation_type is the id of the operation the route serves (operationNames), found by the
 // route's pattern (routeLabel) and never by the path, since a token route's path is its secret.
-// A request no operation served has none. user_id is the end user's: a backend's request is
+// A request no operation served has none; a route the spec leaves out is named in unspecifiedOperations. user_id is the end user's: a backend's request is
 // its own, whichever user it says it acts for. request_size is the declared Content-Length, so
 // a chunked body names none.
 func (s *Server) accessFields(routes *chi.Mux, r *http.Request, answered *loggedResponse) []any {
