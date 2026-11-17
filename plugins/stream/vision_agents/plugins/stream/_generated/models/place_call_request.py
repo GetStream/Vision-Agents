@@ -43,7 +43,8 @@ class PlaceCallRequest:
             ringing for its own default.
         session_id (str | Unset): The session that holds the call: the answered leg is routed into its call,
             agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen,
-            since two calls from the same number are two conversations. Open the session under this id with start_voice.
+            since two calls from the same number are two conversations. Open the session under this id with start_voice. If
+            nobody besides the person is in the call phone.agent_join_timeout after the answer, the router ends the call.
         tags (PlaceCallRequestTags | Unset):
     """
 

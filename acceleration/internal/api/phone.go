@@ -1600,7 +1600,7 @@ type PlaceCallRequest struct {
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`
 	InitialDigits      *string            `json:"initial_digits,omitempty" doc:"Digits pressed once the person answers, for reaching an extension behind a menu, e.g. \"ww1234#\". w is a short pause and W a long one."`
 	RingTimeoutSeconds *int               `json:"ring_timeout_seconds,omitempty" doc:"How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default."`
-	SessionId          *string            `json:"session_id,omitempty" doc:"The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice."`
+	SessionId          *string            `json:"session_id,omitempty" doc:"The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. If nobody besides the person is in the call phone.agent_join_timeout after the answer, the router ends the call."`
 	Tags               *map[string]string `json:"tags,omitempty"`
 	To                 string             `json:"to"`
 }
@@ -1612,7 +1612,7 @@ func (*PlaceCallRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *
 
 // PlacedCall is the PlacedCall schema.
 type PlacedCall struct {
-	SessionId    *string `json:"session_id,omitempty" doc:"The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up."`
+	SessionId    *string `json:"session_id,omitempty" doc:"The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. If nobody besides the person is in the call phone.agent_join_timeout after the answer, the router ends the call."`
 	Status       string  `json:"status" doc:"The vendor's own word for where the call is, e.g. \"queued\"."`
 	Vendor       *string `json:"vendor,omitempty" doc:"Who is placing the call."`
 	VendorCallId string  `json:"vendor_call_id"`

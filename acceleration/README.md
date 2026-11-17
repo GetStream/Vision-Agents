@@ -2521,7 +2521,9 @@ on.
 
 `POST /v1/phone/calls` makes its own trunk and routing rule and pins the rule to a call, so
 the answered leg lands somewhere an agent can be waiting. The response says which call that
-is, and an agent that is not in it hears nothing when the person picks up.
+is, and an agent that is not in it hears nothing when the person picks up. If nobody besides
+the person is in the call `phone.agent_join_timeout` (10 s by default) after the answer, the
+router ends the call.
 
 Vendors do not agree on what a call can be asked for, so a provider declares which terms its
 API can express and a call naming one it cannot is refused rather than placed without it. A
