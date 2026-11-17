@@ -613,6 +613,50 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 	}
 }
 
+func TestAWorkerWhoseRouterFallsSilentReconnectsAndHostsAgain(t *testing.T) {
+	// The first connection stays open but is never read, the way a router pod that is gone
+	// without a close frame or a reset leaves it. Waiting on it would leave every session
+	// naming the agent without its tools.
+	released := make(chan struct{})
+	var connections sync.Mutex
+	opened := 0
+	router := newPool(t, func(*websocket.Conn) {
+		connections.Lock()
+		opened++
+		this := opened
+		connections.Unlock()
+		if this == 1 {
+			<-released
+		}
+	})
+	t.Cleanup(func() { close(released) })
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "investigate_sdk", "Read SDK source", func(context.Context, struct{}) (any, error) { return "", nil }); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{ReportEvery: 10 * time.Millisecond})
+	worker.firstRetry = 10 * time.Millisecond
+	worker.pongWait = 10 * time.Millisecond
+	worker.Host(hostedAgent{"stream-support", functions}, 0)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := run(t, ctx, worker)
+
+	if declared := router.told(t, "host_tools"); declared.String("agent_id") != "stream-support" {
+		t.Errorf("the reconnected worker declared %v", declared)
+	}
+	connections.Lock()
+	reached := opened
+	connections.Unlock()
+	if reached != 2 {
+		t.Errorf("the worker connected %d times, want it back once the router fell silent", reached)
+	}
+	cancel()
+	if err := stopped(); err != nil && err != context.Canceled {
+		t.Errorf("a cancelled worker stopped with %v", err)
+	}
+}
+
 func TestAWorkerWhoseToolsAreRefusedStopsWaiting(t *testing.T) {
 	router := newPool(t, func(connection *websocket.Conn) {
 		_ = connection.WriteJSON(Frame{"type": "hosting_refused", "agent_id": "stream-support", "reason": "hosting no tools is not hosting"})
