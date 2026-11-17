@@ -11,7 +11,10 @@ public data class Turn(
     val speaker: Speaker,
     val text: String,
     val at: Instant,
-    /** The interactive UI an agent turn wrote, as it streams in, or null for a turn without any. */
+    /**
+     * The interactive UI an agent turn wrote, as it streams in, or null for a turn without any.
+     * OpenUI is null until one of its statements is finished.
+     */
     val ui: TurnUI? = null,
 ) {
     public sealed interface Speaker {
@@ -145,9 +148,15 @@ public class Conversation private constructor(
                     this
                 } else {
                     val written = uiWritten[event.turnId].orEmpty() + delta
-                    writing(uiWritten + (event.turnId to written))
-                        .writeUi(event, format, written, isStreaming = true, at)
-                        .let { if (it.state is State.Working) it else it.copy(state = State.Responding) }
+                    val kept = writing(uiWritten + (event.turnId to written))
+                    // Only the line still being written grew, so no statement finished: what shows
+                    // is unchanged.
+                    val shown = if (format == TurnUI.OPEN_UI && '\n' !in delta) {
+                        kept
+                    } else {
+                        kept.writeUi(event, format, written, isStreaming = true, at)
+                    }
+                    shown.let { if (it.state is State.Working) it else it.copy(state = State.Responding) }
                 }
             }
 
@@ -220,10 +229,10 @@ public class Conversation private constructor(
     /**
      * Shows [written], what the turn's UI block wrote so far, as the UI of the agent turn a
      * `ui_delta` or `ui_completed` belongs to, starting the turn if the router sent UI for one we
-     * never saw begin. While OpenUI streams, only its finished statements show. A patch is merged
-     * onto the UI of the latest earlier turn in the same format; with none in this transcript,
-     * such as after a reload, it sets no UI, and Stream Chat's copy, which the router merged, is
-     * the one to show.
+     * never saw begin. While OpenUI streams, only its finished statements show, and until one is
+     * finished it sets no UI. A patch is merged onto the UI of the latest earlier turn in the same
+     * format; with none in this transcript, such as after a reload, it sets no UI, and Stream
+     * Chat's copy, which the router merged, is the one to show.
      */
     private fun writeUi(
         event: AgentEvent,
@@ -235,6 +244,7 @@ public class Conversation private constructor(
         val turnId = event.turnId
         val openUi = format == TurnUI.OPEN_UI
         var content = if (isStreaming && openUi) TurnUI.finished(written) else written
+        if (isStreaming && openUi && content.isEmpty()) return this
         if (event.string("mode") == "patch" && openUi) {
             val base = turns.lastOrNull {
                 it.isAgent && it.id != turnId && it.ui?.format == TurnUI.OPEN_UI && it.ui.content.isNotEmpty()

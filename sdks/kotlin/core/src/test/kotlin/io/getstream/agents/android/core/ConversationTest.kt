@@ -317,6 +317,39 @@ class ConversationTest {
     }
 
     @Test
+    fun `a turn has no UI until one of its OpenUI statements is finished`() {
+        var conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])"}""",
+        )
+
+        // An app reading the turn's UI, as a call does, never gets an empty card.
+        assertNull(conversation.turns.single().ui)
+
+        conversation = conversation.after("""{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"\nhdr = Card"}""")
+
+        assertEquals(TurnUI(format = "openui", isStreaming = true, content = "root = Card([hdr])"), conversation.turns.single().ui)
+    }
+
+    @Test
+    fun `a streaming patch merges only its finished statements onto the card before it`() {
+        var conversation = Conversation().after(
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"root = Card([gauge])\ngauge = AvailabilityGauge(40, \"no wait\")"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"gauge = AvailabilityGauge(8"}""",
+        )
+
+        // The card before is not shown again as this turn's until the patch changes something.
+        assertNull(conversation.turns[1].ui)
+
+        conversation = conversation.after(
+            """{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"6, \"12 min wait\")\nroot = Card([gau"}""",
+        )
+
+        assertEquals("root = Card([gauge])\ngauge = AvailabilityGauge(86, \"12 min wait\")", conversation.turns[1].ui?.content)
+    }
+
+    @Test
     fun `a completed UI with no content keeps what streamed`() {
         val conversation = Conversation().after(
             """{"type":"ui_delta","turn_id":"t1","format":"a2ui","version":"1.0","delta":"[{\"version\":\"v1.0\"}]"}""",
@@ -380,7 +413,7 @@ class ConversationTest {
 
         val before = conversation.after("""{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"${"$"}par"}""")
         conversation = before.after("""{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"ty"}""")
-        assertEquals("\$party = 2\nroot = Card([hdr])", conversation.turns[1].ui?.content)
+        assertNull(conversation.turns[1].ui)
         // Nothing new shows, and the two are still not equal, so a StateFlow keeps the later one.
         assertEquals(before.turns, conversation.turns)
         assertNotEquals(before, conversation)
