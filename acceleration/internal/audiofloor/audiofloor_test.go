@@ -892,6 +892,24 @@ func (s *transcribing) answered() {
 	}, 5*time.Second, time.Millisecond)
 }
 
+// idle waits for the goroutines the transcriber has set going to be done: a pause's words, kept
+// off the check's own goroutine (await), are written by then, however long it takes to be run, so
+// the next frame is the one after them, as it is on a call where they are written within a frame
+// or so. The frames come from the test, so none starts a goroutine while it waits.
+func (s *transcribing) idle() {
+	s.T().Helper()
+	done := make(chan struct{})
+	go func() {
+		s.transcriber.running.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		s.FailNow("the transcriber's goroutines did not finish")
+	}
+}
+
 // next is the next event of type E.
 func next[E stt.Event](s *transcribing) E {
 	s.T().Helper()

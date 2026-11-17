@@ -482,6 +482,7 @@ func (s *PausesSuite) TestSpeechAfterAPauseBeginsAnother() {
 	s.say(1000, true)
 	s.say(220, false)
 	s.answered()
+	s.idle()
 	s.say(600, true)
 	s.ending(0.999)
 	s.say(220, false)

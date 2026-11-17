@@ -29,6 +29,7 @@ func (s *transcribing) holding(ms int, voiced bool) (stt.Transcript, time.Durati
 			s.transcriber.mu.Unlock()
 			return !out && (ended == nil || s.transcriber.sent.over(ended.Utterance))
 		}, 5*time.Second, time.Millisecond)
+		s.idle()
 		for {
 			select {
 			case event := <-s.transcriber.Events():
