@@ -121,6 +121,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** How the agent writes its replies, which picks the renderer for their generated UI. */
     val replyFormat: StateFlow<ReplyFormat> = format.asStateFlow()
 
+    private val brands = MutableStateFlow(Brand.stored(application))
+
+    /** The brand the agent's UI wears, in the chat and on a call. */
+    val brand: StateFlow<Brand> = brands.asStateFlow()
+
     /**
      * Renders the generated UI of replies, in either format, and sends back what the person does
      * in it. One for the screen's life, whatever the reply format, so earlier replies keep their UI
@@ -157,6 +162,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (chosen == format.value) return
         format.value = chosen
         ReplyFormat.store(getApplication(), chosen)
+    }
+
+    /** Has the agent's UI wear [chosen], in every conversation, straight away. */
+    fun chooseBrand(chosen: Brand) {
+        brands.value = chosen
+        Brand.store(getApplication(), chosen)
     }
 
     /** A host for the agent's UI, in either format, whose actions ask in this conversation. */

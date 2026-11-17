@@ -109,12 +109,15 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
     val voiceShown by chat.isVoiceShown.collectAsStateWithLifecycle()
     val open by chat.session.collectAsStateWithLifecycle()
     val replyFormat by chat.replyFormat.collectAsStateWithLifecycle()
+    val brand by chat.brand.collectAsStateWithLifecycle()
     var isSettingsShown by rememberSaveable { mutableStateOf(false) }
 
     if (isSettingsShown) {
         SettingsScreen(
             replyFormat = replyFormat,
             onReplyFormat = chat::chooseReplyFormat,
+            brand = brand,
+            onBrand = chat::chooseBrand,
             onBack = { isSettingsShown = false },
         )
         return

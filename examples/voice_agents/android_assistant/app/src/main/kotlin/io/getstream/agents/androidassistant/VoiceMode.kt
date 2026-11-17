@@ -69,6 +69,7 @@ import io.getstream.chat.android.ai.compose.ui.component.AIToolApprovalState
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceAgentState
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceGlow
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceVisualizationDefaults
+import io.getstream.chat.android.ai.openui.rendering.ProvideOpenUITheme
 import io.getstream.video.android.core.Call
 import io.getstream.agents.android.core.AgentEvent
 import io.getstream.agents.android.core.AgentSession
@@ -114,6 +115,7 @@ fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifie
     val voice by viewModel.voice.collectAsStateWithLifecycle()
     val failure by viewModel.voiceFailure.collectAsStateWithLifecycle()
     val approvals by session.approvals.collectAsStateWithLifecycle()
+    val brand by viewModel.brand.collectAsStateWithLifecycle()
 
     LaunchedEffect(session) { viewModel.startVoice() }
     BackHandler(onBack = viewModel::hangUp)
@@ -143,7 +145,9 @@ fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifie
                     ?.distinctUntilChanged()
                     ?: flowOf(null)
             }.collectAsStateWithLifecycle(null)
-            turnWithUI?.let { CallUI(viewModel.callUiHost, it) }
+            turnWithUI?.let { turn ->
+                ProvideOpenUITheme(brand.openUITheme()) { CallUI(viewModel.callUiHost, turn) }
+            }
 
             approvals.firstOrNull()?.let { request ->
                 // Keyed by the call, so a second question starts with no answer sending.
