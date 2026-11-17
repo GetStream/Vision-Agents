@@ -195,3 +195,14 @@ custom connector. See the [connectors docs](https://getstream.io/agents/docs/con
 * Agent concurrency
 * Voice benchmark
 
+## Alternatives
+
+How Stream Agents compares to the alternatives, see
+[Stream vs alternatives](https://getstream.io/agents/docs/alternatives/):
+
+* OpenAI or Anthropic directly
+* Agent frameworks: Eve, AI SDK, LangChain
+* Routers: OpenRouter, Bifrost, LiteLLM
+* Voice AI frameworks: LiveKit, Pipecat, Retell, Agora, Vapi
+* Support SaaS: Sierra, Decagon, Serval
+
