@@ -10296,7 +10296,7 @@ namespace GetStream.VisionAgents.Models
         public int? RingTimeoutSeconds { get; set; } = default!;
 
         /// <summary>
-        /// The session that holds the call: the answered leg is routed into its call, agent:&lt;session id&gt;. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.
+        /// The session that holds the call: the answered leg is routed into its call, agent:&lt;session id&gt;. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("session_id")]
         public string? SessionId { get; set; } = default!;
@@ -10323,7 +10323,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The session to open, with start_voice, for the call: the answered leg is routed into agent:&lt;session id&gt;, and an agent that is not in it hears nothing when the person picks up.
+        /// The session to open, with start_voice, for the call: the answered leg is routed into agent:&lt;session id&gt;, and an agent that is not in it hears nothing when the person picks up. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("session_id")]
         public string? SessionId { get; set; } = default!;

@@ -43,8 +43,10 @@ type MeteringSuite struct {
 	vendor   *stub
 	clock    *meteringClock
 	logs     *meteringLogs
-	customer string
-	e164     string
+	// deployment is the Stream app the suite's calls are in.
+	deployment *chattest.Server
+	customer   string
+	e164       string
 }
 
 func TestMeteringSuite(t *testing.T) { suite.Run(t, new(MeteringSuite)) }
@@ -90,12 +92,13 @@ func (s *MeteringSuite) withSandbox(sandbox dlc.Sandbox) {
 		s.T().Setenv(name, "set")
 	}
 	deployment := chattest.NewServer(s.T())
+	s.deployment = deployment
 	s.logs = &meteringLogs{}
 	s.service, err = NewService(ServiceOptions{
 		Registry: registry, Store: s.store, Recorder: s.recorder, Now: s.clock.now,
 		Apps:   &testApps{deployment: deployment, own: map[string]*chattest.Server{}, pins: map[string]int64{}, blocked: map[string]bool{}},
 		Gate:   dlc.NewGate(s.store, s.redis, sandbox, nil),
-		Logger: slog.New(slog.NewTextHandler(s.logs, nil)),
+		Logger: slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
@@ -873,6 +876,13 @@ func (l *meteringLogs) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.written.Write(p)
+}
+
+// String is every line written.
+func (l *meteringLogs) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.written.String()
 }
 
 // count is how many lines at level say message.
