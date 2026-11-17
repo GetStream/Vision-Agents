@@ -28,7 +28,7 @@ lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-com
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
 browser = { module = "androidx.browser:browser", version.ref = "browser" }
-maplibre = { module = "org.maplibre.gl:android-sdk", version.ref = "maplibre" }
+maplibre = { module = "org.maplibre.gl:android-sdk-opengl", version.ref = "maplibre" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -97,9 +97,10 @@ or newer, generated UI replies 7.18.0, and `AIConversationState` 7.19.0: `stream
   iOS. They load what they show on the phone: a place's photo and summary from Wikipedia
   (`PlaceCard.kt`), and the person's own calendar for the plan's days (`CalendarCheck.kt`),
   which the agent never sees, read through `CalendarContract` once `READ_CALENDAR` is granted,
-  asked for when the card first appears. The map (`TripMap.kt`) is MapLibre with OpenFreeMap's liberty style, on
-  OpenStreetMap's data, which needs no API key; its pins drop one after another while the reply
-  streams in. Tapping a place card or a pin asks about the place. Ask "Where should we eat in
+  asked for when the card first appears. The map (`TripMap.kt`) is MapLibre's OpenGL ES build
+  (`android-sdk-opengl`, since the default `android-sdk` requires Vulkan) with OpenFreeMap's
+  liberty style, on OpenStreetMap's data, which needs no API key; its pins drop one after another
+  while the reply streams in. Tapping a place card or a pin asks about the place. Ask "Where should we eat in
   Ohrid tonight?" for the other kind of card (`Booking.kt`): `restaurant_card` per venue, which
   asks for its menu when tapped, `availability_gauge` of how full the first one is and
   `seat_selector` of its tables. Tapping a free table asks to reserve it. Each reads the brand

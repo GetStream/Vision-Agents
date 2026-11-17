@@ -3,6 +3,7 @@
 package io.getstream.agents.androidassistant.components
 
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -43,7 +44,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.ConcurrentHashMap
+import okhttp3.Response
 
 /** A place's card, which asks about the place when tapped. */
 internal fun placeCard(definition: AIUIComponentDefinition) = AIUIComponent(definition) { arguments, context ->
@@ -57,10 +58,11 @@ internal fun placeCard(definition: AIUIComponentDefinition) = AIUIComponent(defi
 @Composable
 private fun PlaceCard(title: String, note: String?, onAsk: () -> Unit) {
     val theme = OpenUITheme.current
-    var summary by remember(title) { mutableStateOf(Wikipedia.cached(title)) }
+    var lookup by remember(title) { mutableStateOf(Wikipedia.cached(title)) }
     LaunchedEffect(title) {
-        if (summary == null) summary = Wikipedia.summary(title)
+        if (lookup == null) lookup = Wikipedia.summary(title)
     }
+    val summary = lookup?.summary
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -100,41 +102,56 @@ private fun PlaceCard(title: String, note: String?, onAsk: () -> Unit) {
     }
 }
 
-/** A place's summary on Wikipedia, kept while the app runs. */
+/** A place's summary on Wikipedia, the last few dozen kept while the app runs. */
 private object Wikipedia {
     class Summary(val title: String, val extract: String?, val thumbnail: ImageBitmap?)
+
+    /** What Wikipedia answered for a title: its summary, or null when it has no such article. */
+    class Lookup(val summary: Summary?)
 
     private const val SUMMARIES = "https://en.wikipedia.org/api/rest_v1/page/summary/"
 
     // Wikipedia asks every client to say who it is.
-    private const val USER_AGENT = "AndroidAssistant/1.0 (Stream Agents example)"
+    private const val USER_AGENT = "AndroidAssistant/1.0 (https://github.com/GetStream/Vision-Agents)"
 
     private val http = OkHttpClient()
     private val json = Json { ignoreUnknownKeys = true }
-    private val summaries = ConcurrentHashMap<String, Summary>()
+    private val summaries = LruCache<String, Lookup>(48)
 
-    fun cached(title: String): Summary? = summaries[title]
+    fun cached(title: String): Lookup? = summaries.get(title)
 
-    /** The summary of the article [title], with its photo, or null when it can't be loaded. */
-    suspend fun summary(title: String): Summary? = summaries[title] ?: withContext(Dispatchers.IO) {
-        runCatching { load(title) }.getOrNull()?.also { summaries[title] = it }
+    /**
+     * What Wikipedia has for [title], with its photo, or null when it can't be asked right now,
+     * which is not remembered, so the card asks again next time.
+     */
+    suspend fun summary(title: String): Lookup? = summaries.get(title) ?: withContext(Dispatchers.IO) {
+        runCatching { load(title) }.getOrNull()?.also { summaries.put(title, it) }
     }
 
-    private fun load(title: String): Summary? {
+    private fun load(title: String): Lookup? {
         val url = SUMMARIES.toHttpUrl().newBuilder().addPathSegment(title.replace(' ', '_')).build()
-        val page = get(url.toString())?.let { json.parseToJsonElement(it.decodeToString()).jsonObject } ?: return null
+        val page = call(url.toString()).use { response ->
+            when {
+                response.code == 404 -> return Lookup(null)
+                !response.isSuccessful -> return null
+                else -> json.parseToJsonElement(response.body.string()).jsonObject
+            }
+        }
         val photo = page["thumbnail"]?.jsonObject?.get("source")?.jsonPrimitive?.contentOrNull
             ?.let(::get)
             ?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
-        return Summary(
-            title = page["title"]?.jsonPrimitive?.contentOrNull ?: title,
-            extract = page["extract"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() },
-            thumbnail = photo,
+        return Lookup(
+            Summary(
+                title = page["title"]?.jsonPrimitive?.contentOrNull ?: title,
+                extract = page["extract"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() },
+                thumbnail = photo,
+            ),
         )
     }
 
-    private fun get(url: String): ByteArray? {
-        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
-        return http.newCall(request).execute().use { response -> if (response.isSuccessful) response.body.bytes() else null }
-    }
+    private fun get(url: String): ByteArray? =
+        call(url).use { response -> if (response.isSuccessful) response.body.bytes() else null }
+
+    private fun call(url: String): Response =
+        http.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build()).execute()
 }
