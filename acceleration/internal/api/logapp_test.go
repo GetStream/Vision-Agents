@@ -116,15 +116,38 @@ func (s *LogAppSuite) TestTheAccessLineOfARequestNoOperationServedNamesNoOperati
 	s.NotContains(wrongMethod, "operation_type")
 }
 
-// Defect: a route the spec leaves out (the TeXML answer, a vendor's hook) named after the
-// operation of another route, or by its pattern.
-func (s *LogAppSuite) TestTheAccessLineOfARouteWithNoOperationNamesNoOperation() {
+// Defect: a route added to the router with no operation and no name in unspecifiedOperations,
+// which would log no operation_type, or a name kept for a route that no longer exists.
+func (s *LogAppSuite) TestEveryRouteHasAnOperationName() {
+	var unnamed []string
+	walked := map[string]bool{}
+	s.Require().NoError(chi.Walk(s.router.mux, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		key := method + " " + route
+		walked[key] = true
+		if s.router.operations[key] == "" {
+			unnamed = append(unnamed, key)
+		}
+		return nil
+	}))
+
+	s.Empty(unnamed, "routes with no operation name")
+	for key := range unspecifiedOperations {
+		s.True(walked[key], "%s names a route the router does not serve", key)
+	}
+}
+
+// Defect: a route the spec leaves out (the TeXML answer, a vendor's hook) logged no operation,
+// or with its pattern as the name, or with its token.
+func (s *LogAppSuite) TestTheAccessLineOfARouteWithNoOperationNamesItsLogOnlyName() {
 	token := s.utils.uuid()
 
-	line := s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/phone/answer/"+token, nil)
+	answer := s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/phone/answer/"+token, nil)
+	hook := s.sent(s.unauthenticatedClient, http.MethodPost, "/v1/phone/hooks/stream/"+s.utils.uuid(), nil)
 
-	s.Contains(line, "path=/v1/phone/answer/{token}")
-	s.NotContains(line, "operation_type")
+	s.Contains(answer, "path=/v1/phone/answer/{token}")
+	s.Equal("PhoneAnswer", s.field(answer, "operation_type"))
+	s.NotContains(answer, token)
+	s.Equal("PhoneHook", s.field(hook, "operation_type"))
 }
 
 // Defect: the code left off a refusal, or another code than the one the caller was told.

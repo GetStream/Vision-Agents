@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"mime"
 	"net"
 	"net/http"
@@ -675,6 +676,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	server.serverSide = serverSide
 	server.operations = operationNames(specifiedOperations(document))
+	maps.Copy(server.operations, unspecifiedOperations)
 
 	// The subscriptions outlive every request, so they are held against the process
 	// rather than against a context a handler brought with it. Closing the Redis client
@@ -1226,6 +1228,23 @@ func operationNames(operations []operationSummary) map[string]string {
 		names[operation.method+" "+pattern] = pascalCase(operation.id)
 	}
 	return names
+}
+
+// unspecifiedOperations names the routes served by hand that the spec leaves out (see Handler),
+// by the same "METHOD pattern" key as operationNames. They are named for the access line only:
+// no operation is declared, so the spec and the clients do not change. A route added to Handler
+// without an operation takes a name here, which TestEveryRouteHasAnOperationName insists on.
+var unspecifiedOperations = map[string]string{
+	"POST " + scheduledPeerPath:               "ScheduledTaskDeliver",
+	"POST " + chatInboundPeerPath:             "ChatInboundAnswer",
+	"POST " + unansweredPeerPath:              "PhoneEndUnanswered",
+	"POST " + machinePeerPath:                 "PhoneMachine",
+	"GET /v1/phone/answer/{token}":            "PhoneAnswer",
+	"POST /v1/phone/answer/{token}":           "PhoneAnswer",
+	"POST " + phone.CallHookPath:              "PhoneHook",
+	"POST " + phone.CallHookPath + "/{app}":   "PhoneHook",
+	"POST " + chat.MessageHookPath:            "ChatHook",
+	"POST " + chat.MessageHookPath + "/{app}": "ChatHook",
 }
 
 // pascalCase is id with its first letter upper-cased.
