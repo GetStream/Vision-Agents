@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -68,7 +69,7 @@ func (s *ConnectorResolverSuite) TestWithConnectorsOffThereIsNoLimiterAndNothing
 func (s *ConnectorResolverSuite) TestWithConnectorsOnAndNoRedisThereIsNoLimiterAndOneWarning() {
 	resolver, err := newConnectorResolver(s.connectorsOn(), s.store(), s.sealer())
 	s.Require().NoError(err)
-	transports, err := newConnectorTransports(resolver)
+	transports, err := newConnectorTransports(resolver, egress.NewRoute(nil))
 	s.Require().NoError(err)
 	var logged bytes.Buffer
 

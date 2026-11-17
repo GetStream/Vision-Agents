@@ -472,7 +472,7 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	if err != nil {
 		return core.Registry{}, err
 	}
-	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: connectorRoute(settings).NewClient(connectorHTTPTimeout, nil)})
 	if err != nil {
 		return core.Registry{}, err
 	}
@@ -493,12 +493,19 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	return core.Registry{Schemes: schemes, Verifiers: verifiers, ToolSources: sources}, nil
 }
 
+// connectorRoute is how connector traffic leaves this router: through connectors.egress_proxy
+// when it is set, and straight to the checked public address when it is not. Traffic that is
+// not a connector's (webhooks, callbacks, fetched media, custom models) always goes straight.
+func connectorRoute(settings config.Config) egress.Route {
+	return egress.NewRoute(settings.Connectors.EgressProxyURL())
+}
+
 // connectorSchemeConfig is the oauth2code.Config newConnectorRegistry starts the scheme with.
 // A test runs it against a loopback fake by replacing HTTP and PublicEndpoint, which egress
 // refuses loopback for, and keeps the rest.
 func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLookup) oauth2code.Config {
 	return oauth2code.Config{
-		HTTP:              egress.NewClient(connectorHTTPTimeout, nil),
+		HTTP:              connectorRoute(settings).NewClient(connectorHTTPTimeout, nil),
 		Clients:           clients,
 		ClientMetadataURL: api.ConnectorClientMetadataURL(settings.PublicURL),
 	}
@@ -647,7 +654,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	connectorTransports, err := newConnectorTransports(connectorResolver)
+	connectorTransports, err := newConnectorTransports(connectorResolver, connectorRoute(settings))
 	if err != nil {
 		return err
 	}
@@ -1514,7 +1521,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// The customer's Slack app (managed) and Stream's own (operator) are written only where
 	// connector secrets can be sealed. Slack is reached through egress, as every scheme is.
 	if connectorSecrets != nil {
-		options.SlackApps, err = slackapps.New(slackapps.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+		options.SlackApps, err = slackapps.New(slackapps.Config{HTTP: connectorRoute(settings).NewClient(connectorHTTPTimeout, nil)})
 		if err != nil {
 			return err
 		}

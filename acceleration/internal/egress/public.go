@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -82,9 +83,12 @@ type lookup interface {
 // outside the package always get defaultPolicy.
 type policy struct {
 	resolver lookup
-	// dial opens the socket to an address the policy has already checked.
+	// dial opens the socket to an address the policy has already checked, or to proxy.
 	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	tlsConfig *tls.Config
+	// proxy is the host:port of an HTTP CONNECT proxy every checked connection is tunnelled
+	// through, and empty for none.
+	proxy string
 }
 
 // defaultPolicy dials with the settings http.DefaultTransport uses (30s connect, 30s
@@ -109,6 +113,37 @@ func ValidatePublicHTTPSURL(ctx context.Context, raw string) error {
 // because a proxy would bypass the address checks.
 func NewClient(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 	return defaultPolicy.client(timeout, wrap)
+}
+
+// Route is a way out for connector traffic: NewClient and DialPublic with the same checks,
+// either dialing the checked address or tunnelling through an HTTP CONNECT proxy.
+type Route struct {
+	policy policy
+}
+
+// NewRoute is the route through proxy, an http://host:port URL from the router's own config,
+// and the direct one NewClient takes when proxy is nil. Through the proxy, every address the
+// target resolves to is still checked before the tunnel is asked for, and the tunnel is asked
+// for the target's own host and port, so the proxy can apply its policy to the name. The proxy
+// resolves the name again, so it must refuse non-public addresses itself; the TLS session
+// stays end to end and is verified against the name, so a different answer there reaches
+// nothing that cannot prove it is that host.
+func NewRoute(proxy *url.URL) Route {
+	route := Route{policy: defaultPolicy}
+	if proxy != nil {
+		route.policy.proxy = proxy.Host
+	}
+	return route
+}
+
+// NewClient is NewClient on this route.
+func (r Route) NewClient(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+	return r.policy.client(timeout, wrap)
+}
+
+// DialPublic is DialPublic on this route.
+func (r Route) DialPublic(ctx context.Context, network, address string) (net.Conn, error) {
+	return r.policy.dialPublic(ctx, network, address)
 }
 
 func (p policy) validate(ctx context.Context, raw string) error {
@@ -264,6 +299,9 @@ func (p policy) dialPublic(ctx context.Context, network, address string) (net.Co
 			return nil, fmt.Errorf("egress: outbound host resolved to a non-public address")
 		}
 	}
+	if p.proxy != "" {
+		return p.tunnel(ctx, address)
+	}
 	var lastErr error
 	for _, ip := range ips {
 		connection, err := p.dial(ctx, network, net.JoinHostPort(ip.String(), port))
@@ -273,6 +311,39 @@ func (p policy) dialPublic(ctx context.Context, network, address string) (net.Co
 		lastErr = err
 	}
 	return nil, fmt.Errorf("egress: connect to public endpoint: %w", lastErr)
+}
+
+// tunnel asks the proxy for a tunnel to target, a host and port dialPublic has checked, as
+// net/http's own transport does (RFC 9110 section 9.3.6). Nothing is read past the response:
+// a TLS server does not speak until spoken to. A cancelled ctx closes the socket, so a proxy
+// that never answers holds the call no longer than its context.
+func (p policy) tunnel(ctx context.Context, target string) (net.Conn, error) {
+	connection, err := p.dial(ctx, "tcp", p.proxy)
+	if err != nil {
+		return nil, fmt.Errorf("egress: connect to the egress proxy: %w", err)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	request := &http.Request{Method: http.MethodConnect, URL: &url.URL{Opaque: target}, Host: target, Header: http.Header{}}
+	if err := request.Write(connection); err != nil {
+		stop()
+		_ = connection.Close()
+		return nil, fmt.Errorf("egress: ask the egress proxy for a tunnel: %w", err)
+	}
+	// The body of a refusal is left unread: the socket is closed with it.
+	response, err := http.ReadResponse(bufio.NewReader(connection), request)
+	if err != nil {
+		stop()
+		_ = connection.Close()
+		return nil, fmt.Errorf("egress: read the egress proxy's answer: %w", err)
+	}
+	if !stop() {
+		return nil, fmt.Errorf("egress: tunnel through the egress proxy: %w", context.Cause(ctx))
+	}
+	if response.StatusCode != http.StatusOK {
+		_ = connection.Close()
+		return nil, fmt.Errorf("egress: the egress proxy refused the tunnel: %s", response.Status)
+	}
+	return connection, nil
 }
 
 func (p policy) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
