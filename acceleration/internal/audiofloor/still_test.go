@@ -13,17 +13,22 @@ import (
 
 // holding sends ms of frames, voiced or quiet, 20 ms at a time, each once the checks asked by the
 // one before have answered, so that a check's answer comes at the frame it was asked at, as it
-// nearly does on a call, where a frame takes 20 ms and a check about as long. It returns the
-// final, if one came, and how far into the frames it came.
+// nearly does on a call, where a frame takes 20 ms and a check about as long. A check that ended
+// the turn has its final sent off its own goroutine (await, settle): idle waits for that goroutine,
+// so the next frame comes after the final, or after the turn ended with nothing sent, however long
+// the goroutine takes to be run. It returns the final, if one came, and how far into the frames it
+// came.
 func (s *transcribing) holding(ms int, voiced bool) (stt.Transcript, time.Duration, bool) {
 	s.T().Helper()
 	for sent := 0; sent < ms; sent += 20 {
 		s.say(20, voiced)
 		s.Eventually(func() bool {
 			s.transcriber.mu.Lock()
-			defer s.transcriber.mu.Unlock()
-			return !s.transcriber.still.inFlight && !s.transcriber.pause.inFlight && !s.transcriber.interimOut.Load()
+			out := s.transcriber.still.inFlight || s.transcriber.pause.inFlight || s.transcriber.interimOut.Load()
+			s.transcriber.mu.Unlock()
+			return !out
 		}, 5*time.Second, time.Millisecond)
+		s.idle()
 		for {
 			select {
 			case event := <-s.transcriber.Events():
