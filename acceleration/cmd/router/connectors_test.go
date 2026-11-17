@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -113,6 +117,34 @@ func (s *ConnectorRegistrySuite) TestAPlainHTTPPublicURLStartsWithCIMDOff() {
 	_, err := s.beginWithCIMDOnly()
 
 	s.ErrorIs(err, oauth2code.ErrNoClient, "an http client_id URL is not CIMD's (section 3), so none is passed")
+}
+
+// The target is a public IP literal, so nothing is looked up, and the proxy refuses it, so
+// nothing leaves the machine: what it was asked for is the proof the client went through it.
+func (s *ConnectorRegistrySuite) TestWithAnEgressProxyAConnectorsClientAsksItForATunnel() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	defer listener.Close()
+	asked := make(chan string, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		request, err := http.ReadRequest(bufio.NewReader(connection))
+		if err != nil {
+			return
+		}
+		asked <- request.Method + " " + request.Host
+		_, _ = io.WriteString(connection, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+	}()
+	s.settings.Connectors.EgressProxy = "http://" + listener.Addr().String()
+
+	_, err = connectorSchemeConfig(s.settings, nil).HTTP.Get("https://8.8.8.8/.well-known/oauth-authorization-server")
+
+	s.ErrorContains(err, "egress proxy refused the tunnel")
+	s.Equal("CONNECT 8.8.8.8:443", <-asked)
 }
 
 // beginWithCIMDOnly starts a consent with the scheme the router builds from s.settings,

@@ -208,6 +208,43 @@ func (s *ConfigSuite) TestDirectCallsAreCappedAtSixtyAMinuteUnlessAskedOtherwise
 	s.ErrorContains(err, "connectors.proxy_calls_per_minute")
 }
 
+// The environment's proxy variables are for other clients: connectors leave through a proxy
+// only when the router's own setting names one.
+func (s *ConfigSuite) TestConnectorsDialDirectlyUnlessAnEgressProxyIsNamed() {
+	s.T().Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
+	s.T().Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Nil(config.Connectors.EgressProxyURL())
+
+	s.T().Setenv("ROUTER_CONNECTORS_EGRESS_PROXY", "http://127.0.0.1:41080")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Require().NotNil(config.Connectors.EgressProxyURL())
+	s.Equal("127.0.0.1:41080", config.Connectors.EgressProxyURL().Host)
+}
+
+func (s *ConfigSuite) TestAnEgressProxyThatIsNotHTTPWithAHostAndAPortIsRefused() {
+	for _, refused := range []string{
+		"127.0.0.1:41080",
+		"https://127.0.0.1:41080",
+		"socks5://127.0.0.1:41080",
+		"http://127.0.0.1",
+		"http://127.0.0.1:0",
+		"http://127.0.0.1:65536",
+		"http://:41080",
+		"http://user:hunter2@127.0.0.1:41080",
+		"http://127.0.0.1:41080/",
+		"http://127.0.0.1:41080?x=1",
+		"http://127.0.0.1:41080#x",
+	} {
+		s.T().Setenv("ROUTER_CONNECTORS_EGRESS_PROXY", refused)
+		_, _, err := Load("")
+		s.ErrorContainsf(err, "connectors.egress_proxy", "%s should be refused", refused)
+		s.NotContainsf(err.Error(), "hunter2", "the refusal of %s should not repeat it", refused)
+	}
+}
+
 // TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise: the default, the variable that changes
 // it, 0 that turns it off, and a negative cap refused.
 func (s *ConfigSuite) TestRunsAreCappedAtTwentyPerAppUnlessAskedOtherwise() {

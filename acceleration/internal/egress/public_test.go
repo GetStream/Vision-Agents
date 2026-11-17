@@ -3,6 +3,7 @@ package egress
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -425,6 +427,175 @@ func (s *EgressSuite) TestCloseIdleConnectionsClosesThemThroughAWrapper() {
 // client name and a way to reach whoever runs it.
 func (s *EgressSuite) TestTheUserAgentNamesTheRouterAndWhereToReachIt() {
 	s.Regexp(`^vision-agents \(https://\S+\)$`, UserAgent)
+}
+
+func (s *EgressSuite) TestThroughAProxyACallIsTunnelledToTheTargetsNameAndPort() {
+	for target, want := range map[string]string{
+		"https://api.example.com/mcp":      "api.example.com:443",
+		"https://api.example.com:8443/mcp": "api.example.com:8443",
+	} {
+		var hits atomic.Int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			_, _ = io.WriteString(w, "tools")
+		}))
+		proxy := s.startProxy(server, http.StatusOK)
+
+		response, err := s.proxiedPolicy(server, proxy, publicAnswers()).client(5*time.Second, nil).Get(target)
+
+		s.Require().NoErrorf(err, "%s should be reached through the proxy", target)
+		body, err := io.ReadAll(response.Body)
+		s.Require().NoError(err)
+		_ = response.Body.Close()
+		s.Equal("tools", string(body))
+		s.Equalf([]string{want}, proxy.asked(), "%s should be asked of the proxy by name and port", target)
+		s.EqualValues(1, hits.Load())
+		server.Close()
+	}
+}
+
+// The address check runs before the proxy is dialed, so a private target never reaches it,
+// whatever the proxy would have allowed.
+func (s *EgressSuite) TestThroughAProxyANonPublicTargetIsRefusedBeforeAnyConnect() {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	proxy := s.startProxy(server, http.StatusOK)
+	resolver := &answers{byHost: map[string][]string{
+		"internal.example.com": {"10.1.2.3"},
+		"metadata.example.com": {"169.254.169.254"},
+		"localhost":            {"127.0.0.1"},
+	}}
+	client := s.proxiedPolicy(server, proxy, resolver).client(5*time.Second, nil)
+
+	for _, target := range []string{
+		"https://127.0.0.1/mcp",
+		"https://[::1]/mcp",
+		"https://10.0.0.1/mcp",
+		"https://localhost/mcp",
+		"https://internal.example.com/mcp",
+		"https://metadata.example.com/latest/meta-data",
+	} {
+		_, err := client.Get(target)
+		s.ErrorContainsf(err, "non-public address", "%s should be refused", target)
+	}
+	s.Zero(proxy.connections.Load(), "no connection should reach the proxy")
+}
+
+func (s *EgressSuite) TestAProxysRefusalFailsTheCall() {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer server.Close()
+	proxy := s.startProxy(server, http.StatusForbidden)
+
+	_, err := s.proxiedPolicy(server, proxy, publicAnswers()).client(5*time.Second, nil).Get("https://api.example.com/mcp")
+
+	s.ErrorContains(err, "egress proxy refused the tunnel: 403")
+	s.Equal([]string{"api.example.com:443"}, proxy.asked())
+	s.Zero(hits.Load())
+}
+
+// NewRoute hands the router's proxy to the client. The target is a public IP literal, so no
+// name is looked up; the test proxy tunnels it to a local server whose certificate the
+// default policy does not trust, so nothing leaves the machine.
+func (s *EgressSuite) TestNewRouteSendsTheCallToTheProxyItIsGiven() {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	proxy := s.startProxy(server, http.StatusOK)
+
+	_, err := NewRoute(mustURL("http://"+proxy.address)).NewClient(5*time.Second, nil).Get("https://8.8.8.8/mcp")
+
+	s.ErrorContains(err, "certificate")
+	s.Equal([]string{"8.8.8.8:443"}, proxy.asked())
+}
+
+// Only the router's own setting names a proxy: the environment's variables, which every
+// other client in the process may follow, never route connector traffic.
+func (s *EgressSuite) TestWithoutAProxyTheEnvironmentsProxyIsNotUsed() {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	proxy := s.startProxy(server, http.StatusOK)
+	for _, variable := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY"} {
+		s.T().Setenv(variable, "http://"+proxy.address)
+	}
+
+	response, err := testPolicy(server, publicAnswers()).client(5*time.Second, nil).Get("https://api.example.com/mcp")
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+	_, err = NewRoute(nil).NewClient(5*time.Second, nil).Get(server.URL)
+
+	s.ErrorContains(err, "non-public address", "the direct route should still check the address")
+	s.Zero(proxy.connections.Load())
+}
+
+// proxiedPolicy is testPolicy through proxy: it dials the proxy and nothing else, so a call
+// that tried to reach the target directly fails instead of leaving the machine.
+func (s *EgressSuite) proxiedPolicy(server *httptest.Server, proxy *connectProxy, resolver lookup) policy {
+	return policy{
+		resolver: resolver,
+		dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if address != proxy.address {
+				return nil, errors.New("test: dialed " + address + " instead of the proxy")
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		tlsConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
+		proxy:     proxy.address,
+	}
+}
+
+// connectProxy answers every CONNECT with status, and tunnels the ones it answers 200 to
+// server whatever they name. It records what each CONNECT asked for and every connection.
+type connectProxy struct {
+	address     string
+	connections atomic.Int32
+	mu          sync.Mutex
+	targets     []string
+}
+
+func (s *EgressSuite) startProxy(server *httptest.Server, status int) *connectProxy {
+	proxy := &connectProxy{}
+	listener := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		proxy.mu.Lock()
+		proxy.targets = append(proxy.targets, r.Host)
+		proxy.mu.Unlock()
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		upstream, err := net.Dial("tcp", server.Listener.Addr().String())
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		client, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			_ = upstream.Close()
+			return
+		}
+		_, _ = io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n")
+		go func() { _, _ = io.Copy(upstream, client); _ = upstream.Close() }()
+		_, _ = io.Copy(client, upstream)
+		_ = client.Close()
+	}))
+	listener.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			proxy.connections.Add(1)
+		}
+	}
+	listener.Start()
+	s.T().Cleanup(listener.Close)
+	proxy.address = listener.Listener.Addr().String()
+	return proxy
+}
+
+func (p *connectProxy) asked() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.targets)
 }
 
 func (s *EgressSuite) requireRefused(raws ...string) {

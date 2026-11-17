@@ -449,6 +449,40 @@ type Connectors struct {
 	// customers share the router's egress, so one customer's calls could otherwise spend a
 	// provider's limit for everyone. 0 turns it off; so does a deployment with no Redis.
 	ProxyCallsPerMinute int64 `koanf:"proxy_calls_per_minute"`
+	// EgressProxy is an HTTP CONNECT proxy, http://host:port, that connector traffic leaves
+	// through instead of dialing out itself, for a host whose network allows nothing else (a
+	// sandbox that reaches loopback alone). The router still checks that every address the
+	// target resolves to is public before it asks the proxy for a tunnel, and the proxy must
+	// apply a policy of its own: it resolves the name again. Empty, the default, dials
+	// directly. The environment's HTTPS_PROXY is never used.
+	EgressProxy string `koanf:"egress_proxy"`
+}
+
+// EgressProxyURL is EgressProxy parsed, and nil when it is empty. Load has validated it.
+func (c Connectors) EgressProxyURL() *url.URL {
+	proxy, _ := egressProxyURL(c.EgressProxy)
+	return proxy
+}
+
+// egressProxyURL parses raw as connectors.egress_proxy: http, a host, a port of 1 to 65535,
+// and nothing else. The proxy is spoken to in plain HTTP, so a credential in it would cross
+// the network in the clear, and a path, query or fragment would mean nothing to a CONNECT.
+func egressProxyURL(raw string) (*url.URL, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	invalid := errors.New("config: connectors.egress_proxy (ROUTER_CONNECTORS_EGRESS_PROXY) is http://host:port " +
+		"with no userinfo, path, query or fragment")
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return nil, invalid
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return nil, invalid
+	}
+	return parsed, nil
 }
 
 // Runs is how many headless runs (POST /v1/agents/runs) one app may have going at once.
@@ -634,6 +668,7 @@ var variables = map[string]string{
 	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
 	"agent.floor_control_default":       "ROUTER_FLOOR_CONTROL_DEFAULT",
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
+	"connectors.egress_proxy":           "ROUTER_CONNECTORS_EGRESS_PROXY",
 	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
@@ -834,6 +869,9 @@ func environment() *env.Env {
 func (c Config) validate() error {
 	if c.Connectors.ProxyCallsPerMinute < 0 {
 		return fmt.Errorf("config: connectors.proxy_calls_per_minute cannot be negative, got %d", c.Connectors.ProxyCallsPerMinute)
+	}
+	if _, err := egressProxyURL(c.Connectors.EgressProxy); err != nil {
+		return err
 	}
 	if c.Runs.ConcurrentPerApp < 0 {
 		return fmt.Errorf("config: runs.concurrent_per_app cannot be negative, got %d", c.Runs.ConcurrentPerApp)
