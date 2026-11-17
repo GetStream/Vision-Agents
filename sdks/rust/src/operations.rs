@@ -2091,6 +2091,40 @@ impl Client {
         )
         .await
     }
+    /// Give a running session more of the caller's tools
+    ///
+    /// `POST /v1/agents/sessions/{id}/tools` (`addSessionTools`).
+    pub async fn add_session_tools(
+        &self,
+        id: &str,
+        body: &types::AddSessionToolsRequest,
+    ) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/sessions/{id}/tools", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "addSessionTools",
+        )
+        .await
+    }
+    /// Withdraw one of the caller's tools from a running session
+    ///
+    /// `DELETE /v1/agents/sessions/{id}/tools/{name}` (`removeSessionTool`).
+    pub async fn remove_session_tool(&self, id: &str, name: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/sessions/{id}/tools/{name}",
+                id = segment(id),
+                name = segment(name)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "removeSessionTool",
+        )
+        .await
+    }
     /// Start voice on a session
     ///
     /// `POST /v1/agents/sessions/{id}/voice` (`startSessionVoice`).

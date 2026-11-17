@@ -428,6 +428,13 @@ pub struct AddContactsResponse {
     ///In the order sent.
     pub refused: ::std::vec::Vec<RefusedContact>,
 }
+///Tools to give a running session's caller.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AddSessionToolsRequest {
+    ///The tools, each declared as it is when a session is created. One named as a tool the caller already has replaces it.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub tools: ::std::option::Option<::std::vec::Vec<SessionTool>>,
+}
 ///`AddTrunkNumberRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AddTrunkNumberRequest {
