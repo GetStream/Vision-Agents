@@ -82,6 +82,16 @@ public sealed class Session : IAsyncDisposable
 
     private readonly VisionAgentsClient _client;
     private readonly Tools? _tools;
+    // What AddToolsAsync gave the session after it opened, by name, each in the Tools it was
+    // added in; they run here before the agent's own of the same name. Withdrawn are the names
+    // RemoveToolAsync took back, which the agent's own no longer run, and unsettled the ones
+    // whose adding was never answered, which the router may or may not offer.
+    private readonly Dictionary<string, Tools> _added = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _withdrawn = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _unsettled = new(StringComparer.Ordinal);
+    private readonly Lock _toolsLock = new();
+    // One change of the session's tools at a time, across its request.
+    private readonly SemaphoreSlim _changing = new(1, 1);
     private readonly string _agentUserId;
     private readonly Socket? _socket;
     private readonly Channel<SessionEvent> _events = Channel.CreateBounded<SessionEvent>(
@@ -180,6 +190,120 @@ public sealed class Session : IAsyncDisposable
     /// <summary>Stops whatever the agent is saying.</summary>
     public Task InterruptAsync(CancellationToken cancellationToken = default) =>
         SendAsync(Frames.Of("interrupt"), cancellationToken);
+
+    /// <summary>
+    /// Gives the session the functions in <paramref name="more"/> while it runs, for this session
+    /// alone, and runs their calls here, as it runs the agent's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The router waits for the turn in progress, and every call in flight, to finish, and the
+    /// model is offered them from the next turn, so do not await this from inside one of the
+    /// session's tools: it waits for that call.
+    /// </para>
+    /// <para>
+    /// A tool named as one the session already has is refused (409): to change one,
+    /// <see cref="RemoveToolAsync"/> it first, so that no call runs half under each. So is a name
+    /// the session offers from elsewhere, such as a connector's. Only the kind of caller that
+    /// opened the session may change its tools (403).
+    /// </para>
+    /// </remarks>
+    /// <exception cref="RouterException">The router refused, so none of them run here; or, with
+    /// <see cref="RouterException.Status"/> 0, the answer was lost, and they run here until the
+    /// name is added or removed again.</exception>
+    public async Task AddToolsAsync(Tools more, CancellationToken cancellationToken = default)
+    {
+        if (_socket is null)
+        {
+            throw new ConfigurationException("this session was read, not opened, so nothing here would run its tools; open one through an agent");
+        }
+        var declared = more.Declared();
+        if (declared.Count == 0)
+        {
+            throw new ConfigurationException("there are no tools to add");
+        }
+        await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // A name whose adding was never answered may or may not be the router's: it is
+            // withdrawn first, so the router and this process agree on which function it is.
+            foreach (var tool in declared)
+            {
+                if (Unsettled(tool.Name))
+                {
+                    await WithdrawAsync(tool.Name, true, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            // Run from before the router answers: the next turn can call one before the answer
+            // is here. A name already run here keeps its function, since the router refuses to
+            // add it again.
+            List<string> fresh = [];
+            lock (_toolsLock)
+            {
+                foreach (var tool in declared)
+                {
+                    if (!_added.ContainsKey(tool.Name) && (_withdrawn.Contains(tool.Name) || _tools?.Runs(tool.Name) != true))
+                    {
+                        _added[tool.Name] = more;
+                        fresh.Add(tool.Name);
+                    }
+                }
+            }
+            try
+            {
+                await _client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/tools",
+                    new AddSessionToolsRequest { Tools = declared }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RouterException refused) when (refused.Status != 0)
+            {
+                // Refused, so the router offers none of them.
+                lock (_toolsLock)
+                {
+                    foreach (var name in fresh)
+                    {
+                        _added.Remove(name);
+                    }
+                }
+                throw;
+            }
+            catch
+            {
+                // The router may have added them, so their calls are still run here until a
+                // later change of the name settles it.
+                lock (_toolsLock)
+                {
+                    _unsettled.UnionWith(fresh);
+                }
+                throw;
+            }
+        }
+        finally
+        {
+            _changing.Release();
+        }
+    }
+
+    /// <summary>
+    /// Withdraws one of the session's tools, whether it was the agent's when the session opened
+    /// or added since. The router waits as it does for <see cref="AddToolsAsync"/>, so once this
+    /// returns no call of the tool can still arrive; do not await it from inside one of the
+    /// session's tools.
+    /// </summary>
+    /// <remarks>A name withdrawn can be added again, with another function.</remarks>
+    /// <exception cref="RouterException">404 when the session has no tool of the caller's by that name, or is not running.</exception>
+    public async Task RemoveToolAsync(string name, CancellationToken cancellationToken = default)
+    {
+        await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await WithdrawAsync(name, Unsettled(name), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _changing.Release();
+        }
+    }
 
     /// <summary>
     /// Changes this session: its title, description, custom labels, pin, models or voice, and
@@ -360,6 +484,50 @@ public sealed class Session : IAsyncDisposable
         return _socket.SendAsync(frame, cancellationToken);
     }
 
+    /// <summary>
+    /// Takes the tool called name from the session and from what runs here. absentIsFine settles
+    /// a name whose adding was never answered: the router having no tool by it is as good as
+    /// withdrawing it.
+    /// </summary>
+    private async Task WithdrawAsync(string name, bool absentIsFine, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/tools/{VisionAgentsClient.Escape(name)}",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (RouterException absent) when (absentIsFine && absent.Status == 404)
+        {
+            // Never added, which leaves it as withdrawn.
+        }
+        lock (_toolsLock)
+        {
+            _added.Remove(name);
+            _unsettled.Remove(name);
+            _withdrawn.Add(name);
+        }
+    }
+
+    private bool Unsettled(string name)
+    {
+        lock (_toolsLock)
+        {
+            return _unsettled.Contains(name);
+        }
+    }
+
+    /// <summary>
+    /// What runs the tool called name: the functions AddToolsAsync added it in, none once
+    /// RemoveToolAsync withdrew it, else the agent's.
+    /// </summary>
+    private Tools? FunctionsFor(string name)
+    {
+        lock (_toolsLock)
+        {
+            return _added.TryGetValue(name, out var added) ? added : _withdrawn.Contains(name) ? null : _tools;
+        }
+    }
+
     private async Task WatchAsync()
     {
         try
@@ -375,9 +543,9 @@ public sealed class Session : IAsyncDisposable
                     case "tool_call":
                         // Every watcher is sent every call and the first answer wins: answering a
                         // tool held elsewhere would beat whoever runs it, with an error.
-                        if (_tools?.Runs(frame.Text("name")) == true && ToolCallContext.ToRun(frame))
+                        if (FunctionsFor(frame.Text("name")) is { } functions && functions.Runs(frame.Text("name")) && ToolCallContext.ToRun(frame))
                         {
-                            RunTool(frame);
+                            RunTool(frame, functions);
                         }
                         continue;
                     // A call held through interruptions is not cancelled by one: only its
@@ -431,7 +599,7 @@ public sealed class Session : IAsyncDisposable
     /// Runs a tool the model called, off the read loop so a slow one does not hold up the
     /// conversation, and answers with what it returned or what it threw.
     /// </summary>
-    private void RunTool(Frame frame)
+    private void RunTool(Frame frame, Tools functions)
     {
         var id = frame.Text("id");
         var answer = (string Key, object? Value) => Frames.Of("tool_result",
@@ -439,9 +607,9 @@ public sealed class Session : IAsyncDisposable
             ("request_id", frame.Text("request_id")),
             ("turn_id", frame.Text("turn_id")),
             (Key, Value));
-        if (_tools is null || _running.Count >= MaxRunningTools)
+        if (_running.Count >= MaxRunningTools)
         {
-            _ = TrySendAsync(answer("error", _tools is null ? "nothing here runs tools" : "too many tools are already running"));
+            _ = TrySendAsync(answer("error", "too many tools are already running"));
             return;
         }
 
@@ -459,7 +627,7 @@ public sealed class Session : IAsyncDisposable
                     null => "",
                     var other => other.ToJsonString(),
                 };
-                result = answer("output", await _tools.CallAsync(frame.Text("name"), arguments, cancel.Token, toolCallContext).ConfigureAwait(false));
+                result = answer("output", await functions.CallAsync(frame.Text("name"), arguments, cancel.Token, toolCallContext).ConfigureAwait(false));
             }
             catch (Exception) when (cancel.IsCancellationRequested)
             {
