@@ -3,6 +3,7 @@ package io.getstream.agents.android.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -254,5 +255,169 @@ class ConversationTest {
 
         assertEquals(before, after)
         assertNull(event("""{"type":"astonished"}""").kind)
+    }
+
+    @Test
+    fun `a reply's UI streams onto its turn beside its text`() {
+        var conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Table at 19:15."}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])\n"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"hdr = CardHeader(\"Kan"}""",
+        )
+
+        assertEquals(1, conversation.turns.size)
+        assertEquals("Table at 19:15.", conversation.turns[0].text)
+        assertEquals(true, conversation.turns[0].ui?.isStreaming)
+        // The header shows once it is finished, not a letter at a time.
+        assertEquals("root = Card([hdr])", conversation.turns[0].ui?.content)
+
+        conversation = conversation.after(
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responded","turn_id":"t1","text":"Table at 19:15."}""",
+        )
+
+        assertEquals(false, conversation.turns[0].ui?.isStreaming)
+        assertEquals("root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", conversation.turns[0].ui?.content)
+        assertEquals("Table at 19:15.", conversation.turns[0].text)
+        assertEquals(Conversation.State.Idle, conversation.state)
+    }
+
+    @Test
+    fun `a value shows once its line ends`() {
+        var conversation = Conversation().after(
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([gauge])\ngauge = AvailabilityGauge(8"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"6, \"12 min wait\")\n${"$"}party = 4"}""",
+        )
+
+        assertEquals(
+            "root = Card([gauge])\ngauge = AvailabilityGauge(86, \"12 min wait\")",
+            conversation.turns[0].ui?.content,
+        )
+
+        conversation = conversation.after("""{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"2\n"}""")
+
+        assertEquals(true, conversation.turns[0].ui?.content?.endsWith("\n\$party = 42"))
+    }
+
+    @Test
+    fun `a statement over several lines shows once it closes`() {
+        var conversation = Conversation().after(
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([map])\nmap = TripMap([\n  {name: \"Kaneo\"},\n"}""",
+        )
+
+        assertEquals("root = Card([map])", conversation.turns[0].ui?.content)
+
+        conversation = conversation.after("""{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"])\n"}""")
+
+        assertEquals(
+            "root = Card([map])\nmap = TripMap([\n  {name: \"Kaneo\"},\n])",
+            conversation.turns[0].ui?.content,
+        )
+    }
+
+    @Test
+    fun `a completed UI with no content keeps what streamed`() {
+        val conversation = Conversation().after(
+            """{"type":"ui_delta","turn_id":"t1","format":"a2ui","version":"1.0","delta":"[{\"version\":\"v1.0\"}]"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"a2ui","version":"1.0","content":""}""",
+        )
+
+        assertEquals(listOf(true), conversation.turns.map { it.isAgent })
+        assertEquals(
+            TurnUI(format = "a2ui", version = "1.0", isStreaming = false, content = """[{"version":"v1.0"}]"""),
+            conversation.turns[0].ui,
+        )
+    }
+
+    @Test
+    fun `an OpenUI patch is merged onto the card before it`() {
+        var conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr, gauge])\nhdr = CardHeader(\"Kaneo\")\ngauge = AvailabilityGauge(86, \"12 min wait\")"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"${"$"}party = 4\n"}""",
+        )
+
+        assertEquals(true, conversation.turns[1].ui?.isStreaming)
+        assertEquals(
+            "\$party = 4\nroot = Card([hdr, gauge])\nhdr = CardHeader(\"Kaneo\")\n" +
+                "gauge = AvailabilityGauge(86, \"12 min wait\")",
+            conversation.turns[1].ui?.content,
+        )
+
+        conversation = conversation.after(
+            """{"type":"ui_completed","turn_id":"t2","format":"openui","mode":"patch","content":"${"$"}party = 4\ngauge = null\ntip = Callout(\"info\", \"Book\", \"Ask for the terrace.\")"}""",
+        )
+
+        assertEquals(
+            "\$party = 4\nroot = Card([hdr, gauge])\nhdr = CardHeader(\"Kaneo\")\n" +
+                "tip = Callout(\"info\", \"Book\", \"Ask for the terrace.\")",
+            conversation.turns[1].ui?.content,
+        )
+        // The card it was merged onto stays as it was.
+        assertEquals(true, conversation.turns[0].ui?.content?.contains("AvailabilityGauge"))
+    }
+
+    @Test
+    fun `a patch with no card before it sets no UI`() {
+        // As after a reload: the card it changes is only in Stream Chat, which shows it merged.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","mode":"patch","delta":"${"$"}party = 4\n"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertEquals(listOf<TurnUI?>(null), conversation.turns.map { it.ui })
+    }
+
+    @Test
+    fun `a patch delta that shows nothing new is still kept`() {
+        var conversation = Conversation().after(
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+        )
+
+        val before = conversation.after("""{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"${"$"}par"}""")
+        conversation = before.after("""{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"ty"}""")
+        assertEquals("\$party = 2\nroot = Card([hdr])", conversation.turns[1].ui?.content)
+        // Nothing new shows, and the two are still not equal, so a StateFlow keeps the later one.
+        assertEquals(before.turns, conversation.turns)
+        assertNotEquals(before, conversation)
+
+        conversation = conversation.after("""{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":" = 4\n"}""")
+
+        assertEquals("\$party = 4\nroot = Card([hdr])", conversation.turns[1].ui?.content)
+    }
+
+    @Test
+    fun `a statement over several lines is replaced whole`() {
+        val base = """
+            root = Card([map, tip])
+            map = TripMap([
+              {name: "Kaneo", latitude: 41.11, longitude: 20.78},
+              {name: "St. Naum", latitude: 40.91, longitude: 20.74}
+            ])
+            // the tip
+            tip = Callout("info", "Note", "Closed (Mondays) = no boats")
+        """.trimIndent()
+
+        val merged = TurnUI.merge(base, """map = TripMap([{name: "Bay of Bones", latitude: 41.01, longitude: 20.79}])""")
+
+        assertEquals(
+            """
+                root = Card([map, tip])
+                map = TripMap([{name: "Bay of Bones", latitude: 41.01, longitude: 20.79}])
+                tip = Callout("info", "Note", "Closed (Mondays) = no boats")
+            """.trimIndent(),
+            merged,
+        )
+    }
+
+    @Test
+    fun `a variable set to null keeps its null`() {
+        val merged = TurnUI.merge("\$open = true\nroot = Card([hdr])", "\$open = null")
+
+        assertEquals("\$open = null\nroot = Card([hdr])", merged)
     }
 }

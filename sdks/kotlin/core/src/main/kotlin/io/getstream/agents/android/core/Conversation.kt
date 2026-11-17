@@ -11,6 +11,8 @@ public data class Turn(
     val speaker: Speaker,
     val text: String,
     val at: Instant,
+    /** The interactive UI an agent turn wrote, as it streams in, or null for a turn without any. */
+    val ui: TurnUI? = null,
 ) {
     public sealed interface Speaker {
         /** A person, on the call or typing. Null when the router did not say who. */
@@ -44,6 +46,12 @@ public data class Conversation(
      * again: it next hears, starts answering or speaks.
      */
     val failure: String? = null,
+    /**
+     * What each agent turn's UI block wrote so far, by turn id: the deltas, or a patch before it
+     * is merged. Kept apart from [Turn.ui], which is what shows and is left unchanged by a delta
+     * that shows nothing new, and counted in equality so that such a delta is still kept.
+     */
+    internal val uiWritten: Map<String, String> = emptyMap(),
 ) {
     public sealed interface State {
         /** Waiting to be spoken to. */
@@ -92,6 +100,32 @@ public data class Conversation(
 
             AgentEvent.Kind.ResponseDelta ->
                 write(event.turnId, event.text, at) { it + event.text }.copy(state = State.Responding)
+
+            AgentEvent.Kind.UiDelta -> {
+                val delta = event.string("delta")
+                val format = event.string("format")
+                if (delta.isEmpty() || format.isEmpty()) {
+                    this
+                } else {
+                    val written = uiWritten[event.turnId].orEmpty() + delta
+                    copy(uiWritten = uiWritten + (event.turnId to written))
+                        .writeUi(event, format, written, isStreaming = true, at)
+                        .let { if (it.state is State.Working) it else it.copy(state = State.Responding) }
+                }
+            }
+
+            // The whole of it is authoritative, as a reply's final text is. One with no content
+            // keeps what streamed.
+            AgentEvent.Kind.UiCompleted -> {
+                val format = event.string("format")
+                if (format.isEmpty()) {
+                    this
+                } else {
+                    val written = event.string("content").ifEmpty { uiWritten[event.turnId].orEmpty() }
+                    copy(uiWritten = uiWritten - event.turnId)
+                        .writeUi(event, format, written, isStreaming = false, at)
+                }
+            }
 
             // The final text is authoritative: the deltas are what was being written, this is
             // what was said. An empty one adds nothing, which is what a spoken-only turn is.
@@ -144,5 +178,199 @@ public data class Conversation(
         val updated = turns.toMutableList()
         updated[index] = updated[index].copy(text = change(updated[index].text))
         return copy(turns = updated)
+    }
+
+    /**
+     * Shows [written], what the turn's UI block wrote so far, as the UI of the agent turn a
+     * `ui_delta` or `ui_completed` belongs to, starting the turn if the router sent UI for one we
+     * never saw begin. While OpenUI streams, only its finished statements show. A patch is merged
+     * onto the UI of the latest earlier turn in the same format; with none in this transcript,
+     * such as after a reload, it sets no UI, and Stream Chat's copy, which the router merged, is
+     * the one to show.
+     */
+    private fun writeUi(
+        event: AgentEvent,
+        format: String,
+        written: String,
+        isStreaming: Boolean,
+        at: Instant,
+    ): Conversation {
+        val turnId = event.turnId
+        val openUi = format == TurnUI.OPEN_UI
+        var content = if (isStreaming && openUi) TurnUI.finished(written) else written
+        if (event.string("mode") == "patch" && openUi) {
+            val base = turns.lastOrNull {
+                it.isAgent && it.id != turnId && it.ui?.format == TurnUI.OPEN_UI && it.ui.content.isNotEmpty()
+            }?.ui ?: return this
+            content = TurnUI.merge(base.content, content)
+        }
+        val ui = TurnUI(format, event.string("version").ifEmpty { null }, isStreaming, content)
+        val index = turns.indexOfLast { it.id == turnId && it.isAgent }
+        if (index < 0) return copy(turns = turns + Turn(turnId, Turn.Speaker.Agent, "", at, ui))
+        val updated = turns.toMutableList()
+        updated[index] = updated[index].copy(ui = ui)
+        return copy(turns = updated)
+    }
+}
+
+/**
+ * The interactive UI an agent turn writes, such as a card in OpenUI Lang, as the session's socket
+ * streams it: `ui_delta` as the model writes it, before stage directions are taken out or
+ * anything is spoken, then `ui_completed`.
+ *
+ * The router writes the same UI on the reply's message in Stream Chat as `ai_ui`, later and less
+ * often; [LiveUI] shows this one on the message until that one is complete. On a call, where
+ * nothing is spoken of it, this is the only place it shows.
+ */
+public data class TurnUI(
+    /** The format it is written in, such as `openui` or `a2ui`. */
+    val format: String,
+    /** The format's version, when the model named one. */
+    val version: String? = null,
+    /** Whether the model is still writing it. */
+    val isStreaming: Boolean,
+    /**
+     * The UI to show. While OpenUI is written, that is its finished statements: one still being
+     * written shows once a newline ends it, so the UI grows a part at a time rather than changing
+     * with every delta, such as a gauge reading 8 before 86. A patch, which changes only some
+     * statements of the turn before's OpenUI, is already merged onto it here.
+     */
+    val content: String,
+) {
+    /**
+     * The UI as a message's `ai_ui` custom field holds it, in plain Kotlin values, the shape
+     * Stream Chat's `AIUIDocument.from` reads under that key.
+     */
+    public val customData: Map<String, Any?>
+        get() = buildMap {
+            put("v", 1)
+            put("format", format)
+            put("status", if (isStreaming) "streaming" else "complete")
+            put("content", content)
+            version?.let { put("version", it) }
+        }
+
+    public companion object {
+        /** The format OpenUI Lang is written in, the one whose patches are merged. */
+        public const val OPEN_UI: String = "openui"
+
+        /**
+         * An OpenUI program with [patch] applied, as the router merges one: a statement the patch
+         * assigns again is replaced where it was, a new one goes at the end, and a component
+         * assigned `null` is removed. A `$variable` assigned `null` keeps the `null`.
+         */
+        internal fun merge(base: String, patch: String): String {
+            if (base.isBlank()) return patch
+            if (patch.isBlank()) return base
+            // Insertion-ordered, and replacing a name's statement keeps its place.
+            val statements = LinkedHashMap<String, String>()
+            for (statement in statements(base)) {
+                val (name, _) = assignment(statement) ?: continue
+                statements[name] = statement
+            }
+            for (statement in statements(patch)) {
+                val (name, value) = assignment(statement) ?: continue
+                if (value == "null" && !name.startsWith("$")) {
+                    statements.remove(name)
+                } else {
+                    statements[name] = "$name = $value"
+                }
+            }
+            return statements.values.joinToString("\n")
+        }
+
+        /**
+         * The statements of a program being written that are finished, the one still being written
+         * left out.
+         */
+        internal fun finished(program: String): String =
+            statements(program, finishedOnly = true).joinToString("\n")
+
+        /**
+         * A program's statements: each line, or the lines a bracket or a string left open joined
+         * to the one that closes it. Blank and comment lines are left out. With [finishedOnly], so
+         * is a statement no newline has ended yet.
+         */
+        private fun statements(program: String, finishedOnly: Boolean = false): List<String> {
+            val statements = mutableListOf<String>()
+            val current = StringBuilder()
+            var quote: Char? = null
+            var escaped = false
+            var depth = 0
+            // What follows the last newline is still being written.
+            val lines = program.split("\n").let { if (finishedOnly) it.dropLast(1) else it }
+            for (line in lines) {
+                if (quote == null && depth == 0) {
+                    val trimmed = line.trim(' ', '\t')
+                    if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("#")) continue
+                }
+                if (current.isNotEmpty()) current.append('\n')
+                current.append(line)
+                var previous: Char? = null
+                for (character in line) {
+                    val before = previous
+                    previous = character
+                    if (escaped) {
+                        escaped = false
+                        continue
+                    }
+                    val open = quote
+                    if (open != null) {
+                        if (character == '\\') escaped = true else if (character == open) quote = null
+                        continue
+                    }
+                    if (character == '/' && before == '/') break
+                    when (character) {
+                        '"', '\'' -> quote = character
+                        '(', '[', '{' -> depth += 1
+                        ')', ']', '}' -> depth = maxOf(0, depth - 1)
+                    }
+                }
+                if (quote == null && depth == 0) {
+                    val finished = current.trim()
+                    if (finished.isNotEmpty()) statements += finished.toString()
+                    current.clear()
+                }
+            }
+            val tail = current.trim()
+            if (tail.isNotEmpty() && !finishedOnly) statements += tail.toString()
+            return statements
+        }
+
+        /** Whether [name] can be assigned: an identifier, or a `$variable`. */
+        private fun isName(name: String): Boolean {
+            val identifier = name.removePrefix("$")
+            val first = identifier.firstOrNull() ?: return false
+            return (first == '_' || first.isAsciiLetter()) &&
+                identifier.all { it == '_' || it.isAsciiLetter() || it in '0'..'9' }
+        }
+
+        private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
+
+        /**
+         * The name a statement assigns and the value it assigns, or null when it assigns nothing a
+         * name can be read from.
+         */
+        private fun assignment(statement: String): Pair<String, String>? {
+            var index = 0
+            while (index < statement.length) {
+                if (statement[index] != '=') {
+                    index += 1
+                    continue
+                }
+                if (index > 0 && statement[index - 1] in "!<>=") {
+                    index += 1
+                    continue
+                }
+                if (statement.getOrNull(index + 1) == '=') {
+                    index += 2
+                    continue
+                }
+                val name = statement.substring(0, index).trim(' ', '\t')
+                if (!isName(name)) return null
+                return name to statement.substring(index + 1).trim()
+            }
+            return null
+        }
     }
 }
