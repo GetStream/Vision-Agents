@@ -16,6 +16,9 @@ from ._generated.api.default import (
     delete_session,
     delete_session_memories,
     fork_session,
+    get_call_events,
+    get_call_timeline,
+    get_call_tokens,
     get_session,
     query_sessions,
     start_session_voice,
@@ -24,6 +27,8 @@ from ._generated.api.default import (
     update_session,
 )
 from ._generated.models import (
+    CallEvent,
+    CallTokens,
     CreateSessionRequest,
     CreateSessionRequestCustom,
     ForkSessionRequest,
@@ -38,6 +43,7 @@ from ._generated.models import (
     SessionTool,
     SessionToolApproval,
     SessionToolParameters,
+    TimelineEntry,
     UpdateSessionRequest,
     UpdateSessionRequestCustom,
     UpdateSessionRequestThinking,
@@ -398,6 +404,33 @@ class Sessions:
         await _deleted(
             delete_session_memories.asyncio_detailed(id, client=self._backend.client()),
             f"deleting the memories of {id}",
+        )
+
+    async def tokens(self, id: str) -> CallTokens:
+        """What one conversation's models read and wrote, per model, with the prompt split
+        into instructions, messages, tool definitions, tool use, images and video. Unlike the
+        session's usage it is answered while the conversation runs. Server side only."""
+        return await _unwrapped(
+            get_call_tokens.asyncio(id, client=self._backend.client()),
+            f"reading the tokens of {id}",
+        )
+
+    async def timeline(self, id: str) -> list[TimelineEntry]:
+        """One conversation's exchanges, with what was said in each and how long the answer
+        took to start, its transcription, model and voice timings kept apart. The timings
+        are kept for an hour. Server side only."""
+        return await _unwrapped(
+            get_call_timeline.asyncio(id, client=self._backend.client()),
+            f"reading the timeline of {id}",
+        )
+
+    async def decisions(self, id: str) -> list[CallEvent]:
+        """What one conversation decided, oldest first: why the agent waited rather than
+        answering, why it read something as not meant for it, why it stopped mid-sentence.
+        They are kept for an hour. Server side only."""
+        return await _unwrapped(
+            get_call_events.asyncio(id, client=self._backend.client()),
+            f"reading the decisions of {id}",
         )
 
     def responses(self, id: str) -> Responses:

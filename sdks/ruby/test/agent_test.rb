@@ -1108,6 +1108,45 @@ class TestSessions < LocalRouterTest
     assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/s1").size
   end
 
+  def test_a_sessions_metrics_are_read_back_by_its_id
+    @router.on(:get, "/v1/agents/calls/s1/tokens",
+               body: { "input_tokens" => 1200, "cached_input_tokens" => 800, "output_tokens" => 90,
+                       "input_parts" => { "instructions" => 700, "messages" => 300, "tool_definitions" => 200 },
+                       "models" => [{ "modality" => "llm", "provider" => "openai", "model" => "gpt-5-mini" }] })
+    @router.on(:get, "/v1/agents/calls/s1/timeline",
+               body: [{ "heard" => "what time do you open", "roundtrip_ms" => 640 },
+                      { "heard" => "and on sundays", "roundtrip_ms" => 910 }])
+    @router.on(:get, "/v1/agents/calls/s1/events",
+               body: [{ "kind" => "ignore", "reason" => "not meant for the agent" }])
+    sessions = client.agent("docs").sessions
+
+    tokens = sessions.tokens("s1")
+    timeline = sessions.timeline("s1")
+    decisions = sessions.decisions("s1")
+
+    assert_equal [1200, 800, 200, ["gpt-5-mini"]],
+                 [tokens["input_tokens"], tokens["cached_input_tokens"], tokens["input_parts"]["tool_definitions"],
+                  tokens["models"].map { |model| model["model"] }]
+    assert_equal [["what time do you open", 640], ["and on sundays", 910]],
+                 timeline.map { |entry| [entry["heard"], entry["roundtrip_ms"]] }
+    assert_equal ["ignore"], decisions.map { |decision| decision["kind"] }
+  end
+
+  def test_a_sessions_metrics_of_an_unknown_session_are_refused
+    refused = LocalRouter.failure("not_found", "call_not_found", "unknown call")
+    @router.on(:get, %r{\A/v1/agents/calls/someone-elses/}, status: 404, body: refused)
+    sessions = client.agent("docs").sessions
+
+    { "tokens" => -> { sessions.tokens("someone-elses") }, "timeline" => -> { sessions.timeline("someone-elses") },
+      "decisions" => -> { sessions.decisions("someone-elses") } }.each do |read, call|
+      error = assert_raises(VA::RouterError, read) { call.call }
+      assert_equal [404, "call_not_found"], [error.status, error.code], read
+    end
+    assert_equal %w[/v1/agents/calls/someone-elses/tokens /v1/agents/calls/someone-elses/timeline
+                    /v1/agents/calls/someone-elses/events],
+                 @router.requests.map(&:path)
+  end
+
   def test_closing_a_session_stops_it_and_only_delete_deletes_it
     closed = Thread::Queue.new
     serve_session { |peer| closed << peer.receive_type("close", timeout: 10) }

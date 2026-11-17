@@ -6,6 +6,7 @@ namespace GetStream\VisionAgents\Tests\Unit;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
+use GetStream\VisionAgents\Generated\DecisionKind;
 use GetStream\VisionAgents\Generated\ForkSessionRequest;
 use GetStream\VisionAgents\Generated\ImageSource;
 use GetStream\VisionAgents\Generated\SessionSortField;
@@ -215,6 +216,49 @@ final class SessionTest extends TestCase
 
         self::assertCount(1, $this->router->to('DELETE', '/v1/agents/sessions/ses_1/memories'));
         self::assertCount(1, $this->router->to('DELETE', '/v1/agents/sessions/ses_2/memories'));
+    }
+
+    public function testASessionsMetricsAreReadBackByItsId(): void
+    {
+        $this->router->answer('GET', '/v1/agents/calls/ses_2/tokens', 200, [
+            'input_tokens' => 1200, 'cached_input_tokens' => 800, 'output_tokens' => 90, 'requests' => 3, 'cost_micros' => 410,
+            'cost_sources' => [], 'input_parts' => ['tool_definitions' => 200],
+            'models' => [['provider' => 'openai', 'model' => 'gpt-5-mini', 'modality' => 'llm']],
+        ]);
+        $this->router->answer('GET', '/v1/agents/calls/ses_2/timeline', 200, [
+            ['turn_id' => 't1', 'started_at' => '2026-11-17T10:00:00Z', 'heard' => 'are you open'],
+            ['turn_id' => 't2', 'started_at' => '2026-11-17T10:00:05Z', 'heard' => 'and on sundays', 'roundtrip_ms' => 910],
+        ]);
+        $this->router->answer('GET', '/v1/agents/calls/ses_2/events', 200, [
+            ['at' => '2026-11-17T10:00:02Z', 'kind' => 'ignore', 'reason' => 'not meant for the agent'],
+        ]);
+        $sessions = $this->router->client()->agent('jean')->sessions;
+
+        $tokens = $sessions->tokens('ses_2');
+        $timeline = $sessions->timeline('ses_2');
+        $decisions = $sessions->decisions('ses_2');
+
+        self::assertSame([1200, 800, 200, ['gpt-5-mini']], [$tokens->inputTokens, $tokens->cachedInputTokens, $tokens->inputParts->toolDefinitions, array_map(static fn ($m) => $m->model, $tokens->models)]);
+        self::assertSame([['t1', null], ['t2', 910.0]], array_map(static fn ($e) => [$e->turnId, $e->roundtripMs], $timeline));
+        self::assertSame('and on sundays', $timeline[1]->heard);
+        self::assertSame([DecisionKind::Ignore], array_map(static fn ($e) => $e->kind, $decisions));
+    }
+
+    public function testASessionsMetricsOfAnUnknownSessionAreRefused(): void
+    {
+        foreach (['tokens', 'timeline', 'events'] as $path) {
+            $this->router->answer('GET', "/v1/agents/calls/someone-elses/{$path}", 404, Rows::failure('not_found', 'no such call', 'call_not_found'));
+        }
+        $sessions = $this->router->client()->agent('jean')->sessions;
+
+        foreach (['tokens' => $sessions->tokens(...), 'timeline' => $sessions->timeline(...), 'decisions' => $sessions->decisions(...)] as $read => $metrics) {
+            try {
+                $metrics('someone-elses');
+                self::fail("the {$read} of an unknown session were read");
+            } catch (RouterException $refused) {
+                self::assertSame('call_not_found', $refused->errorCode, $read);
+            }
+        }
     }
 
     public function testActions(): void

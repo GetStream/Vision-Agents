@@ -350,6 +350,33 @@ export class Sessions {
     return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id } });
   }
 
+  /**
+   * What one conversation's models read and wrote, per model, with the prompt split into
+   * instructions, messages, tool definitions, tool use, images and video. Unlike the session's
+   * `usage` it is answered while the conversation runs. Server side only.
+   */
+  tokens(id: string): Promise<Schemas["CallTokens"]> {
+    return this.client.get("/v1/agents/calls/{id}/tokens", { path: { id } });
+  }
+
+  /**
+   * One conversation's exchanges, with what was said in each and how long the answer took to
+   * start, its transcription, model and voice timings kept apart. The timings are kept for an
+   * hour. Server side only.
+   */
+  timeline(id: string): Promise<readonly Schemas["TimelineEntry"][]> {
+    return this.client.get("/v1/agents/calls/{id}/timeline", { path: { id } });
+  }
+
+  /**
+   * What one conversation decided, oldest first: why the agent waited rather than answering,
+   * why it read something as not meant for it, why it stopped mid-sentence. They are kept for
+   * an hour. Server side only.
+   */
+  decisions(id: string): Promise<readonly Schemas["CallEvent"][]> {
+    return this.client.get("/v1/agents/calls/{id}/events", { path: { id } });
+  }
+
   private memoryOf(memory: Schemas["SessionMemory"]): Schemas["SessionMemory"] {
     return memoryFor(this.client, memory);
   }

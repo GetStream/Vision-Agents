@@ -555,6 +555,40 @@ public sealed class ClientTests
     }
 
     [Fact]
+    public async Task ASessionsMetricsAreReadBackByItsId()
+    {
+        await using var router = await CallReads();
+        using var client = Fixtures.Client(router);
+        var sessions = client.Agent("docs").Sessions;
+        var cancel = TestContext.Current.CancellationToken;
+
+        var tokens = await sessions.TokensAsync("session-1", cancel);
+        var timeline = await sessions.TimelineAsync("session-1", cancel);
+        var decisions = await sessions.DecisionsAsync("session-1", cancel);
+
+        Assert.Equal((1200L, 800L, 200L), (tokens.InputTokens, tokens.CachedInputTokens, tokens.InputParts.ToolDefinitions));
+        Assert.Equal("gpt-5-mini", Assert.Single(tokens.Models).Model);
+        Assert.Equal(2, timeline.Count);
+        Assert.Equal(("and on sundays", 910.0), (timeline[1].Heard, timeline[1].RoundtripMs));
+        Assert.Equal("ignore", Assert.Single(decisions).Kind);
+    }
+
+    [Fact]
+    public async Task ASessionsMetricsOfAnUnknownSessionAreRefused()
+    {
+        await using var router = await CallReads();
+        using var client = Fixtures.Client(router);
+        var sessions = client.Agent("docs").Sessions;
+        var cancel = TestContext.Current.CancellationToken;
+
+        var tokens = await Assert.ThrowsAsync<RouterException>(() => sessions.TokensAsync("someone-elses", cancel));
+        var timeline = await Assert.ThrowsAsync<RouterException>(() => sessions.TimelineAsync("someone-elses", cancel));
+        var decisions = await Assert.ThrowsAsync<RouterException>(() => sessions.DecisionsAsync("someone-elses", cancel));
+
+        Assert.Equal(["call_not_found", "call_not_found", "call_not_found"], new[] { tokens.Code, timeline.Code, decisions.Code });
+    }
+
+    [Fact]
     public async Task SimulationsAreWrittenRunAndReadBack()
     {
         await using var router = await TestRouter.StartAsync();
@@ -738,6 +772,33 @@ public sealed class ClientTests
     /// <summary>Every session query the router was sent, each as the JSON it arrived as.</summary>
     private static List<string> Queries(TestRouter router) =>
         [.. router.To("POST", "/v1/agents/sessions/query").Select(seen => seen.Body!.ToJsonString())];
+
+    /// <summary>
+    /// A router answering a call's three reads for <c>session-1</c> alone, each with its own
+    /// shape, so a read of the wrong session, or of the wrong one of the three, is seen.
+    /// </summary>
+    private static async Task<TestRouter> CallReads()
+    {
+        var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/calls/*", 404, Fixtures.Failure("not_found", "call_not_found", "unknown call"));
+        router.On("GET", "/v1/agents/calls/session-1/tokens", 200, new
+        {
+            input_tokens = 1200, cached_input_tokens = 800, output_tokens = 90, cost_micros = 4100, requests = 3,
+            input_parts = new { instructions = 700, messages = 300, tool_definitions = 200, tool_use = 0, images = 0, video = 0 },
+            models = new[] { new { modality = "llm", provider = "openai", model = "gpt-5-mini", input_tokens = 1200 } },
+            cost_sources = Array.Empty<object>(),
+        });
+        router.On("GET", "/v1/agents/calls/session-1/timeline", 200, new[]
+        {
+            new { turn_id = "t1", started_at = "2026-11-17T10:00:00Z", heard = "what time do you open", roundtrip_ms = 640.0 },
+            new { turn_id = "t2", started_at = "2026-11-17T10:00:05Z", heard = "and on sundays", roundtrip_ms = 910.0 },
+        });
+        router.On("GET", "/v1/agents/calls/session-1/events", 200, new[]
+        {
+            new { kind = "ignore", reason = "not meant for the agent", at = "2026-11-17T10:00:03Z" },
+        });
+        return router;
+    }
 
     private static object Page(bool hasMore = false, string? next = null, params object[] items) =>
         new { items, has_more = hasMore, next_cursor = next };

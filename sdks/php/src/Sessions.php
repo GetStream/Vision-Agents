@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents;
 
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Generated\CallEvent;
+use GetStream\VisionAgents\Generated\CallTokens;
 use GetStream\VisionAgents\Generated\CreateSessionRequest;
 use GetStream\VisionAgents\Generated\ModelOverwrites;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Generated\SessionPage;
 use GetStream\VisionAgents\Generated\SessionSortField;
+use GetStream\VisionAgents\Generated\TimelineEntry;
 use GetStream\VisionAgents\Generated\UpdateSessionRequest;
 
 /**
@@ -229,6 +232,42 @@ final readonly class Sessions
     public function deleteMemories(string $id): void
     {
         $this->client->delete('/v1/agents/sessions/{id}/memories', ['id' => $id]);
+    }
+
+    /**
+     * What one conversation's models read and wrote, per model, with the prompt split into
+     * instructions, messages, tool definitions, tool use, images and video. Unlike the
+     * session's usage it is answered while the conversation runs. Server side only.
+     */
+    public function tokens(string $id): CallTokens
+    {
+        return CallTokens::fromArray(Json::asObject($this->client->get('/v1/agents/calls/{id}/tokens', ['id' => $id])));
+    }
+
+    /**
+     * One conversation's exchanges, with what was said in each and how long the answer took
+     * to start, its transcription, model and voice timings kept apart. The timings are kept
+     * for an hour. Server side only.
+     *
+     * @return list<TimelineEntry>
+     */
+    public function timeline(string $id): array
+    {
+        $listed = $this->client->get('/v1/agents/calls/{id}/timeline', ['id' => $id]);
+        return array_map(TimelineEntry::fromArray(...), Json::objects(['rows' => $listed], 'rows'));
+    }
+
+    /**
+     * What one conversation decided, oldest first: why the agent waited rather than
+     * answering, why it read something as not meant for it, why it stopped mid-sentence.
+     * They are kept for an hour. Server side only.
+     *
+     * @return list<CallEvent>
+     */
+    public function decisions(string $id): array
+    {
+        $listed = $this->client->get('/v1/agents/calls/{id}/events', ['id' => $id]);
+        return array_map(CallEvent::fromArray(...), Json::objects(['rows' => $listed], 'rows'));
     }
 
     /**
