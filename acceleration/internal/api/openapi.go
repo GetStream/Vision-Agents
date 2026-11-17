@@ -352,6 +352,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	config.AllowAdditionalPropertiesByDefault = true
 
 	api := humachi.New(router, config)
+	// First, so a request its next middleware refuses still names its operation.
+	api.UseMiddleware(nameHumaOperation)
 	api.UseMiddleware(s.requireStaffKey(api))
 	api.UseMiddleware(requireCustomer(api))
 	s.registerHealth(api)
@@ -483,11 +485,20 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 // spec, whichever half of it declares the operation.
 type operationSummary struct {
 	method, path string
+	// id is the operation's OperationID, as declared.
+	id string
 	// public is an operation declaring no security at all, reached before there is a
 	// caller to classify.
 	public bool
 	// open is an operation marked x-client-accessible.
 	open bool
+}
+
+// nameHumaOperation names the operation a huma.Register declared for the access line, by its id
+// with the first letter upper-cased (pascalCase).
+func nameHumaOperation(ctx huma.Context, next func(huma.Context)) {
+	nameOperation(ctx.Context(), pascalCase(ctx.Operation().OperationID))
+	next(ctx)
 }
 
 // specifiedOperations lists every operation document declares.
@@ -505,6 +516,7 @@ func specifiedOperations(document *huma.OpenAPI) []operationSummary {
 			operations = append(operations, operationSummary{
 				method: method,
 				path:   path,
+				id:     operation.OperationID,
 				public: operation.Security != nil && len(operation.Security) == 0,
 				open:   open,
 			})
