@@ -128,7 +128,7 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 	if err != nil {
 		return stack.Wrap(err)
 	}
-	if err := a.quiesce(ctx); err != nil {
+	if err := a.quiesce(ctx, false); err != nil {
 		prep.close()
 		return stack.Wrap(err)
 	}
@@ -176,12 +176,28 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 	return nil
 }
 
-// SetTools replaces what the model may call, from its next request: a reply being written
-// finishes with the tools it started with. A speech-to-speech model that takes its tools only
-// when it opens refuses (sts.ErrToolsFixed), and then nothing changes.
-func (a *Agent) SetTools(tools harness.Tools) error {
+// SetTools replaces what the model may call. It waits for a turn boundary with no call of
+// any tool in flight, one answered as still running included, and holds the floor while it
+// changes them and runs changed: a call is only ever checked against the tools it was made
+// with, approval included, and changed puts whatever routes calls in step before the next
+// turn can make one. A speech-to-speech model that takes its tools only when it opens refuses
+// (sts.ErrToolsFixed), and then nothing changes and changed does not run.
+func (a *Agent) SetTools(ctx context.Context, tools harness.Tools, changed func()) error {
 	a.swapping.Lock()
 	defer a.swapping.Unlock()
+
+	a.mu.Lock()
+	closed, joined := a.closed, a.joined
+	a.mu.Unlock()
+	if closed {
+		return stack.Wrap(errors.New("agent: closed"))
+	}
+	if joined {
+		if err := a.quiesce(ctx, true); err != nil {
+			return err
+		}
+		defer a.switching.Store(false)
+	}
 
 	a.toolsMu.Lock()
 	previous := a.options.Tools
@@ -208,6 +224,7 @@ func (a *Agent) SetTools(tools harness.Tools) error {
 		a.toolsMu.Unlock()
 		return stack.Wrap(err)
 	}
+	changed()
 	return nil
 }
 
@@ -315,8 +332,9 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 
 // quiesce waits for a turn boundary: nothing being written, said or run on the caller's
 // behalf. It then holds the floor, so no turn starts and no audio is taken in while the
-// pipeline changes underneath.
-func (a *Agent) quiesce(ctx context.Context) error {
+// pipeline changes underneath. toolsDone also waits out a call answered as still running,
+// which no longer holds up a turn but is still being run.
+func (a *Agent) quiesce(ctx context.Context, toolsDone bool) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -326,7 +344,7 @@ func (a *Agent) quiesce(ctx context.Context) error {
 			return stack.Wrap(errors.New("agent: closed"))
 		}
 		if !a.interrupting && a.recoveringVoice == nil && !a.generating && a.utterances == 0 && a.pendingTools == 0 && !a.toolReply &&
-			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 {
+			!a.nativeAwaiting && len(a.streams) == 0 && len(a.generatingCancel) == 0 && (!toolsDone || len(a.toolsRunning) == 0) {
 			a.switching.Store(true)
 			a.mu.Unlock()
 			return nil

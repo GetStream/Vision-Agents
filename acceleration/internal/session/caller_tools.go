@@ -20,8 +20,9 @@ var ErrToolTaken = errors.New("session: the session offers a tool by that name t
 var ErrNoCallerTool = errors.New("session: the session's caller has no tool by that name")
 
 // AddTools gives the session's caller more tools while the session runs, as though they had
-// been declared when it opened: the model is offered them from its next request, and their
-// calls go to whoever runs the caller's tools. One named as a tool the caller has replaces it.
+// been declared when it opened, and their calls go to whoever runs the caller's tools. One
+// named as a tool the caller has replaces it. It waits for the turn in progress and every call
+// in flight to finish (agent.SetTools), and the model is offered them from the next turn.
 func (s *Session) AddTools(ctx context.Context, tools []harness.Tool) error {
 	return s.changeTools(ctx, func(declared []harness.Tool) ([]harness.Tool, error) {
 		next := slices.Clone(declared)
@@ -33,11 +34,15 @@ func (s *Session) AddTools(ctx context.Context, tools []harness.Tool) error {
 			}
 		}
 		return next, nil
+	}, func(added map[string]bool) {
+		for _, tool := range tools {
+			added[tool.Name] = true
+		}
 	})
 }
 
-// RemoveTool withdraws one of the caller's tools. The model is no longer offered it from its
-// next request; a call it already made is still asked for and answered.
+// RemoveTool withdraws one of the caller's tools. It waits as AddTools does, so once it
+// returns no call of the tool is in flight and the model is no longer offered it.
 func (s *Session) RemoveTool(ctx context.Context, name string) error {
 	return s.changeTools(ctx, func(declared []harness.Tool) ([]harness.Tool, error) {
 		at := slices.IndexFunc(declared, named(name))
@@ -45,12 +50,16 @@ func (s *Session) RemoveTool(ctx context.Context, name string) error {
 			return nil, stack.Wrap(fmt.Errorf("%w: %s", ErrNoCallerTool, name))
 		}
 		return slices.Delete(slices.Clone(declared), at, at+1), nil
+	}, func(added map[string]bool) {
+		delete(added, name)
 	})
 }
 
-// changeTools replaces the caller's tools with what change makes of them. The agent takes them
-// first, so a model that cannot change its tools mid-call leaves the session as it was.
-func (s *Session) changeTools(ctx context.Context, change func([]harness.Tool) ([]harness.Tool, error)) error {
+// changeTools replaces the caller's tools with what change makes of them, and marks which of
+// them were added while the session ran. The agent takes them first, so a model that cannot
+// change its tools mid-call leaves the session as it was, and the session's own record of
+// them changes while the agent holds the floor, so no call is routed by the record before.
+func (s *Session) changeTools(ctx context.Context, change func([]harness.Tool) ([]harness.Tool, error), mark func(map[string]bool)) error {
 	// Taken as a settings change takes it, so a swap to or from voice builds its agent with
 	// the tools this leaves.
 	moved, err := s.move(ctx)
@@ -70,13 +79,18 @@ func (s *Session) changeTools(ctx context.Context, change func([]harness.Tool) (
 			return stack.Wrap(fmt.Errorf("%w: %s", ErrToolTaken, tool.Name))
 		}
 	}
-	if err := s.current().SetTools(harness.Tools{Tools: s.offering(next)}); err != nil {
+	if err := s.current().SetTools(ctx, harness.Tools{Tools: s.offering(next)}, func() {
+		s.labelMu.Lock()
+		s.spec.Tools = next
+		if s.addedTools == nil {
+			s.addedTools = map[string]bool{}
+		}
+		mark(s.addedTools)
+		s.labelMu.Unlock()
+		s.tools.setTimeouts(next)
+	}); err != nil {
 		return err
 	}
-	s.labelMu.Lock()
-	s.spec.Tools = next
-	s.labelMu.Unlock()
-	s.tools.setTimeouts(next)
 	if s.persisted != nil {
 		s.persisted.DescribeTools(toolDisplays(next))
 	}
@@ -91,6 +105,14 @@ func (s *Session) declaredTools() []harness.Tool {
 	s.labelMu.Lock()
 	defer s.labelMu.Unlock()
 	return s.spec.Tools
+}
+
+// callerTool reports whether the caller has a tool called name, and whether it was added
+// while the session ran (AddTools).
+func (s *Session) callerTool(name string) (declared, added bool) {
+	s.labelMu.Lock()
+	defer s.labelMu.Unlock()
+	return slices.ContainsFunc(s.spec.Tools, named(name)), s.addedTools[name]
 }
 
 // offering is everything the session offers with declared as the caller's tools, which go

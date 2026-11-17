@@ -107,9 +107,13 @@ def sync_detailed(
 
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
-    runs the caller's tools is asked to run them over the events socket, and the model is offered them
-    from its next request: a reply being written finishes with the tools it started with. A tool named
-    as one the caller already has replaces it.
+    runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
+    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+
+    The change waits for the turn in progress and every tool call in flight to finish, and the model is
+    offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
+    tools were when it was made. So do not wait for this from inside a call of one of the session's
+    tools, which it waits for.
 
     The kind of caller that opened the session declares its tools: a device those of the session it
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
@@ -151,9 +155,13 @@ def sync(
 
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
-    runs the caller's tools is asked to run them over the events socket, and the model is offered them
-    from its next request: a reply being written finishes with the tools it started with. A tool named
-    as one the caller already has replaces it.
+    runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
+    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+
+    The change waits for the turn in progress and every tool call in flight to finish, and the model is
+    offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
+    tools were when it was made. So do not wait for this from inside a call of one of the session's
+    tools, which it waits for.
 
     The kind of caller that opened the session declares its tools: a device those of the session it
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
@@ -190,9 +198,13 @@ async def asyncio_detailed(
 
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
-    runs the caller's tools is asked to run them over the events socket, and the model is offered them
-    from its next request: a reply being written finishes with the tools it started with. A tool named
-    as one the caller already has replaces it.
+    runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
+    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+
+    The change waits for the turn in progress and every tool call in flight to finish, and the model is
+    offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
+    tools were when it was made. So do not wait for this from inside a call of one of the session's
+    tools, which it waits for.
 
     The kind of caller that opened the session declares its tools: a device those of the session it
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name
@@ -232,9 +244,13 @@ async def asyncio(
 
      Declares tools on a running session as though they had been declared when it was created, for tools
     that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever
-    runs the caller's tools is asked to run them over the events socket, and the model is offered them
-    from its next request: a reply being written finishes with the tools it started with. A tool named
-    as one the caller already has replaces it.
+    runs the caller's tools is asked to run them over the events socket, a watcher that names the tools
+    it runs (`tools`) included. A tool named as one the caller already has replaces it.
+
+    The change waits for the turn in progress and every tool call in flight to finish, and the model is
+    offered the tools from the next turn: a call is only ever checked, and asks its approval, as the
+    tools were when it was made. So do not wait for this from inside a call of one of the session's
+    tools, which it waits for.
 
     The kind of caller that opened the session declares its tools: a device those of the session it
     opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name

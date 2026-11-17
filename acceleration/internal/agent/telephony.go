@@ -627,7 +627,12 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	var files []sandbox.Attachment
 	var left bool
 	var err error
-	tool, _ := a.availableTools().Lookup(requested.Call.Name)
+	// The tool as the call was offered it, so a change of tools since cannot take its
+	// approval away; a call that carries none is looked up as the tools are now.
+	tool, offered := requested.Tool, requested.Tool.Name != ""
+	if !offered {
+		tool, offered = a.offeredTool(requested.Call.Name)
+	}
 	// ran is whether the tool was called: the router refuses some calls itself, before it.
 	var ran bool
 	// What the caller said and the tools returned is checked against the whole call, not the
@@ -636,7 +641,12 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	record := a.record()
 	// What the operator told the agent is theirs to give too: an ID or number written in it.
 	told := a.told()
-	if requested.Call.Name == confirmTool && a.offersConfirm() {
+	if !offered && a.native() {
+		// A speech-to-speech model can still ask for a tool it is no longer offered, which
+		// would otherwise run with no approval to ask; the harness drops such a call in a
+		// cascade.
+		err = fmt.Errorf("agent: %s is not one of the model's tools", requested.Call.Name)
+	} else if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
 	} else if earlier, repeated := answeredSinceCaller(harness.WithoutNotes(a.History()), requested.Call, a.connected()); repeated {
@@ -893,6 +903,15 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 	// that hung up would strand the conversation the agent is still holding history for.
 	result, err := a.options.ToolRunner.Run(ctx, call)
 	return result, false, err
+}
+
+// offeredTool is the tool called name as the model is offered it now, the native model's
+// delegation pair included.
+func (a *Agent) offeredTool(name string) (harness.Tool, bool) {
+	if a.native() && (name == delegateSkill || name == cancelSkill) {
+		return harness.Tool{Name: name}, true
+	}
+	return a.availableTools().Lookup(name)
 }
 
 // availableTools is what the voice model is offered, which is the configured set minus

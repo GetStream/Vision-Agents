@@ -106,15 +106,19 @@ func (s *Server) registerSessionTools(api huma.API) {
 		Description: "Declares tools on a running session as though they had been declared when it was " +
 			"created, for tools that exist only partway through a conversation, such as the ones a card " +
 			"shown in it brings. Whoever runs the caller's tools is asked to run them over the events " +
-			"socket, and the model is offered them from its next request: a reply being written finishes " +
-			"with the tools it started with. A tool named as one the caller already has replaces it.\n\n" +
+			"socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the " +
+			"caller already has replaces it.\n\n" +
+			"The change waits for the turn in progress and every tool call in flight to finish, and the " +
+			"model is offered the tools from the next turn: a call is only ever checked, and asks its " +
+			"approval, as the tools were when it was made. So do not wait for this from inside a call " +
+			"of one of the session's tools, which it waits for.\n\n" +
 			"The kind of caller that opened the session declares its tools: a device those of the session " +
 			"it opened, and a backend those of a session a backend opened. Anyone else is refused with a " +
 			"403. A name the session offers that is not the caller's (the router's own, a connector's, a " +
 			"worker's or another agent's) is a 409. A session that is not running is a 404. A " +
 			"speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot " +
 			"be given more during the call: 400.",
-		Responses: map[string]*huma.Response{"204": {Description: "The model is offered them from its next request"}},
+		Responses: map[string]*huma.Response{"204": {Description: "The model is offered them from the next turn"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict},
 		Extensions: map[string]any{clientAccessibleExtension: true},
@@ -125,12 +129,15 @@ func (s *Server) registerSessionTools(api huma.API) {
 		Path:          "/v1/agents/sessions/{id}/tools/{name}",
 		Summary:       "Withdraw one of the caller's tools from a running session",
 		DefaultStatus: http.StatusNoContent,
-		Description: "The model is no longer offered the tool from its next request. A call it made " +
-			"before still goes to the caller to answer. Only the caller's own tools are withdrawn, whether " +
+		Description: "The model is no longer offered the tool from the next turn. The change waits for " +
+			"the turn in progress and every tool call in flight to finish, as adding does, so once it is " +
+			"answered no call of the tool is in flight and none can be made: a handler for it can go. Do " +
+			"not wait for this from inside a call of one of the session's tools, which it waits for. " +
+			"Only the caller's own tools are withdrawn, whether " +
 			"declared when the session was created or added since, and by the kind of caller that opened " +
 			"the session, as for adding: anyone else is refused with a 403. A name the caller has no tool " +
 			"by, and a session that is not running, are a 404.",
-		Responses: map[string]*huma.Response{"204": {Description: "The model is no longer offered it"}},
+		Responses: map[string]*huma.Response{"204": {Description: "No call of it is in flight, and the model is no longer offered it"}},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
 			http.StatusNotFound},
 		Extensions: map[string]any{clientAccessibleExtension: true},

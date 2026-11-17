@@ -93,11 +93,13 @@ def sync_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Withdraw one of the caller's tools from a running session
 
-     The model is no longer offered the tool from its next request. A call it made before still goes to
-    the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session
-    was created or added since, and by the kind of caller that opened the session, as for adding: anyone
-    else is refused with a 403. A name the caller has no tool by, and a session that is not running, are
-    a 404.
+     The model is no longer offered the tool from the next turn. The change waits for the turn in
+    progress and every tool call in flight to finish, as adding does, so once it is answered no call of
+    the tool is in flight and none can be made: a handler for it can go. Do not wait for this from
+    inside a call of one of the session's tools, which it waits for. Only the caller's own tools are
+    withdrawn, whether declared when the session was created or added since, and by the kind of caller
+    that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no
+    tool by, and a session that is not running, are a 404.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -131,11 +133,13 @@ def sync(
 ) -> Any | ErrorResponse | None:
     """Withdraw one of the caller's tools from a running session
 
-     The model is no longer offered the tool from its next request. A call it made before still goes to
-    the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session
-    was created or added since, and by the kind of caller that opened the session, as for adding: anyone
-    else is refused with a 403. A name the caller has no tool by, and a session that is not running, are
-    a 404.
+     The model is no longer offered the tool from the next turn. The change waits for the turn in
+    progress and every tool call in flight to finish, as adding does, so once it is answered no call of
+    the tool is in flight and none can be made: a handler for it can go. Do not wait for this from
+    inside a call of one of the session's tools, which it waits for. Only the caller's own tools are
+    withdrawn, whether declared when the session was created or added since, and by the kind of caller
+    that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no
+    tool by, and a session that is not running, are a 404.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -164,11 +168,13 @@ async def asyncio_detailed(
 ) -> Response[Any | ErrorResponse]:
     """Withdraw one of the caller's tools from a running session
 
-     The model is no longer offered the tool from its next request. A call it made before still goes to
-    the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session
-    was created or added since, and by the kind of caller that opened the session, as for adding: anyone
-    else is refused with a 403. A name the caller has no tool by, and a session that is not running, are
-    a 404.
+     The model is no longer offered the tool from the next turn. The change waits for the turn in
+    progress and every tool call in flight to finish, as adding does, so once it is answered no call of
+    the tool is in flight and none can be made: a handler for it can go. Do not wait for this from
+    inside a call of one of the session's tools, which it waits for. Only the caller's own tools are
+    withdrawn, whether declared when the session was created or added since, and by the kind of caller
+    that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no
+    tool by, and a session that is not running, are a 404.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -200,11 +206,13 @@ async def asyncio(
 ) -> Any | ErrorResponse | None:
     """Withdraw one of the caller's tools from a running session
 
-     The model is no longer offered the tool from its next request. A call it made before still goes to
-    the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session
-    was created or added since, and by the kind of caller that opened the session, as for adding: anyone
-    else is refused with a 403. A name the caller has no tool by, and a session that is not running, are
-    a 404.
+     The model is no longer offered the tool from the next turn. The change waits for the turn in
+    progress and every tool call in flight to finish, as adding does, so once it is answered no call of
+    the tool is in flight and none can be made: a handler for it can go. Do not wait for this from
+    inside a call of one of the session's tools, which it waits for. Only the caller's own tools are
+    withdrawn, whether declared when the session was created or added since, and by the kind of caller
+    that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no
+    tool by, and a session that is not running, are a 404.
 
     Args:
         id (str): The session, as returned when it was created.

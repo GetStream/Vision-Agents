@@ -302,6 +302,9 @@ type Session struct {
 	// naming is how a persistent conversation gets its title from what was said. Nil when
 	// there is no channel to name.
 	naming *naming
+	// addedTools are the caller's tools added while the session ran (AddTools), which a
+	// watcher that named the tools it runs is asked to run as well. Guarded by labelMu.
+	addedTools map[string]bool
 	// labelMu guards title and description, which are what naming last called the
 	// conversation, over the spec's own. It also guards the spec's fields a running session
 	// changes: its labels (Describe), connector selections (chose), models and voice

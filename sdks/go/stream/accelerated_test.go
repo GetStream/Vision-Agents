@@ -45,6 +45,12 @@ type router struct {
 	// stopWith is the status a stop over HTTP is answered with; zero is 204.
 	stopWith int
 
+	// added are the tools the session was given after it opened, and removed the ones taken
+	// back, in order. toolsWith is the status both are answered with; zero is 204.
+	added     []acceleration.AddSessionToolsRequest
+	removed   []string
+	toolsWith int
+
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
 }
@@ -92,6 +98,36 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = fmt.Fprintf(w, `{"error":{"type":"internal","code":"stop_%d","message":"the router said %d"}}`, status, status)
+	})
+
+	answerTools := func(w http.ResponseWriter) {
+		backend.mu.Lock()
+		status := backend.toolsWith
+		backend.mu.Unlock()
+		if status == 0 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = fmt.Fprintf(w, `{"error":{"type":"conflict","code":"conflict","message":"the router said %d"}}`, status)
+	}
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/tools", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.AddSessionToolsRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		backend.mu.Lock()
+		backend.added = append(backend.added, request)
+		backend.mu.Unlock()
+		answerTools(w)
+	})
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/tools/{name}", func(w http.ResponseWriter, r *http.Request) {
+		backend.mu.Lock()
+		backend.removed = append(backend.removed, r.PathValue("name"))
+		backend.mu.Unlock()
+		answerTools(w)
 	})
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
@@ -409,6 +445,111 @@ func TestAToolCallIsRunHereAndAnsweredOverTheSocket(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the model is still waiting on the tool")
 	}
+}
+
+func TestAToolAddedWhileTheSessionRunsIsOfferedAndRunHere(t *testing.T) {
+	added := make(chan struct{})
+	answered := make(chan map[string]any, 1)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		<-added
+		if err := connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-7", "name": "reserve_table", "arguments": `{"table":"T4"}`,
+		}); err != nil {
+			return
+		}
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil {
+			return
+		}
+		answered <- frame
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err != nil {
+		t.Fatal(err)
+	}
+	close(added)
+
+	backend.mu.Lock()
+	declared := backend.added
+	backend.mu.Unlock()
+	if len(declared) != 1 || len(*declared[0].Tools) != 1 || (*declared[0].Tools)[0].Name != "reserve_table" {
+		t.Fatalf("the router was asked to add %+v", declared)
+	}
+	select {
+	case frame := <-answered:
+		if frame["tool_call_id"] != "call-7" || frame["output"] != "Reserved T4." {
+			t.Fatalf("the model was sent %v", frame)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the added tool's call was not answered")
+	}
+}
+
+func TestAToolTheRouterRefusedIsNotRunHere(t *testing.T) {
+	backend := newRouter(t, hold)
+	backend.toolsWith = http.StatusConflict
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	err := pipeline.AddTools(t.Context(), reserveTable(t))
+
+	var refused *RouterError
+	if !errors.As(err, &refused) {
+		t.Fatalf("adding a refused tool answered %v", err)
+	}
+	if pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Error("a tool the router refused would still answer a call")
+	}
+}
+
+func TestARemovedToolIsNoLongerRunHere(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+	if err := pipeline.AddTools(t.Context(), reserveTable(t)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pipeline.RemoveTool(t.Context(), "reserve_table"); err != nil {
+		t.Fatal(err)
+	}
+
+	backend.mu.Lock()
+	removed := backend.removed
+	backend.mu.Unlock()
+	if !slices.Equal(removed, []string{"reserve_table"}) {
+		t.Errorf("the router was asked to remove %v", removed)
+	}
+	if pipeline.functionsFor("reserve_table").Holds("reserve_table") {
+		t.Error("a removed tool would still answer a call")
+	}
+}
+
+// reserveTable is a registry holding one function, reserve_table.
+func reserveTable(t *testing.T) *tools.Registry {
+	t.Helper()
+	registry := tools.NewRegistry()
+	err := tools.Register(registry, "reserve_table", "Reserve a table",
+		func(_ context.Context, in struct {
+			Table string `json:"table"`
+		}) (any, error) {
+			return "Reserved " + in.Table + ".", nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
 }
 
 func TestAToolsPicturesGoOverTheSocketBesideItsWords(t *testing.T) {

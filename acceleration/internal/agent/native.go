@@ -183,6 +183,10 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 				TurnID: typed.ResponseID,
 				Call:   call,
 			}
+			// Taken as it arrives, so a change of tools while it runs leaves it its approval.
+			if tool, offered := a.offeredTool(call.Name); offered {
+				requested.Tool = tool
+			}
 			ctx, cancel := a.prepareTool(requested)
 			go func() {
 				defer a.running.Done()

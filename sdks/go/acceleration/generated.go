@@ -14564,7 +14564,9 @@ type ClientInterface interface {
 
 	// AddSessionToolsWithBody Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
 	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 	//
@@ -14575,7 +14577,9 @@ type ClientInterface interface {
 
 	// AddSessionTools Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
 	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 	//
@@ -14586,7 +14590,7 @@ type ClientInterface interface {
 
 	// RemoveSessionTool Withdraw one of the caller's tools from a running session
 	//
-	// The model is no longer offered the tool from its next request. A call it made before still goes to the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+	// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
 	//
 	// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
 	RemoveSessionTool(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -19650,7 +19654,9 @@ func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...
 
 // AddSessionToolsWithBody Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
 // The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 //
@@ -19671,7 +19677,9 @@ func (c *Client) AddSessionToolsWithBody(ctx context.Context, id string, content
 
 // AddSessionTools Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
 // The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 //
@@ -19692,7 +19700,7 @@ func (c *Client) AddSessionTools(ctx context.Context, id string, body AddSession
 
 // RemoveSessionTool Withdraw one of the caller's tools from a running session
 //
-// The model is no longer offered the tool from its next request. A call it made before still goes to the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
 //
 // Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
 func (c *Client) RemoveSessionTool(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -37570,7 +37578,9 @@ type ClientWithResponsesInterface interface {
 
 	// AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
 	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 	//
@@ -37581,7 +37591,9 @@ type ClientWithResponsesInterface interface {
 
 	// AddSessionToolsWithResponse Give a running session more of the caller's tools
 	//
-	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 	//
 	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 	//
@@ -37592,7 +37604,7 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveSessionToolWithResponse Withdraw one of the caller's tools from a running session
 	//
-	// The model is no longer offered the tool from its next request. A call it made before still goes to the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+	// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -69402,7 +69414,9 @@ func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, 
 
 // AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
 // The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 //
@@ -69419,7 +69433,9 @@ func (c *ClientWithResponses) AddSessionToolsWithBodyWithResponse(ctx context.Co
 
 // AddSessionToolsWithResponse Give a running session more of the caller's tools
 //
-// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, and the model is offered them from its next request: a reply being written finishes with the tools it started with. A tool named as one the caller already has replaces it.
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has replaces it.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
 //
 // The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400.
 //
@@ -69436,7 +69452,7 @@ func (c *ClientWithResponses) AddSessionToolsWithResponse(ctx context.Context, i
 
 // RemoveSessionToolWithResponse Withdraw one of the caller's tools from a running session
 //
-// The model is no longer offered the tool from its next request. A call it made before still goes to the caller to answer. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -716,20 +716,21 @@ func WithImages(history []llm.Message, images []llm.ImagePart) []llm.Message {
 	return out
 }
 
-// Requested reports the tools the model asked to have run in one reply.
+// Requested reports the tools the model asked to have run in one reply, checked against
+// offered, the tools the reply was offered.
 //
 // A call for a tool that was never offered is dropped rather than passed on: models invent
 // them, and the agent should not have to know which names are real. Running the rest is the
 // agent's job, because a tool acts on the call and the harness does not know there is one.
-func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
+func (h *Harness) Requested(turnID string, calls []llm.ToolCall, offered Tools) {
 	for _, call := range calls {
-		tool, known := h.offered().Lookup(call.Name)
+		tool, known := offered.Lookup(call.Name)
 		if !known {
 			h.logger.Debug("the model asked for a tool that does not exist", "tool", call.Name)
 			continue
 		}
 		call.Arguments = Coerce(tool.Parameters, call.Arguments)
-		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call})
+		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call, Tool: tool})
 	}
 }
 

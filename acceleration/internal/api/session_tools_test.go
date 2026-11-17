@@ -159,6 +159,50 @@ func (s *SessionToolsSuite) TestAToolGivenToARunningSessionIsCalledOverItsSocket
 	s.Equal(`{"order":"12"}`, asked["arguments"])
 }
 
+func (s *SessionToolsSuite) TestWithdrawingAToolWaitsForItsCallInFlight() {
+	request := CreateSessionRequest{Llm: pointerTo("tooling/tool-model"), Incognito: pointerTo(true)}
+	request.Tools = &[]SessionTool{s.lookupOrder()}
+	opened := s.serverClient.createSession(request)
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+	asked := s.await(watching, "tool_call")
+
+	withdrawn := make(chan int, 1)
+	go func() {
+		withdrawn <- s.serverClient.do(http.MethodDelete,
+			"/v1/agents/sessions/"+opened.Id+"/tools/"+lookupOrder, nil, nil)
+	}()
+	s.Never(func() bool { return len(withdrawn) > 0 }, time.Second, 50*time.Millisecond,
+		"the tool was withdrawn while a call of it was waiting for its answer")
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": asked["id"], "output": "it ships tomorrow",
+	}))
+	select {
+	case status := <-withdrawn:
+		s.Equal(http.StatusNoContent, status)
+	case <-time.After(settleFor):
+		s.Fail("the tool was not withdrawn once its call was answered")
+	}
+	s.NotContains(s.toolSources(opened.Id), lookupOrder)
+}
+
+func (s *SessionToolsSuite) TestAWatcherThatNamesItsToolsIsAskedToRunOneItsSideAdded() {
+	opened := s.serverClient.createSession(CreateSessionRequest{
+		Llm: pointerTo("tooling/tool-model"), Incognito: pointerTo(true),
+	})
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events?tools=track_parcel")
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(lookupOrder, asked["name"])
+	s.Equal(true, asked["run"])
+}
+
 func (s *SessionToolsSuite) TestAToolGivenToARunningSessionIsListedAsTheCallersAndGoesWhenWithdrawn() {
 	opened := s.serverClient.createSession(textSession(nil))
 

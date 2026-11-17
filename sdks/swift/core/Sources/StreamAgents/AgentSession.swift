@@ -47,7 +47,11 @@ public final class AgentSession: ObservableObject {
     /// Where the session lives and who is asking, for the chat channel to connect as.
     let backend: Backend
     private let socket: SessionSocket
-    private var tools: [String: AgentTool]
+    /// The tools whose calls are answered here, by name.
+    private(set) var tools: [String: AgentTool]
+    /// Whether a change of tools is under way, and the ones waiting for it (`oneAtATime`).
+    private var changingTools = false
+    private var waitingToChangeTools: [CheckedContinuation<Void, Never>] = []
     private var pump: Task<Void, Never>?
     /// Whoever is reading `events()`, each with a stream of their own, or nil once the session
     /// has stopped and there is nothing more to read.
@@ -181,38 +185,47 @@ public final class AgentSession: ObservableObject {
     }
 
     /// Gives the agent more of your tools while the conversation runs, such as the ones a card
-    /// shown in it brings. The model is offered them from its next request, and their calls are
-    /// answered here, as those of the tools the session was opened with are.
+    /// shown in it brings. Their calls are answered here, as those of the tools the session was
+    /// opened with are.
     ///
-    /// A tool named as one this session already has replaces it. Only a session this device
-    /// opened takes tools from it, and a name the agent has of its own, such as a connector's
-    /// tool, is refused.
+    /// The router waits for the reply in progress, and every call it made, to finish, and the
+    /// model is offered the tools from the next turn. So do not wait for this from inside one of
+    /// this session's tools: it waits for that call. A tool named as one this session already
+    /// has replaces it. Only a session this device opened takes tools from it, and a name the
+    /// agent has of its own, such as a connector's tool, is refused.
     public func add(tools: [AgentTool]) async throws {
         guard !tools.isEmpty else { return }
-        let replaced = tools.map { self.tools[$0.name] }
-        // Answered from before the router says they are added: the model can be offered them,
-        // and call one, while the answer is still on its way here.
-        for tool in tools {
-            self.tools[tool.name] = tool
-        }
-        let id = session.id
-        let body = AddSessionToolsRequest(tools: tools.map(\.schema))
-        do {
-            try await backend.call { @Sendable in try await $0.addSessionTools(id: id, addSessionToolsRequest: body) }
-        } catch {
-            for (tool, before) in zip(tools, replaced) {
-                self.tools[tool.name] = before
+        try await oneAtATime {
+            let replaced = tools.map { self.tools[$0.name] }
+            // Answered from before the router says they are added: the next turn can call one
+            // while that answer is still on its way here.
+            for tool in tools {
+                self.tools[tool.name] = tool
             }
-            throw error
+            let id = session.id
+            let body = AddSessionToolsRequest(tools: tools.map(\.schema))
+            do {
+                try await backend.call { @Sendable in try await $0.addSessionTools(id: id, addSessionToolsRequest: body) }
+            } catch AgentsError.http(let failure) {
+                // Refused, so the router offers none of them. Any other failure leaves it
+                // unknown whether it does, and they stay answered.
+                for (tool, before) in zip(tools, replaced) {
+                    self.tools[tool.name] = before
+                }
+                throw AgentsError.http(failure)
+            }
         }
     }
 
-    /// Withdraws one of your tools: the model is no longer offered it from its next request. A
-    /// call of it already running here finishes and is answered.
+    /// Withdraws one of your tools. The router waits for the reply in progress, and every call it
+    /// made, to finish, as `add(tools:)` does, so once this returns no call of the tool can still
+    /// arrive, and its handler goes.
     public func remove(toolNamed name: String) async throws {
-        let id = session.id
-        try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
-        tools[name] = nil
+        try await oneAtATime {
+            let id = session.id
+            try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
+            tools[name] = nil
+        }
     }
 
     /// Answers a call waiting in `approvals`.
@@ -269,6 +282,25 @@ public final class AgentSession: ObservableObject {
     public func delete() async throws {
         try await StreamAgents(backend: backend).sessions.delete(session.id)
         await close()
+    }
+
+    /// Runs one change of tools at a time, in the order they were asked for. A handler is
+    /// put in place before the router is asked and taken back when it refuses, so two changes
+    /// interleaved across their requests could take back what the other put in place.
+    private func oneAtATime(_ change: () async throws -> Void) async throws {
+        if changingTools {
+            await withCheckedContinuation { waitingToChangeTools.append($0) }
+        } else {
+            changingTools = true
+        }
+        defer {
+            if waitingToChangeTools.isEmpty {
+                changingTools = false
+            } else {
+                waitingToChangeTools.removeFirst().resume()
+            }
+        }
+        try await change()
     }
 
     private func stopped(_ error: AgentsError?) {

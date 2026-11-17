@@ -3414,9 +3414,22 @@ func (a *Agent) finish(response llm.Response) {
 	}
 	a.resetTurn()
 
+	// The reply's calls are checked against the tools it was offered, taken while it is still
+	// generating, when no change of tools can be under way (SetTools waits for a quiet turn),
+	// and counted pending under the lock that ends it, so a change waits for them to settle.
+	offered := a.availableTools()
+	pending := 0
+	for _, call := range calls {
+		if _, known := offered.Lookup(call.Name); known {
+			pending++
+		}
+	}
 	a.mu.Lock()
 	a.generating = false
 	currentHarness := a.harness
+	if currentHarness != nil {
+		a.pendingTools += pending
+	}
 	// What the reply was sent after the conversation, the notes it delivered and anything it
 	// was told, is what the model read before writing it, so it joins the conversation ahead
 	// of the reply. A provider that kept the reply can then carry on from it next turn rather
@@ -3485,17 +3498,7 @@ func (a *Agent) finish(response llm.Response) {
 	// Tools are handed over rather than run here, because this is the goroutine that
 	// speaks and a transfer is several seconds of network the caller would hear as silence.
 	if currentHarness != nil && len(calls) > 0 {
-		pending := 0
-		tools := a.availableTools()
-		for _, call := range calls {
-			if _, known := tools.Lookup(call.Name); known {
-				pending++
-			}
-		}
-		a.mu.Lock()
-		a.pendingTools += pending
-		a.mu.Unlock()
-		currentHarness.Requested(response.ID, calls)
+		currentHarness.Requested(response.ID, calls, offered)
 	}
 	if hold {
 		a.mu.Lock()

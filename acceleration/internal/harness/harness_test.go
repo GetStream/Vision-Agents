@@ -613,7 +613,7 @@ func (s *HarnessSuite) TestAToolCallIsReportedForSomebodyElseToRun() {
 
 	s.harness.Requested("turn-1", []llm.ToolCall{
 		{ID: "call-1", Name: "transfer", Arguments: `{"to":"+15550001111"}`},
-	})
+	}, s.tools)
 
 	requested := s.awaitToolRequests(1)
 	s.Equal("turn-1", requested[0].TurnID)
@@ -630,7 +630,7 @@ func (s *HarnessSuite) TestAToolThatWasNeverOfferedIsDropped() {
 	s.harness.Requested("turn-1", []llm.ToolCall{
 		{ID: "call-1", Name: "hang_up", Arguments: "{}"},
 		{ID: "call-2", Name: "press", Arguments: `{"digits":"1"}`},
-	})
+	}, s.tools)
 
 	requested := s.awaitToolRequests(1)
 	s.Equal("press", requested[0].Call.Name, "only the real one survives")
@@ -1707,7 +1707,7 @@ func (s *HarnessSuite) TestACompletedResultQueuedBeforeCancellationIsDiscarded()
 	// A slow event reader holds the first result's delivery, so the second finishes in
 	// the manager but cannot be consumed by the harness until after cancellation.
 	for range eventBuffer {
-		h.Requested("event-backlog", []llm.ToolCall{{Name: tools.Tools[0].Name}})
+		h.Requested("event-backlog", []llm.ToolCall{{Name: tools.Tools[0].Name}}, tools)
 	}
 	s.slow.settle(first, "The delivery address is Harbor Road.")
 	s.eventually(h.Pending, "the first result never reached the harness")
@@ -1871,7 +1871,7 @@ func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
 	s.JSONEq(`{"digits":"1"}`, asked[0].Arguments)
 	s.NotEmpty(asked[0].ID)
 
-	s.harness.Requested("turn-1", asked)
+	s.harness.Requested("turn-1", asked, s.tools)
 	requested := s.awaitToolRequests(1)
 	s.Equal("press", requested[0].Call.Name)
 	s.JSONEq(`{"digits":"1"}`, requested[0].Call.Arguments)

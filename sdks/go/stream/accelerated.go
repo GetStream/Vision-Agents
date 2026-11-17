@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -219,12 +220,18 @@ type Pipeline struct {
 
 	mu      sync.Mutex
 	session *acceleration.Session
+	// added are the functions AddTools gave the session after it opened, by name, each in the
+	// registry it was added in; they run here before the session's own of the same name.
+	added   map[string]*tools.Registry
 	socket  *Socket
 	events  chan Event
 	stop    context.CancelFunc
 	running sync.WaitGroup
 	watcher sync.WaitGroup
 	holds   holds
+
+	// changing runs one change of the session's tools at a time, across its request.
+	changing sync.Mutex
 
 	// awaiting is the request id of the last question asked, which a reconnect asks after.
 	awaiting atomic.Value
@@ -603,18 +610,137 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 }
 
 // runs is the socket's query saying which of the session's tools this process runs: the
-// functions registered here, and none when there are none.
+// functions registered here and the ones AddTools added, and none when there are none.
 func (p *Pipeline) runs() url.Values {
 	var names []string
 	for _, function := range p.functions.List() {
 		names = append(names, function.Name)
 	}
+	p.mu.Lock()
+	for name := range p.added {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	p.mu.Unlock()
 	return url.Values{"tools": {strings.Join(names, ",")}}
+}
+
+// AddTools gives the session the functions in more after it opened, for this session alone,
+// and runs their calls here. One named as a tool the session already has replaces it.
+//
+// The router waits for the turn in progress, and every call in flight, to finish, and the
+// model is offered them from the next turn, so do not call this from inside one of the
+// session's functions. Only the kind of caller that opened the session may: a backend's
+// session takes a backend's tools. Another process watching the session that names the tools
+// it runs is asked to run these too, and leaves them to this one, which holds them.
+func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
+	declared := declarationsOf(more.List())
+	if len(declared) == 0 {
+		return errors.New("stream: there are no tools to add")
+	}
+	sessionID := p.sessionID()
+	if sessionID == "" {
+		return ErrNotOnCall
+	}
+	client, err := p.backend.Client()
+	if err != nil {
+		return err
+	}
+	p.changing.Lock()
+	defer p.changing.Unlock()
+
+	// Run from before the router answers: the next turn can call one before the answer is here.
+	p.mu.Lock()
+	if p.added == nil {
+		p.added = map[string]*tools.Registry{}
+	}
+	replaced := map[string]*tools.Registry{}
+	for _, tool := range declared {
+		replaced[tool.Name] = p.added[tool.Name]
+		p.added[tool.Name] = more
+	}
+	p.mu.Unlock()
+
+	added, err := client.AddSessionToolsWithResponse(ctx, sessionID, acceleration.AddSessionToolsRequest{Tools: &declared})
+	if err != nil {
+		// The router may have added them, so their calls are still run here.
+		return fmt.Errorf("stream: adding tools to session %s: %w", sessionID, err)
+	}
+	if added.StatusCode() != http.StatusNoContent {
+		p.mu.Lock()
+		for name, before := range replaced {
+			if before == nil {
+				delete(p.added, name)
+			} else {
+				p.added[name] = before
+			}
+		}
+		p.mu.Unlock()
+		return NewRouterError(added.HTTPResponse, added.Body, "stream", "adding tools", added.Status())
+	}
+	return nil
+}
+
+// RemoveTool withdraws one of the session's tools, whether it was declared when the session
+// opened or added since. The router waits as it does for AddTools, so once this returns no
+// call of the tool is in flight and none can be made.
+func (p *Pipeline) RemoveTool(ctx context.Context, name string) error {
+	sessionID := p.sessionID()
+	if sessionID == "" {
+		return ErrNotOnCall
+	}
+	client, err := p.backend.Client()
+	if err != nil {
+		return err
+	}
+	p.changing.Lock()
+	defer p.changing.Unlock()
+
+	removed, err := client.RemoveSessionToolWithResponse(ctx, sessionID, name)
+	if err != nil {
+		return fmt.Errorf("stream: removing tool %s from session %s: %w", name, sessionID, err)
+	}
+	if removed.StatusCode() != http.StatusNoContent {
+		return NewRouterError(removed.HTTPResponse, removed.Body, "stream", "removing a tool", removed.Status())
+	}
+	p.mu.Lock()
+	delete(p.added, name)
+	p.mu.Unlock()
+	return nil
+}
+
+// functionsFor is the registry that runs the tool called name: the one AddTools added it
+// in, else the session's own.
+func (p *Pipeline) functionsFor(name string) *tools.Registry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if added := p.added[name]; added != nil {
+		return added
+	}
+	return p.functions
+}
+
+// registries are every registry a call of the session's may be running in.
+func (p *Pipeline) registries() []*tools.Registry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	registries := []*tools.Registry{p.functions}
+	for _, added := range p.added {
+		if !slices.Contains(registries, added) {
+			registries = append(registries, added)
+		}
+	}
+	return registries
 }
 
 // tools are the functions registered here, as the model will be offered them.
 func (p *Pipeline) tools() []acceleration.SessionTool {
-	registered := p.functions.List()
+	return declarationsOf(p.functions.List())
+}
+
+// declarationsOf is registered functions as the model is offered them.
+func declarationsOf(registered []*tools.Function) []acceleration.SessionTool {
 	declared := make([]acceleration.SessionTool, 0, len(registered))
 	for _, function := range registered {
 		tool := acceleration.SessionTool{Name: function.Name, Description: function.Description}
@@ -717,7 +843,7 @@ func (p *Pipeline) read(ctx context.Context, socket *Socket, out chan<- Event, c
 			// One from before it said holds the same rule: answering a tool held elsewhere
 			// would beat the process that runs it. A call sent again after a reconnect is
 			// fenced by the registry, which runs it once.
-			if frame["run"] == false || !p.functions.Holds(frame.String("name")) {
+			if frame["run"] == false || !p.functionsFor(frame.String("name")).Holds(frame.String("name")) {
 				p.logger.Debug("leaving a call for a tool held elsewhere", "tool", frame.String("name"))
 				continue
 			}
@@ -729,7 +855,9 @@ func (p *Pipeline) read(ctx context.Context, socket *Socket, out chan<- Event, c
 			continue
 		case "tool_cancel":
 			p.holds.answer(frame.String("id"), false)
-			p.functions.Cancel(p.sessionID(), frame.String("id"))
+			for _, functions := range p.registries() {
+				functions.Cancel(p.sessionID(), frame.String("id"))
+			}
 		case "tool_held":
 			p.holds.answer(frame.String("id"), true)
 		case "resumed":
@@ -836,7 +964,7 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	}
 
 	line := tools.WithLine(ctx, toolLine{send: p.command, holds: &p.holds})
-	output, err := p.functions.Run(line, toolCallContextOf(frame, p.sessionID()), name, frame.String("arguments"))
+	output, err := p.functionsFor(name).Run(line, toolCallContextOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
 		result["error"] = err.Error()
