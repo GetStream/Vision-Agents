@@ -6,6 +6,10 @@
 
 `POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A tool named as one the caller has replaces it. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the agent offers from elsewhere is a 409, and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown (#2044).
 
+### The JavaScript SDK draws a streaming card a statement at a time
+
+While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2042).
+
 ### The JavaScript SDK compiles `ui.format: a2ui`
 
 `loadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the same A2UI prompt as the Go SDK: the agent is told to answer with A2UI 1.0 in a ```` ```ui:a2ui@1.0 ```` block, with the catalog `getstream.io:app-catalog` that stream-chat-swift's renderer draws. `keep` names the basic catalog's components and functions, `patch_mode` is refused with `a2ui`, and a blueprint `example` is checked so it renders as written. Both SDKs are held to the same fixture, byte for byte.
