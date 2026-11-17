@@ -471,7 +471,8 @@ type Episodes struct {
 type Phone struct {
 	// AgentJoinTimeout is how long a person who answered a call the router placed waits for
 	// someone else to be in the call. After it, the router asks Stream who is in the call. A
-	// call with only the person in it is ended. One setting for the whole router.
+	// call with only the person in it is ended. Zero turns the check off. One setting for the
+	// whole router.
 	AgentJoinTimeout time.Duration `koanf:"agent_join_timeout"`
 }
 
@@ -926,8 +927,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
 			maxEpisodeIdle, c.Episodes.IdleAfter)
 	}
-	if c.Phone.AgentJoinTimeout <= 0 {
-		return fmt.Errorf("config: phone.agent_join_timeout is more than zero, got %s", c.Phone.AgentJoinTimeout)
+	if c.Phone.AgentJoinTimeout < 0 {
+		return fmt.Errorf("config: phone.agent_join_timeout cannot be negative, got %s", c.Phone.AgentJoinTimeout)
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -238,6 +239,26 @@ func (s *MeteringSuite) TestTheWaitSetInTheOptionsEndsAnEmptyCall() {
 	s.answered(placed.CallType, placed.CallID, personSession)
 
 	s.Eventually(func() bool { return s.endedAtStream(placed.CallType, placed.CallID) }, 5*time.Second, 10*time.Millisecond)
+}
+
+// A deployment turns the check off with a wait of zero: an empty call is not ended.
+func (s *MeteringSuite) TestAWaitOfZeroInTheConfigEndsNoCall() {
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "0")
+	settings, _, err := config.Load("")
+	s.Require().NoError(err)
+	service, err := NewService(ServiceOptions{
+		Registry: s.service.registry, Store: s.store, Recorder: s.recorder, Now: s.clock.now,
+		Apps: s.service.apps, Gate: s.service.gate, Logger: s.service.logger,
+		AgentJoinTimeout: settings.Phone.AgentJoinTimeout,
+	})
+	s.Require().NoError(err)
+	s.service = service
+	placed := s.place()
+	s.deployment.PutCallParticipants(placed.CallType, placed.CallID, chattest.Participant{UserID: person, UserSessionID: personSession})
+
+	s.answered(placed.CallType, placed.CallID, personSession)
+
+	s.neverEnded(placed.CallType, placed.CallID)
 }
 
 // A router that stops does not end a call after it said it stopped.

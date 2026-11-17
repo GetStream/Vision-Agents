@@ -651,13 +651,22 @@ func (s *ConfigSuite) TestAPlacedCallWaitsTenSecondsForAnAgentUnlessAskedFor() {
 	s.Equal(25*time.Second, config.Phone.AgentJoinTimeout)
 }
 
-// A wait of nothing ends every answered call before its agent can be in it.
-func (s *ConfigSuite) TestNoWaitForAnAgentIsRefused() {
-	for _, wait := range []string{"0s", "-1s"} {
-		s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", wait)
-		_, _, err := Load("")
-		s.ErrorContains(err, "phone.agent_join_timeout", wait)
-	}
+// Zero is how a deployment turns the agent check off.
+func (s *ConfigSuite) TestAWaitForAnAgentOfZeroIsAccepted() {
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "0s")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Zero(config.Phone.AgentJoinTimeout)
+}
+
+func (s *ConfigSuite) TestANegativeWaitForAnAgentIsRefused() {
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "-1s")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "phone.agent_join_timeout", "-1s")
 }
 
 // WhatsApp's window is 24 hours from the person's last message, so an episode closes inside

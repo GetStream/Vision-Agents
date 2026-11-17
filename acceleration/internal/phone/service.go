@@ -105,7 +105,7 @@ type ServiceOptions struct {
 	Redis rueidis.Client
 	// AgentJoinTimeout is how long the person who answered a placed call waits for someone
 	// else to be in the call. After it, a call with only the person in it is ended. Zero turns
-	// the check off.
+	// the check off, as phone.agent_join_timeout 0 does.
 	AgentJoinTimeout time.Duration
 	Logger           *slog.Logger
 }

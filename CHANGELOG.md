@@ -727,7 +727,7 @@ Posted text is listed as `pending` while its passages are written, then `indexed
 
 ### A placed call with no agent in it is ended
 
-When the person a router-placed call rang answers, the router waits `phone.agent_join_timeout` (`ROUTER_PHONE_AGENT_JOIN_TIMEOUT`, 10 s by default). Then it asks Stream once who is in the call. If only the person's phone is there, the router ends the call and logs "no agent joined the call; ending it". Before, the person heard silence until they hung up. A call with anyone else in it (an agent, an app user, another phone) continues. A call that Stream could not list continues too. This applies to calls from `POST /v1/phone/calls`, campaigns, scheduled calls and transfers. Calls that arrive are not changed (AI-800).
+When the person a router-placed call rang answers, the router waits `phone.agent_join_timeout` (`ROUTER_PHONE_AGENT_JOIN_TIMEOUT`, 10 s by default, `0` turns the check off). Then it asks Stream once who is in the call. If only the person's phone is there, the router ends the call and logs "no agent joined the call; ending it". Before, the person heard silence until they hung up. A call with anyone else in it (an agent, an app user, another phone) continues. A call that Stream could not list continues too. This applies to calls from `POST /v1/phone/calls`, campaigns, scheduled calls and transfers. Calls that arrive are not changed (AI-800).
 
 ### A custom connector cannot list oauth2_client_credentials
 
