@@ -67,8 +67,8 @@ public class AgentSession internal constructor(
     /** The tools whose calls are answered here, by name. */
     private val tools = ConcurrentHashMap(tools.associateBy { it.name })
     /**
-     * The tools whose adding or removing was never answered, so the router may or may not offer
-     * them. Read and written holding [changing].
+     * The tools whose adding or removing got neither a 2xx nor a 4xx, such as no answer, so the
+     * router may or may not offer them. Read and written holding [changing].
      */
     private val unsettled = mutableSetOf<String>()
     /** Held through a change of tools, so that one runs at a time, in the order they were asked for. */
@@ -249,14 +249,15 @@ public class AgentSession internal constructor(
      * otherwise), a name the agent has of its own, such as a connector's tool, is a 409, and a
      * speech-to-speech model whose tools are fixed when it opens is a 400.
      *
-     * A request that gets no answer may or may not have added them, so their calls are still
-     * answered here until adding or removing the name again settles it.
+     * Only a 4xx is the router refusing them. A request that gets no answer, or any other status,
+     * such as a gateway's 502 after the router added them, may or may not have added them, so
+     * their calls are still answered here until adding or removing the name again settles it.
      */
     public suspend fun addTools(tools: List<AgentTool>) {
         if (tools.isEmpty()) return
         changing.withLock {
-            // A name whose adding was never answered may or may not be the router's: it is
-            // withdrawn first, so the router and this session agree on which tool it is.
+            // A name left unsettled may or may not be the router's: it is withdrawn first, so
+            // the router and this session agree on which tool it is.
             for (tool in tools) {
                 if (tool.name in unsettled) withdraw(tool.name)
             }
@@ -272,15 +273,17 @@ public class AgentSession internal constructor(
                     body = wire.encodeToString(AddSessionToolsRequest.serializer(), AddSessionToolsRequest(tools.map { it.schema })),
                     once = true,
                 )
-            } catch (e: AgentsException.Http) {
-                // Refused, so the router offers none of them.
-                added.forEach { this.tools.remove(it.name) }
-                throw e
             } catch (e: Throwable) {
-                // No answer, cancelled waiting for one included: whether the router offers them
-                // is unknown, so they stay answered until a later add or remove of the name
-                // settles it.
-                unsettled += added.map { it.name }
+                if (e is AgentsException.Http && e.status in 400..499) {
+                    // Refused, so the router offers none of them.
+                    added.forEach { this.tools.remove(it.name) }
+                } else {
+                    // No answer, cancelled waiting for one included, or another status, such as a
+                    // gateway's 502 after the router added them: whether the router offers them
+                    // is unknown, so they stay answered until a later add or remove of the name
+                    // settles it.
+                    unsettled += added.map { it.name }
+                }
                 throw e
             }
         }
@@ -293,8 +296,10 @@ public class AgentSession internal constructor(
      * goes; never call it from inside one of this session's tools. A name this session has no
      * tool by is a 404. A name withdrawn can be added again, with another handler.
      *
-     * A request that gets no answer may or may not have withdrawn it, so its calls are still
-     * answered here until removing or adding the name again settles it.
+     * Only a 4xx is the router refusing, which leaves the tool as it was. A request that gets no
+     * answer, or any other status, such as a gateway's 502 after the router withdrew it, may or
+     * may not have withdrawn it, so its calls are still answered here until removing or adding
+     * the name again settles it.
      */
     public suspend fun removeTool(name: String) {
         changing.withLock { withdraw(name) }
@@ -320,19 +325,22 @@ public class AgentSession internal constructor(
     }
 
     /**
-     * Asks the router to withdraw a tool, and lets its handler go once it has. For a name whose
-     * adding or removing was never answered, the router having no tool by it settles it as well.
+     * Asks the router to withdraw a tool, and lets its handler go once it has. For a name left
+     * unsettled, the router having no tool by it settles it as well.
      */
     private suspend fun withdraw(name: String) {
         try {
             backend.send<Unit>(HttpMethod.Delete, listOf("v1", "agents", "sessions", id, "tools", name), answer = null, once = true)
-        } catch (e: AgentsException.Http) {
-            if (e.status != 404 || name !in unsettled) throw e
         } catch (e: Throwable) {
-            // No answer, cancelled waiting for one included: the router may still offer it, so
-            // its calls stay answered until a later remove or add of the name settles it.
-            unsettled += name
-            throw e
+            val status = (e as? AgentsException.Http)?.status
+            if (status != 404 || name !in unsettled) {
+                // Any other 4xx is the router refusing, which changes nothing. No answer, cancelled
+                // waiting for one included, or another status, such as a gateway's 502 after the
+                // router withdrew it: the router may still offer it, so its calls stay answered
+                // until a later remove or add of the name settles it.
+                if (status !in 400..499) unsettled += name
+                throw e
+            }
         }
         tools.remove(name)
         unsettled.remove(name)

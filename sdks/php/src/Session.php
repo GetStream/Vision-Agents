@@ -12,6 +12,7 @@ use GetStream\VisionAgents\Generated\SayRequest;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Worker\OneAtATime;
 use GetStream\VisionAgents\Worker\Watch;
+use Throwable;
 
 /**
  * One conversation, held in the acceleration backend.
@@ -32,8 +33,8 @@ final class Session
      * The functions `addTools` gave this session, by name, each in a `Tools` of the session's
      * own, copied when it was added; they run before the opening ones of the same name.
      * `withdrawn` are the names `removeTool` took, whose opening ones no longer run, and
-     * `unsettled` the ones whose adding or withdrawing got no answer, which the router may or
-     * may not offer.
+     * `unsettled` the ones whose adding or withdrawing failed short of a refusal (a 4xx), which
+     * the router may or may not offer.
      *
      * @var array<string, Tools>
      */
@@ -151,7 +152,13 @@ final class Session
      *
      * The router gives the fork the tools this session has now, those added included and those
      * removed left out, and the fork runs the same functions for them here, as the ones it was
-     * opened with: changing the tools of one afterwards leaves the other's alone.
+     * opened with: changing the tools of one afterwards leaves the other's alone. A name this
+     * session cannot say the router has or not is the same in the fork, whose next change of it
+     * settles it first.
+     *
+     * A fork waits for an `addTools` or `removeTool` in flight, which the router finishes only
+     * once the turn in progress and every tool call in flight have, so do not call this from
+     * inside one of this session's tools while one is: it would wait for itself.
      */
     public function fork(?ForkSessionRequest $options = null): self
     {
@@ -160,6 +167,9 @@ final class Session
             $forked = $this->client->post('/v1/agents/sessions/{id}/fork', ['id' => $this->id()], body: ($options ?? new ForkSessionRequest())->toArray());
             $fork = new self($this->client, SessionRow::fromArray(Json::asObject($forked)), $this->agent);
             $fork->opening = $this->current();
+            // The router copied whatever it has by such a name, so the fork withdraws it before
+            // its own next change of the name, as this session would.
+            $fork->unsettled = $this->unsettled;
             return $fork;
         });
     }
@@ -255,8 +265,10 @@ final class Session
      * opened the session may change its tools.
      *
      * @throws ConfigurationException when `$tools` holds none
-     * @throws RouterException when the router refuses them, or when its answer was lost
-     *     (`status` 0); their calls are then still run here until the name is changed again
+     * @throws RouterException when the router refuses them, with a 4xx. Any other failure (no
+     *     answer, `status` 0; a gateway's 5xx; an answer that cannot be read) leaves it unknown
+     *     whether they were added, and their calls are still run here until the name is changed
+     *     again
      */
     public function addTools(Tools $tools): void
     {
@@ -265,8 +277,9 @@ final class Session
             throw new ConfigurationException('there are no tools to add');
         }
         $this->changing->run(function () use ($tools, $declared): void {
-            // A name whose adding or withdrawing got no answer may or may not be the router's:
-            // it is withdrawn first, so the router and this process agree on which function it is.
+            // A name whose adding or withdrawing failed short of a refusal may or may not be the
+            // router's: it is withdrawn first, so the router and this process agree on which
+            // function it is.
             foreach ($declared as $tool) {
                 if (isset($this->unsettled[$tool->name])) {
                     $this->withdraw($tool->name, true);
@@ -285,9 +298,9 @@ final class Session
             }
             try {
                 $this->client->post('/v1/agents/sessions/{id}/tools', ['id' => $this->id()], body: (new AddSessionToolsRequest($declared))->toArray());
-            } catch (RouterException $failed) {
+            } catch (Throwable $failed) {
                 foreach ($fresh as $name) {
-                    if ($failed->status === 0) {
+                    if (self::refusal($failed) === null) {
                         // The router may have added it, so its calls are still run here until
                         // a later change of the name settles it.
                         $this->unsettled[$name] = true;
@@ -306,9 +319,10 @@ final class Session
      * the tool is in flight and none can arrive; do not call it from inside one of this
      * session's tools.
      *
-     * @throws RouterException 404 when the session has no tool by that name or is not running,
-     *     or when its answer was lost (`status` 0); its calls are then still run here until the
-     *     name is changed again
+     * @throws RouterException when the router refuses, with a 4xx: 404 when the session has no
+     *     tool by that name or is not running. Any other failure (no answer, `status` 0; a
+     *     gateway's 5xx; an answer that cannot be read) leaves its calls run here until the name
+     *     is changed again
      */
     public function removeTool(string $name): void
     {
@@ -372,19 +386,30 @@ final class Session
         try {
             // Sent once: a resent DELETE the router already applied is answered 404.
             $this->client->request('DELETE', '/v1/agents/sessions/{id}/tools/{name}', ['id' => $this->id(), 'name' => $name], resend: false);
-        } catch (RouterException $failed) {
-            if ($failed->status === 0) {
+        } catch (Throwable $failed) {
+            $refused = self::refusal($failed);
+            if ($refused === null) {
                 // The router may have withdrawn it, so its calls are still run here until a
                 // later change of the name settles it.
                 $this->unsettled[$name] = true;
                 throw $failed;
             }
-            if (!$absentIsFine || $failed->status !== 404) {
+            if (!$absentIsFine || $refused !== 404) {
                 throw $failed;
             }
         }
         unset($this->added[$name], $this->unsettled[$name]);
         $this->withdrawn[$name] = true;
+    }
+
+    /**
+     * The status the router refused a change of tools with. Only a 4xx is a refusal: after a
+     * gateway's 5xx, an answer that cannot be read or none at all, the router may have made the
+     * change, and this is null.
+     */
+    private static function refusal(Throwable $failed): ?int
+    {
+        return $failed instanceof RouterException && $failed->status >= 400 && $failed->status < 500 ? $failed->status : null;
     }
 
     /**

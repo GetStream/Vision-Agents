@@ -315,6 +315,11 @@ struct SessionServer {
         /// dropped on the way back.
         static let dropped = Answer(status: 0, headers: [:], body: "")
 
+        /// A gateway's answer from in front of the router, which says nothing of whether the
+        /// router did what it was asked.
+        static let badGateway = Answer(
+            status: 502, headers: ["Content-Type": "text/html"], body: "<html><body>502 Bad Gateway</body></html>")
+
         /// The session `s1`, on the call named `callID` or held in writing when it is empty.
         static func session(status: Int, callID: String) -> Answer {
             Answer(

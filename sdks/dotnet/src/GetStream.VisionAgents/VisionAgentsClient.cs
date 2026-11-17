@@ -203,7 +203,8 @@ public sealed class VisionAgentsClient : IDisposable
     /// DELETEs a path once. HttpClient sends a request without a body again when its connection
     /// closes before any answer, taking it for an idle connection the server had dropped, so a
     /// deletion the router made would come back a 404; one with a body, even an empty one, it
-    /// never sends again, and a lost answer stays lost.
+    /// never sends again once the body has begun, and a lost answer stays lost. So the body is
+    /// not held back for 100 Continue, which an HttpClient's default headers can ask for.
     /// </summary>
     internal Task DeleteOnceAsync(string path, CancellationToken cancellationToken) =>
         SendAsync<Nothing>(HttpMethod.Delete, path, null, new ByteArrayContent([]), cancellationToken);
@@ -234,9 +235,22 @@ public sealed class VisionAgentsClient : IDisposable
             request.Headers.TryAddWithoutValidation(name, value);
         }
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        if (body is not null)
+        if (body is HttpContent content)
         {
-            request.Content = body as HttpContent ?? new StringContent(
+            request.Content = content;
+            // DeleteOnceAsync's, sent whole at once even when the HttpClient's default headers ask
+            // to wait for 100 Continue, which holds back a body however short. HttpClient puts its
+            // default's 100-continue on a request with no Expect of its own, so this one has an
+            // empty one.
+            if (_http.DefaultRequestHeaders.ExpectContinue == true)
+            {
+                request.Headers.ExpectContinue = false;
+                request.Headers.TryAddWithoutValidation("Expect", "");
+            }
+        }
+        else if (body is not null)
+        {
+            request.Content = new StringContent(
                 JsonSerializer.Serialize(body, body.GetType(), Json.Options), Encoding.UTF8, "application/json");
         }
 

@@ -604,7 +604,9 @@ type ForkOptions struct {
 // continuing a conversation twice gives two readable transcripts rather than one with both
 // halves interleaved. An incognito conversation cannot be forked, because there is nothing to
 // fork from. AddTools and RemoveTool wait for a fork being asked for, so the fork is given the
-// tools the router copies into it. See stream.Pipeline.Fork.
+// tools the router copies into it. A fork waits in turn for one of them in flight, which the
+// router finishes only once the turn in progress and every call in flight end, so do not call
+// this from inside one of the conversation's functions. See stream.Pipeline.Fork.
 func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, error) {
 	api, err := s.client.api()
 	if err != nil {

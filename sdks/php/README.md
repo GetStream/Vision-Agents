@@ -273,10 +273,12 @@ $session->removeTool('reserve_table');
 The router waits for the turn in progress and every tool call in flight, and offers the model
 the change from the next turn, so never call these from inside one of the session's own tools.
 A name the session already has is refused (409): remove it, then add it again. Only the kind
-of caller that opened the session may change its tools (403). When the answer to `addTools` or
-`removeTool` is lost (`RouterException` with `status` 0), its calls are still run here until
+of caller that opened the session may change its tools (403). Only a 4xx is a refusal: when
+`addTools` or `removeTool` fails any other way (its answer lost, `RouterException` with
+`status` 0; a gateway's 5xx; an answer that cannot be read), its calls are still run here until
 the next change of that name settles it. Closing the session forgets them. A fork is offered
-the tools the session has at that moment, and runs the same functions for them.
+the tools the session has at that moment, and runs the same functions for them; it waits for a
+change in flight, so never fork from inside one of the session's own tools either.
 
 ## Phone
 

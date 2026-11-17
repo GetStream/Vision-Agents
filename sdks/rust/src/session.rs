@@ -111,8 +111,9 @@ struct Changes {
     added: HashMap<String, Tools>,
     /// The names withdrawn from the session, which its own no longer run.
     withdrawn: HashSet<String>,
-    /// The names whose last change the router has not answered, which it may or may not
-    /// offer: one in flight, or one whose answer was lost or never waited for.
+    /// The names whose last change the router has neither made nor refused, which it may or
+    /// may not offer: one in flight, or one whose answer was lost, never waited for, or said
+    /// neither (a 5xx, which a gateway can answer after the change was made).
     unsettled: HashSet<String>,
 }
 
@@ -322,13 +323,14 @@ impl Session {
             tools: Some(declared),
         };
         let added = self.client.add_session_tools(self.id(), &request).await;
-        // Without an answer the router may have added them, so their calls are still run here
-        // until a later change of the name settles it.
-        if matches!(added, Ok(()) | Err(Error::Router(_))) {
+        // Without a success or a refusal the router may have added them, so their calls are
+        // still run here until a later change of the name settles it.
+        let refused = added.as_ref().is_err_and(is_refusal);
+        if added.is_ok() || refused {
             let mut changes = self.shared.changes.lock().expect("tools");
             for name in fresh {
                 changes.unsettled.remove(&name);
-                if added.is_err() {
+                if refused {
                     changes.added.remove(&name);
                 }
             }
@@ -364,14 +366,14 @@ impl Session {
             Ok(()) => {}
             Err(error) if was_unsettled && error.status() == Some(404) => {}
             // Refused: the router still has the tool as it was.
-            Err(error @ Error::Router(_)) => {
+            Err(error) if is_refusal(&error) => {
                 if !was_unsettled {
                     changes.unsettled.remove(name);
                 }
                 return Err(error);
             }
-            // No answer: its function still runs here until a later change of the name
-            // settles it.
+            // No answer, or one that does not say whether it was withdrawn: its function still
+            // runs here until a later change of the name settles it.
             Err(error) => return Err(error),
         }
         changes.added.remove(name);
@@ -484,15 +486,22 @@ impl Session {
     /// [`Session::remove_tool`] withdrew, and those [`Session::add_tools`] added, since the
     /// router gives a running session's fork its tools as they are. A conversation continued
     /// without them would offer the model tools nothing can run. A change of the tools in
-    /// progress is waited for.
+    /// progress is waited for, and the router finishes one only after the turn in progress
+    /// and every call in flight, so do not call this from inside one of this session's
+    /// functions while one may be in progress.
     pub async fn fork(&self, request: &types::ForkSessionRequest) -> Result<Session> {
         // Copied and asked for under the change lock, so the fork runs the tools the router
         // copies.
         let changing = self.changing.lock().await;
         let tools = self.current_tools();
+        // A name whose last change the router neither made nor refused may or may not be
+        // among them there, so the fork withdraws it before changing it, as this session would.
+        let unsettled = self.shared.changes.lock().expect("tools").unsettled.clone();
         let forked = self.client.fork_session(self.id(), Some(request)).await?;
         drop(changing);
-        Session::watching(&self.client, forked, tools, WatchOptions::default()).await
+        let fork = Session::watching(&self.client, forked, tools, WatchOptions::default()).await?;
+        fork.shared.changes.lock().expect("tools").unsettled = unsettled;
+        Ok(fork)
     }
 
     /// A registry of the functions that run this session's tools now.
@@ -646,6 +655,13 @@ async fn watch_socket(
     *shared.changes.lock().expect("tools") = Changes::default();
     let _ = ended.send(true);
     shared.arrived.notify_one();
+}
+
+/// Whether the router said no to a change of a session's tools, leaving them as they were.
+/// Only a 4xx says so: a gateway in front of it can answer 502 or 504 after the change was
+/// made, so any other status, like no answer, leaves the change unknown.
+fn is_refusal(error: &Error) -> bool {
+    matches!(error.status(), Some(400..=499))
 }
 
 /// Runs one of the caller's functions on its own task and answers the model with what it

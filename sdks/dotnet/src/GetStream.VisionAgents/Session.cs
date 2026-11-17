@@ -208,9 +208,10 @@ public sealed class Session : IAsyncDisposable
     /// opened the session may change its tools (403).
     /// </para>
     /// </remarks>
-    /// <exception cref="RouterException">The router refused, so none of them run here; or, with
-    /// <see cref="RouterException.Status"/> 0, the answer was lost, and they run here until the
-    /// name is added or removed again.</exception>
+    /// <exception cref="RouterException">A 4xx: the router refused, so none of them run here. Any
+    /// other <see cref="RouterException.Status"/>, a gateway's 5xx or 0 when the answer was lost,
+    /// is not the router's answer, and they run here until the name is added or removed
+    /// again.</exception>
     public async Task AddToolsAsync(Tools more, CancellationToken cancellationToken = default)
     {
         if (_socket is null)
@@ -257,7 +258,7 @@ public sealed class Session : IAsyncDisposable
                 await _client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/tools",
                     new AddSessionToolsRequest { Tools = declared }, cancellationToken).ConfigureAwait(false);
             }
-            catch (RouterException refused) when (refused.Status != 0)
+            catch (RouterException refused) when (refused.Status is >= 400 and < 500)
             {
                 // Refused, so the router offers none of them.
                 lock (_toolsLock)
@@ -271,8 +272,8 @@ public sealed class Session : IAsyncDisposable
             }
             catch
             {
-                // The router may have added them, so their calls are still run here until a
-                // later change of the name settles it.
+                // Not the router's answer, so it may have added them: their calls are still run
+                // here until a later change of the name settles it.
                 lock (_toolsLock)
                 {
                     _unsettled.UnionWith(fresh);
@@ -293,9 +294,10 @@ public sealed class Session : IAsyncDisposable
     /// session's tools.
     /// </summary>
     /// <remarks>A name withdrawn can be added again, with another function.</remarks>
-    /// <exception cref="RouterException">404 when the session has no tool of the caller's by that name, or is not running; or,
-    /// with <see cref="RouterException.Status"/> 0, the answer was lost, as it is when this is cancelled, and the tool's calls
-    /// are still run here until the name is added or removed again.</exception>
+    /// <exception cref="RouterException">A 4xx when the router refused, 404 when the session has no tool of the caller's by
+    /// that name, or is not running; or any other <see cref="RouterException.Status"/>, a gateway's 5xx or 0 when the answer was
+    /// lost, as it is when this is cancelled, and the tool's calls are still run here until the name is added or removed
+    /// again.</exception>
     public async Task RemoveToolAsync(string name, CancellationToken cancellationToken = default)
     {
         await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -343,11 +345,20 @@ public sealed class Session : IAsyncDisposable
     /// Carries the conversation on in a new session, leaving this one as it was.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The fork is watched the way this one is and held in writing. The router gives it the tools
     /// this session has when it forks, those added since it opened and not those removed, so the
     /// fork runs the functions this session runs then, as its own: a later change of either's
-    /// tools is not the other's. Name a <see cref="ForkOptions.ResponseId"/> to branch from a
-    /// response rather than from the end.
+    /// tools is not the other's. A name whose adding or removing this session never had answered
+    /// is withdrawn first by the fork's next change of it, as by this one's. Name a
+    /// <see cref="ForkOptions.ResponseId"/> to branch from a response rather than from the end.
+    /// </para>
+    /// <para>
+    /// It waits for an <see cref="AddToolsAsync"/> or <see cref="RemoveToolAsync"/> in flight,
+    /// which the router finishes only once the turn in progress and every call in flight have, so
+    /// do not await this from inside one of the session's tools while one is: it waits for that
+    /// call.
+    /// </para>
     /// </remarks>
     public async Task<Session> ForkAsync(ForkOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -365,13 +376,18 @@ public sealed class Session : IAsyncDisposable
             ResponseId = VisionAgentsClient.Blank(options.ResponseId),
         };
         // Copied and asked for with no change of the tools in between, so the fork runs the set
-        // the router copies.
+        // the router copies, and settles the names this one has not.
         Tools current;
+        List<string> unsettled;
         Models.Session forked;
         await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             current = Current();
+            lock (_toolsLock)
+            {
+                unsettled = [.. _unsettled];
+            }
             forked = await _client.PostAsync<Models.Session>(
                 $"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/fork", request, cancellationToken).ConfigureAwait(false);
         }
@@ -379,9 +395,16 @@ public sealed class Session : IAsyncDisposable
         {
             _changing.Release();
         }
-        return _socket is null
-            ? Read(_client, forked)
-            : await OpenAsync(_client, forked, current, _agentUserId, new Watch(), cancellationToken).ConfigureAwait(false);
+        if (_socket is null)
+        {
+            return Read(_client, forked);
+        }
+        var fork = await OpenAsync(_client, forked, current, _agentUserId, new Watch(), cancellationToken).ConfigureAwait(false);
+        lock (fork._toolsLock)
+        {
+            fork._unsettled.UnionWith(unsettled);
+        }
+        return fork;
     }
 
     /// <summary>Waits for the session to end.</summary>
@@ -520,10 +543,10 @@ public sealed class Session : IAsyncDisposable
         {
             // Never added, or already withdrawn, which leaves it as withdrawn.
         }
-        catch (Exception lost) when (lost is not RouterException { Status: not 0 })
+        catch (Exception lost) when (lost is not RouterException { Status: >= 400 and < 500 })
         {
-            // No answer, so the router may have withdrawn it: its calls are still run here until
-            // a later change of the name settles it.
+            // Not the router's answer, so it may have withdrawn it: its calls are still run here
+            // until a later change of the name settles it.
             lock (_toolsLock)
             {
                 _unsettled.Add(name);

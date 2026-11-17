@@ -169,12 +169,18 @@ class TestAccelerated:
         return pipeline
 
     @pytest.fixture
-    def reserve_table(self) -> FunctionRegistry:
+    def started(self) -> list[str]:
+        """The calls reserve_table was started for, which it says before it answers."""
+        return []
+
+    @pytest.fixture
+    def reserve_table(self, started: list[str]) -> FunctionRegistry:
         """A tool given to the session while the call runs."""
         functions = FunctionRegistry()
 
         @functions.register(description="Reserve a table")
-        async def reserve_table(table: str) -> str:
+        async def reserve_table(tool_call_context: ToolCallContext, table: str) -> str:
+            started.append(tool_call_context.id)
             return f"Reserved {table}."
 
         return functions
@@ -1058,6 +1064,7 @@ class TestAccelerated:
         llm: stream.Accelerated,
         call: RemoteCall,
         reserve_table: FunctionRegistry,
+        started: list[str],
     ):
         await llm.join_remote(call)
         await llm.add_tools(reserve_table)
@@ -1066,8 +1073,9 @@ class TestAccelerated:
 
         await llm.join_remote(call)
         try:
-            # weather is the agent's own and always run, so a call of reserve_table left
-            # alone is told apart from one not answered yet: weather's answer comes first.
+            # weather is the agent's own and always run, and calls are started in the
+            # order they arrive, so once weather is answered a call of reserve_table run
+            # here, however slow, has started.
             await router.send(
                 {
                     "type": "tool_call",
@@ -1089,6 +1097,7 @@ class TestAccelerated:
             await llm.leave_remote()
 
         assert answer["tool_call_id"] == "call-2"
+        assert started == []
 
     async def test_a_config_named_when_the_agent_was_built_is_looked_up_on_joining(
         self, router: Router, call: RemoteCall

@@ -397,12 +397,13 @@ class AgentSessionTest {
 
     /**
      * Answers the session's tool requests as the router does for `reserve_table`, which it offers
-     * to begin with when [offered]. The first request [losing] names is acted on and hung up on
-     * before its answer, and a copy of it sent after is answered as one would be: 409 or 404.
+     * to begin with when [offered]. The first request [losing] names is acted on and answered with
+     * [lost], by default hung up on before its answer, and a copy of it sent after is answered as
+     * one would be: 409 or 404.
      */
-    private fun offering(offered: Boolean, losing: String): (Arrived) -> Reply {
+    private fun offering(offered: Boolean, losing: String, lost: Reply = Reply(hangUp = true)): (Arrived) -> Reply {
         val offers = AtomicBoolean(offered)
-        val lost = AtomicBoolean(false)
+        val answered = AtomicBoolean(false)
         return {
             val adding = it.method == "POST"
             when {
@@ -412,7 +413,7 @@ class AgentSessionTest {
                     } else {
                         Reply(404, envelope("not_found", "not_found", "no tool by that name"))
                     }
-                it.method == losing && !lost.getAndSet(true) -> Reply(hangUp = true)
+                it.method == losing && !answered.getAndSet(true) -> lost
                 else -> Reply(204)
             }
         }
@@ -492,6 +493,54 @@ class AgentSessionTest {
         assertEquals(
             listOf(
                 "POST /v1/agents/sessions/s1/tools",
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
+                "POST /v1/agents/sessions/s1/tools",
+            ),
+            chat.toolRequests(),
+        )
+        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a name whose adding a gateway answered with a 502 is withdrawn before another tool takes it`() = runBlocking {
+        val chat = agents.chat()
+        router.answer = offering(offered = false, losing = "POST", lost = Reply(502, "Bad Gateway"))
+
+        val failed = assertFailsWith<AgentsException.Http> { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+        assertEquals(502, failed.status)
+        assertEquals("Reserve at Chez Nous?", heldFor(chat))
+        chat.decide("c1", allowed = false)
+
+        chat.addTools(listOf(reserve("Reserve at the Ritz?")))
+
+        assertEquals(
+            listOf(
+                "POST /v1/agents/sessions/s1/tools",
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
+                "POST /v1/agents/sessions/s1/tools",
+            ),
+            chat.toolRequests(),
+        )
+        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a name whose removal a gateway answered with a 502 is withdrawn before another tool takes it`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(reserve("Reserve at Chez Nous?"))))
+        router.answer = offering(offered = true, losing = "DELETE", lost = Reply(502, "Bad Gateway"))
+
+        val failed = assertFailsWith<AgentsException.Http> { chat.removeTool("reserve_table") }
+        assertEquals(502, failed.status)
+        assertEquals("Reserve at Chez Nous?", heldFor(chat))
+        chat.decide("c1", allowed = false)
+
+        chat.addTools(listOf(reserve("Reserve at the Ritz?")))
+
+        assertEquals(
+            listOf(
+                "DELETE /v1/agents/sessions/s1/tools/reserve_table",
                 "DELETE /v1/agents/sessions/s1/tools/reserve_table",
                 "POST /v1/agents/sessions/s1/tools",
             ),

@@ -196,7 +196,9 @@ public final class AgentSession: ObservableObject {
     /// this session's tools: it waits for that call. A tool named as one this session already
     /// has is refused: to change one, `remove(toolNamed:)` it first, so that no call of it runs
     /// half under each. Only a session this device opened takes tools from it, and a name the
-    /// agent has of its own, such as a connector's tool, is refused.
+    /// agent has of its own, such as a connector's tool, is refused. A refusal is a 4xx, and takes
+    /// the tools back; after any other failure they stay answered, since the router may have
+    /// added them, until the next add or remove of the name settles it.
     public func add(tools: [AgentTool]) async throws {
         guard !tools.isEmpty else { return }
         try await oneAtATime {
@@ -216,15 +218,16 @@ public final class AgentSession: ObservableObject {
             let body = AddSessionToolsRequest(tools: tools.map(\.schema))
             do {
                 try await backend.call { @Sendable in try await $0.addSessionTools(id: id, addSessionToolsRequest: body) }
-            } catch AgentsError.http(let failure) {
+            } catch AgentsError.http(let failure) where (400..<500).contains(failure.status) {
                 // Refused, so the router offers none of them.
                 for tool in added {
                     self.tools[tool.name] = nil
                 }
                 throw AgentsError.http(failure)
             } catch {
-                // Whether the router offers them is unknown, so they stay answered until a
-                // later add or remove of the name settles it.
+                // Whether the router offers them is unknown, since a gateway in front of it can
+                // answer a 5xx after it added them, so they stay answered until a later add or
+                // remove of the name settles it.
                 unsettledTools.formUnion(added.map(\.name))
                 throw error
             }
@@ -233,8 +236,9 @@ public final class AgentSession: ObservableObject {
 
     /// Withdraws one of your tools. The router waits for the reply in progress, and every call it
     /// made, to finish, as `add(tools:)` does, so once this returns no call of the tool can still
-    /// arrive, and its handler goes. If the answer is lost the handler stays, since the router
-    /// may still offer the tool, until the next remove or add of the name settles it.
+    /// arrive, and its handler goes. If neither a success nor a 4xx comes back, the handler stays,
+    /// since the router may still offer the tool, until the next remove or add of the name
+    /// settles it.
     public func remove(toolNamed name: String) async throws {
         try await oneAtATime { try await withdraw(name) }
     }
@@ -246,12 +250,13 @@ public final class AgentSession: ObservableObject {
         do {
             try await backend.call { @Sendable in try await $0.removeSessionTool(id: id, name: name) }
         } catch AgentsError.http(let failure) where failure.status == 404 && unsettledTools.contains(name) {
-        } catch AgentsError.http(let failure) {
+        } catch AgentsError.http(let failure) where (400..<500).contains(failure.status) {
             // Refused, so the router offers the tool as it did.
             throw AgentsError.http(failure)
         } catch {
-            // Whether the router still offers it is unknown, so it stays answered until a later
-            // add or remove of the name settles it.
+            // Whether the router still offers it is unknown, since a gateway in front of it can
+            // answer a 5xx after it withdrew it, so it stays answered until a later add or remove
+            // of the name settles it.
             unsettledTools.insert(name)
             throw error
         }

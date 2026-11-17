@@ -103,11 +103,12 @@ session.remove_tool("reserve_table")
 ```
 
 The router waits for the turn in progress and every call in flight, and the model is offered the
-change from the next turn, so neither is called from inside one of the session's tools. A name
-the session already has is refused with a 409: remove it, then add it again. `remove_tool` takes
-the agent's own tools too, and the name can then be added with another function. An add or a
-removal whose answer was lost (`RouterError#status` 0) keeps its tools running here until the
-name is changed again.
+change from the next turn, so neither is called from inside one of the session's tools, nor is
+`fork`, which waits for them. A name the session already has is refused with a 409: remove it,
+then add it again. `remove_tool` takes the agent's own tools too, and the name can then be added
+with another function. Only a 4xx is a refusal: an add or a removal answered with another status,
+such as a gateway's 502, or whose answer was lost (`RouterError#status` 0), keeps its tools
+running here until the name is changed again.
 
 ## Credentials
 

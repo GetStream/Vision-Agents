@@ -108,8 +108,9 @@ final class AgentSession {
   /// The tools whose calls are answered here, by name.
   final Map<String, AgentTool> _tools;
 
-  /// The tools whose adding or removing was never answered, so the router may or may not
-  /// offer them.
+  /// The tools whose adding or removing got no answer that settles it, so the router may or
+  /// may not offer them: none at all, one that cannot be read, or a failure other than a 4xx,
+  /// which a gateway in front of the router can answer after the router made the change.
   final Set<String> _unsettled = {};
 
   /// The change of tools under way, which the next one waits for ([_oneAtATime]).
@@ -299,14 +300,15 @@ final class AgentSession {
       }
       try {
         await addSessionTools(_sessions, id, tools);
-      } on RouterException {
-        // Refused, so the router offers none of them.
-        added.forEach(_tools.remove);
-        rethrow;
-      } on Object {
-        // Whether the router offers them is unknown, so they stay answered until a later
-        // add or remove of the name settles it.
-        _unsettled.addAll(added);
+      } on Object catch (error) {
+        if (error case RouterException(status: >= 400 && < 500)) {
+          // Refused, so the router offers none of them.
+          added.forEach(_tools.remove);
+        } else {
+          // Whether the router offers them is unknown, so they stay answered until a later
+          // add or remove of the name settles it.
+          _unsettled.addAll(added);
+        }
         rethrow;
       }
     });
@@ -358,9 +360,14 @@ final class AgentSession {
   ///
   /// The fork keeps this session's tools as they are now, those added since it opened and not
   /// those removed, as the router gives it them: they are here in this process, and a
-  /// conversation continued without them would offer the model tools it cannot run. It waits
-  /// for a change of tools under way, so the router and the fork are given the same ones. It
-  /// is returned unstarted.
+  /// conversation continued without them would offer the model tools it cannot run. One whose
+  /// adding or removing got no answer that settles it is unsettled in the fork too, so the
+  /// fork's own next change of it settles it. It is returned unstarted.
+  ///
+  /// It waits for a change of tools under way, so the router and the fork are given the same
+  /// ones, and that change waits for the reply in progress and every call it made. So do not
+  /// wait for this from inside one of this session's tools while its tools are changing: it
+  /// waits for that call.
   Future<AgentSession> fork([ForkOptions options = const ForkOptions()]) => _oneAtATime(
     () async => AgentSession(
       await _sessions.fork(id, options),
@@ -368,7 +375,7 @@ final class AgentSession {
       sessions: _sessions,
       tools: _tools.values.toList(),
       interim: interim,
-    ),
+    ).._unsettled.addAll(_unsettled),
   );
 
   /// Stops the session and closes the socket. Safe to call more than once, and while
@@ -432,20 +439,23 @@ final class AgentSession {
   }
 
   /// Withdraws one of your tools and drops its handler. For a name whose adding or removing
-  /// was never answered, the router having none by that name settles it as well as
-  /// withdrawing it does.
+  /// was never settled, the router having none by that name settles it as well as
+  /// withdrawing it does. Refused with any other 4xx, the tool is left as it was.
   Future<void> _withdraw(String name) async {
     try {
       await removeSessionTool(_sessions, id, name);
-    } on RouterException catch (error) {
-      if (error.status != 404 || !_unsettled.contains(name)) {
-        rethrow;
+    } on Object catch (error) {
+      switch (error) {
+        case RouterException(status: 404) when _unsettled.contains(name):
+          break;
+        case RouterException(status: >= 400 && < 500):
+          rethrow;
+        default:
+          // Whether the router still offers it is unknown, so it stays answered until a later
+          // add or remove of the name settles it.
+          _unsettled.add(name);
+          rethrow;
       }
-    } on Object {
-      // Whether the router still offers it is unknown, so it stays answered until a later
-      // add or remove of the name settles it.
-      _unsettled.add(name);
-      rethrow;
     }
     _tools.remove(name);
     _unsettled.remove(name);

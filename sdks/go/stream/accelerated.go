@@ -224,8 +224,8 @@ type Pipeline struct {
 	// added are the functions AddTools gave the session after it opened, by name, each in the
 	// registry it was added in; they run here before the session's own of the same name.
 	// withdrawn are the names RemoveTool took from the session, which its own no longer run,
-	// and unsettled the ones whose adding or removing was never answered, which the router may
-	// or may not offer.
+	// and unsettled the ones whose adding or removing got neither a 2xx nor a 4xx, which the
+	// router may or may not offer.
 	added     map[string]*tools.Registry
 	withdrawn map[string]bool
 	unsettled map[string]bool
@@ -701,7 +701,7 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 	p.changing.Lock()
 	defer p.changing.Unlock()
 
-	// A name whose last change was never answered may or may not be the router's: it is
+	// A name whose last change got no answer to go by may or may not be the router's: it is
 	// withdrawn first, so the router and this process agree on which function it is.
 	for _, tool := range declared {
 		if p.isUnsettled(tool.Name) {
@@ -733,15 +733,21 @@ func (p *Pipeline) AddTools(ctx context.Context, more *tools.Registry) error {
 		p.unsettle(fresh...)
 		return fmt.Errorf("stream: adding tools to session %s: %w", sessionID, err)
 	}
-	if added.StatusCode() != http.StatusNoContent {
+	switch added.StatusCode() / 100 {
+	case 2:
+		return nil
+	case 4:
 		p.mu.Lock()
 		for _, name := range fresh {
 			delete(p.added, name)
 		}
 		p.mu.Unlock()
-		return NewRouterError(added.HTTPResponse, added.Body, "stream", "adding tools", added.Status())
+	default:
+		// Only a 4xx is the router refusing: a gateway in front of it can answer 502 or 504
+		// after the router added them, so they are unsettled as an unanswered add's are.
+		p.unsettle(fresh...)
 	}
-	return nil
+	return NewRouterError(added.HTTPResponse, added.Body, "stream", "adding tools", added.Status())
 }
 
 // RemoveTool withdraws one of the session's tools, whether it was declared when the session
@@ -764,8 +770,13 @@ func (p *Pipeline) RemoveTool(ctx context.Context, name string) error {
 // Fork is the pipeline to watch a fork of the session with, once ask has asked the router for
 // it. With no Functions in config, the fork runs the session's tools as they are now, as its
 // own: the ones it opened with less those RemoveTool withdrew, and the ones AddTools added,
-// those whose change was never answered included. That is what the router gives a fork of a
-// running session, and no change of them starts until ask returns, so both copy the same ones.
+// those whose change got no answer to go by included, which stay unsettled in the fork, so its
+// next change of one withdraws it first. That is what the router gives a fork of a running
+// session, and no change of them starts until ask returns, so both copy the same ones.
+//
+// Fork waits for an AddTools or RemoveTool in flight, which the router finishes only once the
+// turn in progress and every call in flight end, so do not call this from inside one of the
+// session's functions.
 func (p *Pipeline) Fork(config Config, ask func() error) (*Pipeline, error) {
 	p.changing.Lock()
 	defer p.changing.Unlock()
@@ -778,14 +789,14 @@ func (p *Pipeline) Fork(config Config, ask func() error) (*Pipeline, error) {
 	config.Functions = p.functions
 	forked := Accelerated(config)
 	p.mu.Lock()
-	forked.added, forked.withdrawn = maps.Clone(p.added), maps.Clone(p.withdrawn)
+	forked.added, forked.withdrawn, forked.unsettled = maps.Clone(p.added), maps.Clone(p.withdrawn), maps.Clone(p.unsettled)
 	p.mu.Unlock()
 	return forked, nil
 }
 
 // withdraw takes the tool called name from the session and from what runs here. absentIsFine
-// settles a name whose last change was never answered: the router having no tool by it is as
-// good as withdrawing it.
+// settles a name whose last change got no answer to go by: the router having no tool by it is
+// as good as withdrawing it. A 4xx otherwise is the router refusing, which changes nothing.
 func (p *Pipeline) withdraw(ctx context.Context, client *acceleration.ClientWithResponses, sessionID, name string, absentIsFine bool) error {
 	removed, err := client.RemoveSessionToolWithResponse(ctx, sessionID, name)
 	if err != nil {
@@ -794,7 +805,12 @@ func (p *Pipeline) withdraw(ctx context.Context, client *acceleration.ClientWith
 		p.unsettle(name)
 		return fmt.Errorf("stream: removing tool %s from session %s: %w", name, sessionID, err)
 	}
-	if removed.StatusCode() != http.StatusNoContent && !(absentIsFine && removed.StatusCode() == http.StatusNotFound) {
+	if status := removed.StatusCode(); status/100 != 2 && !(absentIsFine && status == http.StatusNotFound) {
+		if status/100 != 4 {
+			// Only a 4xx is the router refusing: a gateway in front of it can answer 502 or 504
+			// after the router withdrew it, so it is unsettled as an unanswered removal is.
+			p.unsettle(name)
+		}
 		return NewRouterError(removed.HTTPResponse, removed.Body, "stream", "removing a tool", removed.Status())
 	}
 	p.mu.Lock()
@@ -814,8 +830,8 @@ func (p *Pipeline) isUnsettled(name string) bool {
 	return p.unsettled[name]
 }
 
-// unsettle marks names whose change got no answer, so the next change of each withdraws it
-// first and takes the router having no tool by it as done.
+// unsettle marks names whose change got no answer to go by, so the next change of each
+// withdraws it first and takes the router having no tool by it as done.
 func (p *Pipeline) unsettle(names ...string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

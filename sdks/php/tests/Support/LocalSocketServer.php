@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace GetStream\VisionAgents\Tests\Support;
 
+use Amp\ByteStream\ReadableIterableStream;
 use Amp\Http\Server\DefaultErrorHandler;
 use Amp\Http\Server\Request;
 use Amp\Http\Server\Response;
@@ -43,10 +44,11 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
     public int $refuse = 0;
     /**
      * @var array<string, list<int>> the statuses `METHOD /path` is answered with, in order, the
-     *     last repeated; -1 drops the connection unanswered, and one not listed is a 404
+     *     last repeated; -1 drops the connection unanswered, -2 drops it partway through a
+     *     200's body, and one not listed is a 404
      */
     public array $answers = [];
-    /** @var array<string, array<string, mixed>> the body a success of `METHOD /path` carries */
+    /** @var array<string, array<string, mixed>|string> the body a success of `METHOD /path` carries, a string as it is */
     public array $bodies = [];
     /** @var list<string> each plain HTTP request, as `METHOD /path body` */
     public array $requests = [];
@@ -143,12 +145,19 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
         $statuses = $this->answers[$key] ?? [404];
         $status = count($statuses) > 1 ? (int) array_shift($this->answers[$key]) : $statuses[0];
         delay($this->answerAfter);
+        if ($status === -2) {
+            return new Response(200, ['content-type' => 'application/json', 'content-length' => '100'], new ReadableIterableStream((static function (): \Generator {
+                yield '{"tools"';
+                throw new \RuntimeException('the connection dropped');
+            })()));
+        }
         if ($status < 0) {
             $request->getClient()->close();
             return new Response(500);
         }
         if ($status < 400) {
-            return isset($this->bodies[$key]) ? new Response($status, ['content-type' => 'application/json'], Json::encode($this->bodies[$key])) : new Response($status);
+            $body = $this->bodies[$key] ?? null;
+            return $body === null ? new Response($status) : new Response($status, ['content-type' => 'application/json'], is_string($body) ? $body : Json::encode($body));
         }
         return new Response($status, ['content-type' => 'application/json'], Json::encode(Rows::failure('invalid_request', "the router said {$status}")));
     }

@@ -222,7 +222,8 @@ export class Session {
    * The functions `addTools` gave this session after it opened, by name, each in the `Tools` it
    * was added in; they run here before the session's own of the same name. `withdrawn` are the
    * names `removeTool` took from the session, which its own no longer run, and `unsettled` the
-   * ones whose adding or withdrawing was never answered, which the router may or may not offer.
+   * ones whose adding or withdrawing got no answer, or one that was neither a yes nor a refusal,
+   * which the router may or may not offer.
    */
   private readonly added = new Map<string, Tools>();
   private readonly withdrawn = new Set<string>();
@@ -550,16 +551,18 @@ export class Session {
    * refused with a 409: to change a function, `removeTool` it first, so that no call runs half
    * under each. Only the kind of caller that opened the session may (a device its own, a backend
    * a backend's), and a name the session offers from elsewhere, such as a connector's, is a 409.
-   * When the answer is lost, the functions go on being run here, and adding one of their names
-   * again withdraws it first.
+   * Refused with a 4xx, the router offers none of them and none is run here. When the answer is
+   * lost, or is any other failure, such as a 502 from a gateway in front of a router that had
+   * added them, the functions go on being run here, and adding one of their names again
+   * withdraws it first.
    */
   async addTools(more: Tools): Promise<void> {
     // A conversation nothing is watching has nowhere to be asked for a call.
     this.held();
     await this.oneAtATime(async () => {
       const declared = more.declared();
-      // A name whose adding was never answered may or may not be the router's: it is withdrawn
-      // first, so the router and this session agree on which function it is.
+      // A name whose last change was never settled may or may not be the router's: it is
+      // withdrawn first, so the router and this session agree on which function it is.
       for (const { name } of declared) {
         if (this.unsettled.has(name)) {
           await this.withdraw(name, true);
@@ -580,11 +583,10 @@ export class Session {
           body: { tools: declared },
         });
       } catch (cause) {
-        // Refused, the router offers none of them. Unanswered, it may have added them, so their
+        // Refused, the router offers none of them. Otherwise it may have added them, so their
         // calls are still run here until a later change of the name settles it.
-        const refused = cause instanceof RouterError && cause.status !== 0;
         for (const name of fresh) {
-          if (refused) {
+          if (refusal(cause)) {
             this.added.delete(name);
           } else {
             this.unsettled.add(name);
@@ -599,9 +601,10 @@ export class Session {
    * Withdraws one of your functions, whether the session was opened with it or it was added
    * since. The router waits as it does for `addTools`, so once this resolves no call of it is in
    * flight and none can be made, and it is no longer run here; do not wait for this from inside
-   * one of this session's functions either. A name you have no tool by is a 404. When the answer
-   * is lost, the function goes on being run here, and removing or adding the name again
-   * withdraws it first, a 404 then being as good.
+   * one of this session's functions either. A name you have no tool by is a 404, and refused
+   * with a 4xx, nothing changes. When the answer is lost, or is any other failure, such as a 502
+   * from a gateway in front of a router that had withdrawn it, the function goes on being run
+   * here, and removing or adding the name again withdraws it first, a 404 then being as good.
    */
   removeTool(name: string): Promise<void> {
     return this.oneAtATime(() => this.withdraw(name, this.unsettled.has(name)));
@@ -639,8 +642,10 @@ export class Session {
    *
    * The router gives the fork the tools this session offers when it forks, those `addTools`
    * added included and those `removeTool` withdrew left out, and the fork runs the functions
-   * this session runs for them as its own, unless given `tools`. A change of them under way is
-   * finished first, so do not wait for this from inside one of this session's functions.
+   * this session runs for them as its own, unless given `tools`, and a name whose change was
+   * never settled here is unsettled in the fork too. A change of them under way is finished
+   * first, so do not wait for this from inside one of this session's functions, which it would
+   * be waiting for.
    */
   async fork(options: ForkOptions = {}): Promise<Session> {
     const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
@@ -648,8 +653,9 @@ export class Session {
     // here in this process, and a conversation continued without them would offer the model
     // tools it cannot run. They are read, and the fork asked for, between changes of them, so
     // the fork runs the ones the router copied.
-    const [forked, inherited] = await this.oneAtATime(async () => {
+    const [forked, inherited, unsettled] = await this.oneAtATime(async () => {
       const inherited = tools ?? this.current();
+      const unsettled = new Set(this.unsettled);
       const forked = await this.client.post("/v1/agents/sessions/{id}/fork", {
         path: { id: this.id },
         body: {
@@ -657,9 +663,9 @@ export class Session {
           ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
         },
       });
-      return [forked, inherited] as const;
+      return [forked, inherited, unsettled] as const;
     });
-    return Session.startWatching(this.client, forked, {
+    const fork = await Session.startWatching(this.client, forked, {
       tools: inherited,
       ...(interim === undefined ? {} : { interim }),
       ...(decisions === undefined ? {} : { decisions }),
@@ -667,6 +673,12 @@ export class Session {
       // caller says otherwise: whatever stopped the parent holding a socket still holds.
       watch: watch ?? Boolean(this.socket),
     });
+    // The router copied whatever it offers by those names, which this session never learned,
+    // so the fork's next change of one withdraws it first.
+    for (const name of unsettled) {
+      fork.unsettled.add(name);
+    }
+    return fork;
   }
 
   /**
@@ -894,8 +906,8 @@ export class Session {
 
   /**
    * Takes the tool called `name` from the session and from what runs here. `absentIsFine`
-   * settles a name whose adding or withdrawing was never answered: the router having no tool
-   * by it is as good as withdrawing it.
+   * settles a name whose last change was never settled: the router having no tool by it is as
+   * good as withdrawing it.
    */
   private async withdraw(name: string, absentIsFine: boolean): Promise<void> {
     try {
@@ -907,9 +919,9 @@ export class Session {
       });
     } catch (cause) {
       if (!(absentIsFine && cause instanceof RouterError && cause.status === 404)) {
-        // Unanswered, the router may have withdrawn it, so it is still run here until a later
+        // Not refused, the router may have withdrawn it, so it is still run here until a later
         // change of the name settles it.
-        if (!(cause instanceof RouterError && cause.status !== 0)) {
+        if (!refusal(cause)) {
           this.unsettled.add(name);
         }
         throw cause;
@@ -931,7 +943,7 @@ export class Session {
   /**
    * The functions that run the session's tools now, in a `Tools` of their own: those it was
    * opened with less the ones withdrawn, and the ones added since, a name whose change was
-   * never answered included.
+   * never settled included.
    */
   private current(): Tools {
     const running = new Map<string, Tools>();
@@ -1150,6 +1162,15 @@ export class Voice {
     this.changed?.(false);
     return stopped;
   }
+}
+
+/**
+ * Whether a change of the session's tools failed with the router refusing it, which changed
+ * nothing. Only a 4xx says so: a 5xx can come from a gateway in front of a router that made the
+ * change, and an answer that was lost or could not be read says nothing.
+ */
+function refusal(cause: unknown): boolean {
+  return cause instanceof RouterError && cause.status >= 400 && cause.status < 500;
 }
 
 /** A tool call's arguments, which arrive as a JSON object encoded as a string. Garbled ones are none. */

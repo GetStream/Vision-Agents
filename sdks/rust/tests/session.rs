@@ -1,6 +1,7 @@
 mod support;
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::http::Method;
@@ -1234,15 +1235,30 @@ fn a_policy_that_cannot_work_is_refused_when_it_is_registered() {
 const SESSION_TOOLS: &str = "/v1/agents/sessions/s1/tools";
 const RESERVE_TABLE: &str = "/v1/agents/sessions/s1/tools/reserve_table";
 
-/// A registry with one function, `name`, that answers `by`.
+/// The ids of the calls a function made by [`answering`] was run for, in every test.
+static RAN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Numbers the calls [`answer`] makes, so that no two tests ask with the same id.
+static ASKED: AtomicUsize = AtomicUsize::new(0);
+
+/// A registry with one function, `name`, that answers `by` and puts the id of each call it is
+/// run for in [`RAN`] as it starts.
 fn answering(name: &str, by: &'static str) -> Tools {
     let tools = Tools::new();
-    tools.register(
-        name,
-        &format!("{name} for the test"),
-        json!({"type": "object"}),
-        move |_| async move { Ok::<_, String>(by) },
-    );
+    tools
+        .register_with_tool_call_context(
+            types::SessionTool {
+                name: name.into(),
+                description: format!("{name} for the test"),
+                parameters: json!({"type": "object"}).as_object().unwrap().clone(),
+                ..Default::default()
+            },
+            move |call: ToolCallContext, _| {
+                RAN.lock().unwrap().push(call.id);
+                async move { Ok::<_, String>(by) }
+            },
+        )
+        .unwrap();
     tools
 }
 
@@ -1255,28 +1271,37 @@ fn probed(tools: Tools) -> Tools {
 }
 
 /// What the session answers a call of `name` with now, or `None` when it leaves the call to
-/// another watcher: a call of `fast` sent after it is then answered first.
+/// another watcher: a call of `fast` sent after it is then answered first, and no function
+/// made by [`answering`] was run for it, however late it would have answered.
 async fn answer(socket: &mut Accepted, name: &str) -> Option<Value> {
+    let asked = format!("asked-{}", ASKED.fetch_add(1, Ordering::Relaxed));
     socket
-        .send(json!({"type": "tool_call", "id": "asked", "name": name, "arguments": "{}"}))
+        .send(json!({"type": "tool_call", "id": asked, "name": name, "arguments": "{}"}))
         .await;
     socket
         .send(json!({"type": "tool_call", "id": "probe", "name": "fast", "arguments": "{}"}))
         .await;
     let first = socket.expect("tool_result").await;
     if first["tool_call_id"] == "probe" {
+        // Each call runs on a task of its own, started in the order the calls came on the
+        // test's one thread, so a function run for this one had started before the probe
+        // answered.
+        assert!(
+            !RAN.lock().unwrap().contains(&asked),
+            "{name} was run, and has not answered yet"
+        );
         return None;
     }
     assert_eq!(socket.expect("tool_result").await["tool_call_id"], "probe");
     Some(first["output"].clone())
 }
 
-/// The changes to the session's tools the router was asked for, in order.
+/// The changes to the sessions' tools the router was asked for, in order.
 fn tool_changes(server: &Server) -> Vec<String> {
     server
         .seen()
         .into_iter()
-        .filter(|seen| seen.path.starts_with(SESSION_TOOLS))
+        .filter(|seen| seen.path.contains("/tools"))
         .map(|seen| format!("{} {}", seen.method, seen.path))
         .collect()
 }
@@ -1560,6 +1585,20 @@ fn no_tool_by_that_name() -> Value {
     )
 }
 
+/// The router's answer to a change of the tools by a caller of another kind than the one that
+/// opened the session.
+fn another_kind_of_caller() -> Value {
+    refusal(
+        "permission",
+        "permission",
+        "a session's tools are declared by the kind of caller that opened it",
+    )
+}
+
+/// What a gateway in front of the router answers when the router's own answer does not get
+/// back to it, whether or not the router made the change.
+const BAD_GATEWAY: &str = "<html><body><h1>502 Bad Gateway</h1></body></html>";
+
 /// How long a caller waits for a change of the tools before giving up on it.
 const GIVING_UP: Duration = Duration::from_millis(100);
 
@@ -1706,16 +1745,7 @@ async fn a_removal_the_router_refused_leaves_the_tool_as_it_was() {
     let server = Server::start().await;
     let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
     server
-        .route(
-            Method::DELETE,
-            RESERVE_TABLE,
-            503,
-            refusal(
-                "unavailable",
-                "unavailable",
-                "the session dropped; ask again",
-            ),
-        )
+        .route(Method::DELETE, RESERVE_TABLE, 403, another_kind_of_caller())
         .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null)
         .route(
             Method::POST,
@@ -1724,7 +1754,7 @@ async fn a_removal_the_router_refused_leaves_the_tool_as_it_was() {
             refusal("conflict", "conflict", "the session has reserve_table"),
         );
     let refused = session.remove_tool("reserve_table").await.unwrap_err();
-    assert_eq!(refused.status(), Some(503));
+    assert_eq!(refused.status(), Some(403));
 
     // Still the session's: adding it again is refused rather than withdrawn on the way.
     let again = session
@@ -1752,23 +1782,14 @@ async fn a_tool_whose_adding_was_never_answered_stays_unsettled_when_its_removal
     let (session, mut socket) = open(&server, probed(Tools::new())).await;
     server
         .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
-        .route(
-            Method::DELETE,
-            RESERVE_TABLE,
-            503,
-            refusal(
-                "unavailable",
-                "unavailable",
-                "the session dropped; ask again",
-            ),
-        )
+        .route(Method::DELETE, RESERVE_TABLE, 403, another_kind_of_caller())
         .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name());
     session
         .add_tools(answering("reserve_table", "lost"))
         .await
         .unwrap_err();
     let refused = session.remove_tool("reserve_table").await.unwrap_err();
-    assert_eq!(refused.status(), Some(503));
+    assert_eq!(refused.status(), Some(403));
 
     session.remove_tool("reserve_table").await.unwrap();
 
@@ -1818,4 +1839,129 @@ async fn a_fork_runs_the_tools_the_session_has_when_it_is_forked() {
     assert_eq!(socket.path, "/v1/agents/sessions/s2/events");
     assert_eq!(answer(&mut socket, "book").await, Some(json!("added")));
     assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_tool_whose_adding_a_gateway_failed_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    // The router adds it, and the gateway in front of it answers 502.
+    server
+        .route_raw(Method::POST, SESSION_TOOLS, 502, &[], BAD_GATEWAY)
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null);
+    let failed = session
+        .add_tools(answering("reserve_table", "first"))
+        .await
+        .unwrap_err();
+    assert_eq!(failed.status(), Some(502));
+    // Not a refusal: the router may have added it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("first"))
+    );
+
+    session
+        .add_tools(answering("reserve_table", "second"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("POST {SESSION_TOOLS}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("second"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_whose_removal_a_gateway_failed_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    // The router withdraws it, and the gateway in front of it answers 502.
+    server
+        .route_raw(Method::DELETE, RESERVE_TABLE, 502, &[], BAD_GATEWAY)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name())
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+    let failed = session.remove_tool("reserve_table").await.unwrap_err();
+    assert_eq!(failed.status(), Some(502));
+    // Not a refusal: the router may not have withdrawn it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("own"))
+    );
+
+    session
+        .add_tools(answering("reserve_table", "replacement"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("replacement"))
+    );
+}
+
+#[tokio::test]
+async fn a_fork_withdraws_a_name_whose_adding_was_never_answered_before_adding_it_again() {
+    let server = Server::start().await;
+    let (parent, _parent_socket) = open(&server, probed(Tools::new())).await;
+    // The parent's add never reached the router, so neither session has the tool.
+    server
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
+        .route(
+            Method::POST,
+            "/v1/agents/sessions/s1/fork",
+            201,
+            session("s2"),
+        )
+        .route(
+            Method::DELETE,
+            "/v1/agents/sessions/s2/tools/reserve_table",
+            404,
+            no_tool_by_that_name(),
+        )
+        .route(
+            Method::POST,
+            "/v1/agents/sessions/s2/tools",
+            204,
+            Value::Null,
+        );
+    parent
+        .add_tools(answering("reserve_table", "first"))
+        .await
+        .unwrap_err();
+    let fork = parent.fork(&Default::default()).await.unwrap();
+    let mut socket = server.accept().await;
+
+    fork.add_tools(answering("reserve_table", "second"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("POST {SESSION_TOOLS}"),
+            "DELETE /v1/agents/sessions/s2/tools/reserve_table".to_string(),
+            "POST /v1/agents/sessions/s2/tools".to_string(),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("second"))
+    );
 }

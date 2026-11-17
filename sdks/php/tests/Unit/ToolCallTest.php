@@ -17,6 +17,7 @@ use GetStream\VisionAgents\Tests\Support\Rows;
 use GetStream\VisionAgents\ToolCallContext;
 use GetStream\VisionAgents\Tools;
 use GetStream\VisionAgents\Worker\Dispatch;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\async;
@@ -28,6 +29,12 @@ final class ToolCallTest extends TestCase
     private const string REMOVE = 'DELETE /v1/agents/sessions/ses_1/tools/reserve_table';
 
     private ?LocalSocketServer $server = null;
+    /**
+     * @var array<string, string> who each `reserving` function that ran is, by the call it ran
+     *     for, kept as it starts: a watch is over only once every call it started has ended, so
+     *     this holds every one that ran, however slow
+     */
+    private array $ran = [];
 
     protected function tearDown(): void
     {
@@ -266,7 +273,7 @@ final class ToolCallTest extends TestCase
         $server->answers[self::ADD] = [204];
         $session = self::session($server);
 
-        $refused = self::watchChanging($session, ['add' => static fn () => $session->addTools(self::reserving('first'))]);
+        $refused = self::watchChanging($session, ['add' => fn () => $session->addTools($this->reserving('first'))]);
 
         self::assertSame([], $refused);
         self::assertSame([self::ADD . ' {"tools":[{"description":"Reserve a table","name":"reserve_table","parameters":{"type":"object","properties":{"table":{"type":"string"}}}}]}'], $server->requests);
@@ -284,10 +291,11 @@ final class ToolCallTest extends TestCase
         $server->answers[self::ADD] = [409];
         $session = self::session($server);
 
-        $refused = self::watchChanging($session, ['add' => static fn () => $session->addTools(self::reserving('first'))]);
+        $refused = self::watchChanging($session, ['add' => fn () => $session->addTools($this->reserving('first'))]);
 
         self::assertSame(['add' => 409], $refused);
         self::assertSame(['w1' => 'sunny'], self::answers($server));
+        self::assertSame([], $this->ran);
     }
 
     public function testARemovedToolIsNoLongerRunHere(): void
@@ -305,12 +313,13 @@ final class ToolCallTest extends TestCase
         $session = self::session($server);
 
         $refused = self::watchChanging($session, [
-            'add' => static fn () => $session->addTools(self::reserving('first')),
+            'add' => fn () => $session->addTools($this->reserving('first')),
             'remove' => static fn () => $session->removeTool('reserve_table'),
         ]);
 
         self::assertSame([], $refused);
         self::assertSame(['r1' => 'first ', 'w1' => 'sunny'], self::answers($server));
+        self::assertSame(['r1' => 'first'], $this->ran);
         self::assertSame('DELETE /v1/agents/sessions/ses_1/tools/reserve_table', $server->requests[1]);
     }
 
@@ -325,8 +334,8 @@ final class ToolCallTest extends TestCase
         // replaces a tool the session has, its own or one added.
         $server->answers[self::ADD] = [204, -1];
         $session = self::session($server);
-        $session->addTools(self::reserving('first'));
-        $again = self::reserving('second')->register('get_weather', 'The weather', [], static fn (array $args): string => 'stormy');
+        $session->addTools($this->reserving('first'));
+        $again = $this->reserving('second')->register('get_weather', 'The weather', [], static fn (array $args): string => 'stormy');
 
         try {
             $session->addTools($again);
@@ -351,21 +360,34 @@ final class ToolCallTest extends TestCase
         });
         $server->answers[self::ADD] = [204];
         $server->answers['DELETE /v1/agents/sessions/ses_1/tools/reserve_table'] = [204];
-        $session = self::session($server, self::reserving('agent'));
+        $session = self::session($server, $this->reserving('agent'));
 
         $refused = self::watchChanging($session, [
             'remove' => static fn () => $session->removeTool('reserve_table'),
-            'add' => static fn () => $session->addTools(self::reserving('replacement')),
+            'add' => fn () => $session->addTools($this->reserving('replacement')),
         ]);
 
         self::assertSame([], $refused);
         self::assertSame(['r2' => 'replacement ', 'w1' => 'sunny'], self::answers($server));
+        self::assertSame(['r2' => 'replacement'], $this->ran);
     }
 
-    public function testAToolWhoseAddingGotNoAnswerRunsHereAndIsWithdrawnBeforeItsNameIsAddedAgain(): void
+    /**
+     * @return iterable<string, array{int, string}> an answer after which the router may or may not
+     *     have made the change, as a status or a `LocalSocketServer::$answers` marker, and its body
+     */
+    public static function answersThatAreNotARefusal(): iterable
+    {
+        yield 'none' => [-1, ''];
+        yield "a gateway's 502" => [502, ''];
+        yield 'a 200 that is not JSON' => [200, '<html>done</html>'];
+        yield 'a 200 cut off' => [-2, ''];
+    }
+
+    #[DataProvider('answersThatAreNotARefusal')]
+    public function testAToolWhoseAddingWasNotRefusedRunsHereAndIsWithdrawnBeforeItsNameIsAddedAgain(int $answer, string $body): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
-            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
             self::untilAnswered($socket, $server, 'w1');
@@ -374,19 +396,24 @@ final class ToolCallTest extends TestCase
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w2', 'name' => 'get_weather', 'arguments' => '{}']);
             self::untilAnswered($socket, $server, 'w2');
         });
-        // The router having no tool by the name settles it as well as withdrawing it does.
-        $server->answers[self::ADD] = [-1, 204];
-        $server->answers['DELETE /v1/agents/sessions/ses_1/tools/reserve_table'] = [404];
+        // The router added it, then the answer went wrong on its way here.
+        $server->answers[self::ADD] = [$answer, 204];
+        $server->bodies[self::ADD] = $body;
+        $server->answers[self::REMOVE] = [204];
         $session = self::session($server);
+        try {
+            $session->addTools($this->reserving('first'));
+            $failed = null;
+        } catch (\RuntimeException $failed) {
+        }
 
-        $refused = self::watchChanging($session, [
-            'add' => static fn () => $session->addTools(self::reserving('first')),
-            'again' => static fn () => $session->addTools(self::reserving('second')),
-        ]);
+        $refused = self::watchChanging($session, ['again' => fn () => $session->addTools($this->reserving('second'))]);
 
-        self::assertSame(['add' => 0], $refused);
+        self::assertNotNull($failed, 'an add the router did not answer with a success reported one');
+        self::assertSame([], $refused);
         self::assertSame(['r1' => 'first ', 'w1' => 'sunny', 'r2' => 'second ', 'w2' => 'sunny'], self::answers($server));
-        self::assertSame([self::ADD, 'DELETE /v1/agents/sessions/ses_1/tools/reserve_table', self::ADD], array_map(static fn (string $request): string => explode(' {', $request)[0], $server->requests));
+        self::assertSame(['r1' => 'first', 'r2' => 'second'], $this->ran);
+        self::assertSame([self::ADD, self::REMOVE, self::ADD], array_map(static fn (string $request): string => explode(' {', $request)[0], $server->requests));
     }
 
     public function testRemovingAToolWhoseAddingGotNoAnswerTakesNotFoundAsDone(): void
@@ -406,18 +433,19 @@ final class ToolCallTest extends TestCase
 
         $refused = self::watchChanging($session, [
             'remove unknown' => static fn () => $session->removeTool('book_flight'),
-            'add' => static fn () => $session->addTools(self::reserving('first')),
+            'add' => fn () => $session->addTools($this->reserving('first')),
             'remove' => static fn () => $session->removeTool('reserve_table'),
         ]);
 
         self::assertSame(['remove unknown' => 404, 'add' => 0], $refused);
         self::assertSame(['w1' => 'sunny'], self::answers($server));
+        self::assertSame([], $this->ran);
     }
 
-    public function testAToolWhoseRemovalGotNoAnswerRunsHereUntilItIsRemovedAgain(): void
+    #[DataProvider('answersThatAreNotARefusal')]
+    public function testAToolWhoseRemovalWasNotRefusedRunsHereUntilItIsRemovedAgain(int $answer, string $body): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
-            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'remove']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
             self::untilAnswered($socket, $server, 'w1');
@@ -426,20 +454,26 @@ final class ToolCallTest extends TestCase
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w2', 'name' => 'get_weather', 'arguments' => '{}']);
             self::untilAnswered($socket, $server, 'w2');
         });
-        // The router withdrew it and the answer was lost: asked again, it has no tool by the
-        // name. Sent again by the transport on its own, that 404 would be read as the answer.
+        // The router withdrew it and the answer went wrong on its way here: asked again, it has
+        // no tool by the name. Sent again by the transport on its own, that 404 would be read as
+        // the answer.
         $server->answers[self::ADD] = [204];
-        $server->answers[self::REMOVE] = [-1, 404];
+        $server->answers[self::REMOVE] = [$answer, 404];
+        $server->bodies[self::REMOVE] = $body;
         $session = self::session($server);
-        $session->addTools(self::reserving('first'));
+        $session->addTools($this->reserving('first'));
+        try {
+            $session->removeTool('reserve_table');
+            $failed = null;
+        } catch (\RuntimeException $failed) {
+        }
 
-        $refused = self::watchChanging($session, [
-            'remove' => static fn () => $session->removeTool('reserve_table'),
-            'remove again' => static fn () => $session->removeTool('reserve_table'),
-        ]);
+        $refused = self::watchChanging($session, ['remove again' => static fn () => $session->removeTool('reserve_table')]);
 
-        self::assertSame(['remove' => 0], $refused);
+        self::assertNotNull($failed, 'a removal the router did not answer with a success reported one');
+        self::assertSame([], $refused);
         self::assertSame(['r1' => 'first ', 'w1' => 'sunny', 'w2' => 'sunny'], self::answers($server));
+        self::assertSame(['r1' => 'first'], $this->ran);
         self::assertSame([self::ADD, self::REMOVE, self::REMOVE], array_map(static fn (string $request): string => explode(' {', $request)[0], $server->requests));
     }
 
@@ -456,11 +490,11 @@ final class ToolCallTest extends TestCase
         $server->answers[self::ADD] = [204];
         $server->answers[self::REMOVE] = [-1, 404];
         $session = self::session($server);
-        $session->addTools(self::reserving('first'));
+        $session->addTools($this->reserving('first'));
 
         $refused = self::watchChanging($session, [
             'remove' => static fn () => $session->removeTool('reserve_table'),
-            'add' => static fn () => $session->addTools(self::reserving('second')),
+            'add' => fn () => $session->addTools($this->reserving('second')),
         ]);
 
         self::assertSame(['remove' => 0], $refused);
@@ -477,7 +511,7 @@ final class ToolCallTest extends TestCase
         });
         $server->answers[self::ADD] = [204];
         $session = self::session($server);
-        $tools = self::reserving('first');
+        $tools = $this->reserving('first');
         $session->addTools($tools);
 
         $tools->register('reserve_table', 'Reserve a table', [], static fn (array $args): string => 'replaced');
@@ -498,7 +532,7 @@ final class ToolCallTest extends TestCase
         $server->answers[self::REMOVE] = [204];
         $server->answers['POST /v1/agents/sessions/ses_1/fork'] = [201];
         $server->bodies['POST /v1/agents/sessions/ses_1/fork'] = Rows::session('ses_2');
-        $session = self::session($server, self::reserving('agent'));
+        $session = self::session($server, $this->reserving('agent'));
         $session->addTools((new Tools())->register('book_flight', 'Book a flight', [], static fn (array $args): string => 'booked'));
         $session->removeTool('reserve_table');
 
@@ -507,6 +541,42 @@ final class ToolCallTest extends TestCase
 
         self::assertStringStartsWith('/v1/agents/sessions/ses_2/events', $server->handshakes[0]);
         self::assertSame(['b1' => 'booked', 'w1' => 'sunny'], self::answers($server));
+        self::assertSame([], $this->ran);
+    }
+
+    public function testAForkWithdrawsANameWhoseAddingGotNoAnswerBeforeItAddsItAgain(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        // The parent's add never reached the router, which so gives the fork no tool by the name
+        // and takes the fork's add of it.
+        $server->answers[self::ADD] = [-1];
+        $server->answers['POST /v1/agents/sessions/ses_1/fork'] = [201];
+        $server->bodies['POST /v1/agents/sessions/ses_1/fork'] = Rows::session('ses_2');
+        $server->answers['DELETE /v1/agents/sessions/ses_2/tools/reserve_table'] = [404];
+        $server->answers['POST /v1/agents/sessions/ses_2/tools'] = [204];
+        $session = self::session($server);
+        try {
+            $session->addTools($this->reserving('first'));
+            self::fail('an add whose answer was lost reported success');
+        } catch (RouterException $lost) {
+            self::assertSame(0, $lost->status);
+        }
+
+        $fork = $session->fork();
+        $refused = self::watchChanging($fork, ['add' => fn () => $fork->addTools($this->reserving('second'))]);
+
+        self::assertSame([], $refused);
+        self::assertSame(['r1' => 'second ', 'w1' => 'sunny'], self::answers($server));
+        self::assertSame(['r1' => 'second'], $this->ran);
+        self::assertSame(
+            [self::ADD, 'POST /v1/agents/sessions/ses_1/fork', 'DELETE /v1/agents/sessions/ses_2/tools/reserve_table', 'POST /v1/agents/sessions/ses_2/tools'],
+            array_map(static fn (string $request): string => explode(' {', $request)[0], $server->requests),
+        );
     }
 
     public function testChangesToASessionsToolsAreMadeOneAtATime(): void
@@ -522,8 +592,8 @@ final class ToolCallTest extends TestCase
         $server->answerAfter = 0.05;
         $session = self::session($server);
 
-        $first = async(static fn () => $session->addTools(self::reserving('first')));
-        $second = async(static fn () => $session->addTools(self::reserving('second')));
+        $first = async(fn () => $session->addTools($this->reserving('first')));
+        $second = async(fn () => $session->addTools($this->reserving('second')));
         try {
             $first->await();
             self::fail('a refused add reported success');
@@ -546,12 +616,13 @@ final class ToolCallTest extends TestCase
         $server->answers[self::ADD] = [204];
         $server->answers['POST /v1/agents/sessions/ses_1/stop'] = [204];
         $session = self::session($server);
-        $session->addTools(self::reserving('first'));
+        $session->addTools($this->reserving('first'));
 
         $session->close();
         self::watchChanging($session, []);
 
         self::assertSame(['w1' => 'sunny'], self::answers($server));
+        self::assertSame([], $this->ran);
     }
 
     public function testAToolIsKeptWhenStoppingTheSessionFailsAndClosingIsAskedAgain(): void
@@ -565,7 +636,7 @@ final class ToolCallTest extends TestCase
         $server->answers[self::ADD] = [204];
         $server->answers['POST /v1/agents/sessions/ses_1/stop'] = [503, 204];
         $session = self::session($server);
-        $session->addTools(self::reserving('first'));
+        $session->addTools($this->reserving('first'));
 
         $refused = self::watchChanging($session, ['close' => static fn () => $session->close()]);
         $session->close();
@@ -641,12 +712,16 @@ final class ToolCallTest extends TestCase
     }
 
     /**
-     * `reserve_table`, which answers with `$who` and the table it was asked for.
+     * `reserve_table`, which answers with `$who` and the table it was asked for, and is kept in
+     * `ran`.
      */
-    private static function reserving(string $who): Tools
+    private function reserving(string $who): Tools
     {
         return (new Tools())->register('reserve_table', 'Reserve a table', ['type' => 'object', 'properties' => ['table' => ['type' => 'string']]],
-            static fn (array $args): string => $who . ' ' . Json::string($args, 'table'));
+            function (ToolCallContext $toolCallContext, array $args) use ($who): string {
+                $this->ran[$toolCallContext->id] = $who;
+                return $who . ' ' . Json::string($args, 'table');
+            });
     }
 
     /**
@@ -682,8 +757,8 @@ final class ToolCallTest extends TestCase
     }
 
     /**
-     * Reads what the SDK sends until the call `$id` is answered. Every tool here answers at
-     * once, so a call sent before it that is answered at all is answered first.
+     * Reads what the SDK sends until the call `$id` is answered. A call sent before it may still
+     * be running then, so whether one ran is read from `ran` once the watch is over.
      */
     private static function untilAnswered(WebsocketClient $socket, LocalSocketServer $server, string $id): void
     {

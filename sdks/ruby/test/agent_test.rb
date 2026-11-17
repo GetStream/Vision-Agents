@@ -1128,14 +1128,24 @@ class TestSessions < LocalRouterTest
   ADDED = "/v1/agents/sessions/sess_1/tools"
   RESERVE_TABLE = "/v1/agents/sessions/sess_1/tools/reserve_table"
 
+  def setup
+    super
+    @asked = 0
+    @ran = []
+    @ran_lock = Mutex.new
+  end
+
   def teardown
     @calls&.each(&:close)
     super
   end
 
-  # Tools holding one function, name, that answers said.
+  # Tools holding one function, name, that answers said and notes the call it ran for.
   def tool(name, said)
-    VA::Tools.new.register(name, description: "Runs #{name}") { said }
+    VA::Tools.new.register(name, description: "Runs #{name}") do |tool_call_context, _args|
+      @ran_lock.synchronize { @ran << tool_call_context.id }
+      said
+    end
   end
 
   # Opens a session of an agent with tools, and the lambda that has the router call a tool on
@@ -1147,34 +1157,40 @@ class TestSessions < LocalRouterTest
   end
 
   # A session socket's script that has the router call tools by name, and the lambda that
-  # names one: it answers what came back, or nil when nothing did.
+  # names one: it answers what came back, or nil when nothing did and no function of tool's ran
+  # for the call. Tools run on threads of their own, so one slower than the router waits is
+  # still seen to have run.
   def asking
     calls = Thread::Queue.new
     answers = Thread::Queue.new
     (@calls ||= []) << calls
-    asked = 0
     script = lambda do |peer|
-      while (name = calls.pop)
-        peer.send_frame(type: "tool_call", id: "call_#{asked += 1}", name: name, arguments: "{}")
+      while (call = calls.pop)
+        peer.send_frame(type: "tool_call", arguments: "{}", **call)
         answers << peer.receive_type("tool_result", timeout: 0.3)
       end
     end
     ask = lambda do |name|
-      calls << name
-      answers.pop(timeout: 5)&.slice("output", "error")
+      id = "call_#{@asked += 1}"
+      calls << { id: id, name: name }
+      answer = answers.pop(timeout: 5)&.slice("output", "error")
+      answer || ({ "ran" => id } if @ran_lock.synchronize { @ran.include?(id) })
     end
     [script, ask]
   end
 
-  # Has the router withdraw reserve_table the first time it is asked and drop the connection
-  # unanswered; from then on it has no tool by that name.
-  def withdrawn_unanswered
+  # Has the router withdraw reserve_table the first time it is asked, and the caller not hear
+  # it: the connection drops unanswered, or a gateway in front of it gives answer. From then on
+  # it has no tool by that name.
+  def withdrawn_unanswered(answer = nil)
     withdrawn = false
     @router.on(:delete, RESERVE_TABLE) do
       next [404, LocalRouter.failure("not_found", "tool_not_found", "no reserve_table")] if withdrawn
 
       withdrawn = true
-      raise IOError, "dropped"
+      raise IOError, "dropped" unless answer
+
+      answer
     end
   end
 
@@ -1221,6 +1237,23 @@ class TestSessions < LocalRouterTest
     assert_equal 0, error.status
     assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
     lost = false
+    session.add_tools(tool("reserve_table", "Reserved T9."))
+
+    assert_equal %w[POST DELETE POST],
+                 @router.requests.select { |request| request.path.start_with?(ADDED) }.map(&:method)
+    assert_equal({ "output" => "Reserved T9." }, ask.call("reserve_table"))
+    session.close
+  end
+
+  def test_a_tool_whose_adding_a_gateway_answered_with_a_5xx_runs_here_until_another_takes_its_name
+    session, ask = session_asked
+    adds = 0
+    # The router adds it, and a gateway in front of it answers 502 all the same.
+    @router.on(:post, ADDED) { (adds += 1) == 1 ? [502, "<html>Bad Gateway</html>"] : [204, nil] }
+    @router.on(:delete, RESERVE_TABLE, status: 204)
+
+    assert_equal 502, assert_raises(VA::RouterError) { session.add_tools(tool("reserve_table", "Reserved T4.")) }.status
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
     session.add_tools(tool("reserve_table", "Reserved T9."))
 
     assert_equal %w[POST DELETE POST],
@@ -1340,6 +1373,20 @@ class TestSessions < LocalRouterTest
     session.close
   end
 
+  def test_a_tool_whose_removal_a_gateway_answered_with_a_5xx_runs_here_until_it_is_removed_again
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+    withdrawn_unanswered([504, "<html>Gateway Timeout</html>"])
+    session.add_tools(tool("reserve_table", "Reserved T4."))
+
+    assert_equal 504, assert_raises(VA::RouterError) { session.remove_tool("reserve_table") }.status
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+
+    assert_nil session.remove_tool("reserve_table")
+    assert_nil ask.call("reserve_table")
+    session.close
+  end
+
   def test_a_tool_whose_removal_got_no_answer_is_withdrawn_before_another_function_takes_its_name
     session, ask = session_asked
     @router.on(:post, ADDED, status: 204)
@@ -1430,6 +1477,32 @@ class TestSessions < LocalRouterTest
 
     assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
     assert_nil ask.call("weather")
+    fork.close
+    parent.close
+  end
+
+  def test_a_fork_withdraws_a_name_whose_adding_got_no_answer_before_another_function_takes_it
+    parent, = session_asked
+    # The router never adds it, and the connection drops unanswered.
+    @router.on(:post, ADDED) { raise IOError, "dropped" }
+    @router.on(:post, "/v1/agents/sessions/sess_1/fork", body: { "id" => "sess_2" })
+    @router.on(:delete, "/v1/agents/sessions/sess_2/tools/reserve_table",
+               status: 404, body: LocalRouter.failure("not_found", "tool_not_found", "no reserve_table"))
+    @router.on(:post, "/v1/agents/sessions/sess_2/tools", status: 204)
+    script, ask = asking
+    @router.on_socket("/v1/agents/sessions/sess_2/events") do |peer|
+      script.call(peer)
+      peer.close
+    end
+    assert_raises(VA::RouterError) { parent.add_tools(tool("reserve_table", "Reserved T4.")) }
+    fork = parent.fork
+
+    fork.add_tools(tool("reserve_table", "Reserved T9."))
+
+    assert_equal %w[DELETE POST],
+                 @router.requests.select { |request| request.path.start_with?("/v1/agents/sessions/sess_2/tools") }
+                        .map(&:method)
+    assert_equal({ "output" => "Reserved T9." }, ask.call("reserve_table"))
     fork.close
     parent.close
   end

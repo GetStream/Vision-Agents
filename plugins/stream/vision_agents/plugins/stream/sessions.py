@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Mapping, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Iterable, Mapping, Optional, Sequence, Union
 
 from vision_agents.core.llm.function_registry import FunctionRegistry, ToolPolicy
 
@@ -542,6 +542,7 @@ class Session:
         created: SessionRow,
         functions: FunctionRegistry,
         socket: Socket,
+        unsettled: Iterable[str] = (),
     ):
         self.created = created
         self.responses = Responses(backend, created.id)
@@ -549,7 +550,7 @@ class Session:
 
         self._backend = backend
         self._functions = functions
-        self._session_tools = _SessionTools(backend, functions)
+        self._session_tools = _SessionTools(backend, functions, unsettled)
         self._socket = socket
         self._events: asyncio.Queue[Optional[SessionEvent]] = asyncio.Queue()
         self._running: dict[str, asyncio.Task] = {}
@@ -564,11 +565,14 @@ class Session:
         created: SessionRow,
         functions: FunctionRegistry,
         options: Union[SessionOptions, ForkOptions],
+        unsettled: Iterable[str] = (),
     ) -> "Session":
         """Start watching a session the router has already created.
 
         A classmethod because a fork is created by a different request and is otherwise the
         same thing afterwards: one socket, one tool runner, one way of being closed.
+        ``unsettled`` are the names among ``functions`` the router may or may not offer, a
+        fork's parent having had neither a success nor a refusal for their last change.
         """
         query = []
         if options.interim:
@@ -588,7 +592,7 @@ class Session:
             with contextlib.suppress(Exception):
                 await stop_session.asyncio_detailed(created.id, client=backend.client())
             raise
-        return cls(backend, created, functions, socket)
+        return cls(backend, created, functions, socket, unsettled)
 
     @property
     def id(self) -> str:
@@ -643,10 +647,13 @@ class Session:
 
         Raises:
             ValueError: ``more`` holds no functions.
-            RouterError: The router refused: 409 for a name the conversation already has or
-                offers from elsewhere, 403 for a session another kind of caller opened, 404
-                for one that is not running, 400 for a speech-to-speech model whose tools are
-                fixed, 503 for one that dropped while the change waited, to ask again.
+            RouterError: The router refused, with a 4xx: 409 for a name the conversation
+                already has or offers from elsewhere, 403 for a session another kind of
+                caller opened, 404 for one that is not running, 400 for a speech-to-speech
+                model whose tools are fixed. Or it answered with something else, such as a
+                503 for a speech-to-speech session that dropped while the change waited, to
+                ask again, or a gateway's 502 for a change the router made: their calls are
+                then still run here until the next change of the name settles it.
         """
         await self._session_tools.add(self.id, more)
 
@@ -658,8 +665,10 @@ class Session:
         conversation's functions. A name withdrawn can be added again, with another function.
 
         Raises:
-            RouterError: The router refused: 404 for a name the conversation has no tool
-                by, or a session that is not running.
+            RouterError: The router refused, with a 4xx: 404 for a name the conversation has
+                no tool by, or a session that is not running. Or it answered with something
+                else, such as a gateway's 502: the tool's calls are then still run here until
+                the next change of the name settles it.
         """
         await self._session_tools.remove(self.id, name)
 
@@ -677,8 +686,12 @@ class Session:
         and a conversation continued without them would offer the model tools nothing can run.
         The router gives the fork the tools this session has when it is asked, so those are
         the ones ``add_tools`` gave it and not the ones ``remove_tool`` took back, and a
-        change in progress is waited for. They are the fork's own from then on: changing this
-        session's tools later does not change the fork's.
+        change in progress is waited for. The router finishes a change only once the turn in
+        progress and every tool call in flight end, so never call this from inside one of
+        this conversation's functions while ``add_tools`` or ``remove_tool`` may be waiting.
+        They are the fork's own from then on: changing this session's tools later does not
+        change the fork's, and a name whose last change here got neither a success nor a
+        refusal is settled by the fork's own next change of it.
         """
         options = options or ForkOptions()
         request = ForkSessionRequest()
@@ -703,14 +716,14 @@ class Session:
 
         # Asked while no change can come between the functions copied here and the tools the
         # router copies there.
-        async with self._session_tools.current() as functions:
+        async with self._session_tools.current() as (functions, unsettled):
             row = await _unwrapped(
                 fork_session.asyncio(
                     self.id, client=self._backend.client(), body=request
                 ),
                 f"forking the session {self.id}",
             )
-        return await Session.watching(self._backend, row, functions, options)
+        return await Session.watching(self._backend, row, functions, options, unsettled)
 
     async def update(
         self,
@@ -946,17 +959,22 @@ class _SessionTools:
     it and ``remove`` takes back are this session's alone.
     """
 
-    def __init__(self, backend: Backend, functions: FunctionRegistry):
+    def __init__(
+        self,
+        backend: Backend,
+        functions: FunctionRegistry,
+        unsettled: Iterable[str] = (),
+    ):
         self._backend = backend
         self._functions = functions
         # added are the functions add gave the session, by name, each in a copy of the registry
         # it was added in, so registering into that one later changes nothing here; they run
         # before the session's own of the same name. withdrawn are the names remove took from
         # the session, which its own no longer run, and unsettled the ones whose adding or
-        # removing was never answered, which the router may or may not offer.
+        # removing got neither a success nor a refusal, which the router may or may not offer.
         self._added: dict[str, FunctionRegistry] = {}
         self._withdrawn: set[str] = set()
-        self._unsettled: set[str] = set()
+        self._unsettled: set[str] = set(unsettled)
         # One change at a time: a function is put in place before the router is asked and
         # taken back when it refuses, so two changes across their requests could take back
         # what the other put in place.
@@ -973,10 +991,10 @@ class _SessionTools:
         return self._functions
 
     @contextlib.asynccontextmanager
-    async def current(self) -> AsyncIterator[FunctionRegistry]:
+    async def current(self) -> AsyncIterator[tuple[FunctionRegistry, set[str]]]:
         """The functions that run the session's tools now, which no change replaces until
         the block ends: the ones it opened with less those withdrawn, and those added,
-        unsettled ones included."""
+        unsettled ones included. With them, a copy of the names that are unsettled."""
         async with self._changing:
             current = FunctionRegistry()
             for name, function in self._functions.functions.items():
@@ -984,7 +1002,7 @@ class _SessionTools:
                     current.functions[name] = function
             for name, added in self._added.items():
                 current.functions[name] = added.functions[name]
-            yield current
+            yield current, set(self._unsettled)
 
     async def add(self, session_id: str, more: FunctionRegistry) -> None:
         """Give the session the functions in ``more``. See ``Session.add_tools``."""
@@ -1019,10 +1037,14 @@ class _SessionTools:
                     ),
                     f"adding tools to the session {session_id}",
                 )
-            except RouterError:
-                # Refused, so the router offers none of them.
-                for name in fresh:
-                    del self._added[name]
+            except RouterError as failed:
+                if _refused(failed):
+                    # Refused, so the router offers none of them.
+                    for name in fresh:
+                        del self._added[name]
+                else:
+                    # Not refused, so as unsure as an answer lost.
+                    self._unsettled.update(fresh)
                 raise
             except BaseException:
                 # The answer was lost and the router may have added them, so their calls are
@@ -1040,18 +1062,22 @@ class _SessionTools:
     async def _withdraw(self, session_id: str, name: str, absent_is_fine: bool) -> None:
         """Take the tool called ``name`` from the session and from what runs here.
 
-        ``absent_is_fine`` settles a name whose adding or removing was never answered: the
-        router having no tool by it is as good as withdrawing it.
+        ``absent_is_fine`` settles a name whose adding or removing is unsettled: the router
+        having no tool by it is as good as withdrawing it.
         """
         try:
-            await _deleted(
+            await _asked(
                 remove_session_tool.asyncio_detailed(
                     session_id, name, client=self._backend.client()
                 ),
                 f"removing the tool {name} from the session {session_id}",
             )
-        except RouterError as refused:
-            if not (absent_is_fine and refused.status == 404):
+        except RouterError as failed:
+            if not _refused(failed):
+                # Not refused, so as unsure as an answer lost.
+                self._unsettled.add(name)
+                raise
+            if not (absent_is_fine and failed.status == 404):
                 raise
         except BaseException:
             # The answer was lost and the router may have withdrawn it, so its calls are
@@ -1061,6 +1087,15 @@ class _SessionTools:
         self._added.pop(name, None)
         self._unsettled.discard(name)
         self._withdrawn.add(name)
+
+
+def _refused(failed: RouterError) -> bool:
+    """Whether the router said no to a change of a session's tools, which only a 4xx says.
+
+    Any other answer, such as a gateway's 502 for a change the router made, says no more of
+    whether the change was made than no answer does.
+    """
+    return failed.status is not None and 400 <= failed.status < 500
 
 
 def _tools(functions: FunctionRegistry) -> list[SessionTool]:

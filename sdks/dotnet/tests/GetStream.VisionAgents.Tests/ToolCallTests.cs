@@ -540,6 +540,64 @@ public sealed class ToolCallTests
     }
 
     [Fact]
+    public async Task AToolWhoseAddingAGatewayFailedIsStillAnsweredHereAndWithdrawnBeforeItsNameIsAddedAgain()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        // The router adds the tool and a gateway in front of it answers the first adding 502. It
+        // refuses a name it already has, and withdraws one it has.
+        var offered = false;
+        var adds = 0;
+        router.On("POST", SessionTools, _ =>
+        {
+            if (offered)
+            {
+                return new Reply(409, Fixtures.Failure("conflict", "conflict", "the session already has a tool called reserve_table"));
+            }
+            offered = true;
+            return Interlocked.Increment(ref adds) == 1 ? new Reply(502, "Bad Gateway") : new Reply(204);
+        });
+        router.On("DELETE", SessionTools + "/reserve_table", _ =>
+        {
+            if (!offered)
+            {
+                return new Reply(404, NotFound());
+            }
+            offered = false;
+            return new Reply(204);
+        });
+        var failed = new TaskCompletionSource();
+        var kept = new TaskCompletionSource<JsonObject>();
+        var changed = new TaskCompletionSource();
+        JsonObject? answered = null;
+        router.OnSocket(Events, async peer =>
+        {
+            await failed.Task.WaitAsync(TestRouter.Patience);
+            await peer.SendAsync(new { type = "tool_call", id = "r1", name = "reserve_table", arguments = "{}" });
+            kept.SetResult(await peer.ReceiveAsync("tool_result"));
+            await changed.Task.WaitAsync(TestRouter.Patience);
+            await peer.SendAsync(new { type = "tool_call", id = "r2", name = "reserve_table", arguments = "{}" });
+            answered = await peer.ReceiveAsync("tool_result");
+            await Finish(peer);
+        });
+        await using var agent = Agent(router);
+        var session = await agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var failure = await Assert.ThrowsAsync<RouterException>(() =>
+            session.AddToolsAsync(Answering("reserve_table", "First."), TestContext.Current.CancellationToken));
+        failed.SetResult();
+        var first = await kept.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
+
+        await session.AddToolsAsync(Answering("reserve_table", "Second."), TestContext.Current.CancellationToken);
+        await Talk(session, changed);
+
+        Assert.Equal(502, failure.Status);
+        Assert.Equal(("r1", "First."), (first.Text("tool_call_id"), first.Text("output")));
+        Assert.Equal([$"POST {SessionTools}", $"DELETE {SessionTools}/reserve_table", $"POST {SessionTools}"],
+            router.Requests.Where(seen => seen.Path.StartsWith(SessionTools, StringComparison.Ordinal)).Select(seen => $"{seen.Method} {seen.Path}"));
+        Assert.Equal(("r2", "Second."), (answered.Text("tool_call_id"), answered.Text("output")));
+    }
+
+    [Fact]
     public async Task RemovingAToolWhoseAddingWasNeverAnsweredTakesNotFoundAsDone()
     {
         await using var router = await TestRouter.StartAsync();
@@ -567,14 +625,16 @@ public sealed class ToolCallTests
         Assert.Equal(["f1"], ran);
     }
 
-    [Fact]
-    public async Task AToolWhoseRemovalWasNeverAnsweredRunsUntilItIsRemovedAgain()
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(502)]
+    public async Task AToolWhoseRemovalWasNeverAnsweredRunsUntilItIsRemovedAgain(int lostWith)
     {
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
-        // The first removal is made and its answer lost; the router has no tool by the name after it.
+        // The first removal is made and its answer lost, or a gateway's; the router has no tool by the name after it.
         var removals = 0;
-        router.On("DELETE", SessionTools + "/reserve_table", _ => Interlocked.Increment(ref removals) == 1 ? new Reply(-1) : new Reply(404, NotFound()));
+        router.On("DELETE", SessionTools + "/reserve_table", _ => Interlocked.Increment(ref removals) == 1 ? new Reply(lostWith, "Bad Gateway") : new Reply(404, NotFound()));
         var lost = new TaskCompletionSource();
         var answered = new TaskCompletionSource<JsonObject>();
         router.OnSocket(Events, async peer =>
@@ -595,10 +655,39 @@ public sealed class ToolCallTests
         await session.RemoveToolAsync("reserve_table", TestContext.Current.CancellationToken);
         await session.CloseAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(0, failure.Status);
+        Assert.Equal(Math.Max(lostWith, 0), failure.Status);
         Assert.Equal("Reserved.", kept.Text("output"));
         // One request a removal: the one whose answer was lost was not sent again.
         Assert.Equal(2, router.To("DELETE", SessionTools + "/reserve_table").Count);
+    }
+
+    [Fact]
+    public async Task ARemovalWhoseAnswerWasLostIsNotSentAgainByAnHttpClientThatWaitsToContinue()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        // Made and its answer lost; the router has no tool by the name after it.
+        var removals = 0;
+        router.On("DELETE", SessionTools + "/reserve_table", _ => Interlocked.Increment(ref removals) == 1 ? new Reply(-1) : new Reply(404, NotFound()));
+        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
+        // Every request waits for 100 Continue before its body, an empty one too, and one whose
+        // connection closes before it began its body is sent again.
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.ExpectContinue = true;
+        await using var agent = new Agent(new AgentOptions
+        {
+            Name = "jean",
+            Client = new VisionAgentsClient(http, new VisionAgentsOptions { Url = router.Url, CustomerId = "examples" }),
+        });
+        Answering("reserve_table", "Reserved.", agent.Tools);
+        var session = await agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        var failure = await Assert.ThrowsAsync<RouterException>(() =>
+            session.RemoveToolAsync("reserve_table", TestContext.Current.CancellationToken));
+        await session.CloseAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, failure.Status);
+        router.Only("DELETE", SessionTools + "/reserve_table");
     }
 
     [Fact]
@@ -776,6 +865,42 @@ public sealed class ToolCallTests
 
         Assert.Equal("Ordered.", (await answered.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken))["w1"]);
         Assert.Equal(["f1", "w1"], ran.Order());
+    }
+
+    [Fact]
+    public async Task AForkWithdrawsANameWhoseAddingWasNeverAnsweredBeforeAddingItAgain()
+    {
+        const string forkTools = "/v1/agents/sessions/s2/tools";
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        // The adding never reached the router, so neither the session nor its fork has the tool.
+        router.On("POST", SessionTools, -1);
+        router.On("POST", "/v1/agents/sessions/s1/fork", 201, Fixtures.Session("s2"));
+        router.On("DELETE", forkTools + "/reserve_table", 404, NotFound());
+        router.On("POST", forkTools, 204);
+        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
+        var changed = new TaskCompletionSource();
+        JsonObject? answered = null;
+        router.OnSocket("/v1/agents/sessions/s2/events", async peer =>
+        {
+            await changed.Task.WaitAsync(TestRouter.Patience);
+            await peer.SendAsync(new { type = "tool_call", id = "r1", name = "reserve_table", arguments = "{}" });
+            answered = await peer.ReceiveAsync("tool_result");
+            await Finish(peer);
+        });
+        await using var agent = Agent(router);
+        var session = await agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<RouterException>(() =>
+            session.AddToolsAsync(Answering("reserve_table", "First."), TestContext.Current.CancellationToken));
+        var forked = await session.ForkAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        await forked.AddToolsAsync(Answering("reserve_table", "Second."), TestContext.Current.CancellationToken);
+        await Talk(forked, changed);
+        await session.CloseAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal([$"DELETE {forkTools}/reserve_table", $"POST {forkTools}"],
+            router.Requests.Where(seen => seen.Path.StartsWith(forkTools, StringComparison.Ordinal)).Select(seen => $"{seen.Method} {seen.Path}"));
+        Assert.Equal(("r1", "Second."), (answered.Text("tool_call_id"), answered.Text("output")));
     }
 
     [Fact]
