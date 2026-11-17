@@ -358,7 +358,7 @@ func (s *CallsSuite) TestACallsTokensAreReadWhileItRunsByModelAndByWhatThePrompt
 
 	var spent CallTokens
 	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID+"/tokens", nil, &spent))
+		s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+call.ID+"/tokens", nil, &spent))
 	s.Equal(int64(1050), spent.InputTokens)
 	s.Equal(int64(400), spent.CachedInputTokens)
 	s.Equal(int64(165), spent.OutputTokens)
@@ -385,7 +385,7 @@ func (s *CallsSuite) TestACallsCostIsSplitByWhereItCameFrom() {
 
 	var spent CallTokens
 	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID+"/tokens", nil, &spent))
+		s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+call.ID+"/tokens", nil, &spent))
 	s.Equal(int64(2800), spent.CostMicros)
 	s.Equal([]CostSource{
 		{Source: "input", CostMicros: 1000},
@@ -397,6 +397,28 @@ func (s *CallsSuite) TestACallsCostIsSplitByWhereItCameFrom() {
 	}, spent.CostSources, "the prompt recorded without a split is input")
 }
 
+func (s *CallsSuite) TestTokensAreStillReadUnderTheCallsPathTheyMovedFrom() {
+	call := s.started(store.Call{})
+	request := store.Request{Modality: "llm", Provider: "stub", Model: "stub-llm", InputTokens: 700, OutputTokens: 30,
+		CustomerID: s.customerID(), AgentID: call.AgentID, StartedAt: s.base.Add(time.Second), Success: true}
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &request))
+
+	var moved, kept CallTokens
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+call.ID+"/tokens", nil, &moved))
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+call.ID+"/tokens", nil, &kept))
+	s.Equal(int64(700), moved.InputTokens)
+	s.Equal(moved, kept)
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/agents/sessions/nobody/tokens", nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(string(body), `"code":"`+codeSessionNotFound+`"`)
+	status, body = s.serverClient.call(http.MethodGet, "/v1/agents/calls/nobody/tokens", nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(string(body), `"code":"`+codeCallNotFound+`"`, "the old path answers as it did")
+}
+
 func (s *CallsSuite) TestAConversationRecordsWhatItsPromptsWereMadeOf() {
 	request := textSession(nil)
 	request.Llm, request.ConfigId = pointerTo("counted/counted-model"), s.data.instructedAgent("Answer about "+s.utils.uuid())
@@ -406,7 +428,7 @@ func (s *CallsSuite) TestAConversationRecordsWhatItsPromptsWereMadeOf() {
 
 	var spent CallTokens
 	s.Require().Eventually(func() bool {
-		return s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id+"/tokens", nil, &spent) == http.StatusOK &&
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/tokens", nil, &spent) == http.StatusOK &&
 			spent.InputTokens >= 1000
 	}, settleFor, 20*time.Millisecond, "the turn's request is recorded")
 	parts := spent.InputParts

@@ -264,6 +264,49 @@ func newRouter(t *testing.T) *router {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// A call's reads answer with what is told apart by the session asked about, so a read of
+	// the wrong session, or of the wrong one of the three, is seen.
+	unknownCall := func(w http.ResponseWriter) {
+		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Message: "unknown call", Type: acceleration.ErrorTypeNotFound, Code: "call_not_found",
+		}})
+	}
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") != "session-1" {
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "no such session", Type: acceleration.ErrorTypeNotFound, Code: "session_not_found",
+			}})
+			return
+		}
+		answer(w, http.StatusOK, acceleration.CallTokens{
+			InputTokens: 1200, CachedInputTokens: 800, OutputTokens: 90, CostMicros: 4100, Requests: 3,
+			InputParts: acceleration.InputParts{Instructions: 700, Messages: 300, ToolDefinitions: 200},
+			Models:     []acceleration.ModelTokens{{Modality: "llm", Provider: "openai", Model: "gpt-5-mini", InputTokens: 1200}},
+		})
+	})
+	mux.HandleFunc("GET /v1/agents/calls/{id}/timeline", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") != "session-1" {
+			unknownCall(w)
+			return
+		}
+		answer(w, http.StatusOK, []acceleration.TimelineEntry{
+			{Heard: ptr("what time do you open"), RoundtripMs: ptr(640.0)},
+			{Heard: ptr("and on sundays"), RoundtripMs: ptr(910.0)},
+		})
+	})
+	mux.HandleFunc("GET /v1/agents/calls/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") != "session-1" {
+			unknownCall(w)
+			return
+		}
+		answer(w, http.StatusOK, []acceleration.CallEvent{
+			{Kind: acceleration.DecisionKindIgnore, Reason: "not meant for the agent", At: time.Now()},
+		})
+	})
+
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		if r.PathValue("id") == "someone-elses" {
@@ -1111,6 +1154,59 @@ func TestPinningAndUnpinningTheSessionHeld(t *testing.T) {
 	}
 	if body := backend.body(t, "PATCH", path); !reflect.DeepEqual(body, map[string]any{"pinned": false}) {
 		t.Errorf("the unpin went over as %v", body)
+	}
+}
+
+func TestASessionsMetricsAreReadBackByItsID(t *testing.T) {
+	backend := newRouter(t)
+	sessions := backend.client(t).Agent("docs").Sessions
+
+	tokens, err := sessions.Tokens(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens.InputTokens != 1200 || tokens.CachedInputTokens != 800 || tokens.InputParts.ToolDefinitions != 200 ||
+		len(tokens.Models) != 1 || tokens.Models[0].Model != "gpt-5-mini" {
+		t.Errorf("the tokens were read as %+v", tokens)
+	}
+
+	timeline, err := sessions.Timeline(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline) != 2 || *timeline[1].Heard != "and on sundays" || *timeline[1].RoundtripMs != 910 {
+		t.Errorf("the timeline was read as %+v", timeline)
+	}
+
+	decisions, err := sessions.Decisions(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 1 || decisions[0].Kind != acceleration.DecisionKindIgnore {
+		t.Errorf("the decisions were read as %+v", decisions)
+	}
+}
+
+func TestASessionsMetricsOfAnUnknownSessionAreRefused(t *testing.T) {
+	backend := newRouter(t)
+	sessions := backend.client(t).Agent("docs").Sessions
+
+	_, tokens := sessions.Tokens(t.Context(), "someone-elses")
+	_, timeline := sessions.Timeline(t.Context(), "someone-elses")
+	_, decisions := sessions.Decisions(t.Context(), "someone-elses")
+
+	for read, refusal := range map[string]struct {
+		err  error
+		code string
+	}{
+		"tokens":    {tokens, "session_not_found"},
+		"timeline":  {timeline, "call_not_found"},
+		"decisions": {decisions, "call_not_found"},
+	} {
+		var refused *stream.RouterError
+		if !errors.As(refusal.err, &refused) || refused.Code != refusal.code {
+			t.Errorf("the %s of an unknown session came back as %v, want %s", read, refusal.err, refusal.code)
+		}
 	}
 }
 

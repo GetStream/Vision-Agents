@@ -374,6 +374,63 @@ func (s *Sessions) DeleteMemories(ctx context.Context, id string) error {
 	return nil
 }
 
+// Tokens is what one conversation's models read and wrote, per model, with the prompt split
+// into instructions, messages, tool definitions, tool use, images and video. Unlike the
+// session's Usage it is answered while the conversation runs. Only a backend may ask.
+func (s *Sessions) Tokens(ctx context.Context, id string) (*acceleration.CallTokens, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	got, err := api.GetSessionTokensWithResponse(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the tokens of %s: %w", id, err)
+	}
+	if got.JSON200 == nil {
+		return nil, failure("reading the tokens of "+id, got.HTTPResponse, got.Body)
+	}
+	return got.JSON200, nil
+}
+
+// Timeline is one conversation's exchanges, with what was said in each and how long the
+// answer took to start, its transcription, model and voice timings kept apart. The timings
+// are kept for an hour. Only a backend may ask.
+func (s *Sessions) Timeline(ctx context.Context, id string) ([]acceleration.TimelineEntry, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	got, err := api.GetCallTimelineWithResponse(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the timeline of %s: %w", id, err)
+	}
+	if got.JSON200 == nil {
+		return nil, failure("reading the timeline of "+id, got.HTTPResponse, got.Body)
+	}
+	return *got.JSON200, nil
+}
+
+// Decisions is what one conversation decided, oldest first: why the agent waited rather than
+// answering, why it read something as not meant for it, why it stopped mid-sentence. They are
+// kept for an hour. Only a backend may ask.
+func (s *Sessions) Decisions(ctx context.Context, id string) ([]acceleration.CallEvent, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	got, err := api.GetCallEventsWithResponse(ctx, id, nil)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the decisions of %s: %w", id, err)
+	}
+	if got.JSON200 == nil {
+		return nil, failure("reading the decisions of "+id, got.HTTPResponse, got.Body)
+	}
+	return *got.JSON200, nil
+}
+
 // Responses is a session's turns, read back without holding the conversation.
 //
 // For a conversation that has ended, or one being held somewhere else: the rows are in the

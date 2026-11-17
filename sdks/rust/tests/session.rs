@@ -892,6 +892,95 @@ async fn a_session_is_pinned_and_unpinned_and_says_when() {
 }
 
 #[tokio::test]
+async fn a_sessions_metrics_are_read_back_by_its_id() {
+    let server = Server::start().await;
+    let parts = json!({"instructions": 600, "messages": 300, "tool_definitions": 200,
+                       "tool_use": 100, "images": 0, "video": 0});
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/s9/tokens",
+        200,
+        json!({"input_tokens": 1200, "cached_input_tokens": 800, "output_tokens": 90,
+               "requests": 3, "cost_micros": 410, "cost_sources": [], "input_parts": parts,
+               "models": [{"provider": "openai", "model": "gpt-5-mini", "modality": "llm",
+                           "input_tokens": 1200, "cached_input_tokens": 800,
+                           "output_tokens": 90, "requests": 3, "cost_micros": 410,
+                           "input_parts": parts}]}),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/calls/s9/timeline",
+        200,
+        json!([{"turn_id": "t1", "started_at": "2026-11-11T09:00:00Z", "heard": "are you open"},
+               {"turn_id": "t2", "started_at": "2026-11-11T09:00:05Z",
+                "heard": "and on sundays", "roundtrip_ms": 910}]),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/calls/s9/events",
+        200,
+        json!([{"at": "2026-11-11T09:00:02Z", "kind": "ignore", "reason": "talking to someone else"}]),
+    );
+    let sessions = server.client().agent("jean").sessions;
+
+    let tokens = sessions.tokens("s9").await.unwrap();
+    let timeline = sessions.timeline("s9").await.unwrap();
+    let decisions = sessions.decisions("s9").await.unwrap();
+
+    assert_eq!(tokens.input_tokens, 1200);
+    assert_eq!(tokens.cached_input_tokens, 800);
+    assert_eq!(tokens.input_parts.tool_definitions, 200);
+    assert_eq!(tokens.models[0].model, "gpt-5-mini");
+    assert_eq!(timeline.len(), 2);
+    assert_eq!(timeline[1].heard.as_deref(), Some("and on sundays"));
+    assert_eq!(timeline[1].roundtrip_ms, Some(910.0));
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].kind, types::DecisionKind::Ignore);
+    assert_eq!(
+        server
+            .request(Method::GET, "/v1/agents/calls/s9/events")
+            .query,
+        ""
+    );
+}
+
+#[tokio::test]
+async fn a_sessions_metrics_of_an_unknown_session_are_refused() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/sessions/*",
+        404,
+        support::refusal("not_found", "session_not_found", "no such session"),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/calls/*",
+        404,
+        support::refusal("not_found", "call_not_found", "no such call"),
+    );
+    let sessions = server.client().agent("jean").sessions;
+
+    let refused = [
+        sessions.tokens("someone-elses").await.unwrap_err(),
+        sessions.timeline("someone-elses").await.unwrap_err(),
+        sessions.decisions("someone-elses").await.unwrap_err(),
+    ];
+
+    for (refused, (operation, code)) in refused.into_iter().zip([
+        ("getSessionTokens", "session_not_found"),
+        ("getCallTimeline", "call_not_found"),
+        ("getCallEvents", "call_not_found"),
+    ]) {
+        let Error::Router(failure) = refused else {
+            panic!("expected a refusal, got {refused:?}");
+        };
+        assert_eq!(failure.code, code);
+        assert_eq!(failure.operation, operation);
+    }
+}
+
+#[tokio::test]
 async fn a_session_asked_to_start_voice_is_on_its_call() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));

@@ -139,6 +139,32 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
     public Task DeleteMemoriesAsync(string id, CancellationToken cancellationToken = default) =>
         client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}/memories", cancellationToken);
 
+    /// <summary>
+    /// What one conversation's models read and wrote, per model, with the prompt split into
+    /// instructions, messages, tool definitions, tool use, images and video. Unlike the
+    /// session's usage it is answered while the conversation runs. Only a backend may ask.
+    /// </summary>
+    public Task<CallTokens> TokensAsync(string id, CancellationToken cancellationToken = default) =>
+        client.GetAsync<CallTokens>($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}/tokens", cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// One conversation's exchanges, with what was said in each and how long the answer took to
+    /// start, its transcription, model and voice timings kept apart. The timings are kept for an
+    /// hour. Only a backend may ask.
+    /// </summary>
+    public async Task<IReadOnlyList<TimelineEntry>> TimelineAsync(string id, CancellationToken cancellationToken = default) =>
+        await client.GetAsync<List<TimelineEntry>>(
+            $"/v1/agents/calls/{VisionAgentsClient.Escape(id)}/timeline", cancellationToken: cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// What one conversation decided, oldest first: why the agent waited rather than answering,
+    /// why it read something as not meant for it, why it stopped mid-sentence. They are kept for
+    /// an hour. Only a backend may ask.
+    /// </summary>
+    public async Task<IReadOnlyList<CallEvent>> DecisionsAsync(string id, CancellationToken cancellationToken = default) =>
+        await client.GetAsync<List<CallEvent>>(
+            $"/v1/agents/calls/{VisionAgentsClient.Escape(id)}/events", cancellationToken: cancellationToken).ConfigureAwait(false);
+
     /// <summary>A session's turns, by its id, without reading the session first.</summary>
     public Responses Responses(string id) => new(client, id);
 

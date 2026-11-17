@@ -80,6 +80,8 @@ class Router:
         app.router.add_post("/v1/agents/guests", self._guest)
         app.router.add_post("/v1/agents/guests/claim", self._claim)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
+        app.router.add_get("/v1/agents/sessions/{id}/{read:tokens}", self._call)
+        app.router.add_get("/v1/agents/calls/{id}/{read:timeline|events}", self._call)
         app.router.add_post("/v1/agents/sessions/{id}/tools", self._tools)
         app.router.add_delete("/v1/agents/sessions/{id}/tools/{name}", self._tools)
         app.router.add_post("/v1/agents/simulations", self._simulation)
@@ -166,6 +168,76 @@ class Router:
         updated = self._session(request.match_info["id"])
         updated.update(self.bodies[f"PATCH {request.path}"])
         return web.json_response(updated)
+
+    async def _call(self, request: web.Request) -> web.Response:
+        # Each read answers with what tells it apart, and only for session-1, so a read of
+        # the wrong session, or of the wrong one of the three, is seen.
+        await self._record(request)
+        parts = {
+            "instructions": 700,
+            "messages": 300,
+            "tool_definitions": 200,
+            "tool_use": 0,
+            "images": 0,
+            "video": 0,
+        }
+        answers: dict[str, Any] = {
+            "tokens": {
+                "input_tokens": 1200,
+                "cached_input_tokens": 800,
+                "output_tokens": 90,
+                "cost_micros": 4100,
+                "cost_sources": [],
+                "requests": 3,
+                "input_parts": parts,
+                "models": [
+                    {
+                        "modality": "llm",
+                        "provider": "openai",
+                        "model": "gpt-5-mini",
+                        "input_tokens": 1200,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_micros": 0,
+                        "requests": 1,
+                        "input_parts": parts,
+                    }
+                ],
+            },
+            "timeline": [
+                {
+                    "turn_id": "turn-1",
+                    "started_at": WHEN,
+                    "heard": "what time do you open",
+                    "roundtrip_ms": 640.0,
+                },
+                {
+                    "turn_id": "turn-2",
+                    "started_at": WHEN,
+                    "heard": "and on sundays",
+                    "roundtrip_ms": 910.0,
+                },
+            ],
+            "events": [
+                {"kind": "ignore", "reason": "not meant for the agent", "at": WHEN}
+            ],
+        }
+        if request.match_info["id"] != "session-1":
+            unknown = (
+                "session" if request.path.startswith("/v1/agents/sessions/") else "call"
+            )
+            return web.json_response(
+                status=404,
+                data={
+                    "error": {
+                        "message": f"unknown {unknown}",
+                        "type": "not_found",
+                        "code": f"{unknown}_not_found",
+                        "doc_url": "https://getstream.io/agents/docs/api/errors/#not_found",
+                    }
+                },
+            )
+        return web.json_response(answers[request.match_info["read"]])
 
     async def _simulation(self, request: web.Request) -> web.Response:
         await self._record(request)
@@ -1030,6 +1102,52 @@ class TestSessions:
         await api.agent("docs").sessions.delete_memories("session-9")
 
         assert router.requests("DELETE", "/v1/agents/sessions/session-9/memories") == 1
+
+    async def test_a_sessions_metrics_are_read_back_by_its_id(self, api: stream.Client):
+        sessions = api.agent("docs").sessions
+
+        tokens = await sessions.tokens("session-1")
+        assert (
+            tokens.input_tokens,
+            tokens.cached_input_tokens,
+            tokens.input_parts.tool_definitions,
+        ) == (1200, 800, 200)
+        assert [model.model for model in tokens.models] == ["gpt-5-mini"]
+
+        timeline = await sessions.timeline("session-1")
+        assert [(entry.heard, entry.roundtrip_ms) for entry in timeline] == [
+            ("what time do you open", 640.0),
+            ("and on sundays", 910.0),
+        ]
+
+        decisions = await sessions.decisions("session-1")
+        assert [(d.kind.value, d.reason) for d in decisions] == [
+            ("ignore", "not meant for the agent")
+        ]
+
+    @pytest.mark.parametrize(
+        "read, code",
+        [
+            ("tokens", "session_not_found"),
+            ("timeline", "call_not_found"),
+            ("decisions", "call_not_found"),
+        ],
+    )
+    async def test_a_sessions_metrics_of_an_unknown_session_are_refused(
+        self, api: stream.Client, read: str, code: str
+    ):
+        sessions = api.agent("docs").sessions
+        reads = {
+            "tokens": sessions.tokens,
+            "timeline": sessions.timeline,
+            "decisions": sessions.decisions,
+        }
+
+        with pytest.raises(stream.RouterError) as refused:
+            await reads[read]("someone-elses")
+
+        assert refused.value.code == code
+        assert f"reading the {read} of someone-elses" in str(refused.value)
 
     async def test_a_delete_the_router_refuses_is_raised(self, api: stream.Client):
         with pytest.raises(stream.RouterError, match="no such thing"):

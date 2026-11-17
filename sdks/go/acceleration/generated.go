@@ -12927,9 +12927,11 @@ type ClientInterface interface {
 
 	// GetCallTokens What a call's models read and wrote, and what their prompts were made of
 	//
-	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTranscript What was said on a call
@@ -14584,6 +14586,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSessionTokens What a session's models read and wrote, and what their prompts were made of
+	//
+	// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+	GetSessionTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessionTools List the tools a session's model is offered
 	//
@@ -16365,9 +16374,10 @@ func (c *Client) CreateCallToken(ctx context.Context, id string, body CreateCall
 
 // GetCallTokens What a call's models read and wrote, and what their prompts were made of
 //
-// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 //
 // Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallTokensRequest(c.Server, id)
 	if err != nil {
@@ -19693,6 +19703,23 @@ func (c *Client) SetSessionSettings(ctx context.Context, id string, body SetSess
 // Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSessionTokens What a session's models read and wrote, and what their prompts were made of
+//
+// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+func (c *Client) GetSessionTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionTokensRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -29649,6 +29676,40 @@ func NewStopSessionRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetSessionTokensRequest constructs an http.Request for the GetSessionTokens method
+func NewGetSessionTokensRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tokens", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSessionToolsRequest constructs an http.Request for the ListSessionTools method
 func NewListSessionToolsRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -35878,11 +35939,13 @@ type ClientWithResponsesInterface interface {
 
 	// GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
 	//
-	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error)
 
 	// GetCallTranscriptWithResponse What was said on a call
@@ -37699,6 +37762,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionResponse, error)
+
+	// GetSessionTokensWithResponse What a session's models read and wrote, and what their prompts were made of
+	//
+	// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+	GetSessionTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSessionTokensResponse, error)
 
 	// ListSessionToolsWithResponse List the tools a session's model is offered
 	//
@@ -53759,6 +53831,114 @@ func (r StopSessionResponse) ContentType() string {
 	return ""
 }
 
+// GetSessionTokensResponse200Headers the declared response headers of an HTTP 200 response for GetSessionTokens
+type GetSessionTokensResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetSessionTokensResponse402Headers the declared response headers of an HTTP 402 response for GetSessionTokens
+type GetSessionTokensResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetSessionTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CallTokens
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetSessionTokensResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetSessionTokensResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSessionTokensResponse) GetJSON200() *CallTokens {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetSessionTokensResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetSessionTokensResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSessionTokensResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSessionTokensResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetSessionTokensResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSessionTokensResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSessionTokensResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSessionTokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSessionTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSessionTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSessionTokensResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionToolsResponse200Headers the declared response headers of an HTTP 200 response for ListSessionTools
 type ListSessionToolsResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -66838,11 +67018,13 @@ func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, i
 
 // GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
 //
-// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error) {
 	rsp, err := c.GetCallTokens(ctx, id, reqEditors...)
 	if err != nil {
@@ -69666,6 +69848,21 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 		return nil, err
 	}
 	return ParseStopSessionResponse(rsp)
+}
+
+// GetSessionTokensWithResponse What a session's models read and wrote, and what their prompts were made of
+//
+// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+func (c *ClientWithResponses) GetSessionTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSessionTokensResponse, error) {
+	rsp, err := c.GetSessionTokens(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSessionTokensResponse(rsp)
 }
 
 // ListSessionToolsWithResponse List the tools a session's model is offered
@@ -89147,6 +89344,132 @@ func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) 
 		response.Headers204 = &headers
 	case rsp.StatusCode == 402:
 		var headers StopSessionResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSessionTokensResponse parses an HTTP response from a GetSessionTokensWithResponse call
+func ParseGetSessionTokensResponse(rsp *http.Response) (*GetSessionTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSessionTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CallTokens
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetSessionTokensResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetSessionTokensResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

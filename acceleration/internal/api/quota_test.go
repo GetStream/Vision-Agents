@@ -105,7 +105,7 @@ func (s *QuotaSuite) TestABackendsRepliesForAUserAreNotChargedToTheirDay() {
 	// the debit, if there was going to be one, has landed.
 	s.Require().Eventually(func() bool {
 		var spent CallTokens
-		return s.backend.do(http.MethodGet, "/v1/agents/calls/"+opened.Id+"/tokens", nil, &spent) == http.StatusOK &&
+		return s.backend.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/tokens", nil, &spent) == http.StatusOK &&
 			spent.InputTokens+spent.OutputTokens > 0
 	}, settleFor, 20*time.Millisecond, "the reply was never recorded")
 

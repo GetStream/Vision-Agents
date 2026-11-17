@@ -610,6 +610,75 @@ describe("sessions", () => {
     );
   });
 
+  it("reads a session's tokens, timeline and decisions back by its id", async () => {
+    const parts = { instructions: 600, messages: 400, tool_definitions: 200, tool_use: 0, images: 0, video: 0 };
+    router.serve("GET", "/v1/agents/sessions/session-1/tokens", {
+      body: {
+        input_tokens: 1200,
+        cached_input_tokens: 800,
+        output_tokens: 90,
+        requests: 3,
+        cost_micros: 410,
+        cost_sources: [],
+        input_parts: parts,
+        models: [
+          {
+            provider: "openai",
+            model: "gpt-5-mini",
+            modality: "llm",
+            input_tokens: 1200,
+            cached_input_tokens: 800,
+            output_tokens: 90,
+            requests: 3,
+            cost_micros: 410,
+            input_parts: parts,
+          },
+        ],
+      },
+    });
+    router.serve("GET", "/v1/agents/calls/session-1/timeline", {
+      body: [
+        { turn_id: "turn-1", started_at: "2026-11-10T09:00:00Z", heard: "are you open late", roundtrip_ms: 840 },
+        { turn_id: "turn-2", started_at: "2026-11-10T09:00:04Z", heard: "and on sundays", roundtrip_ms: 910 },
+      ],
+    });
+    router.serve("GET", "/v1/agents/calls/session-1/events", {
+      body: [{ at: "2026-11-10T09:00:00Z", kind: "ignore", reason: "spoken to someone else" }],
+    });
+    const sessions = api.agent("docs").sessions;
+
+    const tokens = await sessions.tokens("session-1");
+    const timeline = await sessions.timeline("session-1");
+    const decisions = await sessions.decisions("session-1");
+
+    assert.equal(tokens.input_tokens, 1200);
+    assert.equal(tokens.cached_input_tokens, 800);
+    assert.equal(tokens.input_parts.tool_definitions, 200);
+    assert.deepEqual(tokens.models.map((model) => model.model), ["gpt-5-mini"]);
+    assert.equal(timeline.length, 2);
+    assert.equal(timeline[1]?.heard, "and on sundays");
+    assert.equal(timeline[1]?.roundtrip_ms, 910);
+    assert.deepEqual(decisions.map((decision) => decision.kind), ["ignore"]);
+  });
+
+  it("says the router does not know a session whose tokens, timeline or decisions were asked for", async () => {
+    const noCall = { error: { message: "no such call", type: "not_found", code: "call_not_found" } };
+    const noSession = { error: { message: "no such session", type: "not_found", code: "session_not_found" } };
+    router.serve("GET", "/v1/agents/sessions/someone-elses/tokens", { status: 404, body: noSession });
+    for (const read of ["timeline", "events"]) {
+      router.serve("GET", `/v1/agents/calls/someone-elses/${read}`, { status: 404, body: noCall });
+    }
+    const sessions = api.agent("docs").sessions;
+
+    for (const [reading, code] of [
+      [() => sessions.tokens("someone-elses"), "session_not_found"],
+      [() => sessions.timeline("someone-elses"), "call_not_found"],
+      [() => sessions.decisions("someone-elses"), "call_not_found"],
+    ] as const) {
+      await assert.rejects(reading(), (error: unknown) => error instanceof RouterError && error.code === code);
+    }
+  });
+
   it("renames, voices, stops and forks a session it is not holding, by its id", async () => {
     router.serve("PATCH", "/v1/agents/sessions/session-9", { body: session({ id: "session-9", title: "Trip" }) });
     router.serve("POST", "/v1/agents/sessions/session-9/voice", { body: session({ id: "session-9", call_id: "c" }) });
