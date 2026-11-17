@@ -17,7 +17,7 @@ const agentCheckTimeout = 10 * time.Second
 // The check runs off the hook request. A process that stops first does not do the check, and
 // the call continues.
 func (s *Service) awaitAgent(leg store.CallLeg) {
-	if s.agentJoinTimeout <= 0 || leg.Direction != store.Outbound || leg.ParticipantSession == "" {
+	if s.agentJoinTimeout <= 0 || leg.Direction != store.Outbound {
 		return
 	}
 	go func() {
@@ -34,7 +34,9 @@ func (s *Service) awaitAgent(leg store.CallLeg) {
 // router agent, a self-hosted agent, an app user and another phone the same way, so any user
 // session besides the leg's phone keeps the call. A call with only the phone in it is ended. A
 // call whose phone is gone is left alone, because the person hung up. A call that Stream could
-// not list is left alone too: the router does not end a call that it could not check.
+// not list is left alone too: the router does not end a call that it could not check. An agent
+// that joins between the read and the end is ended with the call. One read cannot prevent
+// this, and the time between the two is one Stream request.
 func (s *Service) checkAgent(leg store.CallLeg) {
 	attributes := []any{"session_id", leg.CallID, "customer", leg.CustomerID, "from", leg.LocalNumber,
 		"to", leg.RemoteNumber, "vendor", leg.Vendor, "vendor_call_id", leg.VendorCallID, "waited", s.agentJoinTimeout}

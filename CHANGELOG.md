@@ -724,6 +724,7 @@ Posted text is listed as `pending` while its passages are written, then `indexed
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 
 `Conversation.reduce` in the Kotlin SDK sets `state` to `Idle` for an `error` event whose `context` is `llm` or `sts` while the agent is `Responding` or `Working`, and keeps `failure`. Before, only `failure` was set, so a reply that failed with no `responded` after it left an app showing the agent thinking. An error from anything else, a tool, the voice or the transcriber, still leaves `state` as it was, and an `Ended` conversation stays ended. `failure` is now cleared when the agent next hears, starts answering or speaks (`heard`, `responding`, `spoke`), as the JavaScript SDK's is; before, it stayed for the rest of the conversation.
+
 ### A placed call with no agent in it is ended
 
 When the person a router-placed call rang answers, the router waits `phone.agent_join_timeout` (`ROUTER_PHONE_AGENT_JOIN_TIMEOUT`, 10 s by default). Then it asks Stream once who is in the call. If only the person's phone is there, the router ends the call and logs "no agent joined the call; ending it". Before, the person heard silence until they hung up. A call with anyone else in it (an agent, an app user, another phone) continues. A call that Stream could not list continues too. This applies to calls from `POST /v1/phone/calls`, campaigns, scheduled calls and transfers. Calls that arrive are not changed (AI-800).
