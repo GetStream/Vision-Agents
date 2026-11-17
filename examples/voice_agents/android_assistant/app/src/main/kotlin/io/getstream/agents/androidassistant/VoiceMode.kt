@@ -17,11 +17,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
@@ -55,6 +58,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.getstream.chat.android.ai.compose.conversation.AIMessage
+import io.getstream.chat.android.ai.compose.conversation.AIMessageRole
+import io.getstream.chat.android.ai.compose.generativeui.AIUIDocument
+import io.getstream.chat.android.ai.compose.generativeui.AIUIHost
+import io.getstream.chat.android.ai.compose.generativeui.AIUIView
 import io.getstream.chat.android.ai.compose.parts.AIToolApproval
 import io.getstream.chat.android.ai.compose.ui.component.AIToolApprovalCard
 import io.getstream.chat.android.ai.compose.ui.component.AIToolApprovalState
@@ -67,6 +75,7 @@ import io.getstream.agents.android.core.AgentSession
 import io.getstream.agents.android.core.AgentsException
 import io.getstream.agents.android.core.Conversation
 import io.getstream.agents.android.core.ToolApprovalRequest
+import io.getstream.agents.android.core.Turn
 import io.getstream.agents.android.core.VoiceSession
 import io.getstream.webrtc.android.ui.VideoTextureViewRenderer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -77,6 +86,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -94,6 +104,10 @@ import stream.video.sfu.models.TrackType
  *
  * The camera button shows Juno what the phone is pointing at: the call's session answers its
  * vision skill's requests to look with what the camera showed, and the preview is that view.
+ *
+ * What Juno shows while it talks, such as a restaurant's tables, appears under the glow as the
+ * call's session streams it: the router keeps the UI out of what is spoken, and tapping it asks
+ * Juno in the conversation, as in the chat.
  */
 @Composable
 fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifier = Modifier) {
@@ -118,6 +132,18 @@ fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifie
             call?.takeIf { cameraOn }?.let { CameraPreview(it) }
 
             AgentPresence(current, isStarting = current == null && failure == null, modifier = Modifier.weight(1f))
+
+            // The newest of Juno's turns on the call that wrote UI, once a statement of it is finished.
+            val turnWithUI by remember(current) {
+                val before = viewModel.turnsBeforeCall
+                current?.session?.conversation
+                    ?.map { conversation ->
+                        conversation.turns.lastOrNull { it.isAgent && it.ui?.content?.isNotEmpty() == true && it.id !in before }
+                    }
+                    ?.distinctUntilChanged()
+                    ?: flowOf(null)
+            }.collectAsStateWithLifecycle(null)
+            turnWithUI?.let { CallUI(viewModel.callUiHost, it) }
 
             approvals.firstOrNull()?.let { request ->
                 // Keyed by the call, so a second question starts with no answer sending.
@@ -192,6 +218,30 @@ private fun CameraPreview(call: Call) {
             }
         }
     }
+}
+
+/**
+ * The UI of one of Juno's turns on the call, as it streams, in a card that scrolls when it is
+ * taller than the room under the glow.
+ */
+@Composable
+private fun CallUI(host: AIUIHost, turn: Turn, modifier: Modifier = Modifier) {
+    val ui = turn.ui ?: return
+    val document = remember(ui) { AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to ui.customData)) } ?: return
+    // The engines take the turn's UI before its view is asked for, as a conversation's do.
+    host.receive(listOf(CallTurn(turn, document)))
+    if (!host.canShow(document)) return
+    Box(modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
+        AIUIView(host, document, turn.id, Modifier.padding(horizontal = 16.dp))
+    }
+}
+
+/** One of Juno's turns on the call, as the renderers read a reply. */
+private class CallTurn(turn: Turn, override val uiDocument: AIUIDocument) : AIMessage {
+    override val id: String = turn.id
+    override val role: AIMessageRole = AIMessageRole.Assistant
+    override val text: String = turn.text
+    override val isGenerating: Boolean = turn.ui?.isStreaming == true
 }
 
 /**

@@ -126,7 +126,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * in it. One for the screen's life, whatever the reply format, so earlier replies keep their UI
      * and its state when the format changes, Markdown included.
      */
-    val uiHost: AIUIHost = AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer())) { action -> answer(action) }
+    val uiHost: AIUIHost = newUiHost()
+
+    /**
+     * Shows the UI of what is said on the call, apart from the chat's, whose replies it would
+     * otherwise take for the whole conversation.
+     */
+    val callUiHost: AIUIHost = newUiHost()
+
+    /** The turns the call's session had when it was attached, whose UI the chat already showed. */
+    var turnsBeforeCall: Set<String> = emptySet()
+        private set
 
     init {
         // The backend's agent decides the format; follow it when it can say.
@@ -148,6 +158,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         format.value = chosen
         ReplyFormat.store(getApplication(), chosen)
     }
+
+    /** A host for the agent's UI, in either format, whose actions ask in this conversation. */
+    private fun newUiHost(): AIUIHost =
+        AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer())) { action -> answer(action) }
 
     /** Sends what the person did in a reply's generated UI. */
     private fun answer(action: AIUIAction) {
@@ -234,6 +248,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 session.startVoice()
                 val voice = VoiceSession.attach(getApplication(), Assistant.agents, session.id)
+                turnsBeforeCall = voice.session.conversation.value.turns.mapTo(HashSet()) { it.id }
                 calling.value = voice
                 voice.join()
                 voice.session.conversation.first { it.state == Conversation.State.Ended }
