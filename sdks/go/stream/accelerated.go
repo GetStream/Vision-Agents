@@ -617,6 +617,47 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	return request
 }
 
+// Resume is the conversation id, to be watched, carried on with what it ran with, toolTimeout
+// in place of its tool timeout and the functions registered here in place of its tools. With
+// neither to say, it is read as it is, which a call that kept no conversation can be too.
+// toolTimeout under a millisecond says nothing, since it would go over as zero, which the
+// router reads as 30 seconds rather than as what the conversation ran with.
+func (p *Pipeline) Resume(ctx context.Context, id string, toolTimeout time.Duration) (*acceleration.Session, error) {
+	client, err := p.ready()
+	if err != nil {
+		return nil, err
+	}
+	var request acceleration.ResumeSessionRequest
+	if toolTimeout >= time.Millisecond {
+		milliseconds := int(toolTimeout / time.Millisecond)
+		request.ToolTimeoutMs = &milliseconds
+	}
+	if declared := p.tools(); len(declared) > 0 {
+		request.Tools = &declared
+	}
+
+	if request.ToolTimeoutMs == nil && request.Tools == nil {
+		got, err := client.GetSessionWithResponse(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("stream: reading the session: %w", err)
+		}
+		if got.JSON200 == nil {
+			return nil, NewRouterError(got.HTTPResponse, got.Body, "stream", "",
+				"the router answered "+got.Status()+" rather than with the session")
+		}
+		return got.JSON200, nil
+	}
+	resumed, err := client.ResumeSessionWithResponse(ctx, id, request)
+	if err != nil {
+		return nil, fmt.Errorf("stream: resuming the session: %w", err)
+	}
+	if resumed.JSON200 == nil {
+		return nil, NewRouterError(resumed.HTTPResponse, resumed.Body, "stream", "",
+			"the router answered "+resumed.Status()+" rather than with the session")
+	}
+	return resumed.JSON200, nil
+}
+
 // runs is the socket's query saying which of the session's tools this process runs: the
 // functions registered here and the ones AddTools added, and none when there are none.
 func (p *Pipeline) runs() url.Values {

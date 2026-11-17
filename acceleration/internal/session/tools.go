@@ -54,6 +54,7 @@ const defaultToolTimeout = 30 * time.Second
 // model rather than an error nobody hears: a tool nobody answered is a tool that did not
 // work, and the agent apologises for it the same way it would for a failed transfer.
 type bridge struct {
+	// timeout is guarded by mu: a resume may change it while a call is starting.
 	timeout time.Duration
 	// ask publishes the request and reports whether anyone was there to receive it.
 	ask func(ToolCall) error
@@ -105,6 +106,17 @@ func (b *bridge) setTimeouts(tools []harness.Tool) {
 	}
 	b.mu.Lock()
 	b.timeouts = timeouts
+	b.mu.Unlock()
+}
+
+// setTimeout replaces the session's tool timeout for the calls that start after it. Zero is
+// the default.
+func (b *bridge) setTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = defaultToolTimeout
+	}
+	b.mu.Lock()
+	b.timeout = timeout
 	b.mu.Unlock()
 }
 

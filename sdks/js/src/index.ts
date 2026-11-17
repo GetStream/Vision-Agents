@@ -175,6 +175,7 @@ export {
   type ConnectorScopeRequired,
   type ForkOptions,
   type Participant,
+  type ResumeOptions,
   type SessionChat,
   type SessionEvent,
   type SessionOptions,

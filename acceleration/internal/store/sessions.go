@@ -98,6 +98,13 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("closed_at = NULL").
 		Set("end_reason = ''").
 		Set("updated_at = EXCLUDED.updated_at").
+		// A reopened session's tool settings are kept for the kind of caller that opened it (the
+		// row's caller_kind, which a reopen does not change): an end user's device carrying on
+		// its backend's conversation neither clears the backend's tools nor sets its timeout.
+		Set("tool_timeout_ms = CASE WHEN ?TableAlias.caller_kind = EXCLUDED.caller_kind " +
+			"THEN EXCLUDED.tool_timeout_ms ELSE ?TableAlias.tool_timeout_ms END").
+		Set("caller_tools = CASE WHEN ?TableAlias.caller_kind = EXCLUDED.caller_kind " +
+			"THEN EXCLUDED.caller_tools ELSE ?TableAlias.caller_tools END").
 		// A session reopened from its row is opened without the memory it had, and what it
 		// remembered before is still in the store, so once true it stays true. Not known
 		// stays not known: NULL OR false is NULL.
@@ -105,6 +112,28 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save session: %w", err)
+	}
+	return nil
+}
+
+// SetSessionToolTimeout records the tool_timeout_ms a running session was given since it
+// opened, by a caller of kind. Only the kind that opened it changes the row, as on SaveSession.
+// Zero is the default.
+func (s *Store) SetSessionToolTimeout(ctx context.Context, id, kind string, milliseconds int) error {
+	if id == "" {
+		return errors.New("store: a session id is required")
+	}
+	var timeout *int
+	if milliseconds > 0 {
+		timeout = &milliseconds
+	}
+	_, err := s.shard.NewUpdate().Model((*AgentSession)(nil)).
+		Set("tool_timeout_ms = ?", timeout).
+		Where("id = ?", id).
+		Where("caller_kind = ?", kind).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: set session tool timeout: %w", err)
 	}
 	return nil
 }

@@ -118,6 +118,18 @@ export interface SessionOptions {
   watch?: boolean;
 }
 
+/**
+ * How to carry a conversation on. The tools given are declared to the router in place of the
+ * ones it was opened with, as on a fork.
+ */
+export interface ResumeOptions extends SessionOptions {
+  /**
+   * How long the model waits for one of your tools, in milliseconds, in place of what the
+   * conversation ran with. Left out, it keeps that, also after it ended. Zero is 30 seconds.
+   */
+  tool_timeout_ms?: number;
+}
+
 /** What to change about a conversation while continuing it. */
 export interface ForkOptions
   extends Omit<Schemas["ForkSessionRequest"], "model_overwrites">,

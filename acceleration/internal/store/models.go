@@ -1995,7 +1995,13 @@ type AgentSession struct {
 	// FloorControl is what the session was opened with over its config's, which reopening
 	// it keeps. Zero takes the config's, and the router's default after it.
 	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
-	State        string       `bun:"state,notnull"`
+	// ToolTimeoutMs is the tool_timeout_ms the session runs with, which reopening it keeps.
+	// Zero, stored as NULL, is the default.
+	ToolTimeoutMs int `bun:"tool_timeout_ms,nullzero"`
+	// CallerTools are the tools the session's caller declared, which reopening it offers the
+	// model again. Definitions only: what a call returned is in the session's items.
+	CallerTools []CallerTool `bun:"caller_tools,type:jsonb,nullzero"`
+	State       string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
@@ -2015,6 +2021,28 @@ type AgentSession struct {
 	ReviewScore *int `bun:"review_score"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`
+}
+
+// CallerTool is one tool a session's caller declared, as it was declared, so a reopened
+// session offers and runs it as the first one did.
+type CallerTool struct {
+	Name          string              `json:"name"`
+	Description   string              `json:"description"`
+	Parameters    map[string]any      `json:"parameters,omitempty"`
+	Client        bool                `json:"client,omitempty"`
+	DisplayTitle  string              `json:"display_title,omitempty"`
+	Approval      *CallerToolApproval `json:"approval,omitempty"`
+	Interruptible bool                `json:"interruptible,omitempty"`
+	TimeoutMs     int64               `json:"timeout_ms,omitempty"`
+}
+
+// CallerToolApproval is the question a person answers before a caller tool's call runs.
+type CallerToolApproval struct {
+	Title          string `json:"title"`
+	Message        string `json:"message,omitempty"`
+	ReasonArgument string `json:"reason_argument,omitempty"`
+	AllowTitle     string `json:"allow_title,omitempty"`
+	DeclineTitle   string `json:"decline_title,omitempty"`
 }
 
 // SessionConnectorSelection is the connection a session's caller picked for one session
