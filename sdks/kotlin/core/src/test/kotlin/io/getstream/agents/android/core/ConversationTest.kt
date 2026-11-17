@@ -350,6 +350,50 @@ class ConversationTest {
     }
 
     @Test
+    fun `an interrupted turn's UI settles with its last statement when it closed`() {
+        // The router drops an interrupted reply's UI block, so no ui_completed comes.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"interrupted","turn_id":"t1","participant":{"id":"p1","user_id":"u1","name":""}}""",
+        )
+
+        assertEquals(
+            TurnUI(format = "openui", isStreaming = false, content = "root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"),
+            conversation.turns.single().ui,
+        )
+    }
+
+    @Test
+    fun `a turn that ends in the middle of a statement leaves it out`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr, map])\nhdr = CardHeader(\"Kaneo\")\nmap = TripMap([\n"}""",
+            """{"type":"responded","turn_id":"t1","text":"Here it is."}""",
+        )
+
+        val turn = conversation.turns.single()
+        assertEquals("Here it is.", turn.text)
+        assertEquals(
+            TurnUI(format = "openui", isStreaming = false, content = "root = Card([hdr, map])\nhdr = CardHeader(\"Kaneo\")"),
+            turn.ui,
+        )
+    }
+
+    @Test
+    fun `a turn ending with nothing of its UI closed sets none`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr"}""",
+            """{"type":"interrupted","turn_id":"t1","participant":{"id":"p1","user_id":"u1","name":""}}""",
+        )
+
+        assertNull(conversation.turns.single().ui)
+        // Nothing of it is kept to land on a later turn.
+        assertEquals(Conversation(conversation.turns, conversation.state), conversation)
+    }
+
+    @Test
     fun `a completed UI with no content keeps what streamed`() {
         val conversation = Conversation().after(
             """{"type":"ui_delta","turn_id":"t1","format":"a2ui","version":"1.0","delta":"[{\"version\":\"v1.0\"}]"}""",

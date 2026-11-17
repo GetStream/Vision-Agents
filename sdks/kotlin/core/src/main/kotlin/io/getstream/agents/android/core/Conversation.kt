@@ -54,10 +54,11 @@ public class Conversation private constructor(
     public val failure: String?,
     /**
      * What each agent turn's UI block wrote so far, by turn id: the deltas, or a patch before it
-     * is merged. Kept apart from [Turn.ui], which is what shows and is left unchanged by a delta
-     * that shows nothing new, and counted in equality so that such a delta is still kept.
+     * is merged, until the turn's UI is settled. Kept apart from [Turn.ui], which is what shows
+     * and is left unchanged by a delta that shows nothing new, and counted in equality so that
+     * such a delta is still kept.
      */
-    private val uiWritten: Map<String, String>,
+    private val uiWritten: Map<String, UiWritten>,
 ) {
     public constructor(
         turns: List<Turn> = emptyList(),
@@ -90,8 +91,15 @@ public class Conversation private constructor(
 
     override fun toString(): String = "Conversation(turns=$turns, state=$state, failure=$failure)"
 
-    private fun writing(uiWritten: Map<String, String>): Conversation =
+    private fun writing(uiWritten: Map<String, UiWritten>): Conversation =
         Conversation(turns, state, failure, uiWritten)
+
+    /** What a turn's UI block wrote, and how. */
+    private data class UiWritten(val format: String, val version: String?, val mode: String, val text: String) {
+        /** [text], written as the `ui_delta` or `ui_completed` [event] says. */
+        constructor(event: AgentEvent, format: String, text: String) :
+            this(format, event.string("version").ifEmpty { null }, event.string("mode"), text)
+    }
 
     public sealed interface State {
         /** Waiting to be spoken to. */
@@ -147,14 +155,15 @@ public class Conversation private constructor(
                 if (delta.isEmpty() || format.isEmpty()) {
                     this
                 } else {
-                    val written = uiWritten[event.turnId].orEmpty() + delta
+                    val text = uiWritten[event.turnId]?.text.orEmpty() + delta
+                    val written = UiWritten(event, format, text)
                     val kept = writing(uiWritten + (event.turnId to written))
                     // Only the line still being written grew, so no statement finished: what shows
                     // is unchanged.
                     val shown = if (format == TurnUI.OPEN_UI && '\n' !in delta) {
                         kept
                     } else {
-                        kept.writeUi(event, format, written, isStreaming = true, at)
+                        kept.writeUi(event.turnId, written, TurnUI.Keep.Finished, at)
                     }
                     shown.let { if (it.state is State.Working) it else it.copy(state = State.Responding) }
                 }
@@ -167,16 +176,17 @@ public class Conversation private constructor(
                 if (format.isEmpty()) {
                     this
                 } else {
-                    val written = event.string("content").ifEmpty { uiWritten[event.turnId].orEmpty() }
-                    writing(uiWritten - event.turnId)
-                        .writeUi(event, format, written, isStreaming = false, at)
+                    val text = event.string("content").ifEmpty { uiWritten[event.turnId]?.text.orEmpty() }
+                    val written = UiWritten(event, format, text)
+                    writing(uiWritten - event.turnId).writeUi(event.turnId, written, TurnUI.Keep.All, at)
                 }
             }
 
             // The final text is authoritative: the deltas are what was being written, this is
             // what was said. An empty one adds nothing, which is what a spoken-only turn is.
             AgentEvent.Kind.Responded ->
-                (if (event.text.isEmpty()) this else write(event.turnId, event.text, at) { event.text })
+                settleUi(event.turnId, at)
+                    .let { if (event.text.isEmpty()) it else it.write(event.turnId, event.text, at) { event.text } }
                     .copy(state = State.Idle)
 
             AgentEvent.Kind.Delegated -> copy(state = State.Working(working + event.string("skill")))
@@ -186,7 +196,7 @@ public class Conversation private constructor(
                 copy(state = if (left.isEmpty()) State.Responding else State.Working(left))
             }
 
-            AgentEvent.Kind.Interrupted -> copy(state = State.Idle)
+            AgentEvent.Kind.Interrupted -> settleUi(event.turnId, at).copy(state = State.Idle)
 
             // The model writing the reply failing is the end of that reply, which may never be
             // reported as responded. Anything else that fails, a tool, the voice or the
@@ -227,31 +237,34 @@ public class Conversation private constructor(
     }
 
     /**
-     * Shows [written], what the turn's UI block wrote so far, as the UI of the agent turn a
-     * `ui_delta` or `ui_completed` belongs to, starting the turn if the router sent UI for one we
-     * never saw begin. While OpenUI streams, only its finished statements show, and until one is
-     * finished it sets no UI. A patch is merged onto the UI of the latest earlier turn in the same
-     * format; with none in this transcript, such as after a reload, it sets no UI, and Stream
-     * Chat's copy, which the router merged, is the one to show.
+     * Settles the UI of a turn that ended with no `ui_completed`, as an interrupted reply does:
+     * the router dropped its UI block with the turn. What was written shows, but for a statement
+     * it ended in the middle of, and the UI is complete, since nothing more of it will come.
      */
-    private fun writeUi(
-        event: AgentEvent,
-        format: String,
-        written: String,
-        isStreaming: Boolean,
-        at: Instant,
-    ): Conversation {
-        val turnId = event.turnId
-        val openUi = format == TurnUI.OPEN_UI
-        var content = if (isStreaming && openUi) TurnUI.finished(written) else written
-        if (isStreaming && openUi && content.isEmpty()) return this
-        if (event.string("mode") == "patch" && openUi) {
+    private fun settleUi(turnId: String, at: Instant): Conversation {
+        val written = uiWritten[turnId] ?: return this
+        return writing(uiWritten - turnId).writeUi(turnId, written, TurnUI.Keep.Closed, at)
+    }
+
+    /**
+     * Shows [written], what the turn's UI block wrote, as the UI of agent turn [turnId], starting
+     * the turn if the router sent UI for one we never saw begin. Of OpenUI, only the statements
+     * [keep] says count; it is streaming while only the finished ones do, and sets no UI until
+     * one counts. A patch is merged onto the UI of the latest earlier turn in the same format;
+     * with none in this transcript, such as after a reload, it sets no UI, and Stream Chat's copy,
+     * which the router merged, is the one to show.
+     */
+    private fun writeUi(turnId: String, written: UiWritten, keep: TurnUI.Keep, at: Instant): Conversation {
+        val openUi = written.format == TurnUI.OPEN_UI
+        var content = if (openUi) TurnUI.kept(written.text, keep) else written.text
+        if (openUi && keep != TurnUI.Keep.All && content.isEmpty()) return this
+        if (written.mode == "patch" && openUi) {
             val base = turns.lastOrNull {
                 it.isAgent && it.id != turnId && it.ui?.format == TurnUI.OPEN_UI && it.ui.content.isNotEmpty()
             }?.ui ?: return this
             content = TurnUI.merge(base.content, content)
         }
-        val ui = TurnUI(format, event.string("version").ifEmpty { null }, isStreaming, content)
+        val ui = TurnUI(written.format, written.version, keep == TurnUI.Keep.Finished, content)
         val index = turns.indexOfLast { it.id == turnId && it.isAgent }
         if (index < 0) return copy(turns = turns + Turn(turnId, Turn.Speaker.Agent, "", at, ui))
         val updated = turns.toMutableList()
@@ -297,6 +310,13 @@ public data class TurnUI(
             version?.let { put("version", it) }
         }
 
+    /**
+     * Which statements of an OpenUI program count: all of them; those closed, leaving out one a
+     * bracket or a string left open; or those finished, also leaving out the line no newline has
+     * ended, which is still being written.
+     */
+    internal enum class Keep { All, Closed, Finished }
+
     public companion object {
         /** The format OpenUI Lang is written in, the one whose patches are merged. */
         public const val OPEN_UI: String = "openui"
@@ -326,26 +346,23 @@ public data class TurnUI(
             return statements.values.joinToString("\n")
         }
 
-        /**
-         * The statements of a program being written that are finished, the one still being written
-         * left out.
-         */
-        internal fun finished(program: String): String =
-            statements(program, finishedOnly = true).joinToString("\n")
+        /** The statements of [program] that [keep] says count, or all of it as written. */
+        internal fun kept(program: String, keep: Keep): String =
+            if (keep == Keep.All) program else statements(program, keep).joinToString("\n")
 
         /**
          * A program's statements: each line, or the lines a bracket or a string left open joined
-         * to the one that closes it. Blank and comment lines are left out. With [finishedOnly], so
-         * is a statement no newline has ended yet.
+         * to the one that closes it. Blank and comment lines are left out, and so is what [keep]
+         * leaves out.
          */
-        private fun statements(program: String, finishedOnly: Boolean = false): List<String> {
+        private fun statements(program: String, keep: Keep = Keep.All): List<String> {
             val statements = mutableListOf<String>()
             val current = StringBuilder()
             var quote: Char? = null
             var escaped = false
             var depth = 0
             // What follows the last newline is still being written.
-            val lines = program.split("\n").let { if (finishedOnly) it.dropLast(1) else it }
+            val lines = program.split("\n").let { if (keep == Keep.Finished) it.dropLast(1) else it }
             for (line in lines) {
                 if (quote == null && depth == 0) {
                     val trimmed = line.trim(' ', '\t')
@@ -380,7 +397,7 @@ public data class TurnUI(
                 }
             }
             val tail = current.trim()
-            if (tail.isNotEmpty() && !finishedOnly) statements += tail.toString()
+            if (tail.isNotEmpty() && keep == Keep.All) statements += tail.toString()
             return statements
         }
 
