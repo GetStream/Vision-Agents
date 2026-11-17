@@ -2,6 +2,7 @@
 
 import 'generated/api.dart' as api;
 import 'models.dart';
+import 'tools.dart';
 
 Session sessionOf(api.Session wire) => Session(
   id: wire.id,
@@ -97,28 +98,7 @@ api.CreateSessionRequest createRequestOf(
   custom: options.custom,
   incognito: options.incognito,
   modelOverwrites: overwritesOf(options.modelOverwrites),
-  tools: options.tools.isEmpty
-      ? null
-      : [
-          for (final tool in options.tools)
-            api.SessionTool(
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.parameters,
-              displayTitle: _set(tool.displayTitle),
-              executor: tool.executor?.name,
-              approval: switch (tool.approval) {
-                null => null,
-                final approval => api.SessionToolApproval(
-                  title: approval.title,
-                  message: approval.message,
-                  reasonArgument: approval.reasonArgument,
-                  allowTitle: approval.allowTitle,
-                  declineTitle: approval.declineTitle,
-                ),
-              },
-            ),
-        ],
+  tools: options.tools.isEmpty ? null : [for (final tool in options.tools) sessionToolOf(tool)],
   tags: options.tags.isEmpty ? null : options.tags,
   returnUrl: _set(options.returnUrl),
   // The router remembers only for a user id, and a device only ever means its own user.
@@ -146,6 +126,25 @@ api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequ
   // the parent was opened with.
   messages: options.withoutHistory ? false : null,
   modelOverwrites: overwritesOf(options.modelOverwrites),
+);
+
+/// A tool as the router is told of it, when a session opens or while it runs.
+api.SessionTool sessionToolOf(AgentTool tool) => api.SessionTool(
+  name: tool.name,
+  description: tool.description,
+  parameters: tool.parameters,
+  displayTitle: _set(tool.displayTitle),
+  executor: tool.executor?.name,
+  approval: switch (tool.approval) {
+    null => null,
+    final approval => api.SessionToolApproval(
+      title: approval.title,
+      message: approval.message,
+      reasonArgument: approval.reasonArgument,
+      allowTitle: approval.allowTitle,
+      declineTitle: approval.declineTitle,
+    ),
+  },
 );
 
 api.Greeting? greetingOf(Greeting? greeting) =>

@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/suite"
 )
 
 // router is a stand-in for the acceleration backend: the one endpoint that creates a
@@ -47,10 +48,14 @@ type router struct {
 
 	// added are the tools the session was given after it opened, and removed the ones taken
 	// back, in order. toolsWith is the status both are answered with; zero is 204, and a
-	// negative one drops the connection unanswered.
-	added     []acceleration.AddSessionToolsRequest
-	removed   []string
-	toolsWith int
+	// negative one drops the connection unanswered. removeWith, when set, answers a removal in
+	// its place. heard, when set, is closed as the next change arrives, which is then left
+	// unanswered until the caller gives up on it.
+	added      []acceleration.AddSessionToolsRequest
+	removed    []string
+	toolsWith  int
+	removeWith int
+	heard      chan struct{}
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -101,10 +106,16 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		_, _ = fmt.Fprintf(w, `{"error":{"type":"internal","code":"stop_%d","message":"the router said %d"}}`, status, status)
 	})
 
-	answerTools := func(w http.ResponseWriter) {
+	answerTools := func(w http.ResponseWriter, r *http.Request, status int) {
 		backend.mu.Lock()
-		status := backend.toolsWith
+		heard := backend.heard
+		backend.heard = nil
 		backend.mu.Unlock()
+		if heard != nil {
+			close(heard)
+			<-r.Context().Done()
+			return
+		}
 		switch {
 		case status == 0:
 			w.WriteHeader(http.StatusNoContent)
@@ -126,14 +137,19 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		}
 		backend.mu.Lock()
 		backend.added = append(backend.added, request)
+		status := backend.toolsWith
 		backend.mu.Unlock()
-		answerTools(w)
+		answerTools(w, r, status)
 	})
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/tools/{name}", func(w http.ResponseWriter, r *http.Request) {
 		backend.mu.Lock()
 		backend.removed = append(backend.removed, r.PathValue("name"))
+		status := backend.toolsWith
+		if backend.removeWith != 0 {
+			status = backend.removeWith
+		}
 		backend.mu.Unlock()
-		answerTools(w)
+		answerTools(w, r, status)
 	})
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
@@ -626,6 +642,176 @@ func TestAToolWhoseAddingWasNeverAnsweredIsSettledBeforeAnotherTakesItsName(t *t
 	if pipeline.functionsFor("reserve_table") != replacement {
 		t.Error("the function whose adding was never answered still answers the name's calls")
 	}
+}
+
+// SessionToolsSuite is what runs a running session's tools here once a change of them gets no
+// answer to go by, and in a fork of it.
+type SessionToolsSuite struct {
+	suite.Suite
+	backend *router
+}
+
+func TestSessionToolsSuite(t *testing.T) {
+	suite.Run(t, new(SessionToolsSuite))
+}
+
+func (s *SessionToolsSuite) SetupTest() {
+	s.backend = newRouter(s.T(), hold)
+}
+
+// join opens a session whose own functions are functions, none when nil, and leaves it when
+// the test ends.
+func (s *SessionToolsSuite) join(functions *tools.Registry) *Pipeline {
+	pipeline := Accelerated(Config{Backend: Backend{URL: s.backend.URL, CustomerID: "acme"}, Functions: functions})
+	_, err := pipeline.Join(s.T().Context(), Call{})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = pipeline.Leave(context.Background()) })
+	return pipeline
+}
+
+// answer is the status the router answers the next adds and removals with, as toolsWith and
+// removeWith on router say.
+func (s *SessionToolsSuite) answer(adds, removals int) {
+	s.backend.mu.Lock()
+	defer s.backend.mu.Unlock()
+	s.backend.toolsWith, s.backend.removeWith = adds, removals
+}
+
+// removed are the names the router was asked to withdraw, in order.
+func (s *SessionToolsSuite) removed() []string {
+	s.backend.mu.Lock()
+	defer s.backend.mu.Unlock()
+	return slices.Clone(s.backend.removed)
+}
+
+// cancelledOnArrival is a context the caller gives up on once the router has the next change
+// of the tools, which it never answers.
+func (s *SessionToolsSuite) cancelledOnArrival() context.Context {
+	ctx, cancel := context.WithCancel(s.T().Context())
+	heard := make(chan struct{})
+	s.backend.mu.Lock()
+	s.backend.heard = heard
+	s.backend.mu.Unlock()
+	go func() {
+		select {
+		case <-heard:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx
+}
+
+func (s *SessionToolsSuite) TestARemovalWhoseAnswerWasLostIsSettledByTheNextOne() {
+	pipeline := s.join(reserveTable(s.T()))
+	// The router withdraws the tool and the answer is lost.
+	s.answer(0, -1)
+	s.Require().Error(pipeline.RemoveTool(s.T().Context(), "reserve_table"), "a removal whose answer was lost reported success")
+	s.Require().Len(s.removed(), 1, "the removal reached the router more than once, so a resent one could answer for it")
+	s.Require().True(pipeline.functionsFor("reserve_table").Holds("reserve_table"), "a tool the router may still offer no longer answers its calls")
+	s.answer(0, http.StatusNotFound)
+
+	s.Require().NoError(pipeline.RemoveTool(s.T().Context(), "reserve_table"), "removing a tool the router had already withdrawn failed")
+
+	s.False(pipeline.functionsFor("reserve_table").Holds("reserve_table"), "a removed tool would still answer a call")
+}
+
+func (s *SessionToolsSuite) TestAToolWhoseRemovalWasNeverAnsweredIsSettledBeforeItIsAddedAgain() {
+	pipeline := s.join(nil)
+	s.Require().NoError(pipeline.AddTools(s.T().Context(), reserveTable(s.T())))
+	s.answer(0, -1)
+	s.Require().Error(pipeline.RemoveTool(s.T().Context(), "reserve_table"), "a removal whose answer was lost reported success")
+	s.answer(0, http.StatusNotFound)
+	replacement := reserveTable(s.T())
+
+	s.Require().NoError(pipeline.AddTools(s.T().Context(), replacement))
+
+	s.Equal([]string{"reserve_table", "reserve_table"}, s.removed(), "the name was not withdrawn again before it was added again")
+	s.Same(replacement, pipeline.functionsFor("reserve_table"), "the function whose removal was never answered still answers the name's calls")
+}
+
+func (s *SessionToolsSuite) TestARemovalGivenUpOnInFlightIsSettledByTheNextOne() {
+	pipeline := s.join(reserveTable(s.T()))
+	ctx := s.cancelledOnArrival()
+
+	s.Require().ErrorIs(pipeline.RemoveTool(ctx, "reserve_table"), context.Canceled)
+	s.Require().True(pipeline.functionsFor("reserve_table").Holds("reserve_table"), "a tool the router may still offer no longer answers its calls")
+	s.answer(0, http.StatusNotFound)
+
+	s.NoError(pipeline.RemoveTool(s.T().Context(), "reserve_table"), "removing a tool the router had already withdrawn failed")
+}
+
+func (s *SessionToolsSuite) TestAnAddGivenUpOnInFlightKeepsItsFunctionUntilTheNameIsSettled() {
+	pipeline := s.join(nil)
+	ctx := s.cancelledOnArrival()
+	first := reserveTable(s.T())
+
+	s.Require().ErrorIs(pipeline.AddTools(ctx, first), context.Canceled)
+	s.Require().Same(first, pipeline.functionsFor("reserve_table"), "a tool the router may have taken no longer answers its calls")
+	s.answer(0, http.StatusNotFound)
+	replacement := reserveTable(s.T())
+
+	s.Require().NoError(pipeline.AddTools(s.T().Context(), replacement))
+
+	s.Equal([]string{"reserve_table"}, s.removed(), "the name was added again without being withdrawn first")
+	s.Same(replacement, pipeline.functionsFor("reserve_table"), "the function of the add given up on still answers the name's calls")
+}
+
+// Only a 4xx is the router refusing: a gateway in front of it can answer 502 after the router
+// took the tool.
+func (s *SessionToolsSuite) TestAnAddAGatewayFailedKeepsItsFunctionUntilTheNameIsSettled() {
+	pipeline := s.join(nil)
+	s.answer(http.StatusBadGateway, 0)
+	first := reserveTable(s.T())
+	var failed *RouterError
+	s.Require().ErrorAs(pipeline.AddTools(s.T().Context(), first), &failed)
+	s.Require().Equal(http.StatusBadGateway, failed.Status)
+	s.Require().Same(first, pipeline.functionsFor("reserve_table"), "a tool the router may have taken no longer answers its calls")
+	s.answer(0, http.StatusNotFound)
+	replacement := reserveTable(s.T())
+
+	s.Require().NoError(pipeline.AddTools(s.T().Context(), replacement))
+
+	s.Equal([]string{"reserve_table"}, s.removed(), "the name was added again without being withdrawn first")
+	s.Same(replacement, pipeline.functionsFor("reserve_table"), "the function of the add the gateway failed still answers the name's calls")
+}
+
+// Only a 4xx is the router refusing: a gateway in front of it can answer 502 after the router
+// withdrew the tool.
+func (s *SessionToolsSuite) TestARemovalAGatewayFailedIsSettledByTheNextOne() {
+	pipeline := s.join(reserveTable(s.T()))
+	s.answer(0, http.StatusBadGateway)
+	var failed *RouterError
+	s.Require().ErrorAs(pipeline.RemoveTool(s.T().Context(), "reserve_table"), &failed)
+	s.Require().Equal(http.StatusBadGateway, failed.Status)
+	s.Require().True(pipeline.functionsFor("reserve_table").Holds("reserve_table"), "a tool the router may still offer no longer answers its calls")
+	s.answer(0, http.StatusNotFound)
+
+	s.Require().NoError(pipeline.RemoveTool(s.T().Context(), "reserve_table"), "removing a tool the router had already withdrawn failed")
+
+	s.False(pipeline.functionsFor("reserve_table").Holds("reserve_table"), "a removed tool would still answer a call")
+}
+
+// A fork runs the session's tools as they are now, and one whose adding got no answer to go by
+// may never have been the router's, so the fork withdraws it before giving the name another
+// function, as the session would.
+func (s *SessionToolsSuite) TestAForkWithdrawsANameTheSessionLeftUnsettledBeforeAddingItAgain() {
+	pipeline := s.join(nil)
+	s.answer(-1, 0)
+	s.Require().Error(pipeline.AddTools(s.T().Context(), reserveTable(s.T())), "an add whose answer was lost reported success")
+	forked, err := pipeline.Fork(Config{Backend: Backend{URL: s.backend.URL, CustomerID: "acme"}}, func() error { return nil })
+	s.Require().NoError(err)
+	s.Require().NoError(forked.Watch(s.T().Context(), &acceleration.Session{Id: "session-2", CallId: "call-1"}))
+	s.T().Cleanup(func() { _ = forked.Leave(context.Background()) })
+	// The router never took the tool.
+	s.answer(0, http.StatusNotFound)
+	replacement := reserveTable(s.T())
+
+	s.Require().NoError(forked.AddTools(s.T().Context(), replacement))
+
+	s.Equal([]string{"reserve_table"}, s.removed(), "the fork added the name again without withdrawing it first")
+	s.Same(replacement, forked.functionsFor("reserve_table"), "the fork still runs the function whose adding was never answered")
+	s.True(pipeline.isUnsettled("reserve_table"), "settling the name in the fork settled it in the session")
 }
 
 func TestLeavingForgetsTheToolsTheSessionWasGiven(t *testing.T) {

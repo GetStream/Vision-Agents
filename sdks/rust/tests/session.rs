@@ -1,10 +1,12 @@
 mod support;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::http::Method;
-use serde_json::json;
-use support::{Server, item, response, session};
+use serde_json::{Value, json};
+use support::{Accepted, Server, item, refusal, response, session};
 use vision_agents::{Error, Query, Session, ToolCallContext, Tools, WatchOptions, types};
 
 fn weather() -> Tools {
@@ -1228,4 +1230,738 @@ fn a_policy_that_cannot_work_is_refused_when_it_is_registered() {
         None
     );
     assert!(tools.has("refund"));
+}
+
+const SESSION_TOOLS: &str = "/v1/agents/sessions/s1/tools";
+const RESERVE_TABLE: &str = "/v1/agents/sessions/s1/tools/reserve_table";
+
+/// The ids of the calls a function made by [`answering`] was run for, in every test.
+static RAN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Numbers the calls [`answer`] makes, so that no two tests ask with the same id.
+static ASKED: AtomicUsize = AtomicUsize::new(0);
+
+/// A registry with one function, `name`, that answers `by` and puts the id of each call it is
+/// run for in [`RAN`] as it starts.
+fn answering(name: &str, by: &'static str) -> Tools {
+    let tools = Tools::new();
+    tools
+        .register_with_tool_call_context(
+            types::SessionTool {
+                name: name.into(),
+                description: format!("{name} for the test"),
+                parameters: json!({"type": "object"}).as_object().unwrap().clone(),
+                ..Default::default()
+            },
+            move |call: ToolCallContext, _| {
+                RAN.lock().unwrap().push(call.id);
+                async move { Ok::<_, String>(by) }
+            },
+        )
+        .unwrap();
+    tools
+}
+
+/// `tools` with `fast` beside them, which [`answer`] calls after the call it asks about.
+fn probed(tools: Tools) -> Tools {
+    tools.register("fast", "Answers at once", json!({}), |_| async {
+        Ok::<_, String>("done")
+    });
+    tools
+}
+
+/// What the session answers a call of `name` with now, or `None` when it leaves the call to
+/// another watcher: a call of `fast` sent after it is then answered first, and no function
+/// made by [`answering`] was run for it, however late it would have answered.
+async fn answer(socket: &mut Accepted, name: &str) -> Option<Value> {
+    let asked = format!("asked-{}", ASKED.fetch_add(1, Ordering::Relaxed));
+    socket
+        .send(json!({"type": "tool_call", "id": asked, "name": name, "arguments": "{}"}))
+        .await;
+    socket
+        .send(json!({"type": "tool_call", "id": "probe", "name": "fast", "arguments": "{}"}))
+        .await;
+    let first = socket.expect("tool_result").await;
+    if first["tool_call_id"] == "probe" {
+        // Each call runs on a task of its own, started in the order the calls came on the
+        // test's one thread, so a function run for this one had started before the probe
+        // answered.
+        assert!(
+            !RAN.lock().unwrap().contains(&asked),
+            "{name} was run, and has not answered yet"
+        );
+        return None;
+    }
+    assert_eq!(socket.expect("tool_result").await["tool_call_id"], "probe");
+    Some(first["output"].clone())
+}
+
+/// The changes to the sessions' tools the router was asked for, in order.
+fn tool_changes(server: &Server) -> Vec<String> {
+    server
+        .seen()
+        .into_iter()
+        .filter(|seen| seen.path.contains("/tools"))
+        .map(|seen| format!("{} {}", seen.method, seen.path))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_tool_added_while_the_session_runs_is_declared_and_run_here() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server.route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+
+    session
+        .add_tools(answering("reserve_table", "added"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server.request(Method::POST, SESSION_TOOLS).body,
+        json!({"tools": [{"name": "reserve_table", "description": "reserve_table for the test",
+                          "parameters": {"type": "object"}}]})
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("added"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_the_router_refused_is_not_run_here() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server.route(
+        Method::POST,
+        SESSION_TOOLS,
+        409,
+        refusal(
+            "conflict",
+            "conflict",
+            "the session offers reserve_table from elsewhere",
+        ),
+    );
+
+    let refused = session
+        .add_tools(answering("reserve_table", "added"))
+        .await
+        .unwrap_err();
+
+    assert_eq!(refused.status(), Some(409));
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_removed_tool_is_no_longer_run_here() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null);
+    session
+        .add_tools(answering("reserve_table", "added"))
+        .await
+        .unwrap();
+
+    session.remove_tool("reserve_table").await.unwrap();
+
+    server.request(Method::DELETE, RESERVE_TABLE);
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_name_the_session_already_runs_keeps_its_function() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    // The second add's answer is lost, which leaves its fate unknown here; the router never
+    // replaces a tool the session has.
+    server
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null);
+    session
+        .add_tools(answering("book", "first booking"))
+        .await
+        .unwrap();
+    let again = answering("reserve_table", "added");
+    again.register("book", "Books again", json!({}), |_| async {
+        Ok::<_, String>("second booking")
+    });
+
+    let lost = session.add_tools(again).await.unwrap_err();
+
+    assert!(matches!(lost, Error::Transport { .. }), "{lost:?}");
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("own"))
+    );
+    assert_eq!(
+        answer(&mut socket, "book").await,
+        Some(json!("first booking"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_withdrawn_from_the_sessions_own_runs_the_one_added_in_its_place() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    server
+        .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null)
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+
+    session.remove_tool("reserve_table").await.unwrap();
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+    session
+        .add_tools(answering("reserve_table", "replacement"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("replacement"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_whose_adding_was_never_answered_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        // The lost add never reached the session, so it has no tool by the name to withdraw.
+        .route(
+            Method::DELETE,
+            RESERVE_TABLE,
+            404,
+            refusal(
+                "not_found",
+                "not_found",
+                "the session's caller has no tool by that name",
+            ),
+        );
+    let lost = session
+        .add_tools(answering("reserve_table", "first"))
+        .await
+        .unwrap_err();
+    assert!(matches!(lost, Error::Transport { .. }), "{lost:?}");
+    // The router may have added it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("first"))
+    );
+
+    session
+        .add_tools(answering("reserve_table", "second"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("POST {SESSION_TOOLS}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("second"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_the_router_has_none_by_is_withdrawn_only_when_its_adding_was_never_answered() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
+        .route(
+            Method::DELETE,
+            RESERVE_TABLE,
+            404,
+            refusal(
+                "not_found",
+                "not_found",
+                "the session's caller has no tool by that name",
+            ),
+        );
+
+    let absent = session.remove_tool("reserve_table").await.unwrap_err();
+    assert_eq!(absent.status(), Some(404));
+    session
+        .add_tools(answering("reserve_table", "lost"))
+        .await
+        .unwrap_err();
+    session.remove_tool("reserve_table").await.unwrap();
+
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn changes_to_a_sessions_tools_are_made_one_at_a_time() {
+    let server = Server::start().await;
+    let (session, _socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(
+            Method::DELETE,
+            RESERVE_TABLE,
+            404,
+            refusal(
+                "not_found",
+                "not_found",
+                "the session's caller has no tool by that name",
+            ),
+        );
+    session
+        .add_tools(answering("reserve_table", "lost"))
+        .await
+        .unwrap_err();
+
+    // Two at once would both withdraw the unsettled name, and one could take back what the
+    // other just added.
+    let _ = tokio::join!(
+        session.add_tools(answering("reserve_table", "one")),
+        session.add_tools(answering("reserve_table", "other")),
+    );
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("POST {SESSION_TOOLS}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn adding_no_tools_is_refused_before_a_request() {
+    let server = Server::start().await;
+    let (session, _socket) = open(&server, probed(Tools::new())).await;
+
+    let refused = session.add_tools(Tools::new()).await.unwrap_err();
+
+    assert!(matches!(refused, Error::Configuration(_)), "{refused:?}");
+    assert!(tool_changes(&server).is_empty());
+}
+
+#[tokio::test]
+async fn a_closed_session_lets_go_of_the_functions_it_was_given() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server.route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+    let resource = Arc::new(());
+    let held = Arc::downgrade(&resource);
+    let tools = Tools::new();
+    tools.register("reserve_table", "Reserve a table", json!({}), move |_| {
+        let _resource = resource.clone();
+        async { Ok::<_, String>("reserved") }
+    });
+    session.add_tools(tools).await.unwrap();
+
+    let router = tokio::spawn(async move {
+        socket.expect("close").await;
+        socket.close().await;
+    });
+    session.close().await;
+    router.await.unwrap();
+
+    assert!(
+        held.upgrade().is_none(),
+        "a closed session still holds the functions it was given"
+    );
+}
+
+/// The router's answer to withdrawing a tool by a name the session's caller has none by.
+fn no_tool_by_that_name() -> Value {
+    refusal(
+        "not_found",
+        "not_found",
+        "the session's caller has no tool by that name",
+    )
+}
+
+/// The router's answer to a change of the tools by a caller of another kind than the one that
+/// opened the session.
+fn another_kind_of_caller() -> Value {
+    refusal(
+        "permission",
+        "permission",
+        "a session's tools are declared by the kind of caller that opened it",
+    )
+}
+
+/// What a gateway in front of the router answers when the router's own answer does not get
+/// back to it, whether or not the router made the change.
+const BAD_GATEWAY: &str = "<html><body><h1>502 Bad Gateway</h1></body></html>";
+
+/// How long a caller waits for a change of the tools before giving up on it.
+const GIVING_UP: Duration = Duration::from_millis(100);
+
+#[tokio::test]
+async fn a_tool_whose_adding_was_given_up_on_can_be_removed_though_the_router_has_none_by_it() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 1, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name());
+    let adding = session.add_tools(answering("reserve_table", "added"));
+    tokio::time::timeout(GIVING_UP, adding).await.unwrap_err();
+    assert_eq!(tool_changes(&server), [format!("POST {SESSION_TOOLS}")]);
+
+    session.remove_tool("reserve_table").await.unwrap();
+
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_tool_whose_adding_was_given_up_on_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 1, Value::Null)
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name());
+    let adding = session.add_tools(answering("reserve_table", "first"));
+    tokio::time::timeout(GIVING_UP, adding).await.unwrap_err();
+    assert_eq!(tool_changes(&server), [format!("POST {SESSION_TOOLS}")]);
+    // The router may have added it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("first"))
+    );
+
+    session
+        .add_tools(answering("reserve_table", "second"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("second"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_whose_removal_was_never_answered_can_be_removed_though_the_router_has_none_by_it() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    // The router withdraws it, and its answer is lost on the way.
+    server
+        .route(Method::DELETE, RESERVE_TABLE, 0, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name());
+    let lost = session.remove_tool("reserve_table").await.unwrap_err();
+    assert!(matches!(lost, Error::Transport { .. }), "{lost:?}");
+    // The router may not have withdrawn it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("own"))
+    );
+
+    session.remove_tool("reserve_table").await.unwrap();
+
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_tool_whose_removal_was_never_answered_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    server
+        .route(Method::DELETE, RESERVE_TABLE, 0, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name())
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+    session.remove_tool("reserve_table").await.unwrap_err();
+
+    session
+        .add_tools(answering("reserve_table", "replacement"))
+        .await
+        .unwrap();
+
+    // The lost removal was sent once, never again on its own.
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("replacement"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_whose_removal_was_given_up_on_can_be_removed_though_the_router_has_none_by_it() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    server
+        .route(Method::DELETE, RESERVE_TABLE, 1, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name());
+    let removing = session.remove_tool("reserve_table");
+    tokio::time::timeout(GIVING_UP, removing).await.unwrap_err();
+    assert_eq!(tool_changes(&server), [format!("DELETE {RESERVE_TABLE}")]);
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("own"))
+    );
+
+    session.remove_tool("reserve_table").await.unwrap();
+
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_tool_whose_removal_was_given_up_on_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    server
+        .route(Method::DELETE, RESERVE_TABLE, 1, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name())
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+    let removing = session.remove_tool("reserve_table");
+    tokio::time::timeout(GIVING_UP, removing).await.unwrap_err();
+    assert_eq!(tool_changes(&server), [format!("DELETE {RESERVE_TABLE}")]);
+
+    session
+        .add_tools(answering("reserve_table", "replacement"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("replacement"))
+    );
+}
+
+#[tokio::test]
+async fn a_removal_the_router_refused_leaves_the_tool_as_it_was() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    server
+        .route(Method::DELETE, RESERVE_TABLE, 403, another_kind_of_caller())
+        .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null)
+        .route(
+            Method::POST,
+            SESSION_TOOLS,
+            409,
+            refusal("conflict", "conflict", "the session has reserve_table"),
+        );
+    let refused = session.remove_tool("reserve_table").await.unwrap_err();
+    assert_eq!(refused.status(), Some(403));
+
+    // Still the session's: adding it again is refused rather than withdrawn on the way.
+    let again = session
+        .add_tools(answering("reserve_table", "added"))
+        .await
+        .unwrap_err();
+
+    assert_eq!(again.status(), Some(409));
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("own"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_whose_adding_was_never_answered_stays_unsettled_when_its_removal_is_refused() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 403, another_kind_of_caller())
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name());
+    session
+        .add_tools(answering("reserve_table", "lost"))
+        .await
+        .unwrap_err();
+    let refused = session.remove_tool("reserve_table").await.unwrap_err();
+    assert_eq!(refused.status(), Some(403));
+
+    session.remove_tool("reserve_table").await.unwrap();
+
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn registering_in_the_tools_given_to_a_session_afterwards_changes_nothing_there() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    server.route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+    let tools = answering("reserve_table", "added");
+    session.add_tools(tools.clone()).await.unwrap();
+
+    tools.register(
+        "reserve_table",
+        "Reserves another way",
+        json!({}),
+        |_| async { Ok::<_, String>("registered after") },
+    );
+
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("added"))
+    );
+}
+
+#[tokio::test]
+async fn a_fork_runs_the_tools_the_session_has_when_it_is_forked() {
+    let server = Server::start().await;
+    let (parent, _parent_socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    server
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null)
+        .route(
+            Method::POST,
+            "/v1/agents/sessions/s1/fork",
+            201,
+            session("s2"),
+        );
+    parent.add_tools(answering("book", "added")).await.unwrap();
+    parent.remove_tool("reserve_table").await.unwrap();
+
+    let _fork = parent.fork(&Default::default()).await.unwrap();
+    let mut socket = server.accept().await;
+
+    assert_eq!(socket.path, "/v1/agents/sessions/s2/events");
+    assert_eq!(answer(&mut socket, "book").await, Some(json!("added")));
+    assert_eq!(answer(&mut socket, "reserve_table").await, None);
+}
+
+#[tokio::test]
+async fn a_tool_whose_adding_a_gateway_failed_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(Tools::new())).await;
+    // The router adds it, and the gateway in front of it answers 502.
+    server
+        .route_raw(Method::POST, SESSION_TOOLS, 502, &[], BAD_GATEWAY)
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null)
+        .route(Method::DELETE, RESERVE_TABLE, 204, Value::Null);
+    let failed = session
+        .add_tools(answering("reserve_table", "first"))
+        .await
+        .unwrap_err();
+    assert_eq!(failed.status(), Some(502));
+    // Not a refusal: the router may have added it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("first"))
+    );
+
+    session
+        .add_tools(answering("reserve_table", "second"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("POST {SESSION_TOOLS}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("second"))
+    );
+}
+
+#[tokio::test]
+async fn a_tool_whose_removal_a_gateway_failed_is_withdrawn_before_its_name_is_added_again() {
+    let server = Server::start().await;
+    let (session, mut socket) = open(&server, probed(answering("reserve_table", "own"))).await;
+    // The router withdraws it, and the gateway in front of it answers 502.
+    server
+        .route_raw(Method::DELETE, RESERVE_TABLE, 502, &[], BAD_GATEWAY)
+        .route(Method::DELETE, RESERVE_TABLE, 404, no_tool_by_that_name())
+        .route(Method::POST, SESSION_TOOLS, 204, Value::Null);
+    let failed = session.remove_tool("reserve_table").await.unwrap_err();
+    assert_eq!(failed.status(), Some(502));
+    // Not a refusal: the router may not have withdrawn it, so its calls are still run here.
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("own"))
+    );
+
+    session
+        .add_tools(answering("reserve_table", "replacement"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("DELETE {RESERVE_TABLE}"),
+            format!("POST {SESSION_TOOLS}"),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("replacement"))
+    );
+}
+
+#[tokio::test]
+async fn a_fork_withdraws_a_name_whose_adding_was_never_answered_before_adding_it_again() {
+    let server = Server::start().await;
+    let (parent, _parent_socket) = open(&server, probed(Tools::new())).await;
+    // The parent's add never reached the router, so neither session has the tool.
+    server
+        .route(Method::POST, SESSION_TOOLS, 0, Value::Null)
+        .route(
+            Method::POST,
+            "/v1/agents/sessions/s1/fork",
+            201,
+            session("s2"),
+        )
+        .route(
+            Method::DELETE,
+            "/v1/agents/sessions/s2/tools/reserve_table",
+            404,
+            no_tool_by_that_name(),
+        )
+        .route(
+            Method::POST,
+            "/v1/agents/sessions/s2/tools",
+            204,
+            Value::Null,
+        );
+    parent
+        .add_tools(answering("reserve_table", "first"))
+        .await
+        .unwrap_err();
+    let fork = parent.fork(&Default::default()).await.unwrap();
+    let mut socket = server.accept().await;
+
+    fork.add_tools(answering("reserve_table", "second"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tool_changes(&server),
+        [
+            format!("POST {SESSION_TOOLS}"),
+            "DELETE /v1/agents/sessions/s2/tools/reserve_table".to_string(),
+            "POST /v1/agents/sessions/s2/tools".to_string(),
+        ]
+    );
+    assert_eq!(
+        answer(&mut socket, "reserve_table").await,
+        Some(json!("second"))
+    );
 }

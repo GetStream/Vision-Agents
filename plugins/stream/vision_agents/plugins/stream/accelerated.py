@@ -9,6 +9,7 @@ import aiortc
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.function_registry import FunctionRegistry
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
     LLMResponseFinal,
@@ -53,7 +54,7 @@ from ._tool_line import (
 )
 from .config import ensure_agent
 from .knowledge import Knowledge
-from .sessions import _with_policy
+from .sessions import _SessionTools, _with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,7 @@ class Accelerated(OmniLLM):
         self.session: Optional[Session] = None
 
         self._socket: Optional[Socket] = None
+        self._session_tools = _SessionTools(self.backend, self.function_registry)
         self._reader: Optional[asyncio.Task] = None
         self._running: set[asyncio.Task] = set()
         self._tool_tasks: dict[str, asyncio.Task] = {}
@@ -285,6 +287,8 @@ class Accelerated(OmniLLM):
         """End the call. Safe to call after it has already ended."""
         session = self.session
         self.session = None
+        # What add_tools and remove_tool changed was this session's alone, not the next one's.
+        self._session_tools = _SessionTools(self.backend, self.function_registry)
         if session is None:
             return
 
@@ -300,6 +304,29 @@ class Accelerated(OmniLLM):
     async def interrupt(self) -> None:
         """Abandon the reply being spoken."""
         await self._command({"type": "interrupt"})
+
+    async def add_tools(self, more: FunctionRegistry) -> None:
+        """Give the session the functions in `more` while the call runs, for it alone, and
+        run their calls here. See `Session.add_tools`: never call this from inside one of the
+        session's functions, since the router waits for the calls in flight.
+
+        Raises:
+            RemotePipelineError: The agent is not on a call.
+        """
+        if self.session is None:
+            raise RemotePipelineError("the agent is not on a call")
+        await self._session_tools.add(self.session.id, more)
+
+    async def remove_tool(self, name: str) -> None:
+        """Withdraw one of the session's tools, registered here or added since. See
+        `Session.remove_tool`: never call this from inside one of the session's functions.
+
+        Raises:
+            RemotePipelineError: The agent is not on a call.
+        """
+        if self.session is None:
+            raise RemotePipelineError("the agent is not on a call")
+        await self._session_tools.remove(self.session.id, name)
 
     async def close(self) -> None:
         await self.leave_remote()
@@ -518,7 +545,7 @@ class Accelerated(OmniLLM):
             # beat whoever runs it, with an error.
             if frame.get("run") is False or (
                 name != "get_video_frames"
-                and name not in self.function_registry.functions
+                and name not in self._session_tools.functions_for(name).functions
             ):
                 return
             if len(self._tool_tasks) >= 16:
@@ -574,7 +601,7 @@ class Accelerated(OmniLLM):
                     SocketLine(self._command, self._holds),
                 )
                 output = await run_with_tool_call_context(
-                    self.function_registry,
+                    self._session_tools.functions_for(name),
                     name,
                     arguments,
                     tool_call_context,

@@ -116,6 +116,17 @@ final session = await agents.agent('support').chat(SessionOptions(tools: [lookup
 
 The agent only sees what the tool returns.
 
+A running session takes more tools, such as the ones a card shown in it brings, and gives them
+back. The model is offered the change from the next turn, once the reply in progress and its tool
+calls have finished, so never wait for either from inside one of the session's own tools:
+
+```dart
+await session.addTools([reserveTable]);
+await session.removeTool('reserve_table');
+```
+
+A name the session already has is refused: remove it first, then add the new tool.
+
 ## Keeping the conversation in Stream Chat
 
 A text or voice session is kept in a Stream Chat channel unless it is incognito.
@@ -210,8 +221,8 @@ time a session joins, and reuses it for that user's calls on the same `StreamAge
 
 - `StreamAgents` - the client: `agent(name)`, `sessions`, `guestUser`, `withUser`, `useChat`,
   `useVideo`, `disconnect`
-- `AgentSession` - one conversation: `responses`, `conversation`, `events()`, `decide`, `rewind`,
-  `fork`, `update`, `chat`, `close`, `delete`
+- `AgentSession` - one conversation: `responses`, `conversation`, `events()`, `decide`,
+  `addTools`, `removeTool`, `rewind`, `fork`, `update`, `chat`, `close`, `delete`
 - `Conversation`, `Turn`, `ConversationState` - the transcript and what the agent is doing
 - `LiveValue<T>` - a current value and a stream of its changes, with no state-management package
 - `AgentTool`, `ToolOutput` - tools the agent can call on the device

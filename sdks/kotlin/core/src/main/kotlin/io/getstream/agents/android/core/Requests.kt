@@ -8,8 +8,10 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.ByteReadChannel
 import java.io.IOException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
@@ -40,6 +42,10 @@ private const val MAX_ERROR_BODY = 512
  * reason is that the one held expired. A failure to reach the router is [AgentsException.Transport];
  * an answer is [AgentsException.Http], whatever it says. One sent [anonymously] carries only the
  * app's key, and a 401 to it means the router admits no anonymous callers.
+ *
+ * One sent [once] is never sent again by OkHttp itself, as a request otherwise is when its
+ * connection drops before the answer: the router may have acted on it, and the answer to a copy
+ * would be taken for its own. The drop is then [AgentsException.Transport].
  */
 internal suspend fun <T> Backend.send(
     method: HttpMethod,
@@ -48,13 +54,14 @@ internal suspend fun <T> Backend.send(
     query: List<Pair<String, String>> = emptyList(),
     body: String? = null,
     anonymously: Boolean = false,
+    once: Boolean = false,
 ): T? {
-    var response = attempt(method, path, query, body, anonymously)
+    var response = attempt(method, path, query, body, anonymously, once)
     if (anonymously && response.status.value == 401) {
         throw AgentsException.Configuration(ANONYMOUS_GUEST_REFUSED)
     }
     if (response.status.value == 401 && expireToken()) {
-        response = attempt(method, path, query, body, anonymously)
+        response = attempt(method, path, query, body, anonymously, once)
     }
 
     val text = try {
@@ -95,13 +102,16 @@ private suspend fun Backend.attempt(
     query: List<Pair<String, String>>,
     body: String?,
     anonymously: Boolean,
+    once: Boolean,
 ): HttpResponse {
     val headers = if (anonymously) mapOf("Stream-Auth-Type" to "anonymous") else headers()
     return try {
         http.request(url(*path.toTypedArray(), query = query)) {
             this.method = method
             headers.forEach { (name, value) -> header(name, value) }
-            if (body != null) {
+            if (once) {
+                setBody(OneShot(body.orEmpty().encodeToByteArray(), body?.let { ContentType.Application.Json }))
+            } else if (body != null) {
                 contentType(ContentType.Application.Json)
                 setBody(body)
             }
@@ -109,6 +119,17 @@ private suspend fun Backend.attempt(
     } catch (e: IOException) {
         throw AgentsException.Transport(e)
     }
+}
+
+/**
+ * A body OkHttp is told it can send only once, which it then never sends again, even on a
+ * connection that dropped before the answer. The same bytes and headers as a body sent the usual
+ * way, an empty one included.
+ */
+private class OneShot(private val bytes: ByteArray, override val contentType: ContentType?) : OutgoingContent.ReadChannelContent() {
+    override val contentLength: Long get() = bytes.size.toLong()
+
+    override fun readFrom(): ByteReadChannel = ByteReadChannel(bytes)
 }
 
 /**

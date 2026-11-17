@@ -188,9 +188,11 @@ final readonly class Client
      * @param array<string, string> $params
      * @param array<string, scalar|null> $query
      * @param array<mixed>|\stdClass|null $body
+     * @param bool $resend false for a request whose lost answer must reach the caller as lost
+     *     (`status` 0), rather than the transport sending it again and handing back that answer
      * @throws RouterException when the router answers a failure or cannot be reached
      */
-    public function request(string $method, string $path, array $params = [], array $query = [], array|\stdClass|null $body = null): mixed
+    public function request(string $method, string $path, array $params = [], array $query = [], array|\stdClass|null $body = null, bool $resend = true): mixed
     {
         $operation = "{$method} {$path}";
         $url = $this->backend->url . self::expand($path, $params) . self::queryOf($query);
@@ -206,7 +208,7 @@ final readonly class Client
         }
 
         try {
-            $response = $this->http->sendRequest($request);
+            $response = ($resend ? $this->http : Http::sentOnce($this->http))->sendRequest($request);
         } catch (ClientExceptionInterface $failed) {
             throw new RouterException(0, $operation, $failed->getMessage(), '', 0, $failed);
         }
