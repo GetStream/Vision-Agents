@@ -31,28 +31,65 @@ public data class Turn(
  * Immutable and with no network in it, which is the whole design: what a stream of frames
  * means for the transcript is decided in [reduce], and [AgentSession] is only the socket and
  * the `StateFlow` around it. Most new event handling belongs here, and is tested here.
+ *
+ * A value, compared by what it holds, though not a data class: it also keeps what each turn's UI
+ * wrote, which nobody outside sets or reads.
  */
-public data class Conversation(
+public class Conversation private constructor(
     /**
      * The conversation so far, oldest first. The agent's turn in flight is the last entry and
      * grows as deltas arrive.
      */
-    val turns: List<Turn> = emptyList(),
+    public val turns: List<Turn>,
     /** What the agent is doing. */
-    val state: State = State.Idle,
+    public val state: State,
     /**
      * What the agent reported going wrong, or null. Errors arrive as events rather than being
      * thrown, because nobody is awaiting the socket. It lasts until the agent shows it works
      * again: it next hears, starts answering or speaks.
      */
-    val failure: String? = null,
+    public val failure: String?,
     /**
      * What each agent turn's UI block wrote so far, by turn id: the deltas, or a patch before it
      * is merged. Kept apart from [Turn.ui], which is what shows and is left unchanged by a delta
      * that shows nothing new, and counted in equality so that such a delta is still kept.
      */
-    internal val uiWritten: Map<String, String> = emptyMap(),
+    private val uiWritten: Map<String, String>,
 ) {
+    public constructor(
+        turns: List<Turn> = emptyList(),
+        state: State = State.Idle,
+        failure: String? = null,
+    ) : this(turns, state, failure, emptyMap())
+
+    /** This conversation with the given parts changed, and the UI being written kept. */
+    public fun copy(
+        turns: List<Turn> = this.turns,
+        state: State = this.state,
+        failure: String? = this.failure,
+    ): Conversation = Conversation(turns, state, failure, uiWritten)
+
+    public operator fun component1(): List<Turn> = turns
+
+    public operator fun component2(): State = state
+
+    public operator fun component3(): String? = failure
+
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            other is Conversation &&
+            turns == other.turns &&
+            state == other.state &&
+            failure == other.failure &&
+            uiWritten == other.uiWritten
+
+    override fun hashCode(): Int = listOf(turns, state, failure, uiWritten).hashCode()
+
+    override fun toString(): String = "Conversation(turns=$turns, state=$state, failure=$failure)"
+
+    private fun writing(uiWritten: Map<String, String>): Conversation =
+        Conversation(turns, state, failure, uiWritten)
+
     public sealed interface State {
         /** Waiting to be spoken to. */
         public data object Idle : State
@@ -108,7 +145,7 @@ public data class Conversation(
                     this
                 } else {
                     val written = uiWritten[event.turnId].orEmpty() + delta
-                    copy(uiWritten = uiWritten + (event.turnId to written))
+                    writing(uiWritten + (event.turnId to written))
                         .writeUi(event, format, written, isStreaming = true, at)
                         .let { if (it.state is State.Working) it else it.copy(state = State.Responding) }
                 }
@@ -122,7 +159,7 @@ public data class Conversation(
                     this
                 } else {
                     val written = event.string("content").ifEmpty { uiWritten[event.turnId].orEmpty() }
-                    copy(uiWritten = uiWritten - event.turnId)
+                    writing(uiWritten - event.turnId)
                         .writeUi(event, format, written, isStreaming = false, at)
                 }
             }

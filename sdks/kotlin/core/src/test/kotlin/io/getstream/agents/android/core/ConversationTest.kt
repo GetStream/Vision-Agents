@@ -391,6 +391,20 @@ class ConversationTest {
     }
 
     @Test
+    fun `a copy keeps the UI being written`() {
+        val writing = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr"}""",
+        ).copy(failure = "the voice is unknown")
+
+        val conversation = writing.after("""{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"])\n"}""")
+
+        assertEquals("root = Card([hdr])", conversation.turns.single().ui?.content)
+        // What is being written is the SDK's to keep, not something to print.
+        assertTrue("Card" !in writing.toString())
+    }
+
+    @Test
     fun `a statement over several lines is replaced whole`() {
         val base = """
             root = Card([map, tip])
