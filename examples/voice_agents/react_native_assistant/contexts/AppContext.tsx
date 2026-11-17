@@ -113,12 +113,10 @@ const newChat = (sessionId?: string): Chat =>
 
 // The conversation's state over the chat. Asking goes through the session, which records the
 // question in the channel and answers it there; the router takes photos as data URIs, and
-// thinking harder as a high reasoning effort.
+// thinking harder as a high reasoning effort. A reply written again, or a question edited, keeps
+// its earlier versions, which the transport switches between with ‹ i/n ›.
 const conversationOf = (chat: Chat) =>
   new AIConversationController({
-    // The agents router keeps the conversation in Stream Chat and can't rewind it, so a reply
-    // can't be written again or a message edited: either would only be asked again as new.
-    actions: { edit: false, regenerate: false },
     approver: approverFor(chat),
     transport: agentChatTransport(chat, {
       adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
