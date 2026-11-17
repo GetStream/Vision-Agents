@@ -26,6 +26,13 @@ func (s *Service) awaitAgent(leg store.CallLeg) {
 		case <-s.closing:
 			return
 		}
+		// Go picks either ready case of a select at random, so a wait that ended as Close ran
+		// can win over closing.
+		select {
+		case <-s.closing:
+			return
+		default:
+		}
 		s.checkAgent(leg)
 	}()
 }

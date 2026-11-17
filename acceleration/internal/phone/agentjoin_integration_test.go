@@ -251,10 +251,33 @@ func (s *MeteringSuite) TestCloseStopsAWaitingCheck() {
 
 	select {
 	case waits <- time.Now():
-		s.Fail("a check still waited after Close")
 	case <-time.After(500 * time.Millisecond):
 	}
-	s.False(s.endedAtStream(placed.CallType, placed.CallID))
+	s.Never(func() bool { return s.endedAtStream(placed.CallType, placed.CallID) }, 500*time.Millisecond, 10*time.Millisecond,
+		"a router that stopped ended the call")
+}
+
+// A wait that ends as the router stops does not start a check. Go picks a ready case of a
+// select at random, so each call has an even chance to show a check that starts anyway.
+func (s *MeteringSuite) TestAWaitThatEndsAsTheRouterStopsStartsNoCheck() {
+	s.noWait()
+	s.Require().NoError(s.service.Close(s.ctx))
+	var calls []Placed
+	for range 16 {
+		placed := s.place()
+		s.deployment.PutCallParticipants(placed.CallType, placed.CallID, chattest.Participant{UserID: person, UserSessionID: personSession})
+		s.answered(placed.CallType, placed.CallID, personSession)
+		calls = append(calls, placed)
+	}
+
+	s.Never(func() bool {
+		for _, placed := range calls {
+			if s.endedAtStream(placed.CallType, placed.CallID) {
+				return true
+			}
+		}
+		return false
+	}, 500*time.Millisecond, 10*time.Millisecond, "a check started after the router stopped")
 }
 
 // Stream answers a call whose session has not started with no session at all. The check must
