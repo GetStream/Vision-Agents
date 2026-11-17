@@ -784,7 +784,11 @@ public sealed class ClientTests
         router.On("GET", "/v1/agents/calls/*", 404, Fixtures.Failure("not_found", "call_not_found", "unknown call"));
         router.On("GET", "/v1/agents/sessions/session-1/tokens", 200, new
         {
-            input_tokens = 1200, cached_input_tokens = 800, output_tokens = 90, cost_micros = 4100, requests = 3,
+            input_tokens = 1200,
+            cached_input_tokens = 800,
+            output_tokens = 90,
+            cost_micros = 4100,
+            requests = 3,
             input_parts = new { instructions = 700, messages = 300, tool_definitions = 200, tool_use = 0, images = 0, video = 0 },
             models = new[] { new { modality = "llm", provider = "openai", model = "gpt-5-mini", input_tokens = 1200 } },
             cost_sources = Array.Empty<object>(),

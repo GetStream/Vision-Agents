@@ -282,7 +282,7 @@ func newRouter(t *testing.T) *router {
 		answer(w, http.StatusOK, acceleration.CallTokens{
 			InputTokens: 1200, CachedInputTokens: 800, OutputTokens: 90, CostMicros: 4100, Requests: 3,
 			InputParts: acceleration.InputParts{Instructions: 700, Messages: 300, ToolDefinitions: 200},
-			Models: []acceleration.ModelTokens{{Modality: "llm", Provider: "openai", Model: "gpt-5-mini", InputTokens: 1200}},
+			Models:     []acceleration.ModelTokens{{Modality: "llm", Provider: "openai", Model: "gpt-5-mini", InputTokens: 1200}},
 		})
 	})
 	mux.HandleFunc("GET /v1/agents/calls/{id}/timeline", func(w http.ResponseWriter, r *http.Request) {
