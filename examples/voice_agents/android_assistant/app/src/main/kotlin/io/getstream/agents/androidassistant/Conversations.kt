@@ -42,8 +42,8 @@ class Conversations : ViewModel() {
         try {
             val text = search.value
             val page = if (text.isEmpty()) Assistant.sessions.query(limit = 50) else Assistant.sessions.search(text, limit = 50)
-            // Only the ones kept in writing can be opened again as a chat: a session that was
-            // only ever a call, or incognito, has no channel to read back.
+            // Only the ones kept in Stream Chat can be opened again as a chat: a session with
+            // no conversation id has no channel to read back.
             found.value = page.items.filter { it.conversationId.isNotEmpty() }
             failed.value = null
         } catch (e: AgentsException) {

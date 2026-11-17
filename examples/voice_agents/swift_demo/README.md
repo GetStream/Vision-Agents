@@ -57,9 +57,9 @@ takes the secret of the Stream app the router runs in, and `Demo.streamAPIKey` t
 STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend
 ```
 
-Then open `app/SwiftDemo.xcodeproj` in Xcode 27 and run it on a simulator. Ask about an order
-in the Chat tab or tap talk in the Voice tab. Xcode 27 because the app shows the conversation
-with Stream Chat's AI components (`StreamChatAI`), which need it to add with SPM. The app takes
+Then open `app/SwiftDemo.xcodeproj` in Xcode 26 or newer and run it on a simulator. Ask about an
+order in the Chat tab or tap talk in the Voice tab. The app shows the conversation with Stream
+Chat's AI components (`StreamChatAI`), which build with Xcode 26 from 5.17.0. The app takes
 `stream-chat-swift` from its `develop` branch, because the voice glow (`AIVoiceGlowView`) is not
 in a released `StreamChatAI` yet.
 

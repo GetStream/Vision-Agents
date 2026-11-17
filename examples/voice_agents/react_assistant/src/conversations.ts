@@ -43,8 +43,8 @@ export class Conversations extends Store<{
       const page = search ? await sessions().search(search, query) : await sessions().query(query);
       // A newer read was asked for meanwhile, such as another search: its answer is the one shown.
       if (read !== this.reads) return;
-      // Only the ones kept in writing can be opened again as a chat: a session that was only
-      // ever a call, or incognito, has no channel to read back.
+      // Only the ones kept in Stream Chat can be opened again as a chat: a session with no
+      // conversation id has no channel to read back.
       this.update({ items: page.items.filter((each) => Boolean(each.conversation_id)), searched: search, failure: undefined });
     } catch (cause) {
       if (read === this.reads) this.update({ failure: messageOf(cause) });

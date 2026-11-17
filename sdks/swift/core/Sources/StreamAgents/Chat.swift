@@ -16,13 +16,16 @@ extension StreamAgents {
 extension AgentSession {
     /// The Stream Chat channel this conversation is kept in.
     ///
+    /// A text or voice session keeps one unless it is incognito; asking an incognito one
+    /// throws `AgentsError.configuration`.
+    ///
     /// It opens on the client handed over with `use`, or else on one built here and connected
     /// as the user `setUser` named, with the agents' key, which every session then shares.
     public func chat() async throws -> ChatChannelController {
         guard !session.conversationID.isEmpty else {
             throw AgentsError.configuration(
-                "this session keeps no transcript, so there is no channel to read: only a text "
-                    + "session has one, and an incognito session never does")
+                "this session keeps no transcript, so there is no channel to read: an incognito "
+                    + "session never has one")
         }
         let cid = try ChannelId(cid: session.conversationID)
         let backend = backend

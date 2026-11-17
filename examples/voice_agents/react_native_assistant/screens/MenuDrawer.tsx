@@ -25,8 +25,8 @@ const byLastUsed = (sessions: readonly SessionRow[]) =>
   [...sessions].sort((a, b) => lastUsed(b) - lastUsed(a));
 
 /**
- * The agent's conversations, most recently used first. Only those kept in writing: a session that
- * was only ever a call has no channel to read back.
+ * The agent's conversations, most recently used first. Only those kept in Stream Chat: a session
+ * with no conversation id has no channel to read back.
  */
 export const MenuDrawer = ({ navigation }: DrawerContentComponentProps) => {
   const { conversationsVersion, openConversation, sessionId, startConversation } = useAppContext();

@@ -65,8 +65,8 @@ private suspend fun AgentSession.open(context: Context): Pair<ChatClient, String
     val channel = session.conversationId
     if (channel.isEmpty()) {
         throw AgentsException.Configuration(
-            "this session keeps no transcript, so there is no channel to read: only a text " +
-                "session has one, and an incognito session never does",
+            "this session keeps no transcript, so there is no channel to read: an incognito " +
+                "session never has one",
         )
     }
     val user = backend.user
