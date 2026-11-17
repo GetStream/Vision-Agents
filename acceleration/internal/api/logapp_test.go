@@ -151,6 +151,17 @@ func (s *LogAppSuite) TestTheAccessLineOfARouteWithNoOperationNamesItsLogOnlyNam
 	s.NotContains(answer, token)
 	s.Equal("PhoneHook", s.field(hook, "operation_type"))
 	s.Equal("ChatHook", s.field(chatHook, "operation_type"))
+
+	// Defect: a peer route logging another peer's name, which a non-empty check passes.
+	for path, want := range map[string]string{
+		scheduledPeerPath:   "ScheduledTaskDeliver",
+		chatInboundPeerPath: "ChatInboundAnswer",
+		unansweredPeerPath:  "PhoneEndUnanswered",
+		machinePeerPath:     "PhoneMachine",
+	} {
+		line := s.sent(s.unauthenticatedClient, http.MethodPost, path, nil)
+		s.Equal(want, s.field(line, "operation_type"), path)
+	}
 }
 
 // Defect: the code left off a refusal, or another code than the one the caller was told.
