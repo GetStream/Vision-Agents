@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -45,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import io.getstream.chat.android.ai.compose.generativeui.AIUIComponent
 import io.getstream.chat.android.ai.compose.generativeui.AIUIComponentDefinition
 import io.getstream.chat.android.ai.openui.rendering.OpenUITheme
-import java.util.Locale
 import kotlin.math.roundToInt
 
 /** A restaurant's card, which asks for its menu when tapped. */
@@ -82,7 +82,8 @@ internal fun seatSelector(definition: AIUIComponentDefinition) = AIUIComponent(d
 @Composable
 private fun RestaurantCard(name: String, cuisine: String, rating: Double, priceTier: String?, onInspect: () -> Unit) {
     val theme = OpenUITheme.current
-    val badge = "★ " + String.format(Locale.getDefault(), "%.1f", rating) + priceTier?.let { " · $it" }.orEmpty()
+    val locale = LocalLocale.current.platformLocale
+    val badge = "★ " + String.format(locale, "%.1f", rating) + priceTier?.let { " · $it" }.orEmpty()
     Column(
         modifier = Modifier
             .fillMaxWidth()

@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.getstream.agents.androidassistant.Permissions
@@ -67,7 +68,8 @@ private fun CalendarCheck(start: Date, end: Date) {
         days = loaded.orEmpty()
         failure = if (loaded == null) "Let Juno see your calendar in Settings to check these days." else null
     }
-    val dayFormat = remember { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEdMMM"), Locale.getDefault()) }
+    val locale = LocalLocale.current.platformLocale
+    val dayFormat = remember(locale) { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, "EEEdMMM"), locale) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
