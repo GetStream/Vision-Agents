@@ -2,6 +2,9 @@ package io.getstream.agents.android.core
 
 import android.content.ContextWrapper
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,6 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -368,6 +372,128 @@ class AgentSessionTest {
         chat.say("still there?")
         assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
         assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    /** A tool that asks first, so whether a call of it is answered here shows in [AgentSession.approvals] at once. */
+    private fun reserve(title: String) = AgentTool("reserve_table", "Reserve a table.", approval = AgentTool.Approval(title)) { "Reserved." }
+
+    /**
+     * The question a call of `reserve_table` waits on here, or null when no tool here answers it.
+     * Read once the session has seen the call, which it holds for the person before passing it on.
+     */
+    private suspend fun heldFor(chat: AgentSession): String? = coroutineScope {
+        val seen = async(start = CoroutineStart.UNDISPATCHED) { chat.events().first { it.type == "tool_call" } }
+        router.script.send(
+            Script.Send("""{"type":"tool_call","id":"c1","name":"reserve_table","arguments":"{}","request_id":"r1","turn_id":"t1"}"""),
+        )
+        seen.await()
+        chat.approvals.value.singleOrNull()?.approval?.title
+    }
+
+    private fun AgentSession.toolRequests() =
+        router.requests.filter { it.path.startsWith("/v1/agents/sessions/$id/tools") }.map { "${it.method} ${it.path}" }
+
+    @Test
+    fun `a tool the router refused is not answered here`() = runBlocking {
+        val chat = agents.chat()
+        router.answer = { Reply(400, envelope("invalid_request", "invalid_request", "this model's tools are fixed")) }
+
+        val refused = assertFailsWith<AgentsException.Http> { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+
+        assertEquals(400, refused.status)
+        assertNull(heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a tool whose adding got no answer is still answered, since the router may offer it`() = runBlocking {
+        val chat = agents.chat()
+        router.answer = { Reply(hangUp = true) }
+
+        assertFailsWith<AgentsException.Transport> { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+
+        assertEquals("Reserve at Chez Nous?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a tool added under a name the session has leaves the one it has answering`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(reserve("Reserve at Chez Nous?"))))
+        router.answer = { Reply(409, envelope("conflict", "conflict", "the session has a tool named reserve_table")) }
+
+        assertFailsWith<AgentsException.Http> { chat.addTools(listOf(reserve("Reserve at the Ritz?"))) }
+
+        assertEquals("Reserve at Chez Nous?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a name whose adding got no answer is withdrawn before another tool takes it`() = runBlocking {
+        val chat = agents.chat()
+        router.answer = { Reply(hangUp = true) }
+        assertFailsWith<AgentsException.Transport> { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+        router.answer = { if (it.method == "DELETE") Reply(404, envelope("not_found", "not_found", "no tool by that name")) else Reply(204) }
+
+        chat.addTools(listOf(reserve("Reserve at the Ritz?")))
+
+        assertEquals(
+            listOf("DELETE /v1/agents/sessions/s1/tools/reserve_table", "POST /v1/agents/sessions/s1/tools"),
+            chat.toolRequests().takeLast(2),
+        )
+        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `removing a name whose adding got no answer settles it, the router having none included`() = runBlocking {
+        val chat = agents.chat()
+        router.answer = { Reply(hangUp = true) }
+        assertFailsWith<AgentsException.Transport> { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+        router.answer = { Reply(404, envelope("not_found", "not_found", "no tool by that name")) }
+
+        chat.removeTool("reserve_table")
+
+        assertNull(heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a tool the session opened with can be withdrawn and added again with another handler`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(reserve("Reserve at Chez Nous?"))))
+        router.answer = { Reply(204) }
+
+        chat.removeTool("reserve_table")
+        chat.addTools(listOf(reserve("Reserve at the Ritz?")))
+
+        assertEquals(listOf("DELETE /v1/agents/sessions/s1/tools/reserve_table", "POST /v1/agents/sessions/s1/tools"), chat.toolRequests())
+        assertEquals(
+            Json.parseToJsonElement("""{"tools":[{"description":"Reserve a table.","name":"reserve_table","approval":{"title":"Reserve at the Ritz?"}}]}"""),
+            Json.parseToJsonElement(router.requests.last().body),
+        )
+        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        chat.close()
+    }
+
+    @Test
+    fun `a change of tools waits for the one before it to be answered`() = runBlocking {
+        val chat = agents.chat()
+        val removing = CountDownLatch(1)
+        val overlapped = AtomicBoolean(false)
+        router.answer = {
+            // The add's answer is held until the removal arrives, or a second goes by without it.
+            if (it.method == "POST") overlapped.set(removing.await(1, TimeUnit.SECONDS)) else removing.countDown()
+            Reply(204)
+        }
+        val adding = async { chat.addTools(listOf(reserve("Reserve at Chez Nous?"))) }
+        until { chat.toolRequests().isNotEmpty() }
+
+        chat.removeTool("reserve_table")
+        adding.await()
+
+        assertFalse(overlapped.get(), "the removal was sent while the add waited for its answer")
+        assertEquals(listOf("POST /v1/agents/sessions/s1/tools", "DELETE /v1/agents/sessions/s1/tools/reserve_table"), chat.toolRequests())
+        assertNull(heldFor(chat))
         chat.close()
     }
 

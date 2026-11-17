@@ -393,6 +393,22 @@ as URLs or data URIs, which the model sees with that call's result.
 run: async () => new ToolOutput({ text: "The desk, just now.", images: [{ url: dataUri }] }),
 ```
 
+A running session can be given more functions, such as the ones a card shown in it brings, and
+have them taken back:
+
+```ts
+await session.addTools(new Tools().register({ name: "reserve_table", description: "Reserve a table", run: reserve }));
+await session.removeTool("reserve_table");
+```
+
+They are that session's alone and run here, as the ones it opened with do. The router waits for
+the reply in progress and every call in flight before either answers, and the model is offered
+the change from its next turn, so neither is awaited from inside one of the session's functions.
+A name the session already has is refused with a 409: to change a function, remove it, then add
+it again. Only the kind of caller that opened the session may change its tools (403 otherwise),
+and an add whose answer was lost keeps its functions running until the name is added or removed
+again.
+
 ## Agent dispatch
 
 A caller reached a Stream call over SIP, or somebody wrote in a channel, and the router

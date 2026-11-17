@@ -103,6 +103,20 @@ on, for a write that must not stop halfway, and returns `Error::NotHeld` when th
 already cancelled it. A cancelled call is aborted at its next `.await` and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.
 
+A running session takes more functions, and gives them back, from its next turn:
+
+```rust
+let seats = Tools::new();
+seats.register("reserve_table", "Reserve the table the caller picked", json!({}), reserve);
+session.add_tools(seats).await?;
+// later
+session.remove_tool("reserve_table").await?;
+```
+
+What is added is this session's alone, and goes when it ends. A name it already has is refused
+(409): remove it, then add it again. Both wait for the turn in progress and every call in
+flight, so never await them from inside one of the session's functions.
+
 A session closes when it is dropped. To close it at a point you choose and wait for it,
 scope it:
 

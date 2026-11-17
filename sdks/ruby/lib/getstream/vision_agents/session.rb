@@ -82,6 +82,16 @@ module GetStream
         @heard = false
         @ended = false
         @running = {}
+        # added are the functions add_tools gave the session after it opened, by name, each in
+        # the Tools it was added in; they run here before the agent's own of the same name.
+        # withdrawn are the names remove_tool took from the session, which the agent's own no
+        # longer run, and unsettled the ones whose adding was never answered, which the router
+        # may or may not offer.
+        @added = {}
+        @withdrawn = {}
+        @unsettled = {}
+        # One change of the session's tools at a time, across its request.
+        @changing = Mutex.new
         @reader = Thread.new { watch }
         @reader.report_on_exception = false
       end
@@ -155,6 +165,61 @@ module GetStream
       # @return [Hash] the session as the router now has it.
       def update(**fields)
         @client.patch("/v1/agents/sessions/{id}", path: { id: id }, body: fields)
+      end
+
+      # Gives this session the functions in more while it runs, for it alone, and runs their
+      # calls here. The agent's own tools are left as they are, and no other session gets
+      # these. One named as a tool the session already has is refused: to change one,
+      # remove_tool it first, so that no call of it runs half under each.
+      #
+      # The router waits for the turn in progress, and every call in flight, to finish, and the
+      # model is offered them from the next turn, so do not call this from inside one of the
+      # session's tools. Only the kind of caller that opened the session may.
+      #
+      # @param more [Tools] the functions to add.
+      # @raise [RouterError] when the router refused them, or with status 0 when its answer was
+      #   lost, in which case their calls are still run here until the name is changed again.
+      def add_tools(more)
+        declared = more.declarations
+        raise ConfigurationError, "there are no tools to add" if declared.empty?
+
+        names = declared.map { |tool| tool[:name] }
+        @changing.synchronize do
+          # A name whose adding was never answered may or may not be the router's: it is
+          # withdrawn first, so the router and this process agree on which function it is.
+          names.each { |name| withdraw(name, absent_is_fine: true) if unsettled?(name) }
+
+          # Run from before the router answers: the next turn can call one before the answer is
+          # here. A name already run here keeps its function, since the router refuses to add
+          # it again.
+          fresh = @lock.synchronize do
+            names.reject { |name| @added.key?(name) || (!@withdrawn[name] && @tools&.include?(name)) }
+                 .each { |name| @added[name] = more }
+          end
+          begin
+            @client.post("/v1/agents/sessions/{id}/tools", path: { id: id }, body: { tools: declared })
+          rescue Error => e
+            # Refused, the router has none of them. Without an answer it may have them all, so
+            # their calls are still run here until a later change of the name settles it.
+            refused = e.is_a?(RouterError) && e.status.positive?
+            @lock.synchronize do
+              fresh.each { |name| refused ? @added.delete(name) : (@unsettled[name] = true) }
+            end
+            raise
+          end
+        end
+        nil
+      end
+
+      # Withdraws one of this session's tools, whether the agent declared it when the session
+      # opened or add_tools added it since. The router waits as it does for add_tools, so once
+      # this returns no call of the tool is in flight and none can be made: do not call it from
+      # inside one of the session's tools.
+      #
+      # @raise [RouterError] 404 when the session has no tool by that name.
+      def remove_tool(name)
+        name = name.to_s
+        @changing.synchronize { withdraw(name, absent_is_fine: unsettled?(name)) }
       end
 
       # Pins this conversation, so a query sorted by pinned lists it first. Its place in
@@ -244,7 +309,8 @@ module GetStream
           # Every watcher is sent every call, and the router says which are to run it. One
           # from before it said holds the same rule: answering a tool held elsewhere would
           # beat whoever runs it, with an error.
-          run_tool(frame) if frame["run"] != false && @tools&.include?(frame["name"].to_s)
+          tools = tools_for(frame["name"].to_s)
+          run_tool(frame, tools) if frame["run"] != false && tools&.include?(frame["name"].to_s)
         when "tool_cancel"
           # The model has moved on. A Ruby thread cannot be stopped safely from outside, so the
           # tool is left to finish and its answer is dropped rather than sent, unless it asked
@@ -275,7 +341,7 @@ module GetStream
         end
       end
 
-      def run_tool(frame)
+      def run_tool(frame, tools)
         call_id = frame["id"].to_s
         answer = { type: "tool_result", tool_call_id: call_id }
         answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
@@ -295,13 +361,40 @@ module GetStream
           # A tool that raises is reported to the model rather than dropped: it is
           # mid-sentence waiting, and can only say something useful if it is told.
           result = begin
-            { output: @tools.call(frame["name"].to_s, frame["arguments"], tool_call_context) }
+            { output: tools.call(frame["name"].to_s, frame["arguments"], tool_call_context) }
           rescue StandardError => e
             { error: e.message }
           end
           wanted = @lock.synchronize { @running.delete(call_id) }
           reply(answer.merge(result)) if wanted
         end
+      end
+
+      # Takes the tool called name from the session and from what runs here. absent_is_fine
+      # settles a name whose adding was never answered: the router having no tool by it is as
+      # good as withdrawing it.
+      def withdraw(name, absent_is_fine:)
+        begin
+          @client.delete("/v1/agents/sessions/{id}/tools/{name}", path: { id: id, name: name })
+        rescue RouterError => e
+          raise unless absent_is_fine && e.status == 404
+        end
+        @lock.synchronize do
+          @added.delete(name)
+          @unsettled.delete(name)
+          @withdrawn[name] = true
+        end
+        nil
+      end
+
+      def unsettled?(name)
+        @lock.synchronize { @unsettled.key?(name) }
+      end
+
+      # The Tools that run the tool called name: the ones add_tools added it in, none once
+      # remove_tool withdrew it, else the agent's own.
+      def tools_for(name)
+        @lock.synchronize { @added[name] || (@tools unless @withdrawn[name]) }
       end
 
       def reply(frame)

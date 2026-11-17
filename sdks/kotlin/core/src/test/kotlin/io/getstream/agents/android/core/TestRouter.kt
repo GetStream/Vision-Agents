@@ -12,15 +12,18 @@ import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
+import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
+import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.channels.Channel
@@ -39,8 +42,17 @@ data class Arrived(
     fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
 }
 
-/** What the router answers one request with. */
-data class Reply(val status: Int = 200, val body: String = "", val headers: Map<String, String> = emptyMap())
+/**
+ * What the router answers one request with. [hangUp] hangs up partway through the answer, so the
+ * request was handled and its answer never arrives. A hang-up before the status line is out may
+ * have OkHttp send the request once more, as it does on any connection that drops that early.
+ */
+data class Reply(
+    val status: Int = 200,
+    val body: String = "",
+    val headers: Map<String, String> = emptyMap(),
+    val hangUp: Boolean = false,
+)
 
 /** A failure as the router answers every one. */
 fun envelope(type: String, code: String, message: String) =
@@ -124,7 +136,15 @@ class TestRouter : AutoCloseable {
                     requests += arrived
                     val reply = answer(arrived)
                     reply.headers.forEach { (name, value) -> call.response.header(name, value) }
-                    call.respondText(reply.body, ContentType.Application.Json, HttpStatusCode.fromValue(reply.status))
+                    if (reply.hangUp) {
+                        call.respondBytesWriter(ContentType.Application.Json, HttpStatusCode.fromValue(reply.status)) {
+                            writeStringUtf8("{")
+                            flush()
+                            throw IOException("hung up")
+                        }
+                    } else {
+                        call.respondText(reply.body, ContentType.Application.Json, HttpStatusCode.fromValue(reply.status))
+                    }
                 }
             }
         }

@@ -89,6 +89,23 @@ already been stopped. A Ruby thread cannot be stopped from outside, so a call th
 or ran out of time keeps running with `tool_call_context.cancelled?` true, and its answer is
 dropped. A call the router addresses to another watcher (`run: false`) is left alone.
 
+A running session can be given tools of its own and have them taken back. The agent's tools are
+left as they are, and no other session gets these:
+
+```ruby
+extra = GetStream::VisionAgents::Tools.new
+extra.register("reserve_table", description: "Reserve a table") { |args| tables.reserve(args["table"]) }
+session.add_tools(extra)
+session.remove_tool("reserve_table")
+```
+
+The router waits for the turn in progress and every call in flight, and the model is offered the
+change from the next turn, so neither is called from inside one of the session's tools. A name
+the session already has is refused with a 409: remove it, then add it again. `remove_tool` takes
+the agent's own tools too, and the name can then be added with another function. An add whose
+answer was lost (`RouterError#status` 0) keeps its tools running here until the name is changed
+again.
+
 ## Credentials
 
 | Credential | Who it is |

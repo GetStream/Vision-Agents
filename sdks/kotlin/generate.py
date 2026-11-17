@@ -40,9 +40,11 @@ GENERATED = KOTLIN / "core" / "src" / "main" / "kotlin" / Path(*PACKAGE.split(".
 IMAGE = "openapitools/openapi-generator-cli:v7.25.0"
 
 # What a client is allowed to reach: opening a conversation, finding, reading, renaming,
-# stopping and deleting one, going back in it or branching off it, becoming a guest, looking
-# something up, and finding, moving, pausing and cancelling the user's own scheduled tasks.
+# stopping and deleting one, going back in it or branching off it, giving a running one tools and
+# taking them back, becoming a guest, looking something up, and finding, moving, pausing and
+# cancelling the user's own scheduled tasks.
 OPERATIONS = [
+    "addSessionTools",
     "createGuestUser",
     "createResponse",
     "createSession",
@@ -57,6 +59,7 @@ OPERATIONS = [
     "listScheduledTasks",
     "pauseScheduledTask",
     "querySessions",
+    "removeSessionTool",
     "resumeScheduledTask",
     "rewindSession",
     "search",

@@ -1124,6 +1124,186 @@ class TestSessions < LocalRouterTest
     assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1/memories").size
     assert_equal 1, @router.seen(:delete, "/v1/agents/sessions/sess_1").size
   end
+
+  ADDED = "/v1/agents/sessions/sess_1/tools"
+  RESERVE_TABLE = "/v1/agents/sessions/sess_1/tools/reserve_table"
+
+  def teardown
+    @calls&.each(&:close)
+    super
+  end
+
+  # Tools holding one function, name, that answers said.
+  def tool(name, said)
+    VA::Tools.new.register(name, description: "Runs #{name}") { said }
+  end
+
+  # Opens a session of an agent with tools, and the lambda that has the router call a tool on
+  # it by name: it answers what came back, or nil when nothing did.
+  def session_asked(id = "sess_1", tools: VA::Tools.new)
+    calls = Thread::Queue.new
+    answers = Thread::Queue.new
+    (@calls ||= []) << calls
+    asked = 0
+    serve_session(id) do |peer|
+      while (name = calls.pop)
+        peer.send_frame(type: "tool_call", id: "call_#{asked += 1}", name: name, arguments: "{}")
+        answers << peer.receive_type("tool_result", timeout: 0.3)
+      end
+    end
+    ask = lambda do |name|
+      calls << name
+      answers.pop(timeout: 5)&.slice("output", "error")
+    end
+    [client.agent("docs", tools: tools).sessions.create, ask]
+  end
+
+  def test_a_tool_added_while_the_session_runs_is_declared_and_run_here
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+
+    assert_nil session.add_tools(tool("reserve_table", "Reserved T4."))
+
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+    assert_equal({ "tools" => [{ "name" => "reserve_table", "description" => "Runs reserve_table",
+                                 "parameters" => { "type" => "object", "properties" => {} } }] },
+                 @router.last(:post, ADDED).json)
+    assert_raises(VA::ConfigurationError) { session.add_tools(VA::Tools.new) }
+    assert_equal 1, @router.seen(:post, ADDED).size
+    session.close
+  end
+
+  def test_a_tool_the_router_refused_is_not_run_here
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 409,
+                             body: LocalRouter.failure("conflict", "tool_exists", "the session offers reserve_table"))
+
+    error = assert_raises(VA::RouterError) { session.add_tools(tool("reserve_table", "Reserved T4.")) }
+
+    assert_equal 409, error.status
+    assert_nil ask.call("reserve_table")
+    session.close
+  end
+
+  def test_a_tool_whose_adding_got_no_answer_runs_here_until_another_takes_its_name
+    session, ask = session_asked
+    lost = true
+    @router.on(:post, ADDED) do
+      # The connection drops unanswered, so whether the router added it is unknown here.
+      raise IOError, "dropped" if lost
+
+      [204, nil]
+    end
+    @router.on(:delete, RESERVE_TABLE, status: 404,
+                                       body: LocalRouter.failure("not_found", "tool_not_found", "no reserve_table"))
+
+    error = assert_raises(VA::RouterError) { session.add_tools(tool("reserve_table", "Reserved T4.")) }
+    assert_equal 0, error.status
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+    lost = false
+    session.add_tools(tool("reserve_table", "Reserved T9."))
+
+    assert_equal %w[POST DELETE POST],
+                 @router.requests.select { |request| request.path.start_with?(ADDED) }.map(&:method)
+    assert_equal({ "output" => "Reserved T9." }, ask.call("reserve_table"))
+    session.close
+  end
+
+  def test_a_removed_tool_is_no_longer_run_here
+    session, ask = session_asked
+    @router.on(:post, ADDED, status: 204)
+    @router.on(:delete, RESERVE_TABLE, status: 204)
+    session.add_tools(tool("reserve_table", "Reserved T4."))
+
+    assert_nil session.remove_tool("reserve_table")
+
+    assert_equal 1, @router.seen(:delete, RESERVE_TABLE).size
+    assert_nil ask.call("reserve_table")
+    session.close
+  end
+
+  def test_a_404_settles_a_removal_only_of_a_tool_whose_adding_got_no_answer
+    session, = session_asked
+    @router.on(:post, ADDED) { raise IOError, "dropped" }
+    @router.on(:delete, RESERVE_TABLE, status: 404,
+                                       body: LocalRouter.failure("not_found", "tool_not_found", "no reserve_table"))
+    assert_raises(VA::RouterError) { session.add_tools(tool("reserve_table", "Reserved T4.")) }
+
+    assert_nil session.remove_tool("reserve_table")
+
+    assert_equal 404, assert_raises(VA::RouterError) { session.remove_tool("reserve_table") }.status
+    session.close
+  end
+
+  def test_a_tool_added_under_a_name_the_session_runs_keeps_its_function
+    session, ask = session_asked(tools: tool("weather", "clear"))
+    lost = false
+    @router.on(:post, ADDED) do
+      raise IOError, "dropped" if lost
+
+      [204, nil]
+    end
+    session.add_tools(tool("reserve_table", "Reserved T4."))
+    lost = true
+    again = tool("reserve_table", "Reserved T9.").register("weather", description: "Runs weather") { "rain" }
+
+    assert_raises(VA::RouterError) { session.add_tools(again) }
+
+    assert_equal({ "output" => "Reserved T4." }, ask.call("reserve_table"))
+    assert_equal({ "output" => "clear" }, ask.call("weather"))
+    session.close
+  end
+
+  def test_a_tool_withdrawn_from_the_agents_runs_the_one_added_in_its_place
+    session, ask = session_asked(tools: tool("reserve_table", "Reserved by the agent."))
+    @router.on(:post, ADDED, status: 204)
+    @router.on(:delete, RESERVE_TABLE, status: 204)
+
+    session.remove_tool("reserve_table")
+    assert_nil ask.call("reserve_table")
+    session.add_tools(tool("reserve_table", "Reserved T9."))
+
+    assert_equal({ "output" => "Reserved T9." }, ask.call("reserve_table"))
+    session.close
+  end
+
+  def test_tools_added_to_a_session_are_not_run_for_the_next
+    agent_tools = VA::Tools.new
+    first, = session_asked("sess_1", tools: agent_tools)
+    @router.on(:post, ADDED, status: 204)
+    first.add_tools(tool("reserve_table", "Reserved T4."))
+    first.close
+
+    second, ask = session_asked("sess_2", tools: agent_tools)
+
+    assert_nil ask.call("reserve_table")
+    second.close
+  end
+
+  def test_the_tools_change_one_at_a_time
+    serve_session
+    lock = Mutex.new
+    open = 0
+    overlapped = false
+    beside = Thread::Queue.new
+    @router.on(:post, ADDED) do
+      alone = lock.synchronize do
+        overlapped ||= open.positive?
+        (open += 1) == 1
+      end
+      # A change held open long enough for one sent beside it to arrive, which frees it.
+      alone ? beside.pop(timeout: 0.3) : beside << true
+      lock.synchronize { open -= 1 }
+      [204, nil]
+    end
+    session = client.agent("docs").sessions.create
+
+    %w[reserve_table cancel_table].map { |name| Thread.new { session.add_tools(tool(name, "done")) } }.each(&:join)
+
+    refute overlapped, "two changes of the session's tools were sent at once"
+    assert_equal 2, @router.seen(:post, ADDED).size
+    session.close
+  end
 end
 
 class TestResponses < LocalRouterTest

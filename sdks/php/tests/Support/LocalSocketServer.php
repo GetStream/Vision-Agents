@@ -20,11 +20,15 @@ use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Json;
 use Psr\Log\NullLogger;
 
+use function Amp\delay;
+
 /**
  * A real websocket server on this process's event loop, playing the router's side of a socket.
  *
  * The script is handed each connection and talks to it the way the router would; everything the
- * client sent is kept, so a test asserts on the frames rather than on what was called.
+ * client sent is kept, so a test asserts on the frames rather than on what was called. A plain
+ * HTTP request is answered from `answers`, for a test that needs the session's requests and its
+ * socket from one router.
  */
 final class LocalSocketServer implements WebsocketClientHandler, WebsocketAcceptor
 {
@@ -37,6 +41,15 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
     public array $headers = [];
     /** A status to refuse the handshake with, or 0 to accept it. */
     public int $refuse = 0;
+    /**
+     * @var array<string, list<int>> the statuses `METHOD /path` is answered with, in order, the
+     *     last repeated; -1 drops the connection unanswered, and one not listed is a 404
+     */
+    public array $answers = [];
+    /** @var list<string> each plain HTTP request, as `METHOD /path body` */
+    public array $requests = [];
+    /** Seconds a plain HTTP request waits for its answer. */
+    public float $answerAfter = 0.0;
     private readonly SocketHttpServer $server;
     private readonly Rfc6455Acceptor $acceptor;
 
@@ -61,6 +74,9 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
 
     public function handleHandshake(Request $request): Response
     {
+        if (!$request->hasHeader('upgrade')) {
+            return $this->answer($request);
+        }
         $uri = $request->getUri();
         $this->handshakes[] = $uri->getPath() . ($uri->getQuery() === '' ? '' : '?' . $uri->getQuery());
         $headers = [];
@@ -116,5 +132,22 @@ final class LocalSocketServer implements WebsocketClientHandler, WebsocketAccept
     public function stop(): void
     {
         $this->server->stop();
+    }
+
+    private function answer(Request $request): Response
+    {
+        $key = $request->getMethod() . ' ' . $request->getUri()->getPath();
+        $this->requests[] = trim($key . ' ' . $request->getBody()->buffer());
+        $statuses = $this->answers[$key] ?? [404];
+        $status = count($statuses) > 1 ? (int) array_shift($this->answers[$key]) : $statuses[0];
+        delay($this->answerAfter);
+        if ($status < 0) {
+            $request->getClient()->close();
+            return new Response(500);
+        }
+        if ($status < 400) {
+            return new Response($status);
+        }
+        return new Response($status, ['content-type' => 'application/json'], Json::encode(Rows::failure('invalid_request', "the router said {$status}")));
     }
 }

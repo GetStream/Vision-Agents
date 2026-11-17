@@ -12,6 +12,7 @@ from PIL import Image
 from vision_agents.core import Agent, User
 from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.harness import Daytona, DefaultHarness
+from vision_agents.core.llm import FunctionRegistry
 from vision_agents.core.llm.llm import ImageContent
 from vision_agents.core.llm.tool_call import (
     ToolCallContext,
@@ -52,6 +53,8 @@ class Router:
         self.created_for = ""
         self.synced: Optional[dict[str, Any]] = None
         self.closed: list[str] = []
+        # added are the tools each session was given after it opened, by session.
+        self.added: list[tuple[str, dict[str, Any]]] = []
         self.commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.url = ""
         # refusing makes creating a session answer 429, as a customer over its limit is.
@@ -64,6 +67,7 @@ class Router:
         app.router.add_post("/v1/agents/sessions", self._create)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
         app.router.add_post("/v1/agents/sessions/{id}/stop", self._close)
+        app.router.add_post("/v1/agents/sessions/{id}/tools", self._add_tools)
         app.router.add_get("/v1/agents/configs", self._configs)
         app.router.add_post("/v1/agents/sync", self._sync)
         return app
@@ -120,6 +124,10 @@ class Router:
         self.closed.append(request.match_info["id"])
         return web.Response(status=204)
 
+    async def _add_tools(self, request: web.Request) -> web.Response:
+        self.added.append((request.match_info["id"], await request.json()))
+        return web.Response(status=204)
+
     async def _events(self, request: web.Request) -> web.WebSocketResponse:
         socket = web.WebSocketResponse()
         await socket.prepare(request)
@@ -159,6 +167,17 @@ class TestAccelerated:
             return f"it is raining in {city}"
 
         return pipeline
+
+    @pytest.fixture
+    def reserve_table(self) -> FunctionRegistry:
+        """A tool given to the session while the call runs."""
+        functions = FunctionRegistry()
+
+        @functions.register(description="Reserve a table")
+        async def reserve_table(table: str) -> str:
+            return f"Reserved {table}."
+
+        return functions
 
     @pytest.fixture
     def stream_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1004,6 +1023,72 @@ class TestAccelerated:
         await llm.leave_remote()
 
         assert await router.answered() == {"type": "close"}
+
+    async def test_a_tool_given_while_the_call_runs_is_run_here(
+        self,
+        router: Router,
+        joined: stream.Accelerated,
+        reserve_table: FunctionRegistry,
+    ):
+        await joined.add_tools(reserve_table)
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-7",
+                "name": "reserve_table",
+                "arguments": json.dumps({"table": "T4"}),
+            }
+        )
+
+        answer = await router.answered()
+
+        assert [
+            (session, [tool["name"] for tool in body["tools"]])
+            for session, body in router.added
+        ] == [("session-1", ["reserve_table"])]
+        assert answer == {
+            "type": "tool_result",
+            "tool_call_id": "call-7",
+            "output": "Reserved T4.",
+        }
+
+    async def test_leaving_forgets_the_tools_the_session_was_given(
+        self,
+        router: Router,
+        llm: stream.Accelerated,
+        call: RemoteCall,
+        reserve_table: FunctionRegistry,
+    ):
+        await llm.join_remote(call)
+        await llm.add_tools(reserve_table)
+        await llm.leave_remote()
+        assert await router.answered() == {"type": "close"}
+
+        await llm.join_remote(call)
+        try:
+            # weather is the agent's own and always run, so a call of reserve_table left
+            # alone is told apart from one not answered yet: weather's answer comes first.
+            await router.send(
+                {
+                    "type": "tool_call",
+                    "id": "call-1",
+                    "name": "reserve_table",
+                    "arguments": json.dumps({"table": "T4"}),
+                }
+            )
+            await router.send(
+                {
+                    "type": "tool_call",
+                    "id": "call-2",
+                    "name": "weather",
+                    "arguments": json.dumps({"city": "Amsterdam"}),
+                }
+            )
+            answer = await router.answered()
+        finally:
+            await llm.leave_remote()
+
+        assert answer["tool_call_id"] == "call-2"
 
     async def test_a_config_named_when_the_agent_was_built_is_looked_up_on_joining(
         self, router: Router, call: RemoteCall

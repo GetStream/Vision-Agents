@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -150,7 +150,7 @@ impl Server {
 
     /// Answers `method path` with `status` and `body`. A path ending in `*` answers every
     /// path it prefixes. Registering the same route again queues the answers in order; the
-    /// last one keeps being given.
+    /// last one keeps being given. A `status` of 0 drops the connection unanswered.
     pub fn route(&self, method: Method, path: &str, status: u16, body: Value) -> &Self {
         if body.is_null() {
             return self.route_raw(method, path, status, &[], "");
@@ -316,6 +316,11 @@ async fn handle(
         })
     };
     match answer {
+        // The connection breaks before an answer is read, as when a router goes away.
+        Some((0, _, _)) => Body::from_stream(futures_util::stream::once(async {
+            Err::<Bytes, _>(std::io::Error::other("the connection dropped"))
+        }))
+        .into_response(),
         Some((status, headers, body)) => {
             let mut response = (StatusCode::from_u16(status).unwrap(), body).into_response();
             for (name, value) in headers {

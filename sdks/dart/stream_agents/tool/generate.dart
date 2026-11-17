@@ -21,9 +21,11 @@ import 'dart:io';
 import 'package:yaml/yaml.dart';
 
 // What a device may reach: opening, finding, reading back, renaming, rewinding, forking,
-// stopping and deleting a conversation, a guest to hold one as, and looking something up.
-// Everything else about an agent is its backend's to ask for and hand down.
+// stopping and deleting a conversation, giving it tools and taking them back, a guest to hold
+// one as, and looking something up. Everything else about an agent is its backend's to ask for
+// and hand down.
 const operations = [
+  'addSessionTools',
   'createGuestUser',
   'createResponse',
   'createSession',
@@ -33,6 +35,7 @@ const operations = [
   'listResponseItems',
   'listResponses',
   'querySessions',
+  'removeSessionTool',
   'rewindSession',
   'search',
   'startSessionVoice',

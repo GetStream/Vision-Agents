@@ -1,5 +1,7 @@
 package io.getstream.agents.android.core
 
+import io.getstream.agents.android.core.generated.AddSessionToolsRequest
+import io.ktor.http.HttpMethod
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
@@ -22,6 +24,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -60,7 +64,15 @@ public class AgentSession internal constructor(
         // for an app holding one.
         listOf("decisions" to "false"),
     )
-    private val tools = tools.associateBy { it.name }
+    /** The tools whose calls are answered here, by name. */
+    private val tools = ConcurrentHashMap(tools.associateBy { it.name })
+    /**
+     * The tools whose adding was never answered, so the router may or may not offer them. Read
+     * and written holding [changing].
+     */
+    private val unsettled = mutableSetOf<String>()
+    /** Held through a change of tools, so that one runs at a time, in the order they were asked for. */
+    private val changing = Mutex()
     private val running = ConcurrentHashMap<String, Job>()
     private val started = AtomicBoolean(false)
 
@@ -225,6 +237,66 @@ public class AgentSession internal constructor(
         Sessions(backend).fork(session.id, options)
 
     /**
+     * Gives the agent more of your tools while the conversation runs, such as the ones a card
+     * shown in it brings. Their calls are answered here, as those of the tools the session was
+     * opened with are, and they are this session's alone.
+     *
+     * The router waits for the reply in progress, and every call it made, to finish, and the
+     * model is offered the tools from the next turn. So never call this from inside one of this
+     * session's tools: it waits for that call. A tool named as one this session already has is
+     * refused with a 409: to change one, [removeTool] it first, so that no call of it runs half
+     * under each. Only the kind of caller that opened the session may change its tools (403
+     * otherwise), a name the agent has of its own, such as a connector's tool, is a 409, and a
+     * speech-to-speech model whose tools are fixed when it opens is a 400.
+     *
+     * A request that gets no answer may or may not have added them, so their calls are still
+     * answered here until adding or removing the name again settles it.
+     */
+    public suspend fun addTools(tools: List<AgentTool>) {
+        if (tools.isEmpty()) return
+        changing.withLock {
+            // A name whose adding was never answered may or may not be the router's: it is
+            // withdrawn first, so the router and this session agree on which tool it is.
+            for (tool in tools) {
+                if (tool.name in unsettled) withdraw(tool.name)
+            }
+            // Answered from before the router says they are added: the next turn can call one
+            // while that answer is still on its way here. A name already answered here keeps
+            // its handler, since the router refuses to add it again.
+            val added = tools.filter { this.tools.putIfAbsent(it.name, it) == null }
+            try {
+                backend.send<Unit>(
+                    HttpMethod.Post,
+                    listOf("v1", "agents", "sessions", id, "tools"),
+                    answer = null,
+                    body = wire.encodeToString(AddSessionToolsRequest.serializer(), AddSessionToolsRequest(tools.map { it.schema })),
+                )
+            } catch (e: AgentsException.Http) {
+                // Refused, so the router offers none of them.
+                added.forEach { this.tools.remove(it.name) }
+                throw e
+            } catch (e: Throwable) {
+                // No answer, cancelled waiting for one included: whether the router offers them
+                // is unknown, so they stay answered until a later add or remove of the name
+                // settles it.
+                unsettled += added.map { it.name }
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Withdraws one of your tools, one the session was opened with or one [addTools] gave it.
+     * The router waits for the reply in progress, and every call it made, to finish, as
+     * [addTools] does, so once this returns no call of the tool can still arrive and its handler
+     * goes; never call it from inside one of this session's tools. A name this session has no
+     * tool by is a 404. A name withdrawn can be added again, with another handler.
+     */
+    public suspend fun removeTool(name: String) {
+        changing.withLock { withdraw(name) }
+    }
+
+    /**
      * Stops the session and closes the socket. Safe to call more than once. What it recorded and
      * remembered is kept; [delete] takes it away.
      */
@@ -241,6 +313,20 @@ public class AgentSession internal constructor(
     public suspend fun delete() {
         Sessions(backend).delete(session.id)
         end()
+    }
+
+    /**
+     * Asks the router to withdraw a tool, and lets its handler go once it has. For a name whose
+     * adding was never answered, the router having no tool by it settles it as well.
+     */
+    private suspend fun withdraw(name: String) {
+        try {
+            backend.send<Unit>(HttpMethod.Delete, listOf("v1", "agents", "sessions", id, "tools", name), answer = null)
+        } catch (e: AgentsException.Http) {
+            if (e.status != 404 || name !in unsettled) throw e
+        }
+        tools.remove(name)
+        unsettled.remove(name)
     }
 
     private suspend fun end() {

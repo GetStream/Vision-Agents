@@ -7,6 +7,7 @@ namespace GetStream\VisionAgents\Tests\Unit;
 use Amp\Websocket\WebsocketClient;
 use GetStream\VisionAgents\Agent;
 use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Generated\SessionTool;
 use GetStream\VisionAgents\Json;
@@ -18,10 +19,13 @@ use GetStream\VisionAgents\Tools;
 use GetStream\VisionAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
 
+use function Amp\async;
 use function Amp\delay;
 
 final class ToolCallTest extends TestCase
 {
+    private const string ADD = 'POST /v1/agents/sessions/ses_1/tools';
+
     private ?LocalSocketServer $server = null;
 
     protected function tearDown(): void
@@ -250,6 +254,223 @@ final class ToolCallTest extends TestCase
         self::assertSame([['type' => 'tool_result', 'tool_call_id' => 'c1', 'id' => 'c1', 'output' => 'paid for s1']], $server->sent('tool_result'));
     }
 
+    public function testAToolAddedWhileTheSessionIsWatchedIsRunHere(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{"table":"T4"}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        $server->answers[self::ADD] = [204];
+        $session = self::session($server);
+
+        $refused = self::watchChanging($session, ['add' => static fn () => $session->addTools(self::reserving('first'))]);
+
+        self::assertSame([], $refused);
+        self::assertSame([self::ADD . ' {"tools":[{"description":"Reserve a table","name":"reserve_table","parameters":{"type":"object","properties":{"table":{"type":"string"}}}}]}'], $server->requests);
+        self::assertSame(['r1' => 'first T4', 'w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testAToolTheRouterRefusedIsNotRunHere(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        $server->answers[self::ADD] = [409];
+        $session = self::session($server);
+
+        $refused = self::watchChanging($session, ['add' => static fn () => $session->addTools(self::reserving('first'))]);
+
+        self::assertSame(['add' => 409], $refused);
+        self::assertSame(['w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testARemovedToolIsNoLongerRunHere(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'remove']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r2', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        $server->answers[self::ADD] = [204];
+        $server->answers['DELETE /v1/agents/sessions/ses_1/tools/reserve_table'] = [204];
+        $session = self::session($server);
+
+        $refused = self::watchChanging($session, [
+            'add' => static fn () => $session->addTools(self::reserving('first')),
+            'remove' => static fn () => $session->removeTool('reserve_table'),
+        ]);
+
+        self::assertSame([], $refused);
+        self::assertSame(['r1' => 'first ', 'w1' => 'sunny'], self::answers($server));
+        self::assertSame('DELETE /v1/agents/sessions/ses_1/tools/reserve_table', $server->requests[1]);
+    }
+
+    public function testANameTheSessionRunsKeepsItsFunctionWhenAddedAgain(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        // The second answer is lost, which leaves its fate unknown here; the router never
+        // replaces a tool the session has, its own or one added.
+        $server->answers[self::ADD] = [204, -1];
+        $session = self::session($server);
+        $session->addTools(self::reserving('first'));
+        $again = self::reserving('second')->register('get_weather', 'The weather', [], static fn (array $args): string => 'stormy');
+
+        try {
+            $session->addTools($again);
+            self::fail('an add whose answer was lost reported success');
+        } catch (RouterException $lost) {
+            self::assertSame(0, $lost->status);
+        }
+        self::watchChanging($session, []);
+
+        self::assertSame(['r1' => 'first ', 'w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testAToolWithdrawnFromTheAgentsOwnRunsNothingUntilAnotherIsAddedInItsPlace(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'remove']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r2', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        $server->answers[self::ADD] = [204];
+        $server->answers['DELETE /v1/agents/sessions/ses_1/tools/reserve_table'] = [204];
+        $session = self::session($server, self::reserving('agent'));
+
+        $refused = self::watchChanging($session, [
+            'remove' => static fn () => $session->removeTool('reserve_table'),
+            'add' => static fn () => $session->addTools(self::reserving('replacement')),
+        ]);
+
+        self::assertSame([], $refused);
+        self::assertSame(['r2' => 'replacement ', 'w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testAToolWhoseAddingGotNoAnswerRunsHereAndIsWithdrawnBeforeItsNameIsAddedAgain(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'again']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r2', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w2', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w2');
+        });
+        // The router having no tool by the name settles it as well as withdrawing it does.
+        $server->answers[self::ADD] = [-1, 204];
+        $server->answers['DELETE /v1/agents/sessions/ses_1/tools/reserve_table'] = [404];
+        $session = self::session($server);
+
+        $refused = self::watchChanging($session, [
+            'add' => static fn () => $session->addTools(self::reserving('first')),
+            'again' => static fn () => $session->addTools(self::reserving('second')),
+        ]);
+
+        self::assertSame(['add' => 0], $refused);
+        self::assertSame(['r1' => 'first ', 'w1' => 'sunny', 'r2' => 'second ', 'w2' => 'sunny'], self::answers($server));
+        self::assertSame([self::ADD, 'DELETE /v1/agents/sessions/ses_1/tools/reserve_table', self::ADD], array_map(static fn (string $request): string => explode(' {', $request)[0], $server->requests));
+    }
+
+    public function testRemovingAToolWhoseAddingGotNoAnswerTakesNotFoundAsDone(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'remove unknown']);
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'add']);
+            LocalSocketServer::send($socket, ['type' => 'heard', 'text' => 'remove']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        $server->answers[self::ADD] = [-1];
+        $server->answers['DELETE /v1/agents/sessions/ses_1/tools/reserve_table'] = [404];
+        $server->answers['DELETE /v1/agents/sessions/ses_1/tools/book_flight'] = [404];
+        $session = self::session($server);
+
+        $refused = self::watchChanging($session, [
+            'remove unknown' => static fn () => $session->removeTool('book_flight'),
+            'add' => static fn () => $session->addTools(self::reserving('first')),
+            'remove' => static fn () => $session->removeTool('reserve_table'),
+        ]);
+
+        self::assertSame(['remove unknown' => 404, 'add' => 0], $refused);
+        self::assertSame(['w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testChangesToASessionsToolsAreMadeOneAtATime(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        // Interleaved, the refusal of the first would take back the function the second put in
+        // place, and the router would offer a tool nothing here runs.
+        $server->answers[self::ADD] = [409, 204];
+        $server->answerAfter = 0.05;
+        $session = self::session($server);
+
+        $first = async(static fn () => $session->addTools(self::reserving('first')));
+        $second = async(static fn () => $session->addTools(self::reserving('second')));
+        try {
+            $first->await();
+            self::fail('a refused add reported success');
+        } catch (RouterException $refused) {
+            self::assertSame(409, $refused->status);
+        }
+        $second->await();
+        self::watchChanging($session, []);
+
+        self::assertSame(['r1' => 'second ', 'w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testClosingForgetsTheToolsTheSessionWasGiven(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'r1', 'name' => 'reserve_table', 'arguments' => '{}']);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'w1', 'name' => 'get_weather', 'arguments' => '{}']);
+            self::untilAnswered($socket, $server, 'w1');
+        });
+        $server->answers[self::ADD] = [204];
+        $server->answers['POST /v1/agents/sessions/ses_1/stop'] = [204];
+        $session = self::session($server);
+        $session->addTools(self::reserving('first'));
+
+        $session->close();
+        self::watchChanging($session, []);
+
+        self::assertSame(['w1' => 'sunny'], self::answers($server));
+    }
+
+    public function testAddingNoToolsIsRefusedBeforeAsking(): void
+    {
+        $server = $this->serve(static fn (WebsocketClient $socket, LocalSocketServer $server) => null);
+
+        try {
+            self::session($server)->addTools(new Tools());
+            self::fail('an empty add was sent');
+        } catch (ConfigurationException $refused) {
+            self::assertSame('there are no tools to add', $refused->getMessage());
+        }
+        self::assertSame([], $server->requests);
+    }
+
     /**
      * `pay`, which holds itself through interruptions and asks first, `slow`, which may be
      * interrupted, and `fast`.
@@ -299,6 +520,69 @@ final class ToolCallTest extends TestCase
             $kinds[] = $event->kind;
         }
         return $kinds;
+    }
+
+    /**
+     * `reserve_table`, which answers with `$who` and the table it was asked for.
+     */
+    private static function reserving(string $who): Tools
+    {
+        return (new Tools())->register('reserve_table', 'Reserve a table', ['type' => 'object', 'properties' => ['table' => ['type' => 'string']]],
+            static fn (array $args): string => $who . ' ' . Json::string($args, 'table'));
+    }
+
+    /**
+     * A session whose agent runs `get_weather`, and `$more` of its own.
+     */
+    private static function session(LocalSocketServer $server, ?Tools $more = null): Session
+    {
+        $tools = $more ?? new Tools();
+        $tools->register('get_weather', 'The weather', [], static fn (array $args): string => 'sunny');
+        return new Session($server->client(), SessionRow::fromArray(Rows::session()), new Agent(name: 'jean', client: $server->client(), tools: $tools));
+    }
+
+    /**
+     * Watches a session until the script is done with it, making the change each `heard` names.
+     *
+     * @param array<string, \Closure(): void> $changes
+     * @return array<string, int> the status each change that threw was refused with, by name
+     */
+    private static function watchChanging(Session $session, array $changes): array
+    {
+        $refused = [];
+        foreach ($session->watch() as $event) {
+            if ($event->kind !== 'heard') {
+                continue;
+            }
+            try {
+                $changes[$event->text()]();
+            } catch (RouterException $failed) {
+                $refused[$event->text()] = $failed->status;
+            }
+        }
+        return $refused;
+    }
+
+    /**
+     * Reads what the SDK sends until the call `$id` is answered. Every tool here answers at
+     * once, so a call sent before it that is answered at all is answered first.
+     */
+    private static function untilAnswered(WebsocketClient $socket, LocalSocketServer $server, string $id): void
+    {
+        while (!array_key_exists($id, self::answers($server)) && $server->next($socket) !== null) {
+        }
+    }
+
+    /**
+     * @return array<string, string> each call's output, by its id, in the order answered
+     */
+    private static function answers(LocalSocketServer $server): array
+    {
+        $answers = [];
+        foreach ($server->sent('tool_result') as $result) {
+            $answers[Json::string($result, 'tool_call_id')] = Json::string($result, 'output');
+        }
+        return $answers;
     }
 
     private function serve(\Closure $script): LocalSocketServer
