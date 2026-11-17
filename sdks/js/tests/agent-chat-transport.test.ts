@@ -334,6 +334,24 @@ describe("agentChatTransport, branching", () => {
     assert.deepEqual(feed.ids, ["q0", "r0"]);
   });
 
+  it("keeps an edit's question that arrived before the channel.rewound event", async () => {
+    const { streamChat, transport, feed } = await connected();
+    router.serve("POST", responsesPath, answering({ message_id: "q1", inclusive: true }));
+    await transport.send(request({ kind: "edit", message: feed.find("q1"), messageId: "ctl_edit", text: "Rome instead" }));
+    const edited = chatMessage("ctl_edit", 10, mark("resp_9", "question", 2, 2));
+    arrive(streamChat as TestChat, edited);
+    await until(() => feed.ids.join() === "q0,r0,ctl_edit", `shows ${feed.ids.join()}`);
+    router.serve("POST", QUERY_PATH, channelPage([q0, r0, edited]));
+    const reads = router.requestsTo("POST", QUERY_PATH).length;
+
+    // Chat's event for the rewind the edit made, a moment before the question was written.
+    rewind(streamChat as TestChat, "q1", true, 9);
+    await until(() => router.requestsTo("POST", QUERY_PATH).length > reads, "the channel was never read again");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.deepEqual(feed.ids, ["q0", "r0", "ctl_edit"], "the question written after the rewind stays");
+  });
+
   it("refuses a message from before branches, before asking the router anything", async () => {
     const unmarked = chatMessage("old", 1, {}, "agent");
     const { transport, feed } = await connected([unmarked]);
