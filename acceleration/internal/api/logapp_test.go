@@ -66,29 +66,64 @@ func (s *LogAppSuite) SetupTest() {
 }
 
 // Defect: the path logged as the operation, which spreads one route over one value per id
-// (and a token route's over its secrets), or the route left off.
-func (s *LogAppSuite) TestTheAccessLineNamesTheRouteItServedRatherThanThePath() {
+// (and a token route's over its secrets), or the route pattern logged where the operation's
+// name is wanted.
+func (s *LogAppSuite) TestTheAccessLineNamesTheOperationItServedRatherThanThePath() {
 	id := s.utils.uuid()
 
 	line := s.sent(s.serverClient, http.MethodGet, "/v1/agents/sessions/"+id, nil)
 
-	s.Equal("/v1/agents/sessions/{id}", s.field(line, "operation_type"))
+	s.Equal("GetSession", s.field(line, "operation_type"))
 	s.Equal(1, strings.Count(line, "operation_type="))
+	s.Equal("/v1/agents/sessions/"+id, s.field(line, "path"))
 }
 
-// Defect: a refusal before the route (withServerSide) logged without its route.
-func (s *LogAppSuite) TestTheAccessLineOfARequestRefusedBeforeItsRouteNamesTheRoute() {
+// Defect: a refusal before the route (withServerSide) logged without its operation.
+func (s *LogAppSuite) TestTheAccessLineOfARequestRefusedBeforeItsRouteNamesTheOperation() {
 	line := s.sent(s.client, http.MethodGet, "/v1/usage/events", nil)
 
 	s.Contains(line, "status=403")
-	s.Equal("/v1/usage/events", s.field(line, "operation_type"))
+	s.Equal("ListUsageEvents", s.field(line, "operation_type"))
 }
 
-// Defect: "unmatched", the metrics' bucket, logged as if it were a route.
-func (s *LogAppSuite) TestTheAccessLineOfAPathNoRouteServesNamesNoOperation() {
-	line := s.sent(s.serverClient, http.MethodGet, "/v1/no-such-route/"+s.utils.uuid(), nil)
+// Defect: a route served by hand logged with its pattern, or with none, as it is no huma.Register.
+func (s *LogAppSuite) TestTheAccessLineOfASocketNamesTheOperationItDeclares() {
+	events := s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/agents/sessions/"+s.utils.uuid()+"/events", nil)
+	socket := s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/agents/socket", nil)
 
-	s.Contains(line, "status=404")
+	s.Equal("WatchSession", s.field(events, "operation_type"))
+	s.Equal("OpenSocketSession", s.field(socket, "operation_type"))
+}
+
+// Defect: the operation looked up by the path as sent, so a token route logged its secret.
+func (s *LogAppSuite) TestTheAccessLineOfATokenRouteNamesTheOperationAndNoSecret() {
+	token := s.utils.uuid()
+
+	line := s.sent(s.unauthenticatedClient, http.MethodPost, "/v1/phone/status/"+token, nil)
+
+	s.Equal("ReceiveCallStatus", s.field(line, "operation_type"))
+	s.NotContains(line, token)
+}
+
+// Defect: "unmatched", the metrics' bucket, or a route pattern, logged as if it were an operation.
+func (s *LogAppSuite) TestTheAccessLineOfARequestNoOperationServedNamesNoOperation() {
+	missing := s.sent(s.serverClient, http.MethodGet, "/v1/no-such-route/"+s.utils.uuid(), nil)
+	wrongMethod := s.sent(s.serverClient, http.MethodDelete, "/v1/account", nil)
+
+	s.Contains(missing, "status=404")
+	s.NotContains(missing, "operation_type")
+	s.Contains(wrongMethod, "status=405")
+	s.NotContains(wrongMethod, "operation_type")
+}
+
+// Defect: a route the spec leaves out (the TeXML answer, a vendor's hook) named after the
+// operation of another route, or by its pattern.
+func (s *LogAppSuite) TestTheAccessLineOfARouteWithNoOperationNamesNoOperation() {
+	token := s.utils.uuid()
+
+	line := s.sent(s.unauthenticatedClient, http.MethodGet, "/v1/phone/answer/"+token, nil)
+
+	s.Contains(line, "path=/v1/phone/answer/{token}")
 	s.NotContains(line, "operation_type")
 }
 

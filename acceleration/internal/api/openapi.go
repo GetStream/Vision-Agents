@@ -483,6 +483,8 @@ func shareErrorResponses(_ *huma.OpenAPI, operation *huma.Operation) {
 // spec, whichever half of it declares the operation.
 type operationSummary struct {
 	method, path string
+	// id is the operation's OperationID, as declared.
+	id string
 	// public is an operation declaring no security at all, reached before there is a
 	// caller to classify.
 	public bool
@@ -505,6 +507,7 @@ func specifiedOperations(document *huma.OpenAPI) []operationSummary {
 			operations = append(operations, operationSummary{
 				method: method,
 				path:   path,
+				id:     operation.OperationID,
 				public: operation.Security != nil && len(operation.Security) == 0,
 				open:   open,
 			})

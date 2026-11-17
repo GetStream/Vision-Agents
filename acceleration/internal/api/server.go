@@ -470,6 +470,8 @@ type Server struct {
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
+	// operations names the operation each route serves, for the access line (operationNames).
+	operations map[string]string
 	upgrader   websocket.Upgrader
 	popularity *popularity
 	logger     *slog.Logger
@@ -666,11 +668,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	if cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream}); err == nil {
 		server.chatCards = cards
 	}
-	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
+	document := server.newAPI(chi.NewRouter()).OpenAPI()
+	serverSide, err := serverSideRoutes(document)
 	if err != nil {
 		return nil, err
 	}
 	server.serverSide = serverSide
+	server.operations = operationNames(specifiedOperations(document))
 
 	// The subscriptions outlive every request, so they are held against the process
 	// rather than against a context a handler brought with it. Closing the Redis client
@@ -1088,17 +1092,18 @@ const maxLoggedValue = 256
 //
 // trace_id is logged for a sampled span only: the sampler's dropped span is never exported, so
 // its id would name a trace nobody can open.
-// operation_type is the route's pattern (routeLabel), never the path, since a token route's
-// path is its secret. user_id is the end user's: a backend's request is its own, whichever
-// user it says it acts for. request_size is the declared Content-Length, so a chunked body
-// names none.
+// operation_type is the id of the operation the route serves (operationNames), found by the
+// route's pattern (routeLabel) and never by the path, since a token route's path is its secret.
+// A request no operation served has none. user_id is the end user's: a backend's request is
+// its own, whichever user it says it acts for. request_size is the declared Content-Length, so
+// a chunked body names none.
 func (s *Server) accessFields(routes *chi.Mux, r *http.Request, answered *loggedResponse) []any {
 	var fields []any
 	if span := trace.SpanContextFromContext(r.Context()); span.IsValid() && span.IsSampled() {
 		fields = append(fields, "trace_id", span.TraceID().String())
 	}
-	if route := routeLabel(routes, r); route != unmatchedRoute {
-		fields = append(fields, "operation_type", route)
+	if operation := s.operations[r.Method+" "+routeLabel(routes, r)]; operation != "" {
+		fields = append(fields, "operation_type", operation)
 	}
 	if answered.refusal != "" {
 		fields = append(fields, "error_code", answered.refusal)
@@ -1204,6 +1209,31 @@ func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 		routes.Handle(operation.method+" "+operation.path, nothing)
 	}
 	return routes, nil
+}
+
+// operationNames maps "METHOD pattern" of each of operations to its id with the first letter
+// upper-cased (getSession is GetSession), the way the Stream platform's access logs name a handler.
+// It is built once, so the access line looks an operation up instead of walking the spec. The
+// connection proxy is one route for every path under connectionProxyPath, which chi matches as
+// "*" where its operation says {path}.
+func operationNames(operations []operationSummary) map[string]string {
+	names := make(map[string]string, len(operations))
+	for _, operation := range operations {
+		pattern := operation.path
+		if strings.HasPrefix(pattern, connectionProxyPath) {
+			pattern = connectionProxyPath + "*"
+		}
+		names[operation.method+" "+pattern] = pascalCase(operation.id)
+	}
+	return names
+}
+
+// pascalCase is id with its first letter upper-cased.
+func pascalCase(id string) string {
+	if id == "" {
+		return ""
+	}
+	return strings.ToUpper(id[:1]) + id[1:]
 }
 
 // withServerSide refuses the generated operations only a backend may reach.
