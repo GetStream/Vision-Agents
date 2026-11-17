@@ -101,12 +101,12 @@ not through Daytona Secrets.
 AI-2462 proved it live on prod us-east4: `run_code` `GET api.github.com/user` through the proxy
 answered 200, and the token never reached the sandbox.
 
-- The values are in GetStream/chat on branch `thierry/accelerate-gke`, not master. Staging's file
-  is `infra/shards/us-east1-acceleration/accelerate-staging.yaml`. Each prod shard has its own
+- The values are in GetStream/chat on `master`; changes to them are PRs into `master`. Staging's
+  file is `infra/shards/us-east1-acceleration/accelerate-staging.yaml`. Each prod shard has its own
   file, `infra/shards/<region>-acceleration/accelerate-prod.yaml`.
 - `router.sandboxProxy` holds `enabled`, `broker: proxy`, the public URL (it holds the proxy port)
-  and the LoadBalancer's reserved address. The accelerate chart (`infra/charts/accelerate`, same
-  branch) renders the Service from them.
+  and the LoadBalancer's reserved address. The accelerate chart (`infra/charts/accelerate`)
+  renders the Service from them.
 - `router.overlapDeploy.holdSandboxProxy: true` makes devrun hold the proxy port :8091.
   `router.overlapDeploy.devrunImage` pins the devrun that can hold it (chat #19840).
 - The CA certificate and key are two secrets, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT` and

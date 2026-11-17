@@ -66,7 +66,7 @@ func (s *ReplicateSourceSuite) read(source *deployment, path string, query map[s
 //   - the key comes from the api_key header or query parameter only
 //     (monolith/auth/auth.go:739-760, GetApiKeyFromRequest);
 //   - Stream-Auth-Type must be jwt; anonymous and anything else are refused
-//     (projects/stream-accelerate/proxy.go:540-585, branch thierry/accelerate-gke);
+//     (projects/stream-accelerate/proxy.go:540-585);
 //   - the token in Authorization, "Bearer " trimmed (auth.go:784), must be HS256 and
 //     verify with the app secret (auth.go:861, GetAuthPayloadFromRequest); one naming no user_id is
 //     server-side (proxy.go:563-566), one naming a user is not.
