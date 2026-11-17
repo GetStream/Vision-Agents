@@ -2,8 +2,8 @@ name: stream_agents
 description: >-
   The client for Stream Agents: open a conversation with an agent and follow it as it
   happens, keep it in Stream Chat, and talk to the agent out loud over Stream Video.
-version: 0.1.0
-repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/stream_agents
+version: 0.7.0
+repository: https://github.com/GetStream/Vision-Agents/tree/main/sdks/dart/stream_agents
 topics: [ai, agents, chat, voice, stream]
 
 # Stream Chat 10.4's floors, which are higher than Stream Video 1.6's.

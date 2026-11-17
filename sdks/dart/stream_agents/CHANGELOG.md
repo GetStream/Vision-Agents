@@ -1,6 +1,7 @@
-## 0.1.0
+## 0.7.0
 
-First release of `stream_agents`, the Flutter client for Stream Agents. It holds what were
+First release of `stream_agents`, the Flutter client for Stream Agents, versioned with the
+repository's 0.7.0 release. It holds what were
 `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`, with the same API, behind one
 import: `package:stream_agents/stream_agents.dart`.
 
