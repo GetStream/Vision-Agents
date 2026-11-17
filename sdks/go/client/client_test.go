@@ -257,10 +257,12 @@ func newRouter(t *testing.T) *router {
 			Message: "unknown call", Type: acceleration.ErrorTypeNotFound, Code: "call_not_found",
 		}})
 	}
-	mux.HandleFunc("GET /v1/agents/calls/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		if r.PathValue("id") != "session-1" {
-			unknownCall(w)
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "no such session", Type: acceleration.ErrorTypeNotFound, Code: "session_not_found",
+			}})
 			return
 		}
 		answer(w, http.StatusOK, acceleration.CallTokens{
@@ -1171,10 +1173,17 @@ func TestASessionsMetricsOfAnUnknownSessionAreRefused(t *testing.T) {
 	_, timeline := sessions.Timeline(t.Context(), "someone-elses")
 	_, decisions := sessions.Decisions(t.Context(), "someone-elses")
 
-	for read, err := range map[string]error{"tokens": tokens, "timeline": timeline, "decisions": decisions} {
+	for read, refusal := range map[string]struct {
+		err  error
+		code string
+	}{
+		"tokens":    {tokens, "session_not_found"},
+		"timeline":  {timeline, "call_not_found"},
+		"decisions": {decisions, "call_not_found"},
+	} {
 		var refused *stream.RouterError
-		if !errors.As(err, &refused) || refused.Code != "call_not_found" {
-			t.Errorf("the %s of an unknown session came back as %v", read, err)
+		if !errors.As(refusal.err, &refused) || refused.Code != refusal.code {
+			t.Errorf("the %s of an unknown session came back as %v, want %s", read, refusal.err, refusal.code)
 		}
 	}
 }

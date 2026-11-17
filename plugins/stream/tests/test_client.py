@@ -65,7 +65,8 @@ class Router:
         app.router.add_post("/v1/agents/guests", self._guest)
         app.router.add_post("/v1/agents/guests/claim", self._claim)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
-        app.router.add_get("/v1/agents/calls/{id}/{read}", self._call)
+        app.router.add_get("/v1/agents/sessions/{id}/{read:tokens}", self._call)
+        app.router.add_get("/v1/agents/calls/{id}/{read:timeline|events}", self._call)
         app.router.add_post("/v1/agents/simulations", self._simulation)
         app.router.add_get("/v1/agents/simulations", self._simulations)
         app.router.add_get("/v1/agents/simulations/{id}", self._simulation)
@@ -205,13 +206,16 @@ class Router:
             ],
         }
         if request.match_info["id"] != "session-1":
+            unknown = (
+                "session" if request.path.startswith("/v1/agents/sessions/") else "call"
+            )
             return web.json_response(
                 status=404,
                 data={
                     "error": {
-                        "message": "unknown call",
+                        "message": f"unknown {unknown}",
                         "type": "not_found",
-                        "code": "call_not_found",
+                        "code": f"{unknown}_not_found",
                         "doc_url": "https://getstream.io/agents/docs/api/errors/#not_found",
                     }
                 },
@@ -996,9 +1000,16 @@ class TestSessions:
             ("ignore", "not meant for the agent")
         ]
 
-    @pytest.mark.parametrize("read", ["tokens", "timeline", "decisions"])
+    @pytest.mark.parametrize(
+        "read, code",
+        [
+            ("tokens", "session_not_found"),
+            ("timeline", "call_not_found"),
+            ("decisions", "call_not_found"),
+        ],
+    )
     async def test_a_sessions_metrics_of_an_unknown_session_are_refused(
-        self, api: stream.Client, read: str
+        self, api: stream.Client, read: str, code: str
     ):
         sessions = api.agent("docs").sessions
         reads = {
@@ -1010,7 +1021,7 @@ class TestSessions:
         with pytest.raises(stream.RouterError) as refused:
             await reads[read]("someone-elses")
 
-        assert refused.value.code == "call_not_found"
+        assert refused.value.code == code
         assert f"reading the {read} of someone-elses" in str(refused.value)
 
     async def test_a_delete_the_router_refuses_is_raised(self, api: stream.Client):

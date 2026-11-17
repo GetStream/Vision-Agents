@@ -383,7 +383,7 @@ func (s *Sessions) Tokens(ctx context.Context, id string) (*acceleration.CallTok
 		return nil, err
 	}
 
-	got, err := api.GetCallTokensWithResponse(ctx, id)
+	got, err := api.GetSessionTokensWithResponse(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("client: reading the tokens of %s: %w", id, err)
 	}

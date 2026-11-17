@@ -241,7 +241,7 @@ final readonly class Sessions
      */
     public function tokens(string $id): CallTokens
     {
-        return CallTokens::fromArray(Json::asObject($this->client->get('/v1/agents/calls/{id}/tokens', ['id' => $id])));
+        return CallTokens::fromArray(Json::asObject($this->client->get('/v1/agents/sessions/{id}/tokens', ['id' => $id])));
     }
 
     /**

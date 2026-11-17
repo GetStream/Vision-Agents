@@ -220,7 +220,7 @@ final class SessionTest extends TestCase
 
     public function testASessionsMetricsAreReadBackByItsId(): void
     {
-        $this->router->answer('GET', '/v1/agents/calls/ses_2/tokens', 200, [
+        $this->router->answer('GET', '/v1/agents/sessions/ses_2/tokens', 200, [
             'input_tokens' => 1200, 'cached_input_tokens' => 800, 'output_tokens' => 90, 'requests' => 3, 'cost_micros' => 410,
             'cost_sources' => [], 'input_parts' => ['tool_definitions' => 200],
             'models' => [['provider' => 'openai', 'model' => 'gpt-5-mini', 'modality' => 'llm']],
@@ -246,17 +246,22 @@ final class SessionTest extends TestCase
 
     public function testASessionsMetricsOfAnUnknownSessionAreRefused(): void
     {
-        foreach (['tokens', 'timeline', 'events'] as $path) {
+        $this->router->answer('GET', '/v1/agents/sessions/someone-elses/tokens', 404, Rows::failure('not_found', 'no such session', 'session_not_found'));
+        foreach (['timeline', 'events'] as $path) {
             $this->router->answer('GET', "/v1/agents/calls/someone-elses/{$path}", 404, Rows::failure('not_found', 'no such call', 'call_not_found'));
         }
         $sessions = $this->router->client()->agent('jean')->sessions;
 
-        foreach (['tokens' => $sessions->tokens(...), 'timeline' => $sessions->timeline(...), 'decisions' => $sessions->decisions(...)] as $read => $metrics) {
+        foreach ([
+            'tokens' => [$sessions->tokens(...), 'session_not_found'],
+            'timeline' => [$sessions->timeline(...), 'call_not_found'],
+            'decisions' => [$sessions->decisions(...), 'call_not_found'],
+        ] as $read => [$metrics, $code]) {
             try {
                 $metrics('someone-elses');
                 self::fail("the {$read} of an unknown session were read");
             } catch (RouterException $refused) {
-                self::assertSame('call_not_found', $refused->errorCode, $read);
+                self::assertSame($code, $refused->errorCode, $read);
             }
         }
     }

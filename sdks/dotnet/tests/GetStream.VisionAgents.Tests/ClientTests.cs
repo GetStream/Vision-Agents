@@ -585,7 +585,7 @@ public sealed class ClientTests
         var timeline = await Assert.ThrowsAsync<RouterException>(() => sessions.TimelineAsync("someone-elses", cancel));
         var decisions = await Assert.ThrowsAsync<RouterException>(() => sessions.DecisionsAsync("someone-elses", cancel));
 
-        Assert.Equal(["call_not_found", "call_not_found", "call_not_found"], new[] { tokens.Code, timeline.Code, decisions.Code });
+        Assert.Equal(["session_not_found", "call_not_found", "call_not_found"], new[] { tokens.Code, timeline.Code, decisions.Code });
     }
 
     [Fact]
@@ -780,8 +780,9 @@ public sealed class ClientTests
     private static async Task<TestRouter> CallReads()
     {
         var router = await TestRouter.StartAsync();
+        router.On("GET", "/v1/agents/sessions/*", 404, Fixtures.Failure("not_found", "session_not_found", "unknown session"));
         router.On("GET", "/v1/agents/calls/*", 404, Fixtures.Failure("not_found", "call_not_found", "unknown call"));
-        router.On("GET", "/v1/agents/calls/session-1/tokens", 200, new
+        router.On("GET", "/v1/agents/sessions/session-1/tokens", 200, new
         {
             input_tokens = 1200, cached_input_tokens = 800, output_tokens = 90, cost_micros = 4100, requests = 3,
             input_parts = new { instructions = 700, messages = 300, tool_definitions = 200, tool_use = 0, images = 0, video = 0 },

@@ -356,7 +356,7 @@ export class Sessions {
    * `usage` it is answered while the conversation runs. Server side only.
    */
   tokens(id: string): Promise<Schemas["CallTokens"]> {
-    return this.client.get("/v1/agents/calls/{id}/tokens", { path: { id } });
+    return this.client.get("/v1/agents/sessions/{id}/tokens", { path: { id } });
   }
 
   /**

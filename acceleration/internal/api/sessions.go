@@ -205,6 +205,16 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	return &forkSessionResponse{Body: sessionOf(ctx, created)}, nil
 }
 
+// getSessionTokens says what the session's models read and wrote, and what their prompts
+// were made of, while it runs and after.
+func (s *Server) getSessionTokens(ctx context.Context, request *getSessionTokensRequest) (*getSessionTokensResponse, error) {
+	spent, err := s.tokensOf(ctx, request.Id, errUnknownSession)
+	if err != nil {
+		return nil, err
+	}
+	return &getSessionTokensResponse{Body: *spent}, nil
+}
+
 // getSession returns one session, running or ended. A backend is also told what was made of
 // it and what it spent, from the call row every session is recorded under.
 func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*getSessionResponse, error) {
@@ -1407,6 +1417,21 @@ func (s *Server) registerSessions(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.getSession)
 	huma.Register(api, huma.Operation{
+		OperationID: "getSessionTokens",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}/tokens",
+		Summary:     "What a session's models read and wrote, and what their prompts were made of",
+		Description: "Read while the session is running as well as after it, unlike the session's usage, " +
+			"which is counted once it is over, and for a session held in writing as for one on a call. " +
+			"A prompt's parts are estimated: no provider says how much of a prompt was instructions, " +
+			"tools or images, so the router estimates it from each request and scales it to what the " +
+			"provider counted. The parts sum to the input tokens.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session's tokens"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getSessionTokens)
+	huma.Register(api, huma.Operation{
 		OperationID: "forkSession",
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/sessions/{id}/fork",
@@ -1577,6 +1602,14 @@ type getSessionRequest struct {
 
 type getSessionResponse struct {
 	Body Session
+}
+
+type getSessionTokensRequest struct {
+	Id string `path:"id" doc:"The session, as returned when it was created."`
+}
+
+type getSessionTokensResponse struct {
+	Body CallTokens
 }
 
 type forkSessionRequest struct {

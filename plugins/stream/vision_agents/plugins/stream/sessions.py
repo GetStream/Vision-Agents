@@ -18,7 +18,7 @@ from ._generated.api.default import (
     fork_session,
     get_call_events,
     get_call_timeline,
-    get_call_tokens,
+    get_session_tokens,
     get_session,
     query_sessions,
     start_session_voice,
@@ -411,7 +411,7 @@ class Sessions:
         into instructions, messages, tool definitions, tool use, images and video. Unlike the
         session's usage it is answered while the conversation runs. Server side only."""
         return await _unwrapped(
-            get_call_tokens.asyncio(id, client=self._backend.client()),
+            get_session_tokens.asyncio(id, client=self._backend.client()),
             f"reading the tokens of {id}",
         )
 

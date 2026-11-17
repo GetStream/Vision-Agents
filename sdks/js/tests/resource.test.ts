@@ -612,7 +612,7 @@ describe("sessions", () => {
 
   it("reads a session's tokens, timeline and decisions back by its id", async () => {
     const parts = { instructions: 600, messages: 400, tool_definitions: 200, tool_use: 0, images: 0, video: 0 };
-    router.serve("GET", "/v1/agents/calls/session-1/tokens", {
+    router.serve("GET", "/v1/agents/sessions/session-1/tokens", {
       body: {
         input_tokens: 1200,
         cached_input_tokens: 800,
@@ -662,21 +662,20 @@ describe("sessions", () => {
   });
 
   it("says the router does not know a session whose tokens, timeline or decisions were asked for", async () => {
-    const refused = { error: { message: "no such call", type: "not_found", code: "call_not_found" } };
-    for (const read of ["tokens", "timeline", "events"]) {
-      router.serve("GET", `/v1/agents/calls/someone-elses/${read}`, { status: 404, body: refused });
+    const noCall = { error: { message: "no such call", type: "not_found", code: "call_not_found" } };
+    const noSession = { error: { message: "no such session", type: "not_found", code: "session_not_found" } };
+    router.serve("GET", "/v1/agents/sessions/someone-elses/tokens", { status: 404, body: noSession });
+    for (const read of ["timeline", "events"]) {
+      router.serve("GET", `/v1/agents/calls/someone-elses/${read}`, { status: 404, body: noCall });
     }
     const sessions = api.agent("docs").sessions;
 
-    for (const reading of [
-      () => sessions.tokens("someone-elses"),
-      () => sessions.timeline("someone-elses"),
-      () => sessions.decisions("someone-elses"),
-    ]) {
-      await assert.rejects(
-        reading(),
-        (error: unknown) => error instanceof RouterError && error.code === "call_not_found",
-      );
+    for (const [reading, code] of [
+      [() => sessions.tokens("someone-elses"), "session_not_found"],
+      [() => sessions.timeline("someone-elses"), "call_not_found"],
+      [() => sessions.decisions("someone-elses"), "call_not_found"],
+    ] as const) {
+      await assert.rejects(reading(), (error: unknown) => error instanceof RouterError && error.code === code);
     }
   });
 

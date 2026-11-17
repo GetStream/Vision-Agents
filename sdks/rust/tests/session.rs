@@ -896,7 +896,7 @@ async fn a_sessions_metrics_are_read_back_by_its_id() {
                        "tool_use": 100, "images": 0, "video": 0});
     server.route(
         Method::GET,
-        "/v1/agents/calls/s9/tokens",
+        "/v1/agents/sessions/s9/tokens",
         200,
         json!({"input_tokens": 1200, "cached_input_tokens": 800, "output_tokens": 90,
                "requests": 3, "cost_micros": 410, "cost_sources": [], "input_parts": parts,
@@ -947,6 +947,12 @@ async fn a_sessions_metrics_of_an_unknown_session_are_refused() {
     let server = Server::start().await;
     server.route(
         Method::GET,
+        "/v1/agents/sessions/*",
+        404,
+        support::refusal("not_found", "session_not_found", "no such session"),
+    );
+    server.route(
+        Method::GET,
         "/v1/agents/calls/*",
         404,
         support::refusal("not_found", "call_not_found", "no such call"),
@@ -959,15 +965,15 @@ async fn a_sessions_metrics_of_an_unknown_session_are_refused() {
         sessions.decisions("someone-elses").await.unwrap_err(),
     ];
 
-    for (refused, operation) in
-        refused
-            .into_iter()
-            .zip(["getCallTokens", "getCallTimeline", "getCallEvents"])
-    {
+    for (refused, (operation, code)) in refused.into_iter().zip([
+        ("getSessionTokens", "session_not_found"),
+        ("getCallTimeline", "call_not_found"),
+        ("getCallEvents", "call_not_found"),
+    ]) {
         let Error::Router(failure) = refused else {
             panic!("expected a refusal, got {refused:?}");
         };
-        assert_eq!(failure.code, "call_not_found");
+        assert_eq!(failure.code, code);
         assert_eq!(failure.operation, operation);
     }
 }

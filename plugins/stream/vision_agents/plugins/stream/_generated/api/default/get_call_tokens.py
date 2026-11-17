@@ -92,10 +92,9 @@ def sync_detailed(
 ) -> Response[CallTokens | ErrorResponse]:
     """What a call's models read and wrote, and what their prompts were made of
 
-     Read while the call is going as well as after it, unlike the usage on the call, which is counted
-    once it is over. A prompt's parts are estimated: no provider says how much of a prompt was
-    instructions, tools or images, so the router estimates it from each request and scales it to what
-    the provider counted. The parts sum to the input tokens.
+     Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a
+    session held in writing or on a call. An unknown id is answered here as call_not_found rather than
+    session_not_found.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -126,10 +125,9 @@ def sync(
 ) -> CallTokens | ErrorResponse | None:
     """What a call's models read and wrote, and what their prompts were made of
 
-     Read while the call is going as well as after it, unlike the usage on the call, which is counted
-    once it is over. A prompt's parts are estimated: no provider says how much of a prompt was
-    instructions, tools or images, so the router estimates it from each request and scales it to what
-    the provider counted. The parts sum to the input tokens.
+     Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a
+    session held in writing or on a call. An unknown id is answered here as call_not_found rather than
+    session_not_found.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -155,10 +153,9 @@ async def asyncio_detailed(
 ) -> Response[CallTokens | ErrorResponse]:
     """What a call's models read and wrote, and what their prompts were made of
 
-     Read while the call is going as well as after it, unlike the usage on the call, which is counted
-    once it is over. A prompt's parts are estimated: no provider says how much of a prompt was
-    instructions, tools or images, so the router estimates it from each request and scales it to what
-    the provider counted. The parts sum to the input tokens.
+     Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a
+    session held in writing or on a call. An unknown id is answered here as call_not_found rather than
+    session_not_found.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -187,10 +184,9 @@ async def asyncio(
 ) -> CallTokens | ErrorResponse | None:
     """What a call's models read and wrote, and what their prompts were made of
 
-     Read while the call is going as well as after it, unlike the usage on the call, which is counted
-    once it is over. A prompt's parts are estimated: no provider says how much of a prompt was
-    instructions, tools or images, so the router estimates it from each request and scales it to what
-    the provider counted. The parts sum to the input tokens.
+     Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a
+    session held in writing or on a call. An unknown id is answered here as call_not_found rather than
+    session_not_found.
 
     Args:
         id (str): The resource, as returned when it was created.

@@ -1109,7 +1109,7 @@ class TestSessions < LocalRouterTest
   end
 
   def test_a_sessions_metrics_are_read_back_by_its_id
-    @router.on(:get, "/v1/agents/calls/s1/tokens",
+    @router.on(:get, "/v1/agents/sessions/s1/tokens",
                body: { "input_tokens" => 1200, "cached_input_tokens" => 800, "output_tokens" => 90,
                        "input_parts" => { "instructions" => 700, "messages" => 300, "tool_definitions" => 200 },
                        "models" => [{ "modality" => "llm", "provider" => "openai", "model" => "gpt-5-mini" }] })
@@ -1133,16 +1133,19 @@ class TestSessions < LocalRouterTest
   end
 
   def test_a_sessions_metrics_of_an_unknown_session_are_refused
-    refused = LocalRouter.failure("not_found", "call_not_found", "unknown call")
-    @router.on(:get, %r{\A/v1/agents/calls/someone-elses/}, status: 404, body: refused)
+    no_session = LocalRouter.failure("not_found", "session_not_found", "unknown session")
+    no_call = LocalRouter.failure("not_found", "call_not_found", "unknown call")
+    @router.on(:get, "/v1/agents/sessions/someone-elses/tokens", status: 404, body: no_session)
+    @router.on(:get, %r{\A/v1/agents/calls/someone-elses/}, status: 404, body: no_call)
     sessions = client.agent("docs").sessions
 
-    { "tokens" => -> { sessions.tokens("someone-elses") }, "timeline" => -> { sessions.timeline("someone-elses") },
-      "decisions" => -> { sessions.decisions("someone-elses") } }.each do |read, call|
+    { "tokens" => [-> { sessions.tokens("someone-elses") }, "session_not_found"],
+      "timeline" => [-> { sessions.timeline("someone-elses") }, "call_not_found"],
+      "decisions" => [-> { sessions.decisions("someone-elses") }, "call_not_found"] }.each do |read, (call, code)|
       error = assert_raises(VA::RouterError, read) { call.call }
-      assert_equal [404, "call_not_found"], [error.status, error.code], read
+      assert_equal [404, code], [error.status, error.code], read
     end
-    assert_equal %w[/v1/agents/calls/someone-elses/tokens /v1/agents/calls/someone-elses/timeline
+    assert_equal %w[/v1/agents/sessions/someone-elses/tokens /v1/agents/calls/someone-elses/timeline
                     /v1/agents/calls/someone-elses/events],
                  @router.requests.map(&:path)
   end

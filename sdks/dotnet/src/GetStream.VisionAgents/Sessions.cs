@@ -145,7 +145,7 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
     /// session's usage it is answered while the conversation runs. Only a backend may ask.
     /// </summary>
     public Task<CallTokens> TokensAsync(string id, CancellationToken cancellationToken = default) =>
-        client.GetAsync<CallTokens>($"/v1/agents/calls/{VisionAgentsClient.Escape(id)}/tokens", cancellationToken: cancellationToken);
+        client.GetAsync<CallTokens>($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}/tokens", cancellationToken: cancellationToken);
 
     /// <summary>
     /// One conversation's exchanges, with what was said in each and how long the answer took to

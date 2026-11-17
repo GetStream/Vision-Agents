@@ -583,7 +583,7 @@ module GetStream
       #
       # @return [Hash] the CallTokens.
       def tokens(id)
-        @client.get("/v1/agents/calls/{id}/tokens", path: { id: id })
+        @client.get("/v1/agents/sessions/{id}/tokens", path: { id: id })
       end
 
       # One conversation's exchanges, with what was said in each and how long the answer took

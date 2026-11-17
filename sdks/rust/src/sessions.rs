@@ -204,7 +204,7 @@ impl Sessions {
     /// instructions, messages, tool definitions, tool use, images and video. Unlike the
     /// session's usage it is answered while the conversation runs. Server side only.
     pub async fn tokens(&self, id: &str) -> Result<types::CallTokens> {
-        self.client.get_call_tokens(id).await
+        self.client.get_session_tokens(id).await
     }
 
     /// One conversation's exchanges, with what was said in each and how long the answer took

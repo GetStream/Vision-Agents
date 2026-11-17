@@ -728,6 +728,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getSessionTokens" => {
+          method: :get, path: "/v1/agents/sessions/{id}/tokens",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getSimulation" => {
           method: :get, path: "/v1/agents/simulations/{id}",
           path_params: %w[id].freeze, query: [].freeze,
