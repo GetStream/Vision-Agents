@@ -98,6 +98,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.noteHook(r.Context(), origin)
+	r = loggedHook(r, origin)
 	// What the event starts here, an ended call's episode summaries, no key started.
 	r = r.WithContext(routing.WithAttribution(r.Context(), routing.Attribution{APIKey: routing.OriginHookVideo}))
 
@@ -143,7 +144,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 		}
 
 	default:
-		s.logger.Debug("ignoring a call event", "type", eventType)
+		s.logger.DebugContext(r.Context(), "ignoring a call event", "type", eventType)
 	}
 	w.WriteHeader(http.StatusOK)
 }

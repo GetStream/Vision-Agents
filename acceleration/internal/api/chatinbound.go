@@ -98,8 +98,9 @@ func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.noteHook(r.Context(), origin)
+	r = loggedHook(r, origin)
 	if delivery.Type != getstream.EventTypeMessageNew {
-		s.logger.Debug("ignoring a Stream Chat delivery", "type", delivery.Type)
+		s.logger.DebugContext(r.Context(), "ignoring a Stream Chat delivery", "type", delivery.Type)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -112,7 +113,7 @@ func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.queueChatInbound(r.Context(), origin, delivery, body); err != nil {
-		s.logger.Error("could not queue a Stream Chat delivery", "message", delivery.Message.ID,
+		s.logger.ErrorContext(r.Context(), "could not queue a Stream Chat delivery", "message", delivery.Message.ID,
 			"stream_app", origin.app, "error", err)
 		writeError(w, unavailable("could not queue that delivery"))
 		return

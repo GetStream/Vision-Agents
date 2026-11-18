@@ -1026,7 +1026,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			// ErrAbortHandler is net/http's own way of dropping a connection, not a bug.
 			if recovered != http.ErrAbortHandler {
 				customer, _ := CustomerFrom(r.Context())
-				s.logger.ErrorContext(r.Context(), "a request panicked",
+				s.logger.ErrorContext(failure.loggedContext(r.Context()), "a request panicked",
 					"method", r.Method, "path", loggedPath(routes, r), "customer", customer,
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
@@ -1063,11 +1063,12 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			fields = append(fields, "stack", failure.trace)
 		}
 		fields = append(fields, s.accessFields(r, recorder, failure.operation)...)
+		logged := failure.loggedContext(r.Context())
 		if recorder.status() >= http.StatusInternalServerError {
-			s.logger.ErrorContext(r.Context(), "served a request", fields...)
+			s.logger.ErrorContext(logged, "served a request", fields...)
 			return
 		}
-		s.logger.InfoContext(r.Context(), "served a request", fields...)
+		s.logger.InfoContext(logged, "served a request", fields...)
 	})
 }
 

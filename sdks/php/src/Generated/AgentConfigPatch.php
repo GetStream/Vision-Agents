@@ -82,6 +82,8 @@ final readonly class AgentConfigPatch
         public ?array $agents = null,
         // An empty string removes it, and the agent stops being offered generate_image.
         public ?string $image = null,
+        // What teaches the agent's model to answer with UI. An empty string removes them.
+        public ?string $uiInstructions = null,
     ) {
     }
 
@@ -131,6 +133,7 @@ final readonly class AgentConfigPatch
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
             agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
             image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
+            uiInstructions: array_key_exists('ui_instructions', $data) && $data['ui_instructions'] !== null ? Json::string($data, 'ui_instructions') : null,
         );
     }
 
@@ -261,6 +264,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->image !== null) {
             $out['image'] = $this->image;
+        }
+        if ($this->uiInstructions !== null) {
+            $out['ui_instructions'] = $this->uiInstructions;
         }
         return $out;
     }

@@ -63,8 +63,8 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
 	folder := a.folder
 	skills := a.syncedSkills()
-	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
-		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
+	hash := withUI(fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
+		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations), folder.UIInstructions)
 	harness, subagent, sandbox := a.options.Harness.stored()
 	if harness != nil || subagent != nil || sandbox != nil || len(a.options.CostTracking) > 0 {
 		hash = fingerprint(hash, fmt.Sprint(deref(harness), deref(subagent), deref(sandbox)),
@@ -72,14 +72,21 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	}
 
 	if ReadStamp(folder.Path) == hash {
-		if stored, err := storedConfig(ctx, client, a.options.Name); err != nil || stored != nil {
-			return stored, err
+		stored, err := storedConfig(ctx, client, a.options.Name)
+		if err != nil {
+			return nil, err
+		}
+		// A router older than ui_instructions takes the sync and drops them, which the stamp
+		// cannot tell, so a config missing the UI the stamp covers is synced again.
+		if stored != nil && (folder.UIInstructions == "" || deref(stored.UiInstructions) != "") {
+			return stored, nil
 		}
 	}
 
 	body := acceleration.SyncAgentRequest{Name: a.options.Name, Hash: hash}
 	setString(&body.Instructions, a.options.Instructions)
 	setString(&body.Guardrail, a.options.Guardrail)
+	setString(&body.UiInstructions, folder.UIInstructions)
 	if len(skills) > 0 {
 		requests := make([]acceleration.SkillRequest, 0, len(skills))
 		for _, skill := range skills {
