@@ -39,10 +39,10 @@ const defaultMaxTokens = 64000
 // tool loop reads each earlier round from the cache instead of paying for it again.
 //
 // A reasoning effort goes out as output_config.effort on the models that take one
-// (efforts). Not carried over from the compatibility endpoint: a replayed turn's thinking (dropped, as before; adaptive
-// thinking does not require it), temperature (Claude 4.7 and later refuse any but the
-// default), JSON modes (the endpoint ignored them; callers already check what comes back),
-// and the one-hour cache TTL (its writes bill at twice the input rate, which Price does
+// (efforts), and a replayed turn's thinking as the signed blocks it came as (withThinking).
+// Not carried over from the compatibility endpoint: temperature (Claude 4.7 and later
+// refuse any but the default), JSON modes (the endpoint ignored them; callers already check
+// what comes back), and the one-hour cache TTL (its writes bill at twice the input rate, which Price does
 // not model).
 type LLM struct {
 	model        string
@@ -208,6 +208,56 @@ type puller struct {
 	counted bool
 	err     error
 	done    bool
+
+	// thinking is the thinking block being streamed, recorded when it stops: a block cut
+	// off before its signature cannot be sent back.
+	thinking     *llm.ReasoningBlock
+	thinkingText strings.Builder
+	// calls, text and last are where the response stands: the tool calls begun, the bytes
+	// of text written and the type of the latest block. A block is recorded at that place.
+	calls int
+	text  int
+	last  string
+	// textAt is where the latest text block began, so one that ends empty is noticed: a
+	// replay has no block to put back for it.
+	textAt int
+	// unreplayable is a response laid out as a replay cannot rebuild it from one text and
+	// its calls (replayable); no block from that point on is recorded.
+	unreplayable bool
+	// held are the blocks after a tool call, recorded only once the response ends: text
+	// arriving after a call is put back before the calls, inside the prefix they were signed
+	// with, so it withholds them all.
+	held []llm.ReasoningBlock
+	// argued is whether the tool call being streamed has had arguments.
+	argued bool
+}
+
+// keep records a finished block, or holds it until the end when it follows a tool call.
+func (p *puller) keep(w *llm.ResponseWriter, block llm.ReasoningBlock) {
+	if block.AfterToolCalls > 0 {
+		p.held = append(p.held, block)
+		return
+	}
+	w.ReasoningBlock(block)
+}
+
+// place marks where a block of thinking starting now stands: after the text written so far
+// while no tool call has started, after the calls otherwise (a replay puts all the text
+// before the calls).
+func (p *puller) place() llm.ReasoningBlock {
+	if p.calls > 0 {
+		return llm.ReasoningBlock{AfterToolCalls: p.calls}
+	}
+	return llm.ReasoningBlock{AfterText: p.text}
+}
+
+// replayable reports whether a text block starting now still leaves the response one a
+// replay rebuilds exactly. The socket carries a turn's text as one string ahead of its calls,
+// so text after a call, or two text blocks with no thinking between them to split them, would
+// come back moved or merged, and thinking after them would be sent with a prefix Claude never
+// wrote.
+func (p *puller) replayable() bool {
+	return p.calls == 0 && p.last != "text"
 }
 
 // Advance reads one event and records what it carried.
@@ -232,17 +282,68 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 			OutputTokensDetails:      usage.OutputTokensDetails,
 		})
 	case "content_block_start":
-		if block := event.ContentBlock; block.Type == "tool_use" {
+		switch block := event.ContentBlock; block.Type {
+		case "text":
+			p.unreplayable = p.unreplayable || !p.replayable()
+			p.textAt = p.text
+			if p.calls > 0 {
+				p.held = nil
+			}
+		case "tool_use":
 			w.FunctionCall(event.Index, block.ID, block.Name, "", "")
+			p.calls++
+			p.argued = false
+		case "thinking":
+			if !p.unreplayable {
+				placed := p.place()
+				p.thinking = &placed
+				p.thinkingText.Reset()
+			}
+		case "redacted_thinking":
+			p.unreplayable = p.unreplayable || block.Data == ""
+			if !p.unreplayable {
+				placed := p.place()
+				placed.Redacted = block.Data
+				p.keep(w, placed)
+			}
 		}
+		p.last = string(event.ContentBlock.Type)
+	case "content_block_stop":
+		switch {
+		case p.last == "text" && p.text == p.textAt:
+			p.unreplayable = true
+		case p.last == "tool_use" && !p.argued:
+			// A call that takes nothing streams no arguments; replayed, it needs an object.
+			w.FunctionCall(event.Index, "", "", "{}", "")
+		}
+		// A block that cannot be sent back leaves a gap, and the thinking sent back has to
+		// be an unbroken run: none after it is kept.
+		if p.thinking != nil {
+			if p.thinking.Signature == "" {
+				p.unreplayable = true
+			} else {
+				p.thinking.Text = p.thinkingText.String()
+				p.keep(w, *p.thinking)
+			}
+		}
+		p.thinking = nil
 	case "content_block_delta":
 		switch delta := event.Delta; delta.Type {
 		case "text_delta":
 			w.OutputText(delta.Text)
+			p.text += len(delta.Text)
 		case "thinking_delta":
 			w.ReasoningText(delta.Thinking)
+			if p.thinking != nil {
+				p.thinkingText.WriteString(delta.Thinking)
+			}
+		case "signature_delta":
+			if p.thinking != nil {
+				p.thinking.Signature = delta.Signature
+			}
 		case "input_json_delta":
 			w.FunctionCall(event.Index, "", "", delta.PartialJSON, "")
+			p.argued = p.argued || delta.PartialJSON != ""
 		}
 	case "message_delta":
 		p.counted = true
@@ -297,6 +398,9 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
+	for _, block := range p.held {
+		w.ReasoningBlock(block)
+	}
 	switch err := p.upstream.Err(); {
 	case err == nil:
 	case errors.Is(err, context.Canceled):
@@ -528,15 +632,17 @@ func appendMessage(messages []anthropic.MessageParam, message llm.Message) []ant
 	switch message.Role {
 	case llm.Assistant:
 		role = anthropic.MessageParamRoleAssistant
-		if text := messageText(message); text != "" {
-			blocks = append(blocks, anthropic.NewTextBlock(text))
-		}
+		text := messageText(message)
+		var calls []anthropic.ContentBlockParamUnion
 		for _, call := range message.ToolCalls {
 			arguments := json.RawMessage(call.Arguments)
 			if !json.Valid(arguments) {
 				arguments = json.RawMessage("{}")
 			}
-			blocks = append(blocks, anthropic.NewToolUseBlock(call.ID, arguments, call.Name))
+			calls = append(calls, anthropic.NewToolUseBlock(call.ID, arguments, call.Name))
+		}
+		if text != "" || len(calls) > 0 {
+			blocks = withThinking(text, calls, message.ReasoningBlocks)
 		}
 	case llm.ToolResult:
 		result := anthropic.ToolResultBlockParam{ToolUseID: message.ToolCallID}
@@ -574,6 +680,47 @@ func appendMessage(messages []anthropic.MessageParam, message llm.Message) []ant
 		return messages
 	}
 	return append(messages, anthropic.MessageParam{Role: role, Content: blocks})
+}
+
+// withThinking lays out an assistant turn with its thinking back where the model wrote it:
+// a block before any call goes after the bytes of text that preceded it (AfterText), which
+// splits the text into the blocks it came as, and a block after a call goes straight after
+// that call. The API refuses a turn whose thinking was moved, edited or left out between two
+// kept blocks, so an unsigned block (which it refuses too) is the only one dropped. Positions
+// are checked where they arrive (the socket's respond frame); the bounds here only keep a
+// slice in range.
+func withThinking(text string, calls []anthropic.ContentBlockParamUnion, thinking []llm.ReasoningBlock) []anthropic.ContentBlockParamUnion {
+	out := make([]anthropic.ContentBlockParamUnion, 0, 1+len(calls)+len(thinking))
+	written, next := 0, 0
+	writeText := func(upTo int) {
+		if upTo = min(upTo, len(text)); upTo > written {
+			out = append(out, anthropic.NewTextBlock(text[written:upTo]))
+			written = upTo
+		}
+	}
+	think := func(after int) {
+		for ; next < len(thinking) && min(thinking[next].AfterToolCalls, len(calls)) <= after; next++ {
+			block := thinking[next]
+			if block.Redacted == "" && block.Signature == "" {
+				continue
+			}
+			if after == 0 {
+				writeText(block.AfterText)
+			}
+			if block.Redacted != "" {
+				out = append(out, anthropic.NewRedactedThinkingBlock(block.Redacted))
+			} else {
+				out = append(out, anthropic.NewThinkingBlock(block.Signature, block.Text))
+			}
+		}
+	}
+	think(0)
+	writeText(len(text))
+	for i, call := range calls {
+		out = append(out, call)
+		think(i + 1)
+	}
+	return out
 }
 
 func image(part llm.ImagePart) *anthropic.ImageBlockParam {
