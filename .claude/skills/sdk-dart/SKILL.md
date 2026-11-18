@@ -156,6 +156,11 @@ final chat = await agents.agent('support').chat();
 The constructor does no I/O. Advanced forms take an options value (`SessionOptions`,
 `ForkOptions`, `SessionQuery`, `SearchOptions`), not thirty named parameters.
 
+Names follow Swift and Kotlin, the other client SDKs, rather than JavaScript or Go, whose shapes
+serve backends too. A type they nest is flattened under its parent's name (`ScheduledTask.State`
+is `ScheduledTaskState`), `Page` is `ListPage`, and a wire name Dart reserves takes the
+generator's `Value` suffix (`in` is `inValue` on `ScheduledTaskNext` and `ScheduledTaskSchedule`).
+
 Names chosen to not collide with what a Flutter app imports: `SearchRouter` (not `Router`),
 `AgentImage` (not `ImageSource`), commands suffixed `Command`. Stream Chat also exports a
 `Command`; a host importing both hides one.

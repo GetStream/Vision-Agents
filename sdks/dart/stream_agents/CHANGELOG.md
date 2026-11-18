@@ -1,3 +1,14 @@
+## Upcoming
+
+✅ Added
+
+- `StreamAgents.scheduledTasks` - the user's scheduled tasks, as in the Swift and Kotlin SDKs:
+  `list`, `get`, `update`, `pause`, `resume` and `delete` them, and read their `runs`.
+- `session.interrupt(requestId: ...)` - abandons only the reply answering that request, the
+  `request_id` its events carry. Without one it abandons the current reply, as before.
+- `session.addTools` and `session.removeTool` - give a running session more of the app's tools,
+  and take them back.
+
 ## 0.7.0
 
 First release of `stream_agents`, the Flutter client for Stream Agents, versioned with the
