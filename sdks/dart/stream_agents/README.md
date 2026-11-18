@@ -40,7 +40,7 @@ Add this to your `pubspec.yaml`, using the latest version
 
 ```yaml
 dependencies:
-  stream_agents: ^0.1.0
+  stream_agents: ^0.7.0
   stream_chat: ^10.4.0 # for the Channel, Message and client types
   stream_chat_flutter_ai: ^0.2.0 # the conversation's UI
 ```
@@ -115,6 +115,17 @@ final session = await agents.agent('support').chat(SessionOptions(tools: [lookup
 ```
 
 The agent only sees what the tool returns.
+
+A running session takes more tools, such as the ones a card shown in it brings, and gives them
+back. The model is offered the change from the next turn, once the reply in progress and its tool
+calls have finished, so never wait for either from inside one of the session's own tools:
+
+```dart
+await session.addTools([reserveTable]);
+await session.removeTool('reserve_table');
+```
+
+A name the session already has is refused: remove it first, then add the new tool.
 
 ## Keeping the conversation in Stream Chat
 
@@ -210,8 +221,8 @@ time a session joins, and reuses it for that user's calls on the same `StreamAge
 
 - `StreamAgents` - the client: `agent(name)`, `sessions`, `guestUser`, `withUser`, `useChat`,
   `useVideo`, `disconnect`
-- `AgentSession` - one conversation: `responses`, `conversation`, `events()`, `decide`, `rewind`,
-  `fork`, `update`, `chat`, `close`, `delete`
+- `AgentSession` - one conversation: `responses`, `conversation`, `events()`, `decide`,
+  `addTools`, `removeTool`, `rewind`, `fork`, `update`, `chat`, `close`, `delete`
 - `Conversation`, `Turn`, `ConversationState` - the transcript and what the agent is doing
 - `LiveValue<T>` - a current value and a stream of its changes, with no state-management package
 - `AgentTool`, `ToolOutput` - tools the agent can call on the device

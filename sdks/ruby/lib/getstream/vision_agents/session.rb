@@ -82,6 +82,16 @@ module GetStream
         @heard = false
         @ended = false
         @running = {}
+        # added are the functions add_tools gave the session after it opened, copied from the
+        # caller's into a Tools of the session's own; they run here before the agent's own of
+        # the same name. withdrawn are the names remove_tool took from the session, which the
+        # agent's own no longer run, and unsettled the ones whose adding or withdrawing was
+        # neither done nor refused, which the router may or may not offer.
+        @added = Tools.new
+        @withdrawn = {}
+        @unsettled = {}
+        # One change of the session's tools at a time, across its request.
+        @changing = Mutex.new
         @reader = Thread.new { watch }
         @reader.report_on_exception = false
       end
@@ -129,9 +139,16 @@ module GetStream
 
       # Continues this conversation as a new one, held in writing.
       #
-      # The parent is untouched. The fork inherits this session's tools, since they are here
-      # in this process and a conversation continued without them would offer the model tools
-      # nothing can run.
+      # The parent is untouched. The fork runs this session's tools as they are now, the ones
+      # it opened with less the ones remove_tool took and with the ones add_tools gave it, as
+      # its own: the router gives the fork the same tools, and a conversation continued without
+      # their functions would offer the model tools nothing can run. A name whose last change
+      # here was neither done nor refused is as unsettled in the fork, which withdraws it before
+      # it changes it.
+      #
+      # It waits for an add_tools or remove_tool in flight, which the router finishes only once
+      # the turn in progress and every call in flight have, so do not call this from inside one
+      # of the session's tools.
       #
       # @param response_id [String] carry the history only up to the end of this response,
       #   so the fork branches from there. A persistent conversation cannot be rewound; this
@@ -140,8 +157,13 @@ module GetStream
       #   description, project_id, custom, model_overwrites, incognito, messages.
       def fork(response_id: nil, **options)
         body = options.merge(response_id: response_id && Responses.id_of(response_id))
-        forked = @client.post("/v1/agents/sessions/{id}/fork", path: { id: id }, body: body)
-        Session.watching(@client, forked, tools: @tools, **@options)
+        # Copied, and the fork asked for, between changes of the tools, so the router copies
+        # the same ones.
+        tools, unsettled, forked = @changing.synchronize do
+          [*@lock.synchronize { [@tools.except(*@withdrawn.keys).merge(@added), @unsettled.dup] },
+           @client.post("/v1/agents/sessions/{id}/fork", path: { id: id }, body: body)]
+        end
+        Session.watching(@client, forked, tools: tools, **@options).tap { |fork| fork.unsettle(unsettled) }
       end
 
       # Changes this session only: its title, description, custom labels, models or voice,
@@ -155,6 +177,71 @@ module GetStream
       # @return [Hash] the session as the router now has it.
       def update(**fields)
         @client.patch("/v1/agents/sessions/{id}", path: { id: id }, body: fields)
+      end
+
+      # Gives this session the functions in more while it runs, for it alone, and runs their
+      # calls here. The agent's own tools are left as they are, and no other session gets
+      # these. One named as a tool the session already has is refused: to change one,
+      # remove_tool it first, so that no call of it runs half under each.
+      #
+      # The router waits for the turn in progress, and every call in flight, to finish, and the
+      # model is offered them from the next turn, so do not call this from inside one of the
+      # session's tools. Only the kind of caller that opened the session may.
+      #
+      # @param more [Tools] the functions to add, as they are now: one registered in it later
+      #   is not run in their place.
+      # @raise [RouterError] a 4xx when the router refused them. Any other status, a gateway's
+      #   502 say, or 0 when its answer was lost, does not say whether the router has them, and
+      #   their calls are still run here until the name is changed again.
+      def add_tools(more)
+        more = Tools.new.merge(more)
+        declared = more.declarations
+        raise ConfigurationError, "there are no tools to add" if declared.empty?
+
+        names = declared.map { |tool| tool[:name] }
+        @changing.synchronize do
+          # A name whose last change was neither done nor refused may or may not be the router's:
+          # it is withdrawn first, so the router and this process agree on which function it is.
+          names.each { |name| withdraw(name, absent_is_fine: true) if unsettled?(name) }
+
+          # Run from before the router answers: the next turn can call one before the answer is
+          # here. A name already run here keeps its function, since the router refuses to add
+          # it again.
+          fresh = @lock.synchronize do
+            names.reject { |name| @added.include?(name) || (!@withdrawn[name] && @tools&.include?(name)) }
+                 .tap { |picked| @added = @added.merge(more.slice(*picked)) }
+          end
+          settled = false
+          begin
+            @client.post("/v1/agents/sessions/{id}/tools", path: { id: id }, body: { tools: declared })
+            settled = true
+          rescue RouterError => e
+            # Refused with a 4xx, the router has none of them.
+            settled = e.status.between?(400, 499)
+            @lock.synchronize { @added = @added.except(*fresh) } if settled
+            raise
+          ensure
+            # Without an answer or with another status, lost, given up on or a gateway's 5xx
+            # after the router added them, the router may have them all, so their calls are
+            # still run here until a later change of the name settles it.
+            @lock.synchronize { fresh.each { |name| @unsettled[name] = true } } unless settled
+          end
+        end
+        nil
+      end
+
+      # Withdraws one of this session's tools, whether the agent declared it when the session
+      # opened or add_tools added it since. The router waits as it does for add_tools, so once
+      # this returns no call of the tool is in flight and none can be made: do not call it from
+      # inside one of the session's tools.
+      #
+      # @raise [RouterError] a 4xx when the router refused, 404 when the session has no tool by
+      #   that name. Any other status, a gateway's 502 say, or 0 when the answer was lost, does
+      #   not say whether the router withdrew it, and its calls are still run here until the
+      #   name is changed again.
+      def remove_tool(name)
+        name = name.to_s
+        @changing.synchronize { withdraw(name, absent_is_fine: unsettled?(name)) }
       end
 
       # Pins this conversation, so a query sorted by pinned lists it first. Its place in
@@ -221,6 +308,14 @@ module GetStream
         nil
       end
 
+      protected
+
+      # Marks names whose last change was never settled, as a fork's parent hands over its own,
+      # so the next change of each withdraws it first.
+      def unsettle(names)
+        @lock.synchronize { @unsettled.merge!(names) }
+      end
+
       private
 
       def command(frame)
@@ -244,7 +339,8 @@ module GetStream
           # Every watcher is sent every call, and the router says which are to run it. One
           # from before it said holds the same rule: answering a tool held elsewhere would
           # beat whoever runs it, with an error.
-          run_tool(frame) if frame["run"] != false && @tools&.include?(frame["name"].to_s)
+          tools = tools_for(frame["name"].to_s)
+          run_tool(frame, tools) if frame["run"] != false && tools&.include?(frame["name"].to_s)
         when "tool_cancel"
           # The model has moved on. A Ruby thread cannot be stopped safely from outside, so the
           # tool is left to finish and its answer is dropped rather than sent, unless it asked
@@ -275,7 +371,7 @@ module GetStream
         end
       end
 
-      def run_tool(frame)
+      def run_tool(frame, tools)
         call_id = frame["id"].to_s
         answer = { type: "tool_result", tool_call_id: call_id }
         answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
@@ -295,13 +391,52 @@ module GetStream
           # A tool that raises is reported to the model rather than dropped: it is
           # mid-sentence waiting, and can only say something useful if it is told.
           result = begin
-            { output: @tools.call(frame["name"].to_s, frame["arguments"], tool_call_context) }
+            { output: tools.call(frame["name"].to_s, frame["arguments"], tool_call_context) }
           rescue StandardError => e
             { error: e.message }
           end
           wanted = @lock.synchronize { @running.delete(call_id) }
           reply(answer.merge(result)) if wanted
         end
+      end
+
+      # Takes the tool called name from the session and from what runs here. absent_is_fine
+      # settles a name whose last change was neither done nor refused: the router having no tool
+      # by it is as good as withdrawing it.
+      def withdraw(name, absent_is_fine:)
+        settled = false
+        begin
+          # Sent once: one sent again would be answered 404 for the tool the first withdrew.
+          @client.delete("/v1/agents/sessions/{id}/tools/{name}", path: { id: id, name: name }, resend: false)
+          settled = true
+        rescue RouterError => e
+          # A 4xx is a refusal, which changes nothing, but for the 404 absent_is_fine takes as
+          # withdrawn.
+          settled = e.status.between?(400, 499)
+          raise unless settled && absent_is_fine && e.status == 404
+        ensure
+          # Without an answer or with another status, lost, given up on or a gateway's 5xx after
+          # the router withdrew it, the router may or may not have withdrawn it: its function
+          # still runs here, and the name is withdrawn again, a 404 accepted, before it changes
+          # next.
+          @lock.synchronize { @unsettled[name] = true } unless settled
+        end
+        @lock.synchronize do
+          @added = @added.except(name)
+          @unsettled.delete(name)
+          @withdrawn[name] = true
+        end
+        nil
+      end
+
+      def unsettled?(name)
+        @lock.synchronize { @unsettled.key?(name) }
+      end
+
+      # The Tools that run the tool called name: the session's own once add_tools added it, none
+      # once remove_tool withdrew it, else the agent's.
+      def tools_for(name)
+        @lock.synchronize { @added.include?(name) ? @added : (@tools unless @withdrawn[name]) }
       end
 
       def reply(frame)

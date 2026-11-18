@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -18,7 +20,7 @@ namespace GetStream.VisionAgents.Tests;
 /// <summary>A request the server received, whole.</summary>
 public sealed record Seen(string Method, string Path, IReadOnlyDictionary<string, string> Query, IReadOnlyDictionary<string, string> Headers, JsonNode? Body);
 
-/// <summary>What to answer with. A string body is written as it is.</summary>
+/// <summary>What to answer with. A string body is written as it is, and a negative status drops the connection unanswered.</summary>
 public sealed record Reply(int Status, object? Body = null, IReadOnlyDictionary<string, string>? Headers = null);
 
 /// <summary>
@@ -123,6 +125,24 @@ public sealed class TestRouter : IAsyncDisposable
         var answer = _routes.TryGetValue(key, out var exact) ? exact
             : _routes.FirstOrDefault(route => route.Key.EndsWith('*') && key.StartsWith(route.Key[..^1], StringComparison.Ordinal)).Value;
         var reply = answer?.Invoke(seen) ?? new Reply(404, Fixtures.Failure("not_found", "not_found", $"nothing answers {seen.Method} {seen.Path}"));
+        if (reply.Status < 0)
+        {
+            // Closed with nothing written, the way a server that went away between the request
+            // and its answer closes it: the client reads the end of the stream where the answer
+            // should be. Aborted only once the client has hung up, so it reads that end rather
+            // than a reset.
+            context.Features.Get<IConnectionSocketFeature>()!.Socket.Shutdown(SocketShutdown.Send);
+            try
+            {
+                await Task.Delay(Patience, context.RequestAborted);
+            }
+            catch (OperationCanceledException)
+            {
+                // Hung up.
+            }
+            context.Abort();
+            return;
+        }
         context.Response.StatusCode = reply.Status;
         foreach (var (name, value) in reply.Headers ?? new Dictionary<string, string>())
         {

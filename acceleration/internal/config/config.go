@@ -113,6 +113,7 @@ type Config struct {
 	Connectors Connectors `koanf:"connectors"`
 	Runs       Runs       `koanf:"runs"`
 	Episodes   Episodes   `koanf:"episodes"`
+	Phone      Phone      `koanf:"phone"`
 	Sandbox    Sandbox    `koanf:"sandbox"`
 	// CodeSandbox is the sandbox code runs in, not the 10DLC Sandbox above.
 	CodeSandbox CodeSandbox `koanf:"code_sandbox"`
@@ -285,9 +286,6 @@ type Shutdown struct {
 type Auth struct {
 	// Mode is api_key, proxy, noauth or custom. Empty means api_key.
 	Mode string `koanf:"mode"`
-	// KEK unseals the stored key secrets. It belongs in the environment rather than in a
-	// file checked in beside the code: it is what makes a leaked backup ciphertext.
-	KEK string `koanf:"kek"`
 	// KMSKey names the KMS key that unwraps each ROUTER_AUTH_KEK_V<n>_WRAPPED at startup, so
 	// the keyring itself is in no variable. Empty reads only the plain keys.
 	KMSKey string `koanf:"kms_key"`
@@ -466,6 +464,15 @@ type Episodes struct {
 	IdleAfter time.Duration `koanf:"idle_after"`
 }
 
+// Phone is how the router treats the phone calls it places.
+type Phone struct {
+	// AgentJoinTimeout is how long a person who answered a call the router placed waits for
+	// someone else to be in the call. After it, the router asks Stream who is in the call. A
+	// call with only the person in it is ended. Zero turns the check off. One setting for the
+	// whole router.
+	AgentJoinTimeout time.Duration `koanf:"agent_join_timeout"`
+}
+
 // maxEpisodeIdle bounds IdleAfter from above. It is the only external bound: WhatsApp's
 // customer service window, 24 hours from the person's last message, which AI-884 names as
 // the one a text episode must close inside.
@@ -595,7 +602,6 @@ var variables = map[string]string{
 	"listen_fd":            "ROUTER_LISTEN_FD",
 	"shutdown.drain":       "ROUTER_SHUTDOWN_DRAIN",
 	"auth.mode":            "ROUTER_AUTH_MODE",
-	"auth.kek":             "ROUTER_AUTH_KEK",
 	"auth.kms_key":         "ROUTER_AUTH_KMS_KEY",
 	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
 	"auth.manage_key":      "ROUTER_AUTH_MANAGE_KEY",
@@ -629,6 +635,7 @@ var variables = map[string]string{
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
+	"phone.agent_join_timeout":  "ROUTER_PHONE_AGENT_JOIN_TIMEOUT",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
 	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
@@ -701,7 +708,10 @@ func Defaults() Config {
 			AudioFloorOverlapTimeout: 250 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
-		Episodes:    Episodes{IdleAfter: time.Hour},
+		Episodes: Episodes{IdleAfter: time.Hour},
+		// Provisional, not a measurement: staging measures how long sessions.Create takes for
+		// campaign and scheduled calls, and this is set above the longest (AI-800).
+		Phone:       Phone{AgentJoinTimeout: 10 * time.Second},
 		Sandbox:     Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona, IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
@@ -788,6 +798,12 @@ func Load(path string) (Config, string, error) {
 	config := Defaults()
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
+	}
+	// A file that still holds a plain key would otherwise start a router that silently
+	// lacks it. The router refuses the variable that once carried it at its own start.
+	if k.Exists("auth.kek") {
+		return Config{}, "", fmt.Errorf("config: %s: auth.kek is no longer read: set ROUTER_DEV_KEK on a laptop "+
+			"or in CI, or ROUTER_AUTH_KEK_V1_WRAPPED with auth.kms_key on a hosted router", name)
 	}
 	if os.Getenv("ROUTER_CHORUS_ASR_MODE") != "" || k.Exists("agent.chorus_asr_mode") {
 		config.Retired = append(config.Retired, chorusASRModeRetired)
@@ -912,6 +928,9 @@ func (c Config) validate() error {
 	if c.Episodes.IdleAfter <= 0 || c.Episodes.IdleAfter >= maxEpisodeIdle {
 		return fmt.Errorf("config: episodes.idle_after is more than zero and less than %s, got %s",
 			maxEpisodeIdle, c.Episodes.IdleAfter)
+	}
+	if c.Phone.AgentJoinTimeout < 0 {
+		return fmt.Errorf("config: phone.agent_join_timeout cannot be negative, got %s", c.Phone.AgentJoinTimeout)
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
@@ -1174,7 +1193,6 @@ func (c Config) export() error {
 		"listen_fd":                     listenFD(c.ListenFD),
 		"shutdown.drain":                c.Shutdown.Drain.String(),
 		"auth.mode":                     c.Auth.Mode,
-		"auth.kek":                      c.Auth.KEK,
 		"auth.kms_key":                  c.Auth.KMSKey,
 		"auth.ops_key":                  c.Auth.OpsKey,
 		"auth.manage_key":               c.Auth.ManageKey,
@@ -1199,6 +1217,7 @@ func (c Config) export() error {
 		"agent.flow_hedge":              c.Agent.FlowHedge.String(),
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
+		"phone.agent_join_timeout":      c.Phone.AgentJoinTimeout.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),

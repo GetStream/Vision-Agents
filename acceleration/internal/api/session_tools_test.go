@@ -144,6 +144,189 @@ func (s *SessionToolsSuite) TestASessionTheRouterLetGoOfSaysWhereItsToolsCameFro
 	s.Empty(sources["lookup_order"], "a tool kept before sources were recorded names none")
 }
 
+func (s *SessionToolsSuite) TestAToolGivenToARunningSessionIsCalledOverItsSocket() {
+	opened := s.serverClient.createSession(CreateSessionRequest{
+		Llm: pointerTo("tooling/tool-model"), Incognito: pointerTo(true),
+	})
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(lookupOrder, asked["name"])
+	s.Equal(`{"order":"12"}`, asked["arguments"])
+}
+
+func (s *SessionToolsSuite) TestWithdrawingAToolWaitsForItsCallInFlight() {
+	request := CreateSessionRequest{Llm: pointerTo("tooling/tool-model"), Incognito: pointerTo(true)}
+	request.Tools = &[]SessionTool{s.lookupOrder()}
+	opened := s.serverClient.createSession(request)
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events")
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+	asked := s.await(watching, "tool_call")
+
+	withdrawn := make(chan int, 1)
+	go func() {
+		withdrawn <- s.serverClient.do(http.MethodDelete,
+			"/v1/agents/sessions/"+opened.Id+"/tools/"+lookupOrder, nil, nil)
+	}()
+	s.Never(func() bool { return len(withdrawn) > 0 }, time.Second, 50*time.Millisecond,
+		"the tool was withdrawn while a call of it was waiting for its answer")
+
+	s.Require().NoError(watching.WriteJSON(map[string]any{
+		"type": "tool_result", "tool_call_id": asked["id"], "output": "it ships tomorrow",
+	}))
+	select {
+	case status := <-withdrawn:
+		s.Equal(http.StatusNoContent, status)
+	case <-time.After(settleFor):
+		s.Fail("the tool was not withdrawn once its call was answered")
+	}
+	s.NotContains(s.toolSources(opened.Id), lookupOrder)
+}
+
+func (s *SessionToolsSuite) TestAWatcherThatNamesItsToolsIsAskedToRunOneItsSideAdded() {
+	opened := s.serverClient.createSession(CreateSessionRequest{
+		Llm: pointerTo("tooling/tool-model"), Incognito: pointerTo(true),
+	})
+	watching := s.serverClient.opens("/v1/agents/sessions/" + opened.Id + "/events?tools=track_parcel")
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
+
+	asked := s.await(watching, "tool_call")
+	s.Equal(lookupOrder, asked["name"])
+	s.Equal(true, asked["run"])
+}
+
+func (s *SessionToolsSuite) TestAToolGivenToARunningSessionIsListedAsTheCallersAndGoesWhenWithdrawn() {
+	opened := s.serverClient.createSession(textSession(nil))
+
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+	s.Equal("session", s.toolSources(opened.Id)[lookupOrder])
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/tools/"+lookupOrder, nil, nil))
+	s.NotContains(s.toolSources(opened.Id), lookupOrder)
+}
+
+// The SDKs watch a fork with the tools its parent has now, which holds only while the router
+// forks a running session with them rather than with the ones it opened with.
+func (s *SessionToolsSuite) TestAForkOfARunningSessionIsOfferedTheToolsItHasNow() {
+	request := textSession(nil)
+	request.Tools = &[]SessionTool{{Name: "check_stock", Description: "check an item is in stock"}}
+	opened := s.serverClient.createSession(request)
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/tools/check_stock", nil, nil))
+
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{Messages: pointerTo(false)}, &forked))
+
+	sources := s.toolSources(forked.Id)
+	s.Equal("session", sources[lookupOrder], "the tool added while the parent ran")
+	s.NotContains(sources, "check_stock", "the tool the parent opened with and withdrew")
+}
+
+func (s *SessionToolsSuite) TestAToolTheCallerAlreadyHasIsNotAddedAgain() {
+	opened := s.serverClient.createSession(textSession(nil))
+	s.Require().Equal(http.StatusNoContent, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+	again := s.lookupOrder()
+	again.Description = "find an order by its tracking code"
+
+	s.Equal(http.StatusConflict, s.addTools(s.serverClient, opened.Id, again),
+		"changing a tool in place would run a call of it half under each declaration")
+
+	var offered OfferedTools
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/tools", nil, &offered))
+	var descriptions []string
+	for _, tool := range offered.Tools {
+		if tool.Name == lookupOrder {
+			descriptions = append(descriptions, tool.Description)
+		}
+	}
+	s.Equal([]string{"find an order by its number"}, descriptions)
+}
+
+func (s *SessionToolsSuite) TestANameAWorkerHostsCannotBeTheCallersTool() {
+	agent := "agent-" + s.utils.uuid()
+	s.await(s.serverClient.opens("/v1/dispatch"), "ready")
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], agent,
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+	request := textSession(nil)
+	request.AgentId = &agent
+	opened := s.serverClient.createSession(request)
+
+	s.Equal(http.StatusConflict, s.addTools(s.serverClient, opened.Id,
+		SessionTool{Name: "investigate_sdk", Description: "Read my own source"}))
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/tools/investigate_sdk", nil, nil),
+		"a worker's tool is not the caller's to withdraw")
+	s.Equal("worker", s.toolSources(opened.Id)["investigate_sdk"])
+}
+
+func (s *SessionToolsSuite) TestWithdrawingAToolTheCallerDoesNotHaveIsNotFound() {
+	opened := s.serverClient.createSession(textSession(nil))
+
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/tools/"+lookupOrder, nil, nil))
+}
+
+func (s *SessionToolsSuite) TestASessionThatStoppedTakesNoTools() {
+	opened := s.serverClient.createSession(textSession(nil))
+	s.serverClient.stopSession(opened.Id)
+
+	s.Equal(http.StatusNotFound, s.addTools(s.serverClient, opened.Id, s.lookupOrder()))
+}
+
+func (s *SessionToolsSuite) TestADeviceGivesToolsToTheSessionItOpened() {
+	device := s.data.createUser()
+	opened := device.createSession(textSession(nil))
+
+	s.Equal(http.StatusNoContent, s.addTools(device, opened.Id, s.lookupOrder()))
+	s.Equal(http.StatusNoContent, device.do(http.MethodDelete,
+		"/v1/agents/sessions/"+opened.Id+"/tools/"+lookupOrder, nil, nil))
+}
+
+func (s *SessionToolsSuite) TestADeviceCannotDeclareToolsOnASessionABackendOpenedForIt() {
+	device := s.data.createUser()
+	opened := s.serverClient.actingFor(device).createSession(textSession(nil))
+
+	s.Equal(http.StatusForbidden, s.addTools(device, opened.Id, s.lookupOrder()),
+		"a backend's tools are run by the backend, which would never be asked for the device's")
+}
+
+func (s *SessionToolsSuite) TestAnotherUsersDeviceIsToldTheSessionDoesNotExist() {
+	opened := s.data.createUser().createSession(textSession(nil))
+
+	s.Equal(http.StatusNotFound, s.addTools(s.data.createUser(), opened.Id, s.lookupOrder()))
+}
+
+func (s *SessionToolsSuite) TestAnotherAppCannotGiveASessionTools() {
+	opened := s.serverClient.createSession(textSession(nil))
+
+	s.assertHiddenFromOtherApps(func(as *testClient) int {
+		return s.addTools(as, opened.Id, s.lookupOrder())
+	})
+}
+
+// addTools gives the session tools as caller, answering the status.
+func (s *SessionToolsSuite) addTools(caller *testClient, sessionID string, tools ...SessionTool) int {
+	return caller.do(http.MethodPost, "/v1/agents/sessions/"+sessionID+"/tools",
+		AddSessionToolsRequest{Tools: tools}, nil)
+}
+
+func (s *SessionToolsSuite) lookupOrder() SessionTool {
+	return SessionTool{Name: lookupOrder, Description: "find an order by its number",
+		Parameters: &map[string]any{"type": "object"}}
+}
+
 // toolSources is where each tool a session is offered came from, by name.
 func (s *SessionToolsSuite) toolSources(sessionID string) map[string]string {
 	var offered OfferedTools

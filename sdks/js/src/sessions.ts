@@ -2,7 +2,7 @@ import type { Client, Schemas } from "./client.js";
 import { checkTeam } from "./backend.js";
 import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
-import { Session, type ForkOptions, type SessionOptions } from "./session.js";
+import { Session, type ForkOptions, type ResumeOptions, type SessionOptions } from "./session.js";
 
 /**
  * What a session can be opened with, beyond which agent is holding it.
@@ -185,10 +185,33 @@ export class Sessions {
 
   /**
    * Carries on a conversation held in writing, by the id of the session it was held in, and
-   * starts watching it. One that ended is reopened with what was said in it.
+   * starts watching it. One that ended is reopened with what was said in it, the tools its
+   * caller declared and the `tool_timeout_ms` it ran with.
+   *
+   * The `tools` declared here and `tool_timeout_ms` are written over those. A conversation
+   * still running takes `tool_timeout_ms` at once and keeps its tools until it ends: the tools
+   * given then are not offered to its model. Unwatched (`watch: false`), nothing here runs a
+   * tool, so none is declared, and only a `tool_timeout_ms` asks the router to carry it on;
+   * otherwise it is read as it is. Needs a router that has `resumeSession`.
    */
-  async resume(id: string, options: SessionOptions = {}): Promise<Session> {
-    return Session.watching(this.client, await this.get(id), watching(options));
+  async resume(id: string, options: ResumeOptions = {}): Promise<Session> {
+    const { tool_timeout_ms, ...rest } = options;
+    // Unwatched, no tool is run here, so none is declared.
+    const declared = rest.watch === false ? [] : (rest.tools?.declared() ?? []);
+    // With nothing to say, the conversation is read as it is, which a call that kept no
+    // conversation can be too. No declared tools leaves the ones it has: another watcher may
+    // run them.
+    const resumed =
+      tool_timeout_ms === undefined && declared.length === 0
+        ? await this.get(id)
+        : await this.client.post("/v1/agents/sessions/{id}/resume", {
+            path: { id },
+            body: {
+              ...(tool_timeout_ms === undefined ? {} : { tool_timeout_ms }),
+              ...(declared.length > 0 ? { tools: declared } : {}),
+            },
+          });
+    return Session.watching(this.client, resumed, watching(rest));
   }
 
   /**
@@ -325,6 +348,33 @@ export class Sessions {
    */
   deleteMemories(id: string): Promise<void> {
     return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id } });
+  }
+
+  /**
+   * What one conversation's models read and wrote, per model, with the prompt split into
+   * instructions, messages, tool definitions, tool use, images and video. Unlike the session's
+   * `usage` it is answered while the conversation runs. Server side only.
+   */
+  tokens(id: string): Promise<Schemas["CallTokens"]> {
+    return this.client.get("/v1/agents/sessions/{id}/tokens", { path: { id } });
+  }
+
+  /**
+   * One conversation's exchanges, with what was said in each and how long the answer took to
+   * start, its transcription, model and voice timings kept apart. The timings are kept for an
+   * hour. Server side only.
+   */
+  timeline(id: string): Promise<readonly Schemas["TimelineEntry"][]> {
+    return this.client.get("/v1/agents/calls/{id}/timeline", { path: { id } });
+  }
+
+  /**
+   * What one conversation decided, oldest first: why the agent waited rather than answering,
+   * why it read something as not meant for it, why it stopped mid-sentence. They are kept for
+   * an hour. Server side only.
+   */
+  decisions(id: string): Promise<readonly Schemas["CallEvent"][]> {
+    return this.client.get("/v1/agents/calls/{id}/events", { path: { id } });
   }
 
   private memoryOf(memory: Schemas["SessionMemory"]): Schemas["SessionMemory"] {

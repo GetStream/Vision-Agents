@@ -311,6 +311,15 @@ struct SessionServer {
         let headers: [String: String]
         let body: String
 
+        /// No answer at all: the connection closes once the request has arrived, as though it
+        /// dropped on the way back.
+        static let dropped = Answer(status: 0, headers: [:], body: "")
+
+        /// A gateway's answer from in front of the router, which says nothing of whether the
+        /// router did what it was asked.
+        static let badGateway = Answer(
+            status: 502, headers: ["Content-Type": "text/html"], body: "<html><body>502 Bad Gateway</body></html>")
+
         /// The session `s1`, on the call named `callID` or held in writing when it is empty.
         static func session(status: Int, callID: String) -> Answer {
             Answer(
@@ -324,6 +333,12 @@ struct SessionServer {
     private let requests: AsyncThrowingStream<Request, any Error>
 
     init(answer: Answer? = nil) throws {
+        try self.init { _, _, _ in answer }
+    }
+
+    /// A server answering each request by its method, path and body, or with a session for
+    /// a nil answer.
+    init(answering: @escaping @Sendable (String, String, [String: RawJSON]) -> Answer?) throws {
         let queue = DispatchQueue(label: "session-server")
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
@@ -348,7 +363,7 @@ struct SessionServer {
         }
         listener.newConnectionHandler = { connection in
             connection.start(queue: queue)
-            Self.read(connection, Data(), answer, request)
+            Self.read(connection, Data(), answering, request)
         }
         queue.asyncAfter(deadline: .now() + 30) {
             let error = AgentsError.unreadable("test server timed out")
@@ -367,7 +382,8 @@ struct SessionServer {
     }
 
     private static func read(
-        _ connection: NWConnection, _ buffer: Data, _ answer: Answer?,
+        _ connection: NWConnection, _ buffer: Data,
+        _ answering: @escaping @Sendable (String, String, [String: RawJSON]) -> Answer?,
         _ request: AsyncThrowingStream<Request, any Error>.Continuation
     ) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, done, error in
@@ -391,7 +407,7 @@ struct SessionServer {
                         guard pair.count == 2 else { continue }
                         headers[pair[0].lowercased()] = pair[1].trimmingCharacters(in: .whitespaces)
                     }
-                    respond(connection, answer ?? session(path: path, fields: fields))
+                    respond(connection, answering(line[0], path, fields) ?? session(path: path, fields: fields))
                     request.yield(
                         Request(
                             method: line[0], path: path, query: target.count > 1 ? target[1] : "",
@@ -403,7 +419,7 @@ struct SessionServer {
             if let error {
                 request.finish(throwing: error)
             } else if !done {
-                read(connection, buffer, answer, request)
+                read(connection, buffer, answering, request)
             }
         }
     }
@@ -426,6 +442,7 @@ struct SessionServer {
     }
 
     private static func respond(_ connection: NWConnection, _ answer: Answer) {
+        guard answer.status != 0 else { return connection.cancel() }
         let body = Data(answer.body.utf8)
         var head = "HTTP/1.1 \(answer.status) \(HTTPURLResponse.localizedString(forStatusCode: answer.status))\r\n"
         for (name, value) in answer.headers.sorted(by: { $0.key < $1.key }) {

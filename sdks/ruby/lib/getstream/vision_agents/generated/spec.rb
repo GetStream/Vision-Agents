@@ -26,6 +26,12 @@ module GetStream
           body: "KnowledgeUrlRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "addSessionTools" => {
+          method: :post, path: "/v1/agents/sessions/{id}/tools",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "AddSessionToolsRequest", body_required: true,
+          socket: false, client_accessible: true
+        }.freeze,
         "addTrunkNumber" => {
           method: :post, path: "/v1/phone/trunks/{id}/numbers",
           path_params: %w[id].freeze, query: [].freeze,
@@ -719,6 +725,12 @@ module GetStream
         "getSessionCommand" => {
           method: :get, path: "/v1/agents/sessions/{id}/commands/{request_id}",
           path_params: %w[id request_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "getSessionTokens" => {
+          method: :get, path: "/v1/agents/sessions/{id}/tokens",
+          path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1442,6 +1454,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "removeSessionTool" => {
+          method: :delete, path: "/v1/agents/sessions/{id}/tools/{name}",
+          path_params: %w[id name].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "resetLimitUsage" => {
           method: :post, path: "/v1/spend/limits/usage/reset",
           path_params: [].freeze, query: [].freeze,
@@ -1470,6 +1488,12 @@ module GetStream
           method: :post, path: "/v1/agents/scheduled-tasks/{id}/resume",
           path_params: %w[id].freeze, query: [].freeze,
           body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
+        "resumeSession" => {
+          method: :post, path: "/v1/agents/sessions/{id}/resume",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "ResumeSessionRequest", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
         "reviewUseCase" => {
@@ -1836,6 +1860,10 @@ module GetStream
         "AddContactsResponse" => {
           properties: %w[added refused].freeze,
           required: %w[added refused].freeze, open: false
+        }.freeze,
+        "AddSessionToolsRequest" => {
+          properties: %w[tools].freeze,
+          required: %w[tools].freeze, open: false
         }.freeze,
         "AddTrunkNumberRequest" => {
           properties: %w[country e164 tags].freeze,
@@ -2851,6 +2879,10 @@ module GetStream
         }.freeze,
         "ResumeHistory" => {
           properties: %w[include_tools max_characters max_messages].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "ResumeSessionRequest" => {
+          properties: %w[tool_timeout_ms tools].freeze,
           required: [].freeze, open: false
         }.freeze,
         "ReviewAnalysis" => {

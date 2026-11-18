@@ -105,6 +105,23 @@ from then on, for a write that must not stop halfway, and throws `CallNotHeldExc
 router had already cancelled it. A cancelled call has its token cancelled and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.
 
+A running session can be given more functions, for it alone, and have one taken back:
+
+```csharp
+await session.AddToolsAsync(new Tools().Register<Table, string>("reserve_table", "Reserve a table",
+    (table, cancellationToken) => ReserveAsync(table.Number, cancellationToken)));
+await session.RemoveToolAsync("reserve_table");
+```
+
+The router waits for the turn in progress and every call in flight, so never await either from
+inside one of the session's tools. A name the session already has is refused (409): remove it,
+then add it again. One of the agent's tools that is removed runs nothing in that session until a
+function is added under its name. A 4xx is the router refusing; when the answer to an add or a
+remove is lost or is not the router's (`RouterException.Status` 0 or a gateway's 5xx, or the call
+cancelled), the function added, or the one being removed, keeps running here, and the next add or
+remove of the name settles it. A fork runs the tools the session has when it forks, and waits for
+an add or a remove in flight.
+
 A stored config is changed in place, and only what is set is sent:
 
 ```csharp

@@ -14,6 +14,7 @@ import {
   type SessionSearch,
   type SessionSort,
   type Sessions,
+  Tools,
 } from "../src/index.js";
 import { inPage, offPage } from "./device.js";
 import { TestRouter, type Connection } from "./router.js";
@@ -165,7 +166,55 @@ describe("sessions", () => {
       false,
       "carrying a conversation on creates no session",
     );
+    assert.equal(
+      router.requestsTo("POST", "/v1/agents/sessions/session-4/resume").length,
+      0,
+      "with nothing to say over what it ran with, it is read as it is",
+    );
     await held.close();
+  });
+
+  it("resumes with a tool timeout and its tools by asking the router to carry it on", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-4/resume", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "live" }),
+    });
+    const tools = new Tools().register({ name: "lookup_order", description: "Finds an order", run: () => "found" });
+    const resuming = api.agent("docs").sessions.resume("session-4", { tools, tool_timeout_ms: 180_000 });
+    const connection = await router.socket();
+    const held = await resuming;
+
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/session-4/resume")[0]?.body, {
+      tool_timeout_ms: 180_000,
+      tools: [{ name: "lookup_order", description: "Finds an order" }],
+    });
+    assert.equal(router.requestsTo("GET", "/v1/agents/sessions/session-4").length, 0);
+    assert.equal(connection.path, "/v1/agents/sessions/session-4/events");
+    await held.close();
+  });
+
+  it("resumes with only a tool timeout, leaving the tools the conversation has", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-4/resume", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "live" }),
+    });
+    const resuming = api.agent("docs").sessions.resume("session-4", { tool_timeout_ms: 0 });
+    await router.socket();
+    const held = await resuming;
+
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/session-4/resume")[0]?.body, {
+      tool_timeout_ms: 0,
+    });
+    await held.close();
+  });
+
+  it("reads a conversation it will not watch as it is, though it has tools", async () => {
+    router.serve("GET", "/v1/agents/sessions/session-4", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "ended" }),
+    });
+    const tools = new Tools().register({ name: "lookup_order", description: "Finds an order", run: () => "found" });
+    const held = await api.agent("docs").sessions.resume("session-4", { tools, watch: false });
+
+    assert.equal(held.id, "session-4");
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-4/resume").length, 0);
   });
 
   it("spells the model overwrites the way the wire does", async () => {
@@ -559,6 +608,75 @@ describe("sessions", () => {
       api.agent("docs").sessions.deleteMemories("someone-elses"),
       (error: unknown) => error instanceof RouterError && error.status === 404,
     );
+  });
+
+  it("reads a session's tokens, timeline and decisions back by its id", async () => {
+    const parts = { instructions: 600, messages: 400, tool_definitions: 200, tool_use: 0, images: 0, video: 0 };
+    router.serve("GET", "/v1/agents/sessions/session-1/tokens", {
+      body: {
+        input_tokens: 1200,
+        cached_input_tokens: 800,
+        output_tokens: 90,
+        requests: 3,
+        cost_micros: 410,
+        cost_sources: [],
+        input_parts: parts,
+        models: [
+          {
+            provider: "openai",
+            model: "gpt-5-mini",
+            modality: "llm",
+            input_tokens: 1200,
+            cached_input_tokens: 800,
+            output_tokens: 90,
+            requests: 3,
+            cost_micros: 410,
+            input_parts: parts,
+          },
+        ],
+      },
+    });
+    router.serve("GET", "/v1/agents/calls/session-1/timeline", {
+      body: [
+        { turn_id: "turn-1", started_at: "2026-11-10T09:00:00Z", heard: "are you open late", roundtrip_ms: 840 },
+        { turn_id: "turn-2", started_at: "2026-11-10T09:00:04Z", heard: "and on sundays", roundtrip_ms: 910 },
+      ],
+    });
+    router.serve("GET", "/v1/agents/calls/session-1/events", {
+      body: [{ at: "2026-11-10T09:00:00Z", kind: "ignore", reason: "spoken to someone else" }],
+    });
+    const sessions = api.agent("docs").sessions;
+
+    const tokens = await sessions.tokens("session-1");
+    const timeline = await sessions.timeline("session-1");
+    const decisions = await sessions.decisions("session-1");
+
+    assert.equal(tokens.input_tokens, 1200);
+    assert.equal(tokens.cached_input_tokens, 800);
+    assert.equal(tokens.input_parts.tool_definitions, 200);
+    assert.deepEqual(tokens.models.map((model) => model.model), ["gpt-5-mini"]);
+    assert.equal(timeline.length, 2);
+    assert.equal(timeline[1]?.heard, "and on sundays");
+    assert.equal(timeline[1]?.roundtrip_ms, 910);
+    assert.deepEqual(decisions.map((decision) => decision.kind), ["ignore"]);
+  });
+
+  it("says the router does not know a session whose tokens, timeline or decisions were asked for", async () => {
+    const noCall = { error: { message: "no such call", type: "not_found", code: "call_not_found" } };
+    const noSession = { error: { message: "no such session", type: "not_found", code: "session_not_found" } };
+    router.serve("GET", "/v1/agents/sessions/someone-elses/tokens", { status: 404, body: noSession });
+    for (const read of ["timeline", "events"]) {
+      router.serve("GET", `/v1/agents/calls/someone-elses/${read}`, { status: 404, body: noCall });
+    }
+    const sessions = api.agent("docs").sessions;
+
+    for (const [reading, code] of [
+      [() => sessions.tokens("someone-elses"), "session_not_found"],
+      [() => sessions.timeline("someone-elses"), "call_not_found"],
+      [() => sessions.decisions("someone-elses"), "call_not_found"],
+    ] as const) {
+      await assert.rejects(reading(), (error: unknown) => error instanceof RouterError && error.code === code);
+    }
   });
 
   it("renames, voices, stops and forks a session it is not holding, by its id", async () => {

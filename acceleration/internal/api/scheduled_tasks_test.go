@@ -544,6 +544,13 @@ func (s *ScheduledTasksSuite) delivered(task store.ScheduledTask) store.Schedule
 	return latest
 }
 
+// awaitHeard waits for the newest session's model to be sent text holding needle. A run
+// delivered into the conversation is recorded once the session has taken the follow-up, and
+// the model is asked after that, so a delivered run does not yet mean the model heard it.
+func (s *ScheduledTasksSuite) awaitHeard(needle, failure string) {
+	s.Eventually(func() bool { return s.model().heard(needle) }, settleFor, 50*time.Millisecond, failure)
+}
+
 // ranResult is the text a tool that ran in the watched session answered with.
 func (s *ScheduledTasksSuite) ranResult(watching *websocket.Conn) string {
 	ran := s.await(watching, "tool_ran")
@@ -988,10 +995,9 @@ func (s *ScheduledTasksSuite) TestADueTaskFollowsUpInTheConversationItWasSchedul
 	s.Require().NotNil(standing.NextRunAt)
 	s.True(standing.NextRunAt.After(time.Now()), "the made occurrence still stands")
 
-	model := s.model()
-	s.True(model.heard("<scheduled_task"), "the model was never sent the task")
-	s.True(model.heard("Remind them to stretch."), "the model was never sent the instructions")
-	s.True(model.heard("not a message from the user"), "the model was not told what the follow-up is")
+	s.awaitHeard("<scheduled_task", "the model was never sent the task")
+	s.awaitHeard("Remind them to stretch.", "the model was never sent the instructions")
+	s.awaitHeard("not a message from the user", "the model was not told what the follow-up is")
 }
 
 // The worker sleeps up to a lease (a minute) when nothing is due sooner; a
@@ -1069,7 +1075,7 @@ func (s *ScheduledTasksSuite) TestATaskWithNoSessionYetOpensOneAtItsFirstOccurre
 	opened := s.taskReloaded(task)
 	s.NotEmpty(opened.SessionID, "the first occurrence opened no session")
 	s.Equal(opened.SessionID, run.SessionID)
-	s.True(s.model().heard("Remind them to stretch."), "the model was never sent the instructions")
+	s.awaitHeard("Remind them to stretch.", "the model was never sent the instructions")
 }
 
 func (s *ScheduledTasksSuite) TestAReduedOneShotInAFallBackSecondPassIsDueAtThatPass() {
@@ -1093,7 +1099,7 @@ func (s *ScheduledTasksSuite) TestAReduedOneShotInAFallBackSecondPassIsDueAtThat
 	s.runWorker()
 
 	s.delivered(task)
-	s.True(s.model().heard(`due="Sun 26 Oct 2025 02:20 CET"`), "the prompt named the first pass, an hour early")
+	s.awaitHeard(`due="Sun 26 Oct 2025 02:20 CET"`, "the prompt named the first pass, an hour early")
 }
 
 func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd() {
@@ -1121,7 +1127,7 @@ func (s *ScheduledTasksSuite) TestATaskThatComesDueOnACallWaitsForTheCallToEnd()
 
 	s.Require().Equal(http.StatusOK, user.do(http.MethodDelete, "/v1/agents/sessions/"+opened.Id+"/voice", nil, nil))
 	s.delivered(task)
-	s.True(s.model().heard("Remind them to stretch."))
+	s.awaitHeard("Remind them to stretch.", "the model was never sent the instructions")
 }
 
 func (s *ScheduledTasksSuite) TestADueTaskIsHandedToTheNodeHoldingItsConversation() {
@@ -1145,7 +1151,7 @@ func (s *ScheduledTasksSuite) TestADueTaskIsHandedToTheNodeHoldingItsConversatio
 
 	run := s.delivered(task)
 	s.Equal(opened.Id, run.SessionID)
-	s.True(s.model().heard("Remind them to stretch."), "the holding node never ran the follow-up")
+	s.awaitHeard("Remind them to stretch.", "the holding node never ran the follow-up")
 }
 
 func (s *ScheduledTasksSuite) TestDeletingASessionDeletesItsTasks() {
@@ -2787,7 +2793,7 @@ func (s *ScheduledTasksSuite) TestRunningATaskByHandDeliversWithoutMovingTheSche
 	s.Require().Len(page.Items, 1)
 	s.Equal(store.ScheduledTaskDeliveredConversation, page.Items[0].DeliveredTo)
 	s.Nil(page.Items[0].Error, "a run that landed lists no reason")
-	s.True(s.model().heard("Remind them to stretch."), "the model was never sent the instructions")
+	s.awaitHeard("Remind them to stretch.", "the model was never sent the instructions")
 
 	var read ScheduledTask
 	s.Require().Equal(http.StatusOK, user.do(http.MethodGet, path, nil, &read))

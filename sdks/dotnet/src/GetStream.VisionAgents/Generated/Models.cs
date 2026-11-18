@@ -560,6 +560,30 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// Tools to give a running session's caller.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AddSessionToolsRequest
+    {
+
+        /// <summary>
+        /// The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tools")]
+        public System.Collections.Generic.List<SessionTool>? Tools { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AddTrunkNumberRequest
     {
@@ -7615,7 +7639,7 @@ namespace GetStream.VisionAgents.Models
         public string? Title { get; set; } = default!;
 
         /// <summary>
-        /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+        /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tool_timeout_ms")]
         public int? ToolTimeoutMs { get; set; } = default!;
@@ -10272,7 +10296,7 @@ namespace GetStream.VisionAgents.Models
         public int? RingTimeoutSeconds { get; set; } = default!;
 
         /// <summary>
-        /// The session that holds the call: the answered leg is routed into its call, agent:&lt;session id&gt;. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.
+        /// The session that holds the call: the answered leg is routed into its call, agent:&lt;session id&gt;. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("session_id")]
         public string? SessionId { get; set; } = default!;
@@ -10299,7 +10323,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The session to open, with start_voice, for the call: the answered leg is routed into agent:&lt;session id&gt;, and an agent that is not in it hears nothing when the person picks up.
+        /// The session to open, with start_voice, for the call: the answered leg is routed into agent:&lt;session id&gt;, and an agent that is not in it hears nothing when the person picks up. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("session_id")]
         public string? SessionId { get; set; } = default!;
@@ -11989,6 +12013,36 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("max_messages")]
         public long? MaxMessages { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// What a caller carrying a conversation on says about its tools, over what it ran with.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ResumeSessionRequest
+    {
+
+        /// <summary>
+        /// How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_timeout_ms")]
+        public int? ToolTimeoutMs { get; set; } = default!;
+
+        /// <summary>
+        /// The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tools")]
+        public System.Collections.Generic.List<SessionTool>? Tools { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

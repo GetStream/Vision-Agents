@@ -27,8 +27,8 @@ final class Conversations {
                 searchText.isEmpty
                 ? try await Assistant.sessions.query(limit: 50)
                 : try await Assistant.sessions.search(searchText, limit: 50)
-            // Only the ones kept in writing can be opened again as a chat: a session that was
-            // only ever a call, or incognito, has no channel to read back.
+            // Only the ones kept in Stream Chat can be opened again as a chat: a session with
+            // no conversation id has no channel to read back.
             items = page.items.filter { !$0.conversationID.isEmpty }
             failure = nil
         } catch is CancellationError {

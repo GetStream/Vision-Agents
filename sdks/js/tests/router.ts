@@ -18,6 +18,8 @@ export interface Reply {
   /** Sent as it is rather than as JSON, the way a proxy in front of the router answers. */
   text?: string;
   headers?: Record<string, string>;
+  /** Hangs up without answering, as a connection lost after the request arrived does. */
+  drop?: boolean;
 }
 
 /**
@@ -25,9 +27,10 @@ export interface Reply {
  *
  * The per-call form is what paging needs. A caller that pages until it sees a short page
  * cannot be tested against a route that answers the same thing forever: the test would
- * either never end or never page.
+ * either never end or never page. It may also answer later, for what the SDK does while a
+ * request is still waiting.
  */
-export type Answer = Reply | ((request: Received, calls: number) => Reply);
+export type Answer = Reply | ((request: Received, calls: number) => Reply | Promise<Reply>);
 
 /** One socket a test is holding the other end of. */
 export interface Connection {
@@ -65,7 +68,7 @@ export class TestRouter {
       const url = new URL(request.url ?? "/", "http://router");
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
-      request.on("end", () => {
+      request.on("end", async () => {
         const raw = Buffer.concat(chunks).toString();
         const received: Received = {
           method: request.method ?? "",
@@ -94,7 +97,11 @@ export class TestRouter {
         }
         const seen = this.calls.get(route) ?? 0;
         this.calls.set(route, seen + 1);
-        const reply = typeof answer === "function" ? answer(received, seen) : answer;
+        const reply = typeof answer === "function" ? await answer(received, seen) : answer;
+        if (reply.drop) {
+          response.destroy();
+          return;
+        }
         const status = reply.status ?? 200;
         const headers = reply.headers ?? {};
         if (reply.text !== undefined) {

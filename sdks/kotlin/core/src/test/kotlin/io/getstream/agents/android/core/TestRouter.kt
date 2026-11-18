@@ -21,7 +21,13 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.concurrent.thread
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -39,8 +45,18 @@ data class Arrived(
     fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
 }
 
-/** What the router answers one request with. */
-data class Reply(val status: Int = 200, val body: String = "", val headers: Map<String, String> = emptyMap())
+/**
+ * What the router answers one request with. [hangUp] hangs up once the request is handled and
+ * before any of its answer is out, as a network that drops the answer does: the router acted on
+ * it and the SDK never hears so. OkHttp sends a request again on a connection that drops that
+ * early unless it was told the request may go only once.
+ */
+data class Reply(
+    val status: Int = 200,
+    val body: String = "",
+    val headers: Map<String, String> = emptyMap(),
+    val hangUp: Boolean = false,
+)
 
 /** A failure as the router answers every one. */
 fun envelope(type: String, code: String, message: String) =
@@ -74,6 +90,15 @@ class TestRouter : AutoCloseable {
 
     /** What the socket's handshake is answered with in place of the upgrade, or null to upgrade. */
     @Volatile var refuseHandshake: Reply? = null
+
+    /**
+     * Where the SDK connects. Each connection is passed on to the server as it is, so the server
+     * can hang up on one before writing anything to it, which it cannot do itself.
+     */
+    private val front = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+
+    /** The SDK's end of each connection passed on, by the port the server sees it come from. */
+    private val passed = ConcurrentHashMap<Int, Socket>()
 
     private val server: EmbeddedServer<*, *> = embeddedServer(CIO, port = 0, host = "127.0.0.1") {
         install(WebSockets)
@@ -123,6 +148,10 @@ class TestRouter : AutoCloseable {
                     )
                     requests += arrived
                     val reply = answer(arrived)
+                    if (reply.hangUp) {
+                        passed.remove(call.request.local.remotePort)?.close()
+                        return@handle
+                    }
                     reply.headers.forEach { (name, value) -> call.response.header(name, value) }
                     call.respondText(reply.body, ContentType.Application.Json, HttpStatusCode.fromValue(reply.status))
                 }
@@ -134,7 +163,21 @@ class TestRouter : AutoCloseable {
 
     init {
         server.start(wait = false)
-        url = runBlocking { "http://127.0.0.1:${server.engine.resolvedConnectors().first().port}" }
+        val port = runBlocking { server.engine.resolvedConnectors().first().port }
+        thread(isDaemon = true) {
+            while (true) {
+                val outer = try {
+                    front.accept()
+                } catch (_: IOException) {
+                    break
+                }
+                val inner = Socket("127.0.0.1", port)
+                passed[inner.localPort] = outer
+                pipe(outer, inner)
+                pipe(inner, outer)
+            }
+        }
+        url = "http://127.0.0.1:${front.localPort}"
     }
 
     /** The next frame the SDK sent, waiting for it rather than for a guessed length of time. */
@@ -142,7 +185,21 @@ class TestRouter : AutoCloseable {
 
     override fun close() {
         script.close()
+        front.close()
+        passed.values.forEach { it.close() }
         server.stop(0, 0)
+    }
+
+    /** Copies one way of a connection until either end goes, and then closes both. */
+    private fun pipe(from: Socket, to: Socket) = thread(isDaemon = true) {
+        try {
+            from.getInputStream().copyTo(to.getOutputStream())
+        } catch (_: IOException) {
+            // One end went, which ends the connection.
+        } finally {
+            from.close()
+            to.close()
+        }
     }
 }
 

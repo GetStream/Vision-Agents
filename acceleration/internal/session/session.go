@@ -285,6 +285,10 @@ type Session struct {
 	// toolSources is where each tool the session opened with came from, by name. Set before
 	// the session is served and only read after.
 	toolSources map[string]ToolSource
+	// otherTools are what the session offers besides its caller's own tools, which go first:
+	// the workers', the router's, the connectors' and other agents'. Set before the session
+	// is served and only read after; the caller's change (AddTools, RemoveTool).
+	otherTools []harness.Tool
 	// connectors is the session's connector dispatcher, nil when its config binds none. A
 	// consent finished for one of its logins is handed back to it (ConnectorConsentFinished).
 	connectors *dispatcher
@@ -298,11 +302,14 @@ type Session struct {
 	// naming is how a persistent conversation gets its title from what was said. Nil when
 	// there is no channel to name.
 	naming *naming
+	// addedTools are the caller's tools added while the session ran (AddTools), which a
+	// watcher that named the tools it runs is asked to run as well. Guarded by labelMu.
+	addedTools map[string]bool
 	// labelMu guards title and description, which are what naming last called the
 	// conversation, over the spec's own. It also guards the spec's fields a running session
 	// changes: its labels (Describe), connector selections (chose), models and voice
-	// (SetSettings) and the call it is held on (swap). The rest are set before the session
-	// can be reached and are read without it.
+	// (SetSettings), the call it is held on (swap) and the caller's tools (AddTools). The rest
+	// are set before the session can be reached and are read without it.
 	labelMu     sync.Mutex
 	title       string
 	description string
@@ -1021,6 +1028,25 @@ func (s *Session) chose(name, connectionID string) {
 	s.labelMu.Unlock()
 	if s.records != nil {
 		s.afterRow(func() { s.records.Chose(s.spec.CustomerID, s.id, name, connectionID) })
+	}
+}
+
+// SetToolTimeout gives a running session a new tool_timeout_ms, in milliseconds, for the tool
+// calls that start after it, and keeps it on the spec and the row, so the conversation goes on
+// with it when it is carried on after it ends. Zero is the default.
+func (s *Session) SetToolTimeout(milliseconds int) {
+	milliseconds = max(milliseconds, 0)
+	// One critical section, so two resumes at once leave the spec, the bridge and the queued
+	// row write on the same value.
+	s.labelMu.Lock()
+	defer s.labelMu.Unlock()
+	s.spec.ToolTimeoutMs = milliseconds
+	if s.tools != nil {
+		s.tools.setTimeout(time.Duration(milliseconds) * time.Millisecond)
+	}
+	if s.records != nil {
+		kind := string(s.spec.CallerKind)
+		s.afterRow(func() { s.records.ToolTimeout(s.id, kind, milliseconds) })
 	}
 }
 

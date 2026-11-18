@@ -75,6 +75,29 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 	return &found, nil
 }
 
+// resumeSession carries a conversation on with what the caller says about its tools.
+func (s *Server) resumeSession(ctx context.Context, request *resumeSessionRequest) (*getSessionResponse, error) {
+	var over resumed
+	if body := request.Body; body != nil {
+		over.toolTimeoutMs = body.ToolTimeoutMs
+		if body.Tools != nil {
+			declared := declaredTools(*body.Tools)
+			over.tools = &declared
+		}
+	}
+	_, sent, failure := s.carryOn(ctx, request.Id, refusedRequest, over)
+	switch {
+	case failure == nil:
+		// Held open for the watcher a resume is followed by, as for a message.
+		sent()
+	case !errors.Is(failure, errUnknownSession):
+		return nil, failure
+	}
+	// Answered as a read is, so one that could not be carried on is still the caller's to
+	// read, and one that is not theirs is not found either way.
+	return s.getSession(ctx, &getSessionRequest{Id: request.Id})
+}
+
 // forkSession continues a conversation as a new one.
 func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (*forkSessionResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
@@ -180,6 +203,16 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 		return nil, refusedRequest(err)
 	}
 	return &forkSessionResponse{Body: sessionOf(ctx, created)}, nil
+}
+
+// getSessionTokens says what the session's models read and wrote, and what their prompts
+// were made of, while it runs and after.
+func (s *Server) getSessionTokens(ctx context.Context, request *getSessionTokensRequest) (*getSessionTokensResponse, error) {
+	spent, err := s.tokensOf(ctx, request.Id, errUnknownSession)
+	if err != nil {
+		return nil, err
+	}
+	return &getSessionTokensResponse{Body: *spent}, nil
 }
 
 // getSession returns one session, running or ended. A backend is also told what was made of
@@ -546,17 +579,45 @@ const reopenHoldMost = 10 * time.Minute
 // answered, so a message sent with no socket attached still gets its reply, and then ends
 // the way any conversation does once nobody is watching.
 func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Session, func(), error) {
-	return s.carryOn(ctx, id, refusedRequest)
+	return s.carryOn(ctx, id, refusedRequest, resumed{})
+}
+
+// resumed is what a resume says over what a conversation runs with. A nil field keeps it.
+type resumed struct {
+	toolTimeoutMs *int
+	// tools replaces the caller's declared tools when not nil, an empty list with none.
+	tools *[]harness.Tool
+}
+
+// over writes r onto the spec of a conversation being carried on.
+func (r resumed) over(spec *session.Spec) {
+	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, r.toolTimeoutMs)
+	if r.tools != nil {
+		spec.Tools = *r.tools
+	}
+}
+
+// onto gives a conversation that is still running what of r it can take while it runs: the
+// tool timeout. Its tools are the ones it was opened with until it ends and is carried on.
+// Only the kind of caller that opened it changes it: a device does not set how long its
+// backend's tools are waited for.
+func (r resumed) onto(ctx context.Context, running *session.Session) {
+	if r.toolTimeoutMs != nil && running.Spec().CallerKind == KindFrom(ctx) {
+		running.SetToolTimeout(*r.toolTimeoutMs)
+	}
 }
 
 // carryOn is sessionToAnswer, with refuse turning the error of a session that could not be carried
 // on into the answer: refusedRequest for a request; a scheduled task's delivery keeps the refusal
 // itself, to tell money that may not be paid from money that could not be checked (unpaid).
-func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) error) (*session.Session, func(), error) {
+func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) error, over resumed) (*session.Session, func(), error) {
 	found, failure := s.session(ctx, id)
 	var spec session.Spec
 	switch {
 	case failure == nil && (found.State() != session.Ended || !found.Spec().PersistConversation):
+		if found.State() != session.Ended {
+			over.onto(ctx, found)
+		}
 		return found, func() {}, nil
 	case failure == nil:
 		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
@@ -578,10 +639,19 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 	spec.Greeting = ""
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
+	over.over(&spec)
 
 	reopened, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrSessionExists) || errors.Is(err, conversation.ErrAlreadyOpen) {
+		// Another request carried it on first and met this one on the id or on the conversation,
+		// which the winner opens before it is held under the id. The one running is the answer,
+		// given a resume's timeout rather than losing it; its tools are its own.
+		if running := s.carriedOnBy(ctx, id); running != nil {
+			over.onto(ctx, running)
+			return running, func() {}, nil
+		}
+	}
 	if errors.Is(err, session.ErrSessionExists) {
-		// Another message reopened it first.
 		found, failure := s.session(ctx, id)
 		return found, func() {}, failure
 	}
@@ -595,9 +665,35 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
 }
 
+// reopenRaceWait bounds how long a request that lost a reopen waits for the winner to be held.
+// A conversation open under another id is never held under this one, and is refused after it.
+const reopenRaceWait = 3 * time.Second
+
+// carriedOnBy is the session another request is carrying id on in, once it is held and still
+// running, or nil if none is within reopenRaceWait.
+func (s *Server) carriedOnBy(ctx context.Context, id string) *session.Session {
+	ctx, cancel := context.WithTimeout(ctx, reopenRaceWait)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if running, failure := s.session(ctx, id); failure == nil && running.State() != session.Ended {
+			return running
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
 // reopenedFromRow is the spec a text session that ended in another process is carried on
 // with: the config it was opened with, and what its row remembers about it.
 func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, error) {
+	// A resume's timeout given to the session just before it ended may still be on its way to
+	// the row. A failed flush reads the row as it is.
+	_ = s.sessions.FlushRecords(ctx)
 	stored, failure := s.storedOrLiveSession(ctx, id)
 	if failure != nil {
 		return session.Spec{}, failure
@@ -630,6 +726,14 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 		spec.FloorControl = row.FloorControl
 	}
 	spec.ForkedFrom = row.ForkedFrom
+	// The caller's tools and how long they are waited for go on with the chat, as they do
+	// for one carried on in the process that held it (Spec.Written).
+	spec.ToolTimeoutMs = row.ToolTimeoutMs
+	// Tools only for the kind of caller that declared them: a backend's tool carried on by its
+	// end user's device would be the device's to answer (Session.seatRuns).
+	if row.CallerKind == string(KindFrom(ctx)) {
+		spec.Tools = session.DeclaredTools(row.CallerTools)
+	}
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
 	spec.ConnectorSelections = selectionsOf(*row)
@@ -823,26 +927,40 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	}
 	if request.Tools != nil {
 		for _, tool := range *request.Tools {
-			declared := harness.Tool{
-				Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
-				Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
-			}
-			if tool.Parameters != nil {
-				declared.Parameters = *tool.Parameters
-			}
-			if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
-				declared.Client = true
-			}
-			if approval := tool.Approval; approval != nil && approval.Title != "" {
-				declared.Approval = &harness.ToolApproval{
-					Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
-					AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
-				}
-			}
-			spec.Tools = append(spec.Tools, declared)
+			spec.Tools = append(spec.Tools, toolOf(tool))
 		}
 	}
 	return spec
+}
+
+// declaredTools are the caller's own tools, as a session's model is offered them.
+func declaredTools(tools []SessionTool) []harness.Tool {
+	declared := make([]harness.Tool, 0, len(tools))
+	for _, tool := range tools {
+		declared = append(declared, toolOf(tool))
+	}
+	return declared
+}
+
+// toolOf is one of the caller's tools as the session offers it.
+func toolOf(tool SessionTool) harness.Tool {
+	declared := harness.Tool{
+		Name: tool.Name, Description: tool.Description, DisplayTitle: value(tool.DisplayTitle),
+		Interruptible: value(tool.Interruptible), Timeout: time.Duration(value(tool.TimeoutMs)) * time.Millisecond,
+	}
+	if tool.Parameters != nil {
+		declared.Parameters = *tool.Parameters
+	}
+	if tool.Executor != nil && *tool.Executor == SessionToolExecutorClient {
+		declared.Client = true
+	}
+	if approval := tool.Approval; approval != nil && approval.Title != "" {
+		declared.Approval = &harness.ToolApproval{
+			Title: approval.Title, Message: value(approval.Message), ReasonArgument: value(approval.ReasonArgument),
+			AllowTitle: value(approval.AllowTitle), DeclineTitle: value(approval.DeclineTitle),
+		}
+	}
+	return declared
 }
 
 // sessionOf renders a session for the wire. Its instructions go only to a backend: they are
@@ -1299,6 +1417,21 @@ func (s *Server) registerSessions(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.getSession)
 	huma.Register(api, huma.Operation{
+		OperationID: "getSessionTokens",
+		Method:      http.MethodGet,
+		Path:        "/v1/agents/sessions/{id}/tokens",
+		Summary:     "What a session's models read and wrote, and what their prompts were made of",
+		Description: "Read while the session is running as well as after it, unlike the session's usage, " +
+			"which is counted once it is over, and for a session held in writing as for one on a call. " +
+			"A prompt's parts are estimated: no provider says how much of a prompt was instructions, " +
+			"tools or images, so the router estimates it from each request and scales it to what the " +
+			"provider counted. The parts sum to the input tokens.",
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The session's tokens"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.getSessionTokens)
+	huma.Register(api, huma.Operation{
 		OperationID: "forkSession",
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/sessions/{id}/fork",
@@ -1318,6 +1451,21 @@ func (s *Server) registerSessions(api huma.API) {
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.forkSession)
+	huma.Register(api, huma.Operation{
+		OperationID: "resumeSession",
+		Method:      http.MethodPost,
+		Path:        "/v1/agents/sessions/{id}/resume",
+		Summary:     "Carry a conversation on, with the caller's tool settings",
+		Description: "Carries on a conversation held in writing under its own id, as a message to it does, " +
+			"and answers it as getSession does. A conversation that ended is carried on with the tools " +
+			"its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything " +
+			"named here is written over those. A conversation still running takes tool_timeout_ms " +
+			"for the tool calls that start after it, and keeps its tools until it ends and is " +
+			"carried on. One that cannot be carried on, such as a call that kept no conversation, " +
+			"is answered as it is.",
+		Extensions: map[string]any{clientAccessibleExtension: true},
+		Errors:     []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+	}, s.resumeSession)
 	huma.Register(api, huma.Operation{
 		OperationID: "rewindSession",
 		Method:      http.MethodPost,
@@ -1456,6 +1604,14 @@ type getSessionResponse struct {
 	Body Session
 }
 
+type getSessionTokensRequest struct {
+	Id string `path:"id" doc:"The session, as returned when it was created."`
+}
+
+type getSessionTokensResponse struct {
+	Body CallTokens
+}
+
 type forkSessionRequest struct {
 	Id   string `path:"id" doc:"The session, as returned when it was created."`
 	Body *ForkSessionRequest
@@ -1463,6 +1619,11 @@ type forkSessionRequest struct {
 
 type forkSessionResponse struct {
 	Body Session
+}
+
+type resumeSessionRequest struct {
+	Id   string `path:"id" doc:"The session, as returned when it was created."`
+	Body *ResumeSessionRequest
 }
 
 type rewindSessionRequest struct {
@@ -1518,7 +1679,7 @@ type ForkSessionRequest struct {
 	Custom          *map[string]interface{} `json:"custom,omitempty"`
 	Description     *string                 `json:"description,omitempty"`
 	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
-	ToolTimeoutMs   *int                    `json:"tool_timeout_ms,omitempty" doc:"How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession."`
+	ToolTimeoutMs   *int                    `json:"tool_timeout_ms,omitempty" doc:"How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession."`
 	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
 	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
 	ProjectId       *string                 `json:"project_id,omitempty"`
@@ -1529,6 +1690,18 @@ type ForkSessionRequest struct {
 func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["tool_timeout_ms"].Format = ""
 	schema.Description = "Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model."
+	return schema
+}
+
+// ResumeSessionRequest What a caller carrying a conversation on says about its tools, over what it ran with.
+type ResumeSessionRequest struct {
+	ToolTimeoutMs *int           `json:"tool_timeout_ms,omitempty" minimum:"0" doc:"How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds."`
+	Tools         *[]SessionTool `json:"tools,omitempty" doc:"The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on."`
+}
+
+func (*ResumeSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["tool_timeout_ms"].Format = ""
+	schema.Description = "What a caller carrying a conversation on says about its tools, over what it ran with."
 	return schema
 }
 

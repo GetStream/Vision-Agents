@@ -14,10 +14,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
@@ -44,6 +46,8 @@ type router struct {
 	items [][]acceleration.AgentResponseItem
 	// frames are what the session's socket was sent, close aside.
 	frames []map[string]any
+	// calls are the tool calls a session's socket sends once it opens, by session id.
+	calls map[string][]map[string]any
 }
 
 func newRouter(t *testing.T) *router {
@@ -131,6 +135,30 @@ func newRouter(t *testing.T) *router {
 		answer(w, http.StatusCreated, acceleration.Session{
 			Id: "session-2", AgentId: "agent-1", UserId: "jean", State: "running",
 			ForkedFrom: ptr(r.PathValue("id")), CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/tools", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/tools/{name}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "ended", CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running", CreatedAt: time.Now(),
 		})
 	})
 
@@ -236,6 +264,49 @@ func newRouter(t *testing.T) *router {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// A call's reads answer with what is told apart by the session asked about, so a read of
+	// the wrong session, or of the wrong one of the three, is seen.
+	unknownCall := func(w http.ResponseWriter) {
+		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Message: "unknown call", Type: acceleration.ErrorTypeNotFound, Code: "call_not_found",
+		}})
+	}
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/tokens", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") != "session-1" {
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "no such session", Type: acceleration.ErrorTypeNotFound, Code: "session_not_found",
+			}})
+			return
+		}
+		answer(w, http.StatusOK, acceleration.CallTokens{
+			InputTokens: 1200, CachedInputTokens: 800, OutputTokens: 90, CostMicros: 4100, Requests: 3,
+			InputParts: acceleration.InputParts{Instructions: 700, Messages: 300, ToolDefinitions: 200},
+			Models:     []acceleration.ModelTokens{{Modality: "llm", Provider: "openai", Model: "gpt-5-mini", InputTokens: 1200}},
+		})
+	})
+	mux.HandleFunc("GET /v1/agents/calls/{id}/timeline", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") != "session-1" {
+			unknownCall(w)
+			return
+		}
+		answer(w, http.StatusOK, []acceleration.TimelineEntry{
+			{Heard: ptr("what time do you open"), RoundtripMs: ptr(640.0)},
+			{Heard: ptr("and on sundays"), RoundtripMs: ptr(910.0)},
+		})
+	})
+	mux.HandleFunc("GET /v1/agents/calls/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") != "session-1" {
+			unknownCall(w)
+			return
+		}
+		answer(w, http.StatusOK, []acceleration.CallEvent{
+			{Kind: acceleration.DecisionKindIgnore, Reason: "not meant for the agent", At: time.Now()},
+		})
+	})
+
 	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		if r.PathValue("id") == "someone-elses" {
@@ -327,6 +398,14 @@ func newRouter(t *testing.T) *router {
 			return
 		}
 		defer connection.Close()
+		backend.mu.Lock()
+		calls := backend.calls[r.PathValue("id")]
+		backend.mu.Unlock()
+		for _, call := range calls {
+			if err := connection.WriteJSON(call); err != nil {
+				return
+			}
+		}
 		for {
 			var frame map[string]any
 			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
@@ -1078,6 +1157,59 @@ func TestPinningAndUnpinningTheSessionHeld(t *testing.T) {
 	}
 }
 
+func TestASessionsMetricsAreReadBackByItsID(t *testing.T) {
+	backend := newRouter(t)
+	sessions := backend.client(t).Agent("docs").Sessions
+
+	tokens, err := sessions.Tokens(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens.InputTokens != 1200 || tokens.CachedInputTokens != 800 || tokens.InputParts.ToolDefinitions != 200 ||
+		len(tokens.Models) != 1 || tokens.Models[0].Model != "gpt-5-mini" {
+		t.Errorf("the tokens were read as %+v", tokens)
+	}
+
+	timeline, err := sessions.Timeline(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline) != 2 || *timeline[1].Heard != "and on sundays" || *timeline[1].RoundtripMs != 910 {
+		t.Errorf("the timeline was read as %+v", timeline)
+	}
+
+	decisions, err := sessions.Decisions(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 1 || decisions[0].Kind != acceleration.DecisionKindIgnore {
+		t.Errorf("the decisions were read as %+v", decisions)
+	}
+}
+
+func TestASessionsMetricsOfAnUnknownSessionAreRefused(t *testing.T) {
+	backend := newRouter(t)
+	sessions := backend.client(t).Agent("docs").Sessions
+
+	_, tokens := sessions.Tokens(t.Context(), "someone-elses")
+	_, timeline := sessions.Timeline(t.Context(), "someone-elses")
+	_, decisions := sessions.Decisions(t.Context(), "someone-elses")
+
+	for read, refusal := range map[string]struct {
+		err  error
+		code string
+	}{
+		"tokens":    {tokens, "session_not_found"},
+		"timeline":  {timeline, "call_not_found"},
+		"decisions": {decisions, "call_not_found"},
+	} {
+		var refused *stream.RouterError
+		if !errors.As(refusal.err, &refused) || refused.Code != refusal.code {
+			t.Errorf("the %s of an unknown session came back as %v, want %s", read, refusal.err, refusal.code)
+		}
+	}
+}
+
 func TestPinningThroughUpdateSendsItWithTheRest(t *testing.T) {
 	backend := newRouter(t)
 
@@ -1785,6 +1917,67 @@ func TestAForksToolTimeoutUnderAMillisecondIsNotSent(t *testing.T) {
 	}
 }
 
+func TestAResumesToolTimeoutGoesOverInMilliseconds(t *testing.T) {
+	backend := newRouter(t)
+
+	resumed, err := backend.client(t).Agent("docs").Sessions.Resume(t.Context(), "session-7",
+		ResumeOptions{ToolTimeout: 3 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(t.Context())
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-7/resume")
+	if body["tool_timeout_ms"] != float64(180_000) {
+		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
+	}
+	if _, sent := body["tools"]; sent {
+		t.Errorf("an agent with no functions declared tools: %v", body["tools"])
+	}
+}
+
+func TestAResumeDeclaresTheAgentsFunctions(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+	if err := register(agent.Tools(), "get_weather"); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := agent.Sessions.Resume(t.Context(), "session-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(t.Context())
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-7/resume")
+	declared, _ := body["tools"].([]any)
+	if len(declared) != 1 || declared[0].(map[string]any)["name"] != "get_weather" {
+		t.Errorf("tools went over as %v", body["tools"])
+	}
+	if _, sent := body["tool_timeout_ms"]; sent {
+		t.Errorf("tool_timeout_ms went over as %v though none was given", body["tool_timeout_ms"])
+	}
+}
+
+func TestAResumeWithNothingToSayReadsTheConversationAsItIs(t *testing.T) {
+	// A timeout under a millisecond would go over as zero, 30 seconds, not what it ran with.
+	backend := newRouter(t)
+
+	resumed, err := backend.client(t).Agent("docs").Sessions.Resume(t.Context(), "session-7",
+		ResumeOptions{ToolTimeout: 500 * time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(t.Context())
+
+	backend.query(t, "GET", "/v1/agents/sessions/session-7")
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if _, posted := backend.bodies["POST /v1/agents/sessions/session-7/resume"]; posted {
+		t.Error("a resume with nothing to say asked the router to carry the conversation on")
+	}
+}
+
 func TestForkingWithoutMessagesSaysSo(t *testing.T) {
 	backend := newRouter(t)
 	session := open(t, backend)
@@ -1823,6 +2016,56 @@ func TestAForkInheritsTheParentsFunctions(t *testing.T) {
 	if len(registered) != 1 || registered[0].Name != "get_weather" {
 		t.Errorf("the fork offers %v", registered)
 	}
+}
+
+// SessionToolsSuite is what a conversation runs once its tools changed while it ran.
+type SessionToolsSuite struct {
+	suite.Suite
+	backend *router
+}
+
+func TestSessionToolsSuite(t *testing.T) {
+	suite.Run(t, new(SessionToolsSuite))
+}
+
+func (s *SessionToolsSuite) SetupTest() {
+	s.backend = newRouter(s.T())
+}
+
+// The router gives a fork of a running session the tools it has now, so the fork runs those:
+// the ones added since it opened, and not the ones taken back.
+func (s *SessionToolsSuite) TestAForkRunsTheToolsTheSessionHasNow() {
+	s.backend.calls = map[string][]map[string]any{"session-2": {
+		{"type": "tool_call", "id": "call-1", "name": "get_weather", "arguments": `{"location":"Oslo"}`},
+		{"type": "tool_call", "id": "call-2", "name": "reserve_table", "arguments": `{"location":"T4"}`},
+	}}
+	agent := s.backend.client(s.T()).Agent("docs")
+	var withdrawnRan atomic.Bool
+	s.Require().NoError(tools.Register(agent.Tools(), "get_weather", "What the weather is",
+		func(context.Context, struct{}) (any, error) {
+			withdrawnRan.Store(true)
+			return "raining", nil
+		}))
+	session, err := agent.Sessions.Create(s.T().Context(), SessionOptions{})
+	s.Require().NoError(err)
+	defer session.Close(s.T().Context())
+	added := tools.NewRegistry()
+	s.Require().NoError(register(added, "reserve_table"))
+	s.Require().NoError(session.AddTools(s.T().Context(), added))
+	s.Require().NoError(session.RemoveTool(s.T().Context(), "get_weather"))
+
+	forked, err := session.Fork(s.T().Context(), ForkOptions{})
+	s.Require().NoError(err)
+
+	want := map[string]any{"type": "tool_result", "tool_call_id": "call-2", "output": "raining in T4"}
+	s.Require().Eventually(func() bool {
+		s.backend.mu.Lock()
+		defer s.backend.mu.Unlock()
+		return slices.ContainsFunc(s.backend.frames, func(frame map[string]any) bool { return reflect.DeepEqual(frame, want) })
+	}, 5*time.Second, 10*time.Millisecond, "the fork's call of the added tool was not answered")
+	// Closing waits for every call the fork started, so one of the withdrawn tool has run by now.
+	s.Require().NoError(forked.Close(s.T().Context()))
+	s.False(withdrawnRan.Load(), "the fork ran a tool the session had withdrawn")
 }
 
 func TestTheModelIsOfferedTheAgentsFunctions(t *testing.T) {

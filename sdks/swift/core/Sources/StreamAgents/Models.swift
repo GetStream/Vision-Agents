@@ -16,7 +16,7 @@ public struct Session: Sendable, Hashable, Identifiable {
     public let state: State
     /// How the user took part. It only moves up, from text or voice to video.
     public let modality: Modality
-    /// The Stream Chat channel a text session is kept in. Empty for one kept nowhere.
+    /// The Stream Chat channel the session is kept in, typed or spoken. Empty for an incognito one.
     public let conversationID: String
     public let projectID: String
     /// The team the session's usage is counted under. Empty for none.

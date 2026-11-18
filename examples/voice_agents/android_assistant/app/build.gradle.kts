@@ -15,6 +15,33 @@ val local = Properties().apply {
 fun setting(name: String, environment: String, default: String): String =
     local.getProperty(name) ?: providers.environmentVariable(environment).orNull ?: default
 
+/** Puts the file that describes the app's components among the app's assets. */
+abstract class ComponentDefinitions : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val source: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val assets: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        source.get().asFile.copyTo(assets.get().file(source.get().asFile.name).asFile, overwrite = true)
+    }
+}
+
+// The agent's own description of the components it can place in a reply, which its instructions
+// are written from too: one file for the agent and every app that runs it.
+val componentDefinitions = tasks.register<ComponentDefinitions>("componentDefinitions") {
+    source = rootProject.layout.projectDirectory.file("../swift_assistant/app/SwiftAssistant/UIComponents.json")
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(componentDefinitions, ComponentDefinitions::assets)
+    }
+}
+
 android {
     namespace = "io.getstream.agents.androidassistant"
     compileSdk = 37
@@ -52,6 +79,8 @@ dependencies {
     implementation(libs.okhttp)
     // The connector sign-in opens in an Auth Tab, or a Custom Tab where the browser has none.
     implementation(libs.browser)
+    // The trip map, on OpenStreetMap's data, which needs no key.
+    implementation(libs.maplibre)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

@@ -182,14 +182,30 @@ func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session
 	return newSession(s.client, s.agent, pipeline, created), nil
 }
 
+// ResumeOptions is what to carry a conversation on with, over what it ran with.
+type ResumeOptions struct {
+	// ToolTimeout is how long the model waits for one of your functions, to the millisecond,
+	// in place of what the conversation ran with. Zero, or less than a millisecond, keeps
+	// that, which a conversation that ended keeps too. A conversation still running takes it
+	// for the calls that start after it.
+	ToolTimeout time.Duration
+}
+
 // Resume carries on a conversation held in writing, by the id of the session it was held
-// in, and starts watching it. One that ended is reopened with what was said in it.
-func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
-	got, err := s.Get(ctx, id)
+// in, and starts watching it. One that ended is reopened with what was said in it, the tools
+// its caller declared and the tool timeout it ran with. The agent's functions, when it has
+// any, are declared in place of those tools; a conversation still running keeps its tools
+// until it ends. At most one ResumeOptions is read.
+func (s *Sessions) Resume(ctx context.Context, id string, options ...ResumeOptions) (*Session, error) {
+	var chosen ResumeOptions
+	if len(options) > 0 {
+		chosen = options[0]
+	}
+	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend, Functions: s.agent.tools})
+	got, err := pipeline.Resume(ctx, id, chosen.ToolTimeout)
 	if err != nil {
 		return nil, err
 	}
-	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend, Functions: s.agent.tools})
 	if err := pipeline.Watch(ctx, got); err != nil {
 		return nil, err
 	}
@@ -358,6 +374,63 @@ func (s *Sessions) DeleteMemories(ctx context.Context, id string) error {
 	return nil
 }
 
+// Tokens is what one conversation's models read and wrote, per model, with the prompt split
+// into instructions, messages, tool definitions, tool use, images and video. Unlike the
+// session's Usage it is answered while the conversation runs. Only a backend may ask.
+func (s *Sessions) Tokens(ctx context.Context, id string) (*acceleration.CallTokens, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	got, err := api.GetSessionTokensWithResponse(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the tokens of %s: %w", id, err)
+	}
+	if got.JSON200 == nil {
+		return nil, failure("reading the tokens of "+id, got.HTTPResponse, got.Body)
+	}
+	return got.JSON200, nil
+}
+
+// Timeline is one conversation's exchanges, with what was said in each and how long the
+// answer took to start, its transcription, model and voice timings kept apart. The timings
+// are kept for an hour. Only a backend may ask.
+func (s *Sessions) Timeline(ctx context.Context, id string) ([]acceleration.TimelineEntry, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	got, err := api.GetCallTimelineWithResponse(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the timeline of %s: %w", id, err)
+	}
+	if got.JSON200 == nil {
+		return nil, failure("reading the timeline of "+id, got.HTTPResponse, got.Body)
+	}
+	return *got.JSON200, nil
+}
+
+// Decisions is what one conversation decided, oldest first: why the agent waited rather than
+// answering, why it read something as not meant for it, why it stopped mid-sentence. They are
+// kept for an hour. Only a backend may ask.
+func (s *Sessions) Decisions(ctx context.Context, id string) ([]acceleration.CallEvent, error) {
+	api, err := s.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	got, err := api.GetCallEventsWithResponse(ctx, id, nil)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the decisions of %s: %w", id, err)
+	}
+	if got.JSON200 == nil {
+		return nil, failure("reading the decisions of "+id, got.HTTPResponse, got.Body)
+	}
+	return *got.JSON200, nil
+}
+
 // Responses is a session's turns, read back without holding the conversation.
 //
 // For a conversation that has ended, or one being held somewhere else: the rows are in the
@@ -475,6 +548,17 @@ func (s *Session) ContextTruncated() bool {
 // Tools are the ones this conversation offers the model, to add to.
 func (s *Session) Tools() *tools.Registry { return s.pipeline.Functions() }
 
+// AddTools gives this conversation the functions in more while it runs, for it alone, and
+// runs their calls here. See stream.Pipeline.AddTools.
+func (s *Session) AddTools(ctx context.Context, more *tools.Registry) error {
+	return s.pipeline.AddTools(ctx, more)
+}
+
+// RemoveTool withdraws one of this conversation's tools. See stream.Pipeline.RemoveTool.
+func (s *Session) RemoveTool(ctx context.Context, name string) error {
+	return s.pipeline.RemoveTool(ctx, name)
+}
+
 // Events yields what the backend did until the conversation ends, when the channel closes.
 func (s *Session) Events() <-chan stream.Event { return s.pipeline.Events() }
 
@@ -562,8 +646,9 @@ type ForkOptions struct {
 	// that ended has the router's default of 30 seconds.
 	ToolTimeout time.Duration
 
-	// Tools are the fork's own. Nil inherits this session's, since a conversation continued
-	// without them would offer the model tools nothing can run.
+	// Tools are the fork's own. Nil inherits this session's as they are now, the ones AddTools
+	// added and not the ones RemoveTool withdrew, since the router offers the fork those and a
+	// conversation continued without them would offer the model tools nothing can run.
 	Tools  *tools.Registry
 	Logger *slog.Logger
 }
@@ -575,7 +660,10 @@ type ForkOptions struct {
 // there. The parent is untouched and keeps its own transcript; the fork writes its own, so
 // continuing a conversation twice gives two readable transcripts rather than one with both
 // halves interleaved. An incognito conversation cannot be forked, because there is nothing to
-// fork from.
+// fork from. AddTools and RemoveTool wait for a fork being asked for, so the fork is given the
+// tools the router copies into it. A fork waits in turn for one of them in flight, which the
+// router finishes only once the turn in progress and every call in flight end, so do not call
+// this from inside one of the conversation's functions. See stream.Pipeline.Fork.
 func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, error) {
 	api, err := s.client.api()
 	if err != nil {
@@ -608,26 +696,28 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		request.ToolTimeoutMs = &milliseconds
 	}
 
-	forked, err := api.ForkSessionWithResponse(ctx, s.ID(), request)
-	if err != nil {
-		return nil, fmt.Errorf("client: forking the session %s: %w", s.ID(), err)
-	}
-	if forked.JSON201 == nil {
-		return nil, failure("forking the session "+s.ID(), forked.HTTPResponse, forked.Body)
-	}
-
-	functions := options.Tools
-	if functions == nil {
-		functions = s.pipeline.Functions()
-	}
 	// The fork is a conversation of its own with its own socket, so it gets its own pipeline
 	// rather than moving this one onto it: the parent is still being held.
-	pipeline := stream.Accelerated(stream.Config{
+	var forked *acceleration.Session
+	pipeline, err := s.pipeline.Fork(stream.Config{
 		Backend:   s.client.backend,
-		Functions: functions,
+		Functions: options.Tools,
 		Logger:    options.Logger,
+	}, func() error {
+		answered, err := api.ForkSessionWithResponse(ctx, s.ID(), request)
+		if err != nil {
+			return fmt.Errorf("client: forking the session %s: %w", s.ID(), err)
+		}
+		if answered.JSON201 == nil {
+			return failure("forking the session "+s.ID(), answered.HTTPResponse, answered.Body)
+		}
+		forked = answered.JSON201
+		return nil
 	})
-	if err := pipeline.Watch(ctx, forked.JSON201); err != nil {
+	if err != nil {
+		return nil, err
+	}
+	if err := pipeline.Watch(ctx, forked); err != nil {
 		return nil, err
 	}
 
@@ -635,7 +725,7 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 	if options.Agent != "" && options.Agent != agent.name {
 		agent = s.client.Agent(options.Agent)
 	}
-	return newSession(s.client, agent, pipeline, forked.JSON201), nil
+	return newSession(s.client, agent, pipeline, forked), nil
 }
 
 // Chat is Stream Chat, opened on this conversation's transcript.

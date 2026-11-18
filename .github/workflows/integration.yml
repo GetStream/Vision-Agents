@@ -10,7 +10,7 @@ name: Integration (router)
 # on a pull request, which is given no secrets.
 on:
   push:
-    branches: [ "main", "accelerate" ]
+    branches: [ "main" ]
     paths:
       - 'acceleration/**'
       - '!**/*.md'

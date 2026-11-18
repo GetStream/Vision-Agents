@@ -1,6 +1,10 @@
 package session
 
-import "github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+import (
+	"slices"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+)
 
 // ToolSource is where a tool a session's model is offered came from.
 //
@@ -31,8 +35,12 @@ func markTools(sources map[string]ToolSource, tools []harness.Tool, source ToolS
 }
 
 // ToolSource says where one of the tools the session's model is offered came from. A name
-// the session was not opened with is one the agent added itself, which is built in.
+// the session was not opened with, nor given to its caller since, is one the agent added
+// itself, which is built in.
 func (s *Session) ToolSource(name string) ToolSource {
+	if slices.ContainsFunc(s.declaredTools(), named(name)) {
+		return ToolFromSession
+	}
 	if source, ok := s.toolSources[name]; ok {
 		return source
 	}

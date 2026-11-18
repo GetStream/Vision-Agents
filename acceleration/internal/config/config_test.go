@@ -110,7 +110,6 @@ redis:
   addr: redis:6379
 auth:
   mode: api_key
-  kek: a-passphrase
 data_move:
   retention: 48h
 `), 0o600))
@@ -125,6 +124,16 @@ data_move:
 	s.Equal("api_key", config.Auth.Mode)
 	s.Equal(48*time.Hour, config.DataMove.Retention)
 	s.EqualValues(200, config.RateLimit.MessagesPerDay, "a file that says nothing keeps the default")
+}
+
+func (s *ConfigSuite) TestAFileThatStillHoldsAPlainKEKIsRefused() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("auth:\n  mode: api_key\n  kek: a-passphrase\n"), 0o600))
+
+	_, _, err := Load(path)
+	s.EqualError(err, "config: "+path+": auth.kek is no longer read: set ROUTER_DEV_KEK on a laptop or in CI, "+
+		"or ROUTER_AUTH_KEK_V1_WRAPPED with auth.kms_key on a hosted router")
+	s.NotContains(err.Error(), "a-passphrase")
 }
 
 func (s *ConfigSuite) TestAFileIsFoundThroughTheEnvironmentToo() {
@@ -638,6 +647,35 @@ func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	config, _, err = Load("")
 	s.Require().NoError(err)
 	s.Equal(30*time.Minute, config.Episodes.IdleAfter)
+}
+
+func (s *ConfigSuite) TestAPlacedCallWaitsTenSecondsForAnAgentUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(10*time.Second, config.Phone.AgentJoinTimeout)
+
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "25s")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(25*time.Second, config.Phone.AgentJoinTimeout)
+}
+
+// Zero is how a deployment turns the agent check off.
+func (s *ConfigSuite) TestAWaitForAnAgentOfZeroIsAccepted() {
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "0s")
+
+	config, _, err := Load("")
+
+	s.Require().NoError(err)
+	s.Zero(config.Phone.AgentJoinTimeout)
+}
+
+func (s *ConfigSuite) TestANegativeWaitForAnAgentIsRefused() {
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "-1s")
+
+	_, _, err := Load("")
+
+	s.ErrorContains(err, "phone.agent_join_timeout", "-1s")
 }
 
 // WhatsApp's window is 24 hours from the person's last message, so an episode closes inside

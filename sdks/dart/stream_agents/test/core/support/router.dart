@@ -21,9 +21,16 @@ final class Arrived {
 
 /// An answer to script for a route.
 final class Answer {
-  const Answer(this.status, [this.body, this.headers = const {}]);
+  const Answer(this.status, [this.body, this.headers = const {}]) : hangsUp = false;
+
+  /// No answer at all: the connection is dropped once the request has arrived, as when the
+  /// network goes while the router is still working on it.
+  const Answer.hangUp() : status = 0, body = null, headers = const {}, hangsUp = true;
 
   final int status;
+
+  /// Whether the connection is dropped rather than answered.
+  final bool hangsUp;
 
   /// Encoded as JSON unless it is already a string.
   final Object? body;
@@ -48,6 +55,7 @@ final class TestRouter {
   final HttpServer _server;
   final Map<String, Answer> _answers = {};
   final Map<String, List<Answer>> _inTurn = {};
+  final Map<String, Future<void>> _held = {};
   final List<Arrived> arrived = [];
 
   /// The socket upgrades that arrived, oldest first.
@@ -62,6 +70,10 @@ final class TestRouter {
   /// Answers `METHOD /path` with each of these in turn, before whatever [answer] set.
   void answerInTurn(String route, List<Answer> answers) =>
       _inTurn.putIfAbsent(route, () => []).addAll(answers);
+
+  /// Holds back the answer to the next `METHOD /path` until [until] completes, for what
+  /// happens while a request is still in flight.
+  void hold(String route, Future<void> until) => _held[route] = until;
 
   /// Answers every socket upgrade with a 404 envelope, the way a router that lost the
   /// session would.
@@ -104,10 +116,15 @@ final class TestRouter {
 
     arrived.add(seen);
     final route = '${request.method} ${request.uri.path}';
+    await _held.remove(route);
     final queued = _inTurn[route];
     final answer = queued != null && queued.isNotEmpty
         ? queued.removeAt(0)
         : _answers[route] ?? Answer(404, errorJson('not_found', 'not_found', 'no route'));
+    if (answer.hangsUp) {
+      (await request.response.detachSocket(writeHeaders: false)).destroy();
+      return;
+    }
     request.response.statusCode = answer.status;
     answer.headers.forEach(request.response.headers.set);
     if (answer.body != null) {

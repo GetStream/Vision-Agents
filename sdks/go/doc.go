@@ -8,7 +8,7 @@
 // The generated client in acceleration/ is built from acceleration/api/openapi.yaml, the same
 // file the Go server and the Python client are built from. Its output is committed, so
 // installing this module needs no code generation; generating it needs the spec beside it,
-// which only a checkout of the accelerate branch has. Its types are the SDK's models. Its
+// which a checkout of this repository has. Its types are the SDK's models. Its
 // operation methods are not the SDK's API and carry no compatibility promise.
 package agentscorego
 

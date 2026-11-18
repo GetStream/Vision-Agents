@@ -16,6 +16,7 @@ from .activity_sessions import ActivitySessions
 from .activity_step import ActivityStep
 from .add_contacts_request import AddContactsRequest
 from .add_contacts_response import AddContactsResponse
+from .add_session_tools_request import AddSessionToolsRequest
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
@@ -449,6 +450,7 @@ from .response_branch_of import ResponseBranchOf
 from .response_sibling import ResponseSibling
 from .response_sibling_page import ResponseSiblingPage
 from .resume_history import ResumeHistory
+from .resume_session_request import ResumeSessionRequest
 from .review_actor import ReviewActor
 from .review_analysis import ReviewAnalysis
 from .review_cause import ReviewCause
@@ -670,6 +672,7 @@ __all__ = (
     "ActivityStep",
     "AddContactsRequest",
     "AddContactsResponse",
+    "AddSessionToolsRequest",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
     "AgentCalls",
@@ -1097,6 +1100,7 @@ __all__ = (
     "ResponseSibling",
     "ResponseSiblingPage",
     "ResumeHistory",
+    "ResumeSessionRequest",
     "ReviewActor",
     "ReviewAnalysis",
     "ReviewCause",

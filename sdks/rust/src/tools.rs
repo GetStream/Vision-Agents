@@ -16,6 +16,7 @@ use crate::types;
 type Run =
     Arc<dyn Fn(ToolCallContext, Value) -> BoxFuture<'static, Result<Value, String>> + Send + Sync>;
 
+#[derive(Clone)]
 struct Tool {
     declaration: types::SessionTool,
     run: Run,
@@ -138,6 +139,20 @@ impl Tools {
     /// Whether a function is registered under this name.
     pub fn has(&self, name: &str) -> bool {
         self.registered.lock().expect("tools").contains_key(name)
+    }
+
+    /// Copies the functions `keep` names into `into`, each in place of one of its name there.
+    /// The copies are `into`'s own: registering in this registry afterwards leaves them alone.
+    pub(crate) fn copy_into(&self, into: &Tools, keep: impl Fn(&str) -> bool) {
+        let copied: Vec<(String, Tool)> = self
+            .registered
+            .lock()
+            .expect("tools")
+            .iter()
+            .filter(|(name, _)| keep(name))
+            .map(|(name, tool)| (name.clone(), tool.clone()))
+            .collect();
+        into.registered.lock().expect("tools").extend(copied);
     }
 
     /// Runs one function with the arguments the model wrote, as the output to send back.

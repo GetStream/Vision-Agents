@@ -428,6 +428,13 @@ pub struct AddContactsResponse {
     ///In the order sent.
     pub refused: ::std::vec::Vec<RefusedContact>,
 }
+///Tools to give a running session's caller.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AddSessionToolsRequest {
+    ///The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub tools: ::std::option::Option<::std::vec::Vec<SessionTool>>,
+}
 ///`AddTrunkNumberRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AddTrunkNumberRequest {
@@ -6024,7 +6031,7 @@ pub struct ForkSessionRequest {
     pub response_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
-    ///How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+    ///How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tool_timeout_ms: ::std::option::Option<i64>,
 }
@@ -8766,7 +8773,7 @@ pub struct PlaceCallRequest {
     ///How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub ring_timeout_seconds: ::std::option::Option<i64>,
-    ///The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.
+    ///The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub session_id: ::std::option::Option<::std::string::String>,
     #[serde(
@@ -8779,7 +8786,7 @@ pub struct PlaceCallRequest {
 ///`PlacedCall`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PlacedCall {
-    ///The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up.
+    ///The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub session_id: ::std::option::Option<::std::string::String>,
     ///The vendor's own word for where the call is, e.g. "queued".
@@ -9817,6 +9824,16 @@ pub struct ResumeHistory {
     ///How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_messages: ::std::option::Option<i64>,
+}
+///What a caller carrying a conversation on says about its tools, over what it ran with.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct ResumeSessionRequest {
+    ///How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool_timeout_ms: ::std::option::Option<i64>,
+    ///The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tools: ::std::option::Option<::std::vec::Vec<SessionTool>>,
 }
 ///Who moved a use case: the app, Stream staff or the vendor.
 #[derive(

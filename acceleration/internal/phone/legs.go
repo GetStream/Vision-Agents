@@ -90,6 +90,7 @@ func (s *Service) OpenLeg(ctx context.Context, owner routing.Owner, leg store.Ca
 		s.settleLegs(ctx, []store.CallLeg{leg})
 	case leg.StartedAt != nil:
 		s.told(ctx, leg)
+		s.awaitAgent(leg)
 	}
 }
 
@@ -137,6 +138,7 @@ func (s *Service) Connect(ctx context.Context, scope store.AppScope, callType, c
 		s.settleLegs(ctx, []store.CallLeg{leg})
 	} else {
 		s.told(ctx, leg)
+		s.awaitAgent(leg)
 		if left, err = s.store.ParticipantLeft(ctx, scope, callType, callID, participant); err != nil {
 			return err
 		} else if left != nil {

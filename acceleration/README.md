@@ -87,7 +87,7 @@ go run ./cmd/router --config /etc/router.yaml
 
 Its keys are `addr`, `public_url`, `log_level`, `dashboard_url`,
 `trusted_proxies`, `routing_config`, `phone_config`, `prices_file`, `voices_bucket_url`, and the nested
-`postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kek}`,
+`postgres.dsn`, `redis.{addr,username,password}`, `node.{advertise,listen}`, `listen_fd`, `shutdown.drain`, `auth.{mode,kms_key}`,
 `rate_limit.{messages_per_day,tokens_per_day}`, `data_move.retention`, `connectors.enabled`,
 `knowledge.regions`, `code_sandbox.targets` and `stream.{api_key,api_secret}`. Naming no file
 loads one of the three embedded in the binary, by `ROUTER_ENV`.
@@ -113,11 +113,10 @@ the other commands that read them there.
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.08 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
-| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
-| `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
-| `ROUTER_AUTH_KEK_V<n>_WRAPPED` | Version `n` of the keyring as base64 ciphertext a KMS wrapped with the AAD `router-kek-v<n>`, in place of `ROUTER_AUTH_KEK_V<n>`. The router unwraps it at startup with `ROUTER_AUTH_KMS_KEY` into the same key, so the rows it sealed still open. Setting both forms of one version is refused |
-| `ROUTER_AUTH_KMS_KEY`   | The Cloud KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`, as `projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>`. The router calls Cloud KMS once at startup, with Application Default Credentials. Unset, only the plain keys are read. See «The key encryption key in Cloud KMS» |
-| `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
+| `ROUTER_DEV_KEK`        | The key encryption key in plain text, for a laptop or CI only: version 1 of the keyring. The keyring unseals the stored key secrets, so `api_key` needs it, and it is what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it. Refused beside `ROUTER_AUTH_KMS_KEY` or any `ROUTER_AUTH_KEK_V<n>_WRAPPED`. `ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and `auth.kek` are no longer read, and a start that sets one is refused |
+| `ROUTER_AUTH_KEK_V<n>_WRAPPED` | Version `n` of the keyring on a hosted router, as base64 ciphertext a KMS wrapped with the AAD `router-kek-v<n>`. The router unwraps it at startup with `ROUTER_AUTH_KMS_KEY`. Keep an old version until every row sealed under it is rewrapped |
+| `ROUTER_AUTH_KMS_KEY`   | The Cloud KMS key that unwraps every `ROUTER_AUTH_KEK_V<n>_WRAPPED`, as `projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>`. The router calls Cloud KMS once at startup, with Application Default Credentials. See «The key encryption key in Cloud KMS» |
+| `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>_WRAPPED` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
 | `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis. The child agents a run calls take no slot: at most 8 run at once inside their parent's |
@@ -162,7 +161,7 @@ the other commands that read them there.
 | `TWILIO_WEBHOOK_AUTH_TOKEN` | Auth Token of the Twilio account whose webhooks the router checks (`X-Twilio-Signature`). It only checks signatures: those of the Monitor alerts and usage-trigger callbacks sent to `/v1/phone/hooks/twilio/events`, signed over `ROUTER_PUBLIC_URL` and the path. Without it, or without `ROUTER_PUBLIC_URL`, that route answers 404. A token with whitespace in it stops the router at start |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
-| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx` and the account events it sends to `/v1/phone/hooks/telnyx/events`. Without it Telnyx numbers are not answered and the events route answers 404. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
+| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx` and the account events it sends to `/v1/phone/hooks/telnyx/events`. Without it Telnyx numbers are not answered and the events route answers 404. Telnyx numbers also need a key encryption keyring (`ROUTER_DEV_KEK` locally, `ROUTER_AUTH_KEK_V<n>_WRAPPED` hosted): without one they cannot be attached |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
 | `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
@@ -189,10 +188,11 @@ the other commands that read them there.
 
 ### The key encryption key in Cloud KMS
 
-A hosted deployment can keep its key encryption key out of its secrets. Cloud KMS wraps the
+A hosted deployment keeps its key encryption key out of its secrets. Cloud KMS wraps the
 key once. At each start the router unwraps it with one `Decrypt` call and then seals and opens
-rows in memory, as before. The key is the same string, so every row it sealed still opens and
-the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK`.
+rows in memory. The key is the same string the plain one was, so every row it sealed still
+opens and the nodes of a deployment still agree. A laptop or CI sets the plain key as
+`ROUTER_DEV_KEK`, and the router refuses it beside a KMS setting.
 
 1. Make a symmetric Cloud KMS key, and give the router's service account
    `roles/cloudkms.cryptoKeyDecrypter` on that key only. `roles/cloudkms.admin` cannot decrypt
@@ -205,31 +205,38 @@ the nodes of a deployment still agree. A laptop keeps the plain `ROUTER_AUTH_KEK
    ```
 
 2. Wrap the current key as version 1, with the AAD `router-kek-v1` (`router-kek-v<n>` for
-   version `n`). `printf %s` adds no newline: the unwrapped key must be the same bytes as the
+   version `n`). A deployment that also holds a plain `ROUTER_AUTH_KEK_V2` wraps that one the same way, as
+   `ROUTER_AUTH_KEK_V2_WRAPPED` with `router-kek-v2`: a row sealed under a version opens only
+   while that version's key is set. `printf %s` adds no newline: the unwrapped key must be the same bytes as the
    plain one, or no row opens. `gcloud kms encrypt` reads a `-` input from stdin and writes
    the ciphertext to stdout for `-`
    ([gcloud kms encrypt](https://docs.cloud.google.com/sdk/gcloud/reference/kms/encrypt),
    opened 2026-10-22). The ciphertext is raw bytes, and the plaintext and the AAD cannot both
    be stdin (`lib/surface/kms/encrypt.py` in Google Cloud SDK 580.0.0). GNU `base64` breaks
-   lines, so `tr` joins them. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
+   lines, so `tr` joins them. The key is in the shell variable `KEK`, never in the router's
+   environment. Whoever runs it needs `roles/cloudkms.cryptoKeyEncrypter` on the
    key, which `roles/cloudkms.admin` lacks too
    ([Encrypting and decrypting data](https://docs.cloud.google.com/kms/docs/encrypt-decrypt),
    opened 2026-10-22):
 
    ```bash
-   printf %s "$ROUTER_AUTH_KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
+   printf %s "$KEK" | gcloud kms encrypt --key=KEY --keyring=KEYRING \
      --location=LOCATION --plaintext-file=- --ciphertext-file=- \
      --additional-authenticated-data-file=<(printf %s router-kek-v1) | base64 | tr -d '\n'
    ```
 
 3. Set `ROUTER_AUTH_KMS_KEY` to the key's resource name and `ROUTER_AUTH_KEK_V1_WRAPPED` to the
-   base64, then remove `ROUTER_AUTH_KEK` and `ROUTER_AUTH_KEK_V1`: a version set both ways is
-   refused. The wrapped value is ciphertext, so it can live in plain chart values.
+   base64, and remove any `ROUTER_AUTH_KEK` and plain `ROUTER_AUTH_KEK_V<n>`: the router refuses
+   to start while one is set. The wrapped value is ciphertext, so it can live in plain chart
+   values.
 4. Restart. A start that cannot unwrap a key stops, and its error names the variable and the
    KMS error, never the key or the ciphertext.
 
-To roll back, set `ROUTER_AUTH_KEK` to the same key again and unset `ROUTER_AUTH_KMS_KEY` and
-`ROUTER_AUTH_KEK_V1_WRAPPED`. The router then reads the plain key and calls no KMS.
+To roll back a re-wrap of the same key, set `ROUTER_AUTH_KEK_V1_WRAPPED` (and `ROUTER_AUTH_KMS_KEY`,
+if the KMS key changed too) to the previous values and restart. A value that wraps a different
+key cannot be rolled back this way once the router has sealed rows under it: the rows it
+sealed open only with that key. A hosted router has no plain
+key to fall back to.
 
 ## Authentication
 
@@ -256,8 +263,8 @@ A key is two values with different jobs. The id is public — `vak_live_…`, en
 checksum so a truncated paste is rejected before the database is asked, and it is what a
 log line names so an operator can revoke the right one. The secret is `vas_live_…`, shown
 once and then held only sealed: verifying a token means recomputing its signature, which
-means the secret cannot be hashed, so it is encrypted with AES-256-GCM under
-`ROUTER_AUTH_KEK` and a leaked backup yields ciphertext. `kek_version` is there so that key
+means the secret cannot be hashed, so it is encrypted with AES-256-GCM under the key
+encryption keyring and a leaked backup yields ciphertext. `kek_version` is there so that key
 can be rotated by re-wrapping rows rather than by reissuing every secret.
 
 Every failure is one 401 with one body, because a caller that could tell an unknown key
@@ -1541,6 +1548,24 @@ caller's own functions live wherever the caller is, so the model asks for one he
 answer comes back from there, and a caller that does not answer inside the tool timeout
 leaves the model to carry on without it rather than leaving the call silent.
 
+#### Tool timeout
+
+`tool_timeout_ms` on `POST /v1/agents/sessions` is how long the model waits for a tool the
+caller or a worker runs: 30 seconds when it is zero or left out. A tool's own `timeout_ms`
+replaces it for that tool, which is how one slow tool gets longer without every tool waiting
+as long. A fork takes its own `tool_timeout_ms` and otherwise keeps a running parent's.
+
+The session row keeps the timeout and the tools the caller declared (definitions only), so a
+conversation carried on after it ended, in this process or another, waits as long and offers
+the same tools. `POST /v1/agents/sessions/{id}/resume`, which JavaScript's and Go's `resume` send when
+they have something to say, writes a `tool_timeout_ms` and `tools` over those, the caller's own
+winning; an empty `tools` offers none. A conversation still running takes the new timeout for
+the calls that start after it and keeps its tools until it ends and is carried on. Both are
+kept for the kind of caller that opened the conversation: an end user's device carrying on its
+backend's conversation is not offered the backend's tools, and what it says runs only in the
+session it reopens, never on the row the backend carries it on from. Requests that carry the
+same conversation on at once all get the one that runs.
+
 Sessions are keyed by customer. A session id that exists but belongs to somebody else is
 reported as not existing at all, since a forbidden would confirm it was real.
 
@@ -1610,7 +1635,7 @@ both need `redis.addr`:
   them, and the node answering runs its own handler: it authenticates and authorizes the
   caller itself rather than taking a peer's word for either. Since anyone reaching that
   port can speak gRPC to it, a peer presents a credential derived from the key encryption
-  keyring (`ROUTER_AUTH_KEK`, `ROUTER_AUTH_KEK_V<n>`), and a node accepts the one of any key
+  keyring (`ROUTER_AUTH_KEK_V<n>_WRAPPED`, or `ROUTER_DEV_KEK` on a laptop), and a node accepts the one of any key
   it holds, so a rotation needs no pause. A node with no keyring refuses every peer, and
   every node holding one refuses it.
 
@@ -2097,7 +2122,7 @@ is left out when the request has none:
 | Field | What it is |
 | --- | --- |
 | `trace_id` | The trace of the request's span. None when tracing is off or the request was not sampled |
-| `operation_type` | The route's pattern, such as `/v1/agents/sessions/{id}`. None for a path no route serves |
+| `operation_type` | The operation the route serves, named as its `operationId` with a capital first letter, such as `GetSession`. `path` is the request path, with a token route's secret segment shown as `{token}`. None for a request no operation served: an unknown path, a method a route does not take, a request refused for a spent day (429). A route the spec leaves out (a vendor's hook, a peer call) has a name of its own, such as `PhoneHook` |
 | `error_code` | The `code` of the error the request was answered with |
 | `x_stream_client`, `stream_auth_type`, `user_agent` | The `X-Stream-Client`, `Stream-Auth-Type` and `User-Agent` headers, each cut to 256 bytes. `stream_auth_type` falls back to a socket's `stream-auth-type` query (`jwt` or `anonymous`) |
 | `request_size` | The request's `Content-Length`. None for a chunked body |
@@ -2521,7 +2546,10 @@ on.
 
 `POST /v1/phone/calls` makes its own trunk and routing rule and pins the rule to a call, so
 the answered leg lands somewhere an agent can be waiting. The response says which call that
-is, and an agent that is not in it hears nothing when the person picks up.
+is, and an agent that is not in it hears nothing when the person picks up. After
+`phone.agent_join_timeout` (10 s by default) from the answer, the router asks Stream who is in
+the call. If only the person is there, it ends the call. If Stream does not answer, the call
+continues. `0` turns this check off.
 
 Vendors do not agree on what a call can be asked for, so a provider declares which terms its
 API can express and a call naming one it cannot is refused rather than placed without it. A

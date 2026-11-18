@@ -2,6 +2,10 @@
 
 ## Features
 
+### A running session takes more of its caller's tools, and gives them back
+
+`POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A change waits for the turn in progress and every tool call in flight, so a call is only checked, and asks its approval, against the tools it was made with. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the caller already has, or the agent offers from elsewhere, is a 409 (to change a tool, remove it, then add it again), and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown (#2044). Go has `Pipeline.AddTools` and `RemoveTool`, and now every other SDK has the same pair on its session: JavaScript `addTools`/`removeTool`, Python `add_tools`/`remove_tool`, .NET `AddToolsAsync`/`RemoveToolAsync`, Ruby and Rust `add_tools`/`remove_tool`, PHP, Kotlin and Dart `addTools`/`removeTool`. A removal whose answer is lost is settled by the next change of that name, as a lost add is, rather than leaving the old function to run under a new declaration, and the SDK's own HTTP client never resends either request (a client the app supplies, with retries of its own, is outside that). Only a 4xx answer counts as a refusal: a 5xx, such as a gateway timing out after the router applied the change, leaves the name unsettled too. A fork of a running session is watched with the tools the session has now, added ones and unsettled names included, as the router offers them to it (#2050).
+
 ### The JavaScript SDK draws a streaming card a statement at a time
 
 While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2042).
@@ -9,10 +13,17 @@ While a reply's OpenUI streams, `TurnUI.content` now holds only its finished sta
 ### The JavaScript SDK compiles `ui.format: a2ui`
 
 `loadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the same A2UI prompt as the Go SDK: the agent is told to answer with A2UI 1.0 in a ```` ```ui:a2ui@1.0 ```` block, with the catalog `getstream.io:app-catalog` that stream-chat-swift's renderer draws. `keep` names the basic catalog's components and functions, `patch_mode` is refused with `a2ui`, and a blueprint `example` is checked so it renders as written. Both SDKs are held to the same fixture, byte for byte.
+### A conversation carried on keeps its tool timeout and declared tools, and resume can change them
+
+A text conversation carried on after it ended in another router process, by a message, a watch or a resume, used to lose the caller's `tool_timeout_ms` and the tools it declared: it waited 30 seconds and offered the model none of them. The session row now keeps both (`tool_timeout_ms`, and `caller_tools`, the declarations without results; an additive migration), so it carries on as it ran. `POST /v1/agents/sessions/{id}/resume` takes `tool_timeout_ms` and `tools` to write over them, as a fork does: the caller's tools win, and an empty list offers none. A conversation still running takes the timeout for the tool calls that start after it and keeps its tools. Both are kept for the kind of caller that opened the conversation: a device carrying on its backend's conversation neither gets nor changes the backend's tools and timeout. Concurrent requests carrying one conversation on now all get the session that runs, where the losers were refused with 400 "conversation is already open". JavaScript's `sessions.resume(id, { tool_timeout_ms, tools })` and Go's `Sessions.Resume(ctx, id, client.ResumeOptions{ToolTimeout})` send it when there is something to say, the agent's own functions declared; with nothing to say they read the session as before, and JavaScript declares no tools for a resume with `watch: false`. Deploy the router before releasing these SDKs. A fork of a conversation that ended still has the default 30 seconds (AI-3201).
 
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
 `AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
+
+### The Kotlin SDK shows a reply's interactive UI as the socket streams it
+
+`AgentEvent.Kind` has `UiDelta` and `UiCompleted`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time, and a turn has no `Turn.ui` until one is finished. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. `LiveUI` (`observe(conversation)`, then `overlay(messages)` for each reply's custom data) lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as Swift and JavaScript, so a new reply never shows the card of the one before it. A call screen, which shows no channel, shows the newest `Turn.ui` itself, from `TurnUI.customData`. `android_assistant` shows it in chat and on calls, with the trip's map, place cards and calendar, restaurant cards, an availability gauge and a seat selector, the app's own views described by swift_assistant's `UIComponents.json`, and brands switched live in Settings, which OpenUI cards and those views wear (AND-1948, #2054).
 
 ### A call through a customer's own SIP trunk survives the router node that holds it stopping
 
@@ -583,6 +594,14 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
+
+`ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
+
+### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
+
+`Conversation` keeps the UI text a turn is writing private, so its constructor, `copy`, `componentN`, `equals` and `toString` are written by hand. Kotlin callers need no change. Java loses the no-argument constructor: pass the three arguments, `new Conversation(turns, state, failure)`, where it called `new Conversation()`. `Turn` takes a new last parameter, `ui`, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change (AND-1948, #2054).
+
 ### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
 
 `stream_agents` (`sdks/dart/stream_agents`) replaces `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`: an app depends on `stream_agents` and imports `package:stream_agents/stream_agents.dart` where it depended on and imported the three. Nothing else in the API changed. Its floors are Stream Chat 10.4's, Dart 3.12 and Flutter 3.44. Core, chat and rtc stay apart inside it, and `area_boundaries_test.dart` keeps core pure Dart.
@@ -728,6 +747,10 @@ Posted text is listed as `pending` while its passages are written, then `indexed
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 
 `Conversation.reduce` in the Kotlin SDK sets `state` to `Idle` for an `error` event whose `context` is `llm` or `sts` while the agent is `Responding` or `Working`, and keeps `failure`. Before, only `failure` was set, so a reply that failed with no `responded` after it left an app showing the agent thinking. An error from anything else, a tool, the voice or the transcriber, still leaves `state` as it was, and an `Ended` conversation stays ended. `failure` is now cleared when the agent next hears, starts answering or speaks (`heard`, `responding`, `spoke`), as the JavaScript SDK's is; before, it stayed for the rest of the conversation.
+
+### A placed call with no agent in it is ended
+
+When the person a router-placed call rang answers, the router waits `phone.agent_join_timeout` (`ROUTER_PHONE_AGENT_JOIN_TIMEOUT`, 10 s by default, `0` turns the check off). Then it asks Stream once who is in the call. If only the person's phone is there, the router ends the call and logs "no agent joined the call; ending it". Before, the person heard silence until they hung up. A call with anyone else in it (an agent, an app user, another phone) continues. A call that Stream could not list continues too. This applies to calls from `POST /v1/phone/calls`, campaigns, scheduled calls and transfers. Calls that arrive are not changed (AI-800).
 
 ### A custom connector cannot list oauth2_client_credentials
 

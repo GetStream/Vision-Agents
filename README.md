@@ -1,27 +1,28 @@
 ![StreamAgents](assets/stream_agents.png)
 
 > [!NOTE]
-> Using Python for Agents no longer makes sense. 0.7 is a move to Go, with SDKs for other languages.
+> Using Python for Agents no longer makes sense. For 0.7 we've moved to Go, with SDKs for other languages.
 
-Stream Agents is a Go backend for building voice, video and text agents.
+Stream Agents is a Go backend for building text, voice and video agents.
 You can build AI/agentic apps like Muse, Decagon and Harvey in a day.
 
 #### It's faster to build agents:
 
 1. Agents are defined in a folder structure + YAML
 2. SDKs handle chat/audio client and state
-3. All the components you need are integrated with sensible default. (Guardrails, Knowledge, Routing, Connectors, Sandboxes, skills, telephony)
+3. All the components you need are integrated with sensible defaults. (Guardrails, Knowledge, Routing, Connectors, Sandboxes, skills, telephony)
 
 #### Performance is excellent:
 
-1. Go runs with high concurrency and raw performance
+1. Go runs with high concurrency and great performance
 2. The edge acceleration offloads your backend and lowers latency
 3. Audio forwarding is optimized with WARP similar to OpenAI
 
 #### Sovereign AI
 
 The combination of routing, persistence and memory makes it easy to switch the underlying models.
-Stay in control of how you use the frontier models, how costs scale and run on your own when it makes sense.
+Stay in control of how costs scale.
+Start with the frontier models and run your own when it makes sense.
 
 ## Quickstart
 
@@ -45,7 +46,6 @@ Then add chat, voice and video to your app with a client SDK:
 * [Flutter](https://getstream.io/agents/docs/quickstart/?client=flutter)
 * [React Native](https://getstream.io/agents/docs/quickstart/?client=react-native)
 
-
 ## Agent Folders and CLI
 
 The fastest way to define an agent is using the folder structure
@@ -53,7 +53,7 @@ The fastest way to define an agent is using the folder structure
 You can quickly create a folder using the CLI
 
 ```bash
-curl -fsSL https://getstream.io/cli/beta/install.sh | bash
+curl -fsSL https://getstream.io/cli.sh | bash
 getstream agents init my-agent --template text
 ```
 
@@ -73,7 +73,7 @@ agents/my-agent/
   guardrail.md     ← prevent abuse
 ```
 
-After you create an agent you can quickly test it like this
+After you create an agent you can quickly test it
 
 ```bash
 getstream agents test my-agent
@@ -81,43 +81,6 @@ getstream agents test my-agent
 
 Note that you can also configure agents through the SDKs or dashboard.
 
-## Tool Calling
-
-You can set up tool calling with any backend language. Here's Python.
-
-Register your functions on the agent, then host them with a `Dispatch` worker. The worker
-connects out to the router, so it needs no public URL, and every session with the agent can
-call its tools: chat, voice or phone, opened from your backend or from a user's browser. Run
-more workers and the router spreads the calls between them.
-
-```python
-import asyncio
-
-from vision_agents.core.llm import ToolCallContext
-from vision_agents.plugins import stream
-
-agent = stream.Client().agent("my-agent")
-
-
-@agent.register()
-async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
-    """Look up the user's open support cases."""
-    user = tool_call_context.user
-    if not user.id:
-        raise ValueError("unknown user")
-    await tool_call_context.update("Checking your open cases")
-    # pretend this calls your CRM
-    return await crm.open_cases(user.id)
-
-
-async def main() -> None:
-    dispatch = stream.Dispatch()
-    dispatch.host(agent, tool_timeout=30)
-    await dispatch.run()
-
-
-asyncio.run(main())
-```
 
 ## Client Side/ Browser & App
 
@@ -150,6 +113,40 @@ Full apps with chat, voice and tools, one per client SDK:
 * [React](examples/voice_agents/react_assistant)
 * [Flutter](examples/voice_agents/flutter_assistant)
 
+## Tool Calling
+
+Any backend SDK can provide tools to the agent. Here's a Python based example:
+
+```python
+import asyncio
+
+from vision_agents.core.llm import ToolCallContext
+from vision_agents.plugins import stream
+
+agent = stream.Client().agent("my-agent")
+
+
+@agent.register()
+async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
+    """Look up the user's open support cases."""
+    user = tool_call_context.user
+    if not user.id:
+        raise ValueError("unknown user")
+    await tool_call_context.update("Checking your open cases")
+    # pretend this calls your CRM
+    return await crm.open_cases(user.id)
+
+
+async def main() -> None:
+    dispatch = stream.Dispatch()
+    dispatch.host(agent, tool_timeout=30)
+    await dispatch.run()
+
+
+asyncio.run(main())
+```
+
+
 ## Examples / What can you build
 
 * Simple chat: text, knowledge, skills, function calling, a connector and an MCP server
@@ -172,6 +169,30 @@ Full apps with chat, voice and tools, one per client SDK:
 * Chat/agent persistence, see [sessions](https://getstream.io/agents/docs/sessions/)
 * [Sandbox/VM](https://getstream.io/agents/docs/harness-and-sandbox/)
 * [Search](https://getstream.io/agents/docs/creating-an-agent/)
+
+## Simulations & Monitoring
+
+Agent [simulations](https://getstream.io/agents/docs/simulations-and-evals/) and [monitoring](https://getstream.io/agents/docs/agent-monitoring/) are built-in.
+
+
+
+<!-- dashboard screenshot -->
+
+## Cost Transparency
+
+It's very easy for AI costs to spiral out of control. We aim to give you the tools you need to keep costs under control
+
+* It's extremely easy to switch model
+* Session monitoring shows you stats about token usage. So you can optimize tools/skills etc to reduce token usage
+* Aggregated stats show token usage for skills, tools across all your tools
+* [Tags](https://getstream.io/agents/docs/sessions/#models-cost-tags-and-incognito) allow you to track specific customers, products etc
+* Spending limits
+
+Set daily, weekly and monthly spend limits in
+USD on the organization, API keys, users, apps and teams.
+See [spend limits](https://getstream.io/agents/docs/spend-limits/).
+
+<!-- dashboard screenshot -->
 
 ## Connectors
 
@@ -206,3 +227,31 @@ How Stream Agents compares to the alternatives, see
 * Voice AI frameworks: LiveKit, Pipecat, Retell, Agora, Vapi
 * Support SaaS: Sierra, Decagon, Serval
 
+## Free tier
+
+You can [run it yourself](https://getstream.io/agents/docs/self-hosting/), or use the hosted
+version. Its free tier has generous limits:
+
+* $25 of inference and other costs included
+* 50k agent hosting minutes / month
+* 150k AI infra text messages
+* 500 concurrent agents
+* 10k monthly active agent users
+* 1M API calls
+* 1M records storage
+* Custom voices
+* Team collaboration
+
+Past those limits, usage costs:
+
+| What | Price |
+| --- | --- |
+| AI voice infra | $0.002 / min |
+| AI infra text | $0.0001 / message |
+| Audio RTC | $0.30 / 1k participant min |
+| SD video RTC | $0.75 / 1k participant min |
+| Stored records | $1.50 / 1M after first 1M |
+| Bandwidth | $0.10 / GB |
+| Tokens, telephony, knowledge, search & other forwarded costs | cost + 5% + payment fees |
+
+See [agent pricing](https://getstream.io/agents/pricing/).

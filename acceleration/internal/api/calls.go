@@ -129,8 +129,19 @@ func (s *Server) attachUsage(ctx context.Context, customerID string, call store.
 	}
 }
 
-// getCallTokens says what the call's models read and wrote, and what their prompts were made of.
+// getCallTokens is getSessionTokens under the path it had before tokens moved to the
+// session, answering an unknown id as an unknown call as it did.
 func (s *Server) getCallTokens(ctx context.Context, request *getCallTokensRequest) (*getCallTokensResponse, error) {
+	spent, err := s.tokensOf(ctx, request.Id, errUnknownCall)
+	if err != nil {
+		return nil, err
+	}
+	return &getCallTokensResponse{Body: *spent}, nil
+}
+
+// tokensOf says what the session's models read and wrote, and what their prompts were made of.
+// unknown is what an id with no session is answered with.
+func (s *Server) tokensOf(ctx context.Context, id string, unknown APIError) (*CallTokens, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, errMissingCustomer
@@ -139,9 +150,9 @@ func (s *Server) getCallTokens(ctx context.Context, request *getCallTokensReques
 		return nil, errNoCalls
 	}
 
-	call, err := s.store.Call(ctx, customerID, request.Id)
+	call, err := s.store.Call(ctx, customerID, id)
 	if err != nil {
-		return nil, errUnknownCall
+		return nil, unknown
 	}
 	used, err := s.store.CallTokens(ctx, customerID, call.AgentID, call.ID, call.StartedAt, call.EndedAt)
 	if err != nil {
@@ -170,7 +181,7 @@ func (s *Server) getCallTokens(ctx context.Context, request *getCallTokensReques
 		spent.InputParts.Video += parts.Video
 	}
 	spent.CostSources = costSources(used)
-	return &getCallTokensResponse{Body: spent}, nil
+	return &spent, nil
 }
 
 // costSources splits what the models cost by where it came from. A model's prompt cost is
@@ -1033,10 +1044,10 @@ func (s *Server) registerCalls(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/calls/{id}/tokens",
 		Summary:     "What a call's models read and wrote, and what their prompts were made of",
-		Description: "Read while the call is going as well as after it, unlike the usage on the call, " +
-			"which is counted once it is over. A prompt's parts are estimated: no provider says how " +
-			"much of a prompt was instructions, tools or images, so the router estimates it from each " +
-			"request and scales it to what the provider counted. The parts sum to the input tokens.",
+		Description: "Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers " +
+			"the same for a session held in writing or on a call. An unknown id is answered here as " +
+			"call_not_found rather than session_not_found.",
+		Deprecated: true,
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The call's tokens"},
 		},

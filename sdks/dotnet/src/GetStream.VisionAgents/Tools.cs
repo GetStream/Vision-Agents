@@ -141,6 +141,40 @@ public sealed class Tools
         }
     }
 
+    /// <summary>The names registered.</summary>
+    internal List<string> Names()
+    {
+        lock (_lock)
+        {
+            return [.. _registered.Keys];
+        }
+    }
+
+    /// <summary>
+    /// A registry of its own with the function called each of names, taken from the registry
+    /// <paramref name="from"/> gives for it, so a function registered there later does not run in
+    /// its place.
+    /// </summary>
+    internal static Tools Copy(IEnumerable<string> names, Func<string, Tools?> from)
+    {
+        var copy = new Tools();
+        foreach (var name in names)
+        {
+            if (from(name) is not { } source)
+            {
+                continue;
+            }
+            lock (source._lock)
+            {
+                if (source._registered.TryGetValue(name, out var registered))
+                {
+                    copy._registered[name] = registered;
+                }
+            }
+        }
+        return copy;
+    }
+
     /// <summary>The functions as the session request declares them.</summary>
     internal List<SessionTool> Declared()
     {

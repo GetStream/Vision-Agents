@@ -64,8 +64,8 @@ const initialsOf = (name: string) =>
     .toUpperCase();
 
 /**
- * The agent's conversations, most recently used first. Only those kept in writing: a session that
- * was only ever a call has no channel to read back.
+ * The agent's conversations, most recently used first. Only those kept in Stream Chat: a session
+ * with no conversation id has no channel to read back.
  */
 export const MenuDrawer = ({ navigation }: DrawerContentComponentProps) => {
   const { conversationsVersion, isReady, openConversation, sessionId, startConversation } =

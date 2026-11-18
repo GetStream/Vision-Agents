@@ -46,6 +46,7 @@ import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
 import io.getstream.chat.android.ai.compose.ui.component.ComposerTrailingContentParams
 import io.getstream.chat.android.ai.compose.ui.component.LocalChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.MessageData
+import io.getstream.chat.android.ai.openui.rendering.ProvideOpenUITheme
 import java.util.Calendar
 
 private val starters = listOf(
@@ -72,6 +73,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val status by conversation.status.collectAsStateWithLifecycle()
     val error by conversation.error.collectAsStateWithLifecycle()
     val opening by viewModel.failure.collectAsStateWithLifecycle()
+    val brand by viewModel.brand.collectAsStateWithLifecycle()
     val signIn = LocalSignIn.current
     DisposableEffect(viewModel, signIn) {
         viewModel.signIn = signIn
@@ -91,14 +93,16 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
 
     CompositionLocalProvider(LocalChatAiComponentFactory provides views) {
         Box(modifier.fillMaxSize()) {
-            AIConversation(
-                state = conversation,
-                modifier = Modifier.fillMaxSize(),
-                footer = { unanswered?.let { Unanswered(UNANSWERED, onRetry = viewModel::retry) } },
-                emptyContent = { Welcome() },
-                contentPadding = PaddingValues(bottom = barHeight),
-                ui = viewModel.uiHost,
-            )
+            ProvideOpenUITheme(brand.openUITheme()) {
+                AIConversation(
+                    state = conversation,
+                    modifier = Modifier.fillMaxSize(),
+                    footer = { unanswered?.let { Unanswered(UNANSWERED, onRetry = viewModel::retry) } },
+                    emptyContent = { Welcome() },
+                    contentPadding = PaddingValues(bottom = barHeight),
+                    ui = viewModel.uiHost,
+                )
+            }
 
             // The conversation fades away under the composer rather than stopping at a hairline,
             // so the composer does not read as a bar of its own.

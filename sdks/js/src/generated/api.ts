@@ -313,7 +313,8 @@ export type paths = {
         };
         /**
          * What a call's models read and wrote, and what their prompts were made of
-         * @description Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+         * @deprecated
+         * @description Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
          */
         readonly get: operations["getCallTokens"];
         readonly put?: never;
@@ -2314,6 +2315,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/resume": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Carry a conversation on, with the caller's tool settings
+         * @description Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+         */
+        readonly post: operations["resumeSession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/rewind": {
         readonly parameters: {
             readonly query?: never;
@@ -2399,6 +2420,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/tokens": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a session's models read and wrote, and what their prompts were made of
+         * @description Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+         */
+        readonly get: operations["getSessionTokens"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/tools": {
         readonly parameters: {
             readonly query?: never;
@@ -2412,8 +2453,36 @@ export type paths = {
          */
         readonly get: operations["listSessionTools"];
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * Give a running session more of the caller's tools
+         * @description Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+         *
+         *     The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+         *
+         *     The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+         */
+        readonly post: operations["addSessionTools"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/tools/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Withdraw one of the caller's tools from a running session
+         * @description The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+         */
+        readonly delete: operations["removeSessionTool"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4729,6 +4798,11 @@ export type components = {
             readonly added: number;
             /** @description In the order sent. */
             readonly refused: readonly components["schemas"]["RefusedContact"][];
+        };
+        /** @description Tools to give a running session's caller. */
+        readonly AddSessionToolsRequest: {
+            /** @description The tools, each declared as it is when a session is created, and each named as no tool the caller already has. */
+            readonly tools: readonly components["schemas"]["SessionTool"][] | null;
         };
         readonly AddTrunkNumberRequest: {
             /** @description Required. ISO 3166-1 alpha-2 country code. */
@@ -7392,7 +7466,7 @@ export type components = {
             /** @description Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. */
             readonly response_id?: string;
             readonly title?: string;
-            /** @description How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession. */
+            /** @description How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession. */
             readonly tool_timeout_ms?: number;
         };
         readonly GeneratedImage: {
@@ -8495,7 +8569,7 @@ export type components = {
             readonly initial_digits?: string;
             /** @description How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default. */
             readonly ring_timeout_seconds?: number;
-            /** @description The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. */
+            /** @description The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off. */
             readonly session_id?: string;
             readonly tags?: {
                 readonly [key: string]: string;
@@ -8503,7 +8577,7 @@ export type components = {
             readonly to: string;
         };
         readonly PlacedCall: {
-            /** @description The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. */
+            /** @description The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off. */
             readonly session_id?: string;
             /** @description The vendor's own word for where the call is, e.g. "queued". */
             readonly status: string;
@@ -9186,6 +9260,13 @@ export type components = {
              * @description How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
              */
             readonly max_messages?: number;
+        };
+        /** @description What a caller carrying a conversation on says about its tools, over what it ran with. */
+        readonly ResumeSessionRequest: {
+            /** @description How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds. */
+            readonly tool_timeout_ms?: number;
+            /** @description The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on. */
+            readonly tools?: readonly components["schemas"]["SessionTool"][];
         };
         /**
          * @description Who moved a use case: the app, Stream staff or the vendor.
@@ -17235,6 +17316,44 @@ export interface operations {
             readonly 503: components["responses"]["Unavailable"];
         };
     };
+    readonly resumeSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ResumeSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Session"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
     readonly rewindSession: {
         readonly parameters: {
             readonly query?: never;
@@ -17385,6 +17504,40 @@ export interface operations {
             readonly 503: components["responses"]["Unavailable"];
         };
     };
+    readonly getSessionTokens: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The session's tokens */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CallTokens"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
     readonly listSessionTools: {
         readonly parameters: {
             readonly query?: never;
@@ -17413,6 +17566,85 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 402: components["responses"]["PaymentRequired"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly addSessionTools: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddSessionToolsRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The model is offered them from the next turn */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly removeSessionTool: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+                /** @description The tool's name, as the caller declared it. */
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No call of it is in flight, and the model is no longer offered it */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];

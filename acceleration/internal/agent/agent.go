@@ -301,6 +301,8 @@ type Agent struct {
 	switching atomic.Bool
 	// swapping serialises swaps.
 	swapping sync.Mutex
+	// toolsMu guards options.Tools, which SetTools replaces while turns read it.
+	toolsMu sync.RWMutex
 
 	llm *llmrouter.Session
 	// replies is where every reply in flight is fanned in to, so the one goroutine that
@@ -601,6 +603,13 @@ type Agent struct {
 	nativeListening bool
 	nativeAwaiting  bool
 	nativeCalls     map[string]llm.ToolCall
+	// nativeResponses are the native model's replies open as receiveSTS saw them, each true
+	// unless it opened while the tools were changing, when it may have been offered either
+	// set. toolsChanging is that change, from the turn boundary it waited for (quiesce) to its
+	// end (SetTools), and refusedCalls are the native calls refused for it, with why.
+	nativeResponses map[string]bool
+	toolsChanging   bool
+	refusedCalls    map[string]error
 	// goodbye is the reply a native model owes after being told end_call ran.
 	goodbye *goodbye
 	// nativeRetries counts replacements across the call; swapping protects it.
@@ -2158,7 +2167,7 @@ func (a *Agent) ask(ready candidate) {
 	if participant == "" {
 		participant = a.speakerLocked(ready.Participant).label
 	}
-	tools := a.options.Tools.Tools
+	tools := a.tools().Tools
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the
@@ -3412,9 +3421,22 @@ func (a *Agent) finish(response llm.Response) {
 	}
 	a.resetTurn()
 
+	// The reply's calls are checked against the tools it was offered, taken while it is still
+	// generating, when no change of tools can be under way (SetTools waits for a quiet turn),
+	// and counted pending under the lock that ends it, so a change waits for them to settle.
+	offered := a.availableTools()
+	pending := 0
+	for _, call := range calls {
+		if _, known := offered.Lookup(call.Name); known {
+			pending++
+		}
+	}
 	a.mu.Lock()
 	a.generating = false
 	currentHarness := a.harness
+	if currentHarness != nil {
+		a.pendingTools += pending
+	}
 	// What the reply was sent after the conversation, the notes it delivered and anything it
 	// was told, is what the model read before writing it, so it joins the conversation ahead
 	// of the reply. A provider that kept the reply can then carry on from it next turn rather
@@ -3483,17 +3505,7 @@ func (a *Agent) finish(response llm.Response) {
 	// Tools are handed over rather than run here, because this is the goroutine that
 	// speaks and a transfer is several seconds of network the caller would hear as silence.
 	if currentHarness != nil && len(calls) > 0 {
-		pending := 0
-		tools := a.availableTools()
-		for _, call := range calls {
-			if _, known := tools.Lookup(call.Name); known {
-				pending++
-			}
-		}
-		a.mu.Lock()
-		a.pendingTools += pending
-		a.mu.Unlock()
-		currentHarness.Requested(response.ID, calls)
+		currentHarness.Requested(response.ID, calls, offered)
 	}
 	if hold {
 		a.mu.Lock()

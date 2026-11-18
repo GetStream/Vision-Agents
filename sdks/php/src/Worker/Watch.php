@@ -37,18 +37,18 @@ final class Watch implements IteratorAggregate
 
     private readonly Holds $holds;
 
-    private function __construct(private readonly Socket $socket, private readonly ?Tools $tools, private readonly string $sessionId = '')
+    private function __construct(private readonly Socket $socket, private readonly Session $session)
     {
         $this->holds = new Holds();
     }
 
-    public static function open(Session $session, ?Tools $tools, bool $interim = false, bool $decisions = true): self
+    public static function open(Session $session, bool $interim = false, bool $decisions = true): self
     {
         $socket = Socket::open($session->client, "/v1/agents/sessions/{$session->id()}/events", [
             'interim' => $interim,
             'decisions' => $decisions,
         ]);
-        return new self($socket, $tools, $session->id());
+        return new self($socket, $session);
     }
 
     /**
@@ -66,17 +66,18 @@ final class Watch implements IteratorAggregate
                     // Every watcher is sent every call and the first answer wins: answering a
                     // tool held elsewhere would beat whoever runs it, with an error. One the
                     // router addresses to another watcher says so with `run` false.
-                    if ($this->tools === null || !$this->tools->has(Json::string($frame, 'name')) || ($frame['run'] ?? true) === false) {
+                    $tools = $this->session->toolsFor(Json::string($frame, 'name'));
+                    if ($tools === null || ($frame['run'] ?? true) === false) {
                         continue;
                     }
                     $id = Json::string($frame, 'id');
-                    $toolCallContext = ToolCallContext::fromFrame($frame, $this->sessionId, $this->socket->send(...), $this->holds, $id);
+                    $toolCallContext = ToolCallContext::fromFrame($frame, $this->session->id(), $this->socket->send(...), $this->holds, $id);
                     $this->calls[$id] = $toolCallContext;
                     // Each call in its own fiber, so a slow tool does not hold up the events
                     // behind it or the other calls the model made in the same turn.
-                    $this->running[$id] = async(function () use ($frame, $id, $toolCallContext): void {
+                    $this->running[$id] = async(function () use ($frame, $tools, $id, $toolCallContext): void {
                         try {
-                            $this->runTool($frame, $toolCallContext);
+                            $this->runTool($frame, $tools, $toolCallContext);
                         } finally {
                             unset($this->running[$id], $this->calls[$id]);
                             $this->holds->forget($id);
@@ -146,7 +147,7 @@ final class Watch implements IteratorAggregate
      *
      * @param array<string, mixed> $frame
      */
-    private function runTool(array $frame, ToolCallContext $toolCallContext): void
+    private function runTool(array $frame, Tools $tools, ToolCallContext $toolCallContext): void
     {
         $id = Json::string($frame, 'id');
         $name = Json::string($frame, 'name');
@@ -159,11 +160,8 @@ final class Watch implements IteratorAggregate
             }
         }
         try {
-            if ($this->tools === null) {
-                throw new \RuntimeException("{$name} was asked for, and no tools are registered");
-            }
             $arguments = $frame['arguments'] ?? '';
-            $result['output'] = $this->tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $toolCallContext);
+            $result['output'] = $tools->call($name, is_string($arguments) ? $arguments : Json::encode($arguments), $toolCallContext);
         } catch (Throwable $failed) {
             $result['error'] = $failed->getMessage();
         }

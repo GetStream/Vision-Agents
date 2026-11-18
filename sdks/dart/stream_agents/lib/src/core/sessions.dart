@@ -3,6 +3,7 @@ import 'dart:math';
 import 'convert.dart';
 import 'generated/api.dart' as api;
 import 'models.dart';
+import 'tools.dart';
 
 /// How many items are read per request while unwinding.
 const _itemPage = 200;
@@ -370,6 +371,17 @@ final class Responses {
 /// Opens a conversation on its call or in writing, whatever [options] say.
 Future<Session> openSession(Sessions sessions, SessionOptions options, {required bool voice}) =>
     sessions._create(options, voice);
+
+/// Gives a running session more of its caller's tools, declared as when it opened.
+Future<void> addSessionTools(Sessions sessions, String id, List<AgentTool> tools) =>
+    sessions._operations.addSessionTools(
+      id: id,
+      body: api.AddSessionToolsRequest(tools: [for (final tool in tools) sessionToolOf(tool)]),
+    );
+
+/// Withdraws one of its caller's tools from a running session.
+Future<void> removeSessionTool(Sessions sessions, String id, String name) =>
+    sessions._operations.removeSessionTool(id: id, name: name);
 
 /// A name left empty, which means the same as leaving it out.
 String? _named(String? name) => name == null || name.isEmpty ? null : name;

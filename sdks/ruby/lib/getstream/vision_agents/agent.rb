@@ -577,6 +577,33 @@ module GetStream
         Responses.new(@client, id)
       end
 
+      # What one conversation's models read and wrote, per model, with the prompt split into
+      # instructions, messages, tool definitions, tool use, images and video. Unlike the
+      # session's usage it is answered while the conversation runs. Server side only.
+      #
+      # @return [Hash] the CallTokens.
+      def tokens(id)
+        @client.get("/v1/agents/sessions/{id}/tokens", path: { id: id })
+      end
+
+      # One conversation's exchanges, with what was said in each and how long the answer took
+      # to start, its transcription, model and voice timings kept apart. The timings are kept
+      # for an hour. Server side only.
+      #
+      # @return [Array<Hash>] the TimelineEntry list.
+      def timeline(id)
+        @client.get("/v1/agents/calls/{id}/timeline", path: { id: id })
+      end
+
+      # What one conversation decided, oldest first: why the agent waited rather than
+      # answering, why it read something as not meant for it, why it stopped mid-sentence.
+      # They are kept for an hour. Server side only.
+      #
+      # @return [Array<Hash>] the CallEvent list.
+      def decisions(id)
+        @client.get("/v1/agents/calls/{id}/events", path: { id: id })
+      end
+
       private
 
       # The caller's filter with this agent at its top level. The filter is not wrapped in an

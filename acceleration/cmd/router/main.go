@@ -90,7 +90,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -140,15 +139,22 @@ var idleTimeout = 10 * time.Minute
 
 const (
 	// authKEKEnvVar and authKEKVersionEnvVar name the connector credential keyring: the
-	// keys are authKEKEnvVar with a _V<n> suffix, and authKEKVersionEnvVar says which one
-	// seals new rows.
+	// keys are authKEKEnvVar with a _V<n>_WRAPPED suffix, and authKEKVersionEnvVar says
+	// which one seals new rows. authKEKEnvVar alone and with a plain _V<n> suffix once held
+	// a plain key, and a start that still sets one is refused.
 	authKEKEnvVar        = "ROUTER_AUTH_KEK"
 	authKEKVersionEnvVar = "ROUTER_AUTH_KEK_VERSION"
 	// authKEKWrappedSuffix marks a key a KMS wrapped, ROUTER_AUTH_KEK_V<n>_WRAPPED, which
 	// auth.kms_key unwraps at startup into the same version n.
 	authKEKWrappedSuffix = "_WRAPPED"
-	shutdownGrace        = 10 * time.Second
-	readHeaderTimeout    = 10 * time.Second
+	// devKEKEnvVar is the one plain key the router reads, as version 1, for a laptop or CI.
+	// A hosted router keeps its keys wrapped, so this is refused beside a KMS setting.
+	devKEKEnvVar = "ROUTER_DEV_KEK"
+	// setAKeyring is what a refusal for a missing keyring tells the operator to set.
+	setAKeyring = "set " + devKEKEnvVar + " on a laptop or in CI, or " + authKEKEnvVar + "_V1" +
+		authKEKWrappedSuffix + " with auth.kms_key (ROUTER_AUTH_KMS_KEY) on a hosted router"
+	shutdownGrace     = 10 * time.Second
+	readHeaderTimeout = 10 * time.Second
 	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
 	// to a search because nobody is on the phone waiting for it: a page that has to be
 	// crawled live rather than served from an index takes seconds, and giving up on it
@@ -321,11 +327,11 @@ func sentryOptions() sentry.ClientOptions {
 // one; channels and SIP trunks use it when it is set and are off otherwise, so it is nil only when nothing requires it and no key is set. It does not
 // depend on auth.mode: a proxy deployment holds them as much as an api_key one does.
 //
-// The keyring is every ROUTER_AUTH_KEK_V1, _V2 and so on that is set, with
+// The keyring is every ROUTER_AUTH_KEK_V1_WRAPPED, _V2_WRAPPED and so on that is set, with
 // ROUTER_AUTH_KEK_VERSION naming the one that seals new rows. That variable picks the
 // writer and is never a ceiling: moving it back to an older key must leave the newer ones
-// loaded, or the rows sealed under them stop opening. auth.kek is version 1, so a
-// deployment that already has it needs nothing more.
+// loaded, or the rows sealed under them stop opening. ROUTER_DEV_KEK is version 1, so a
+// laptop needs nothing more.
 func newSecretSealer(ctx context.Context, settings config.Config) (*auth.Sealer, error) {
 	var holders []string
 	if settings.Connectors.Enabled {
@@ -349,28 +355,96 @@ func newSecretSealer(ctx context.Context, settings config.Config) (*auth.Sealer,
 	return loadKeyring(ctx, settings, needs)
 }
 
-// keyringSet reports whether any key of the keyring is set: auth.kek, a
-// ROUTER_AUTH_KEK_V<n> or its _WRAPPED form, or auth.kms_key to unwrap one with.
+// keyringSet reports whether any key of the keyring is set: ROUTER_DEV_KEK, a
+// ROUTER_AUTH_KEK_V<n>_WRAPPED, auth.kms_key to unwrap one with, or a retired plain
+// ROUTER_AUTH_KEK, which has to reach loadKeyring to be refused.
 func keyringSet(settings config.Config) bool {
-	if settings.Auth.KEK != "" || settings.Auth.KMSKey != "" {
+	if settings.Auth.KMSKey != "" || os.Getenv(devKEKEnvVar) != "" {
 		return true
 	}
 	for _, variable := range os.Environ() {
 		name, key, _ := strings.Cut(variable, "=")
-		if strings.HasPrefix(name, authKEKEnvVar+"_V") && key != "" {
+		if (name == authKEKEnvVar || strings.HasPrefix(name, authKEKEnvVar+"_V")) && key != "" {
 			return true
 		}
 	}
 	return false
 }
 
-// loadKeyring reads every ROUTER_AUTH_KEK_V<n>, ROUTER_AUTH_KEK_V<n>_WRAPPED and auth.kek
-// into a keyring, with ROUTER_AUTH_KEK_VERSION naming the writer, and unwraps the wrapped
-// ones with the KMS key auth.kms_key names. needs says which setting requires it, for each
-// refusal to name.
+// keyringVersion reads the keyring version a variable named name holds, and whether it is
+// the _WRAPPED form. Only the plain spelling counts, so _V01 cannot stand in for _V1 and
+// ROUTER_AUTH_KEK_VERSION is not read as a key.
+func keyringVersion(name string) (version int, wrapped bool, ok bool) {
+	suffix, ok := strings.CutPrefix(name, authKEKEnvVar+"_V")
+	suffix, wrapped = strings.CutSuffix(suffix, authKEKWrappedSuffix)
+	version, err := strconv.Atoi(suffix)
+	if !ok || err != nil || version < 1 || strconv.Itoa(version) != suffix {
+		return 0, false, false
+	}
+	return version, wrapped, true
+}
+
+// checkKeySources refuses a plain key anywhere but ROUTER_DEV_KEK, and ROUTER_DEV_KEK on a
+// router that also unwraps keys with a KMS: a hosted router holds no plain key, and one that
+// mixed the two would seal under whichever won. Each refusal names variables, never values.
+func checkKeySources(settings config.Config) error {
+	var retired, wrapped []string
+	if os.Getenv(authKEKEnvVar) != "" {
+		retired = append(retired, authKEKEnvVar)
+	}
+	for _, variable := range os.Environ() {
+		name, key, _ := strings.Cut(variable, "=")
+		_, isWrapped, ok := keyringVersion(name)
+		if !ok || key == "" {
+			continue
+		}
+		if isWrapped {
+			wrapped = append(wrapped, name)
+		} else {
+			retired = append(retired, name)
+		}
+	}
+	if len(retired) > 0 {
+		slices.Sort(retired)
+		// ROUTER_AUTH_KEK was version 1, and ROUTER_AUTH_KEK_V<n> is version n.
+		replacement := retired[0] + authKEKWrappedSuffix
+		if retired[0] == authKEKEnvVar {
+			replacement = authKEKEnvVar + "_V1" + authKEKWrappedSuffix
+		}
+		// ROUTER_DEV_KEK is version 1 only, so it is no way to keep the rows of a later version.
+		if retired[0] != authKEKEnvVar && retired[0] != authKEKEnvVar+"_V1" {
+			return fmt.Errorf("%s is no longer read: set %s with auth.kms_key (ROUTER_AUTH_KMS_KEY) "+
+				"on a hosted router", retired[0], replacement)
+		}
+		return fmt.Errorf("%s is no longer read: set %s on a laptop or in CI, or %s with "+
+			"auth.kms_key (ROUTER_AUTH_KMS_KEY) on a hosted router", retired[0], devKEKEnvVar, replacement)
+	}
+	if os.Getenv(devKEKEnvVar) == "" {
+		return nil
+	}
+	if settings.Auth.KMSKey != "" {
+		return fmt.Errorf("%s is for a laptop or CI and is never set with auth.kms_key (ROUTER_AUTH_KMS_KEY): "+
+			"unset %s", devKEKEnvVar, devKEKEnvVar)
+	}
+	if len(wrapped) > 0 {
+		slices.Sort(wrapped)
+		return fmt.Errorf("%s is for a laptop or CI and is never set with %s: unset %s",
+			devKEKEnvVar, wrapped[0], devKEKEnvVar)
+	}
+	return nil
+}
+
+// loadKeyring reads ROUTER_DEV_KEK and every ROUTER_AUTH_KEK_V<n>_WRAPPED into a keyring,
+// with ROUTER_AUTH_KEK_VERSION naming the writer, and unwraps the wrapped ones with the KMS
+// key auth.kms_key names. needs says which setting requires it, for each refusal to name.
 func loadKeyring(ctx context.Context, settings config.Config, needs string) (*auth.Sealer, error) {
+	// Checked before a KMS client opens, so a laptop that also names a KMS key hears why
+	// rather than that it has no cloud credentials.
+	if err := checkKeySources(settings); err != nil {
+		return nil, err
+	}
 	if settings.Auth.KMSKey == "" {
-		return readKeyring(ctx, settings, nil, needs)
+		return readKeyring(ctx, nil, needs)
 	}
 	unwrapper, err := newKEKUnwrapper(ctx, settings.Auth.KMSKey)
 	if err != nil {
@@ -378,11 +452,12 @@ func loadKeyring(ctx context.Context, settings config.Config, needs string) (*au
 	}
 	// The keys are unwrapped once, here, so nothing needs the client after.
 	defer unwrapper.Close()
-	return readKeyring(ctx, settings, unwrapper, needs)
+	return readKeyring(ctx, unwrapper, needs)
 }
 
-// readKeyring is loadKeyring with the unwrapper given, nil when auth.kms_key is unset.
-func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwrapper, needs string) (*auth.Sealer, error) {
+// readKeyring is loadKeyring after its checks, with the unwrapper given, nil when
+// auth.kms_key is unset.
+func readKeyring(ctx context.Context, unwrapper kekUnwrapper, needs string) (*auth.Sealer, error) {
 	current := auth.KEKVersion
 	if configured := os.Getenv(authKEKVersionEnvVar); configured != "" {
 		version, err := strconv.Atoi(configured)
@@ -394,36 +469,19 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 		current = version
 	}
 	keys := make(map[int]string)
-	if settings.Auth.KEK != "" {
-		keys[1] = settings.Auth.KEK
+	if key := os.Getenv(devKEKEnvVar); key != "" {
+		keys[1] = key
 	}
 	wrapped := make(map[int]string)
 	for _, variable := range os.Environ() {
 		name, key, _ := strings.Cut(variable, "=")
-		suffix, ok := strings.CutPrefix(name, authKEKEnvVar+"_V")
-		suffix, isWrapped := strings.CutSuffix(suffix, authKEKWrappedSuffix)
-		version, err := strconv.Atoi(suffix)
-		// Only the plain spelling counts, so _V01 cannot stand in for _V1 and
-		// ROUTER_AUTH_KEK_VERSION is not read as a key.
-		if !ok || err != nil || version < 1 || strconv.Itoa(version) != suffix || key == "" {
-			continue
-		}
-		if isWrapped {
+		version, isWrapped, ok := keyringVersion(name)
+		if ok && isWrapped && key != "" {
 			wrapped[version] = key
-			continue
 		}
-		if version == 1 && keys[1] != "" && keys[1] != key {
-			return nil, stack.Wrap(fmt.Errorf("%s and %s_V1 are both version 1 and differ: set one of them",
-				authKEKEnvVar, authKEKEnvVar))
-		}
-		keys[version] = key
 	}
 	for _, version := range slices.Sorted(maps.Keys(wrapped)) {
 		name := fmt.Sprintf("%s_V%d%s", authKEKEnvVar, version, authKEKWrappedSuffix)
-		if keys[version] != "" {
-			return nil, fmt.Errorf("%s and a plain version %d key (%s_V%d, or %s for version 1) "+
-				"are both set: set one of them", name, version, authKEKEnvVar, version, authKEKEnvVar)
-		}
 		if unwrapper == nil {
 			return nil, fmt.Errorf("%s is set, but auth.kms_key names no KMS key to unwrap it with", name)
 		}
@@ -435,15 +493,20 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 	}
 	if keys[current] == "" {
 		if os.Getenv(authKEKVersionEnvVar) == "" {
-			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: "+
-				"set %s_V1 (%s is version 1)", needs, authKEKEnvVar, authKEKEnvVar)
+			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: %s", needs, setAKeyring)
+		}
+		// ROUTER_DEV_KEK is version 1, and a wrapped key beside it is refused: only the selector
+		// can change.
+		if os.Getenv(devKEKEnvVar) != "" {
+			return nil, fmt.Errorf("%s a key for the version %s names, and %s is version 1 only: "+
+				"unset %s or set it to 1", needs, authKEKVersionEnvVar, devKEKEnvVar, authKEKVersionEnvVar)
 		}
 		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
 		// parses as one, and naming it would send the key to the logs and Sentry. The
 		// versions that are set come from variable names, never from values.
 		return nil, fmt.Errorf("%s a key for the version %s names: "+
-			"set the matching %s_V<n> (versions set: %v)",
-			needs, authKEKVersionEnvVar, authKEKEnvVar, slices.Sorted(maps.Keys(keys)))
+			"set the matching %s_V<n>%s (versions set: %v)",
+			needs, authKEKVersionEnvVar, authKEKEnvVar, authKEKWrappedSuffix, slices.Sorted(maps.Keys(keys)))
 	}
 	return auth.NewSealerWithKeyring(current, keys)
 }
@@ -507,7 +570,7 @@ func connectorSchemeConfig(settings config.Config, clients oauth2code.ClientLook
 // errAPIKeyNeedsKeyring is the refusal of an api_key start with no keyring: the one
 // loadKeyring gave before newAuthenticator took the keyring from newSecretSealer.
 var errAPIKeyNeedsKeyring = errors.New("auth.mode=" + string(auth.APIKey) + " needs a key encryption " +
-	"keyring to seal the secrets it holds: set " + authKEKEnvVar + "_V1 (" + authKEKEnvVar + " is version 1)")
+	"keyring to seal the secrets it holds: " + setAKeyring)
 
 // newAuthenticator builds the authenticator the deployment's mode asks for.
 //
@@ -1597,7 +1660,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			defer inbound.Close()
 		}
 	} else {
-		logger.Warn("no key encryption keyring set (ROUTER_AUTH_KEK_V1), so no channel can be "+
+		logger.Warn("no key encryption keyring set ("+devKEKEnvVar+" (local), or "+authKEKEnvVar+"_V1"+
+			authKEKWrappedSuffix+" with ROUTER_AUTH_KMS_KEY (hosted)), so no channel can be "+
 			"connected: there is nowhere safe to keep a provider's credentials",
 			"endpoint", "POST /v1/agents/channels")
 	}
@@ -2506,6 +2570,8 @@ func buildPhone(
 		Logger:    logger,
 		Sealer:    secrets,
 		SIPTrunks: trunks,
+
+		AgentJoinTimeout: settings.Phone.AgentJoinTimeout,
 	})
 	if err != nil {
 		return nil, nil, err

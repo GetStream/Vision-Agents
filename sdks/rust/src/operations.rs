@@ -2022,6 +2022,23 @@ impl Client {
         )
         .await
     }
+    /// Carry a conversation on, with the caller's tool settings
+    ///
+    /// `POST /v1/agents/sessions/{id}/resume` (`resumeSession`).
+    pub async fn resume_session(
+        &self,
+        id: &str,
+        body: Option<&types::ResumeSessionRequest>,
+    ) -> Result<types::Session> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/sessions/{id}/resume", id = segment(id)),
+            None::<&()>,
+            body,
+            "resumeSession",
+        )
+        .await
+    }
     /// Go back to a response and carry on from there
     ///
     /// `POST /v1/agents/sessions/{id}/rewind` (`rewindSession`).
@@ -2078,6 +2095,19 @@ impl Client {
         )
         .await
     }
+    /// What a session's models read and wrote, and what their prompts were made of
+    ///
+    /// `GET /v1/agents/sessions/{id}/tokens` (`getSessionTokens`).
+    pub async fn get_session_tokens(&self, id: &str) -> Result<types::CallTokens> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/sessions/{id}/tokens", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getSessionTokens",
+        )
+        .await
+    }
     /// List the tools a session's model is offered
     ///
     /// `GET /v1/agents/sessions/{id}/tools` (`listSessionTools`).
@@ -2088,6 +2118,40 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "listSessionTools",
+        )
+        .await
+    }
+    /// Give a running session more of the caller's tools
+    ///
+    /// `POST /v1/agents/sessions/{id}/tools` (`addSessionTools`).
+    pub async fn add_session_tools(
+        &self,
+        id: &str,
+        body: &types::AddSessionToolsRequest,
+    ) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/sessions/{id}/tools", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "addSessionTools",
+        )
+        .await
+    }
+    /// Withdraw one of the caller's tools from a running session
+    ///
+    /// `DELETE /v1/agents/sessions/{id}/tools/{name}` (`removeSessionTool`).
+    pub async fn remove_session_tool(&self, id: &str, name: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!(
+                "/v1/agents/sessions/{id}/tools/{name}",
+                id = segment(id),
+                name = segment(name)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "removeSessionTool",
         )
         .await
     }

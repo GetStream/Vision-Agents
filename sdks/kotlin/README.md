@@ -142,6 +142,20 @@ Tools are answered inside `AgentSession` whether or not anybody collects `events
 conversation see while it runs, and `executor = AgentTool.Executor.Client` shows the call as
 waiting on the person's device.
 
+A running conversation can be given more tools and have them taken back, such as the ones a card
+shown in it brings:
+
+```kotlin
+chat.addTools(listOf(reserveTable))
+chat.removeTool("reserve_table")
+```
+
+The router waits for the reply in progress and every call it made to finish, and the model is
+offered the change from the next turn, so never call either from inside one of the session's own
+tools. A name the session already has is refused with a 409: to change a tool, remove it and add
+it again. The tools added are that session's alone, and only a session this device opened takes
+them.
+
 ### A tool that shows the model a picture
 
 Declare it with `AgentTool.withPictures` and return a `ToolOutput` to answer with pictures beside
@@ -249,8 +263,8 @@ chat.responses.rewind(turns[0])
 val branch = agents.attach(chat.fork(ForkOptions(responseId = turns[0].id)).id)
 ```
 
-A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
-is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
+A session, typed or spoken, is kept in Stream Chat unless it is `incognito`, and a conversation
+kept there is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
 brought back. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 
@@ -290,7 +304,7 @@ when one is needed and again after a 401, never on every request.
 ## What is deliberately not here
 
 The router is server-side only by default: a handful of operations are marked
-`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses twenty-two
+`x-client-accessible` in the spec and everything else answers a device 403. This SDK uses twenty-four
 of them plus the event socket, and `generate.py` fails if the list names anything the spec does
 not open.
 
@@ -364,10 +378,10 @@ to `https://stream-io-repo.com` from `release-kotlin-*` branches only. `version`
 - **A snapshot:** push a branch named `release-kotlin-X.Y.Z-SNAPSHOT` that sets
   `version=X.Y.Z-SNAPSHOT`. Each push publishes `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, which expires
   after 7 days. `X.Y.Z` must be newer than the last release.
-- **A release:** open a pull request to `accelerate` from `release-kotlin-X.Y.Z` that sets
+- **A release:** open a pull request to `main` from `release-kotlin-X.Y.Z` that sets
   `version=X.Y.Z`. It fails unless `X.Y.Z` is newer than the last release and not already
   published. Merging it publishes the release and tags the commit `sdk-kotlin-vX.Y.Z`.
 
-Other merges into `accelerate` publish nothing.
+Other merges into `main` publish nothing.
 
 There is no GitHub release: publishing one starts the Python release, `release.yml`.

@@ -3550,6 +3550,12 @@ type AddContactsResponse struct {
 	Refused []RefusedContact `json:"refused"`
 }
 
+// AddSessionToolsRequest Tools to give a running session's caller.
+type AddSessionToolsRequest struct {
+	// Tools The tools, each declared as it is when a session is created, and each named as no tool the caller already has.
+	Tools *[]SessionTool `json:"tools"`
+}
+
 // AddTrunkNumberRequest defines model for AddTrunkNumberRequest.
 type AddTrunkNumberRequest struct {
 	// Country Required. ISO 3166-1 alpha-2 country code.
@@ -6622,7 +6628,7 @@ type ForkSessionRequest struct {
 	ResponseId *string `json:"response_id,omitempty"`
 	Title      *string `json:"title,omitempty"`
 
-	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession.
 	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
 }
 
@@ -7818,7 +7824,7 @@ type PlaceCallRequest struct {
 	// RingTimeoutSeconds How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default.
 	RingTimeoutSeconds *int `json:"ring_timeout_seconds,omitempty"`
 
-	// SessionId The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice.
+	// SessionId The session that holds the call: the answered leg is routed into its call, agent:<session id>. It takes what a session id does: up to 64 letters, digits, - and _. Omit to have one chosen, since two calls from the same number are two conversations. Open the session under this id with start_voice. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
 	SessionId *string            `json:"session_id,omitempty"`
 	Tags      *map[string]string `json:"tags,omitempty"`
 	To        string             `json:"to"`
@@ -7826,7 +7832,7 @@ type PlaceCallRequest struct {
 
 // PlacedCall defines model for PlacedCall.
 type PlacedCall struct {
-	// SessionId The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up.
+	// SessionId The session to open, with start_voice, for the call: the answered leg is routed into agent:<session id>, and an agent that is not in it hears nothing when the person picks up. After phone.agent_join_timeout from the answer, the router asks Stream who is in the call. If only the person is there, it ends the call. If Stream does not answer, the call continues. A timeout of 0 turns this check off.
 	SessionId *string `json:"session_id,omitempty"`
 
 	// Status The vendor's own word for where the call is, e.g. "queued".
@@ -8566,6 +8572,15 @@ type ResumeHistory struct {
 
 	// MaxMessages How many turns are handed back, newest first. Tool calls and their results are not turns. Omitted is 100.
 	MaxMessages *int64 `json:"max_messages,omitempty"`
+}
+
+// ResumeSessionRequest What a caller carrying a conversation on says about its tools, over what it ran with.
+type ResumeSessionRequest struct {
+	// ToolTimeoutMs How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds.
+	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
+
+	// Tools The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on.
+	Tools *[]SessionTool `json:"tools,omitempty"`
 }
 
 // ReviewActor Who moved a use case: the app, Stream staff or the vendor.
@@ -12034,6 +12049,9 @@ type RespondSessionJSONRequestBody = RespondRequest
 // CreateResponseJSONRequestBody defines body for CreateResponse for application/json ContentType.
 type CreateResponseJSONRequestBody = CreateResponseRequest
 
+// ResumeSessionJSONRequestBody defines body for ResumeSession for application/json ContentType.
+type ResumeSessionJSONRequestBody = ResumeSessionRequest
+
 // RewindSessionJSONRequestBody defines body for RewindSession for application/json ContentType.
 type RewindSessionJSONRequestBody = RewindSessionRequest
 
@@ -12042,6 +12060,9 @@ type SaySessionJSONRequestBody = SayRequest
 
 // SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
 type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
+
+// AddSessionToolsJSONRequestBody defines body for AddSessionTools for application/json ContentType.
+type AddSessionToolsJSONRequestBody = AddSessionToolsRequest
 
 // StartSessionVoiceJSONRequestBody defines body for StartSessionVoice for application/json ContentType.
 type StartSessionVoiceJSONRequestBody = StartSessionVoiceRequest
@@ -12906,9 +12927,11 @@ type ClientInterface interface {
 
 	// GetCallTokens What a call's models read and wrote, and what their prompts were made of
 	//
-	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTranscript What was said on a call
@@ -14477,6 +14500,24 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 	ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ResumeSessionWithBody Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeSession Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSession(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RewindSessionWithBody Go back to a response and carry on from there
 	//
 	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
@@ -14546,12 +14587,52 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSession(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetSessionTokens What a session's models read and wrote, and what their prompts were made of
+	//
+	// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+	GetSessionTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSessionTools List the tools a session's model is offered
 	//
 	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddSessionToolsWithBody Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionToolsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddSessionTools Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionTools(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveSessionTool Withdraw one of the caller's tools from a running session
+	//
+	// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+	RemoveSessionTool(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StopSessionVoice Stop voice on a session
 	//
@@ -16293,9 +16374,10 @@ func (c *Client) CreateCallToken(ctx context.Context, id string, body CreateCall
 
 // GetCallTokens What a call's models read and wrote, and what their prompts were made of
 //
-// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 //
 // Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *Client) GetCallTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallTokensRequest(c.Server, id)
 	if err != nil {
@@ -19454,6 +19536,44 @@ func (c *Client) ListResponseSiblings(ctx context.Context, id string, responseId
 	return c.Client.Do(req)
 }
 
+// ResumeSessionWithBody Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *Client) ResumeSessionWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeSession Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *Client) ResumeSession(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeSessionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RewindSessionWithBody Go back to a response and carry on from there
 //
 // The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
@@ -19593,6 +19713,23 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
+// GetSessionTokens What a session's models read and wrote, and what their prompts were made of
+//
+// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+func (c *Client) GetSessionTokens(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionTokensRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListSessionTools List the tools a session's model is offered
 //
 // The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
@@ -19600,6 +19737,69 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSessionToolsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddSessionToolsWithBody Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *Client) AddSessionToolsWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddSessionToolsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddSessionTools Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *Client) AddSessionTools(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddSessionToolsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveSessionTool Withdraw one of the caller's tools from a running session
+//
+// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+func (c *Client) RemoveSessionTool(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveSessionToolRequest(c.Server, id, name)
 	if err != nil {
 		return nil, err
 	}
@@ -29254,6 +29454,53 @@ func NewListResponseSiblingsRequest(server string, id string, responseId string,
 	return req, nil
 }
 
+// NewResumeSessionRequest calls the generic ResumeSession builder with application/json body
+func NewResumeSessionRequest(server string, id string, body ResumeSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResumeSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewResumeSessionRequestWithBody constructs an http.Request for the ResumeSession method, with any body, and a specified content type
+func NewResumeSessionRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRewindSessionRequest calls the generic RewindSession builder with application/json body
 func NewRewindSessionRequest(server string, id string, body RewindSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -29429,6 +29676,40 @@ func NewStopSessionRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetSessionTokensRequest constructs an http.Request for the GetSessionTokens method
+func NewGetSessionTokensRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tokens", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSessionToolsRequest constructs an http.Request for the ListSessionTools method
 func NewListSessionToolsRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -29456,6 +29737,94 @@ func NewListSessionToolsRequest(server string, id string) (*http.Request, error)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddSessionToolsRequest calls the generic AddSessionTools builder with application/json body
+func NewAddSessionToolsRequest(server string, id string, body AddSessionToolsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddSessionToolsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewAddSessionToolsRequestWithBody constructs an http.Request for the AddSessionTools method, with any body, and a specified content type
+func NewAddSessionToolsRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tools", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRemoveSessionToolRequest constructs an http.Request for the RemoveSessionTool method
+func NewRemoveSessionToolRequest(server string, id string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/tools/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -35570,11 +35939,13 @@ type ClientWithResponsesInterface interface {
 
 	// GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
 	//
-	// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error)
 
 	// GetCallTranscriptWithResponse What was said on a call
@@ -37303,6 +37674,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 	ListResponseSiblingsWithResponse(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*ListResponseSiblingsResponse, error)
 
+	// ResumeSessionWithBodyWithResponse Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error)
+
+	// ResumeSessionWithResponse Carry a conversation on, with the caller's tool settings
+	//
+	// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+	ResumeSessionWithResponse(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error)
+
 	// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 	//
 	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
@@ -37374,6 +37763,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sessions/{id}/stop (the `StopSession` operationId).
 	StopSessionWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopSessionResponse, error)
 
+	// GetSessionTokensWithResponse What a session's models read and wrote, and what their prompts were made of
+	//
+	// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+	GetSessionTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSessionTokensResponse, error)
+
 	// ListSessionToolsWithResponse List the tools a session's model is offered
 	//
 	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
@@ -37382,6 +37780,41 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionToolsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListSessionToolsResponse, error)
+
+	// AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionToolsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error)
+
+	// AddSessionToolsWithResponse Give a running session more of the caller's tools
+	//
+	// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+	//
+	// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+	//
+	// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+	AddSessionToolsWithResponse(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error)
+
+	// RemoveSessionToolWithResponse Withdraw one of the caller's tools from a running session
+	//
+	// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+	RemoveSessionToolWithResponse(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*RemoveSessionToolResponse, error)
 
 	// StopSessionVoiceWithResponse Stop voice on a session
 	//
@@ -52879,6 +53312,114 @@ func (r ListResponseSiblingsResponse) ContentType() string {
 	return ""
 }
 
+// ResumeSessionResponse200Headers the declared response headers of an HTTP 200 response for ResumeSession
+type ResumeSessionResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ResumeSessionResponse402Headers the declared response headers of an HTTP 402 response for ResumeSession
+type ResumeSessionResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ResumeSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ResumeSessionResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ResumeSessionResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeSessionResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ResumeSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResumeSessionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ResumeSessionResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResumeSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResumeSessionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ResumeSessionResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ResumeSessionResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RewindSessionResponse204Headers the declared response headers of an HTTP 204 response for RewindSession
 type RewindSessionResponse204Headers struct {
 	XStreamBalanceMicros  *int64
@@ -53290,6 +53831,114 @@ func (r StopSessionResponse) ContentType() string {
 	return ""
 }
 
+// GetSessionTokensResponse200Headers the declared response headers of an HTTP 200 response for GetSessionTokens
+type GetSessionTokensResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetSessionTokensResponse402Headers the declared response headers of an HTTP 402 response for GetSessionTokens
+type GetSessionTokensResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetSessionTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CallTokens
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetSessionTokensResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetSessionTokensResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSessionTokensResponse) GetJSON200() *CallTokens {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetSessionTokensResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetSessionTokensResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetSessionTokensResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSessionTokensResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetSessionTokensResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetSessionTokensResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetSessionTokensResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSessionTokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSessionTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSessionTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSessionTokensResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionToolsResponse200Headers the declared response headers of an HTTP 200 response for ListSessionTools
 type ListSessionToolsResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -53385,6 +54034,215 @@ func (r ListSessionToolsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListSessionToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AddSessionToolsResponse204Headers the declared response headers of an HTTP 204 response for AddSessionTools
+type AddSessionToolsResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// AddSessionToolsResponse402Headers the declared response headers of an HTTP 402 response for AddSessionTools
+type AddSessionToolsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type AddSessionToolsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *AddSessionToolsResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *AddSessionToolsResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddSessionToolsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AddSessionToolsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AddSessionToolsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AddSessionToolsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AddSessionToolsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AddSessionToolsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddSessionToolsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AddSessionToolsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AddSessionToolsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddSessionToolsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddSessionToolsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddSessionToolsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RemoveSessionToolResponse204Headers the declared response headers of an HTTP 204 response for RemoveSessionTool
+type RemoveSessionToolResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// RemoveSessionToolResponse402Headers the declared response headers of an HTTP 402 response for RemoveSessionTool
+type RemoveSessionToolResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type RemoveSessionToolResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *RemoveSessionToolResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *RemoveSessionToolResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r RemoveSessionToolResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveSessionToolResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveSessionToolResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveSessionToolResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveSessionToolResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -66160,11 +67018,13 @@ func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, i
 
 // GetCallTokensWithResponse What a call's models read and wrote, and what their prompts were made of
 //
-// Read while the call is going as well as after it, unlike the usage on the call, which is counted once it is over. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+// Deprecated: read getSessionTokens, GET /v1/agents/sessions/{id}/tokens, which answers the same for a session held in writing or on a call. An unknown id is answered here as call_not_found rather than session_not_found.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/calls/{id}/tokens (the `GetCallTokens` operationId).
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (c *ClientWithResponses) GetCallTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCallTokensResponse, error) {
 	rsp, err := c.GetCallTokens(ctx, id, reqEditors...)
 	if err != nil {
@@ -68847,6 +69707,36 @@ func (c *ClientWithResponses) ListResponseSiblingsWithResponse(ctx context.Conte
 	return ParseListResponseSiblingsResponse(rsp)
 }
 
+// ResumeSessionWithBodyWithResponse Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *ClientWithResponses) ResumeSessionWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error) {
+	rsp, err := c.ResumeSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeSessionResponse(rsp)
+}
+
+// ResumeSessionWithResponse Carry a conversation on, with the caller's tool settings
+//
+// Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/resume (the `ResumeSession` operationId).
+func (c *ClientWithResponses) ResumeSessionWithResponse(ctx context.Context, id string, body ResumeSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeSessionResponse, error) {
+	rsp, err := c.ResumeSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeSessionResponse(rsp)
+}
+
 // RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 //
 // The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
@@ -68960,6 +69850,21 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 	return ParseStopSessionResponse(rsp)
 }
 
+// GetSessionTokensWithResponse What a session's models read and wrote, and what their prompts were made of
+//
+// Read while the session is running as well as after it, unlike the session's usage, which is counted once it is over, and for a session held in writing as for one on a call. A prompt's parts are estimated: no provider says how much of a prompt was instructions, tools or images, so the router estimates it from each request and scales it to what the provider counted. The parts sum to the input tokens.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/tokens (the `GetSessionTokens` operationId).
+func (c *ClientWithResponses) GetSessionTokensWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetSessionTokensResponse, error) {
+	rsp, err := c.GetSessionTokens(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSessionTokensResponse(rsp)
+}
+
 // ListSessionToolsWithResponse List the tools a session's model is offered
 //
 // The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
@@ -68973,6 +69878,59 @@ func (c *ClientWithResponses) ListSessionToolsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseListSessionToolsResponse(rsp)
+}
+
+// AddSessionToolsWithBodyWithResponse Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *ClientWithResponses) AddSessionToolsWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error) {
+	rsp, err := c.AddSessionToolsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddSessionToolsResponse(rsp)
+}
+
+// AddSessionToolsWithResponse Give a running session more of the caller's tools
+//
+// Declares tools on a running session as though they had been declared when it was created, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. Whoever runs the caller's tools is asked to run them over the events socket, a watcher that names the tools it runs (`tools`) included. A tool named as one the caller already has is refused with a 409: to change a tool, remove it, which waits for its calls, then add the new one, so no call is run half under each.
+//
+// The change waits for the turn in progress and every tool call in flight to finish, and the model is offered the tools from the next turn: a call is only ever checked, and asks its approval, as the tools were when it was made. So do not wait for this from inside a call of one of the session's tools, which it waits for.
+//
+// The kind of caller that opened the session declares its tools: a device those of the session it opened, and a backend those of a session a backend opened. Anyone else is refused with a 403. A name the session offers that is not the caller's (the router's own, a connector's, a worker's or another agent's) is a 409. A session that is not running is a 404. A speech-to-speech model that takes its tools only when it opens, such as Gemini Live, cannot be given more during the call: 400. A speech-to-speech session that drops while the change waits is a 503, and the change can be asked again once the session is back.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/tools (the `AddSessionTools` operationId).
+func (c *ClientWithResponses) AddSessionToolsWithResponse(ctx context.Context, id string, body AddSessionToolsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddSessionToolsResponse, error) {
+	rsp, err := c.AddSessionTools(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddSessionToolsResponse(rsp)
+}
+
+// RemoveSessionToolWithResponse Withdraw one of the caller's tools from a running session
+//
+// The model is no longer offered the tool from the next turn. The change waits for the turn in progress and every tool call in flight to finish, as adding does, so once it is answered no call of the tool is in flight and none can be made: a handler for it can go. Do not wait for this from inside a call of one of the session's tools, which it waits for. Only the caller's own tools are withdrawn, whether declared when the session was created or added since, and by the kind of caller that opened the session, as for adding: anyone else is refused with a 403. A name the caller has no tool by, and a session that is not running, are a 404.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/sessions/{id}/tools/{name} (the `RemoveSessionTool` operationId).
+func (c *ClientWithResponses) RemoveSessionToolWithResponse(ctx context.Context, id string, name string, reqEditors ...RequestEditorFn) (*RemoveSessionToolResponse, error) {
+	rsp, err := c.RemoveSessionTool(ctx, id, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveSessionToolResponse(rsp)
 }
 
 // StopSessionVoiceWithResponse Stop voice on a session
@@ -87788,6 +88746,132 @@ func ParseListResponseSiblingsResponse(rsp *http.Response) (*ListResponseSibling
 	return response, nil
 }
 
+// ParseResumeSessionResponse parses an HTTP response from a ResumeSessionWithResponse call
+func ParseResumeSessionResponse(rsp *http.Response) (*ResumeSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ResumeSessionResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ResumeSessionResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseRewindSessionResponse parses an HTTP response from a RewindSessionWithResponse call
 func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -88280,6 +89364,132 @@ func ParseStopSessionResponse(rsp *http.Response) (*StopSessionResponse, error) 
 	return response, nil
 }
 
+// ParseGetSessionTokensResponse parses an HTTP response from a GetSessionTokensWithResponse call
+func ParseGetSessionTokensResponse(rsp *http.Response) (*GetSessionTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSessionTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CallTokens
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetSessionTokensResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetSessionTokensResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListSessionToolsResponse parses an HTTP response from a ListSessionToolsWithResponse call
 func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -88379,6 +89589,257 @@ func ParseListSessionToolsResponse(rsp *http.Response) (*ListSessionToolsRespons
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListSessionToolsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAddSessionToolsResponse parses an HTTP response from a AddSessionToolsWithResponse call
+func ParseAddSessionToolsResponse(rsp *http.Response) (*AddSessionToolsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddSessionToolsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers AddSessionToolsResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers AddSessionToolsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemoveSessionToolResponse parses an HTTP response from a RemoveSessionToolWithResponse call
+func ParseRemoveSessionToolResponse(rsp *http.Response) (*RemoveSessionToolResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveSessionToolResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers RemoveSessionToolResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers RemoveSessionToolResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
