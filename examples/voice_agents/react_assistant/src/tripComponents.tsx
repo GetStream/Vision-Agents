@@ -1,6 +1,6 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   defineAIUIComponent,
   parseAIUIComponentDefinition,
@@ -11,8 +11,18 @@ import {
 
 // The components are described once, for the iOS and Android apps too, beside the iOS app.
 import described from "../../swift_assistant/app/SwiftAssistant/UIComponents.json";
+import { Assistant } from "./assistant";
 import bookingDescribed from "./bookingComponents.json";
+import type { ChatScreen } from "./chatScreen";
 import { calendarDays } from "./reminders";
+import { isReservationOf, RESERVE_TABLE, reserveTable, type DiningTable, type Reservation } from "./reserveTable";
+import { useSelected } from "./store";
+
+/**
+ * The conversation the components are shown in, which holds the session a card's tool is given
+ * to. Undefined where they are shown outside one.
+ */
+export const ChatScreenContext = createContext<ChatScreen | undefined>(undefined);
 
 // Each component's view, by the name the agent places it by.
 const views: Record<string, (definition: AIUIComponentDefinition) => AIUIComponent> = {
@@ -255,13 +265,39 @@ function AvailabilityGauge({ args }: AIUIComponentProps<AvailabilityGaugeArgumen
   );
 }
 
-type DiningTable = { id: string; zone: string; seats: number; available: boolean };
 type SeatSelectorArguments = { tables: DiningTable[] };
 
+/**
+ * A venue's tables, by zone and seats. Tapping a free one chooses it and asks to reserve it; a
+ * taken one can't be tapped.
+ *
+ * The card brings its own tool, `reserve_table`: the agent has no way to book a table until a
+ * card offering tables is on the screen, so the card gives the conversation's session the tool
+ * the first time it shows (`Session.addTools`), and takes it back once a table is reserved
+ * (`Session.removeTool`). Its tables then show the booking, even if the agent shows them again.
+ */
 function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArguments>) {
+  const screen = useContext(ChatScreenContext);
+  const reservation = useSelected(screen ?? noScreen, (state) =>
+    isReservationOf(state.reservation, args.tables) ? state.reservation : undefined,
+  );
   const [selected, setSelected] = useState<string | undefined>(
     () => args.tables.find((t) => t.available)?.id,
   );
+  const tables = useRef(args.tables);
+  tables.current = args.tables;
+  const isBooked = reservation !== undefined;
+
+  // Brought once the tables are all in, which is when the tool can tell a free one.
+  useEffect(() => {
+    if (!screen || isBooked || context.isStreaming) return;
+    void screen.bring(
+      RESERVE_TABLE,
+      reserveTable(tables.current, Assistant.user.name, (made) => screen.reserved(made)),
+    );
+  }, [screen, isBooked, context.isStreaming]);
+
+  if (reservation) return <ReservationConfirmation reservation={reservation} />;
   return (
     <div className="seat-selector">
       <span className="seat-selector-title">Select a table zone</span>
@@ -285,6 +321,31 @@ function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArgument
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** A store holding no reservation, for a seat selector shown outside a conversation. */
+const noScreen = {
+  get: () => ({ reservation: undefined as Reservation | undefined }),
+  subscribe: () => () => undefined,
+};
+
+/** What a seat selector shows once one of its tables is booked. */
+function ReservationConfirmation({ reservation }: { reservation: Reservation }) {
+  const { table, when, code } = reservation;
+  return (
+    <div className="seat-selector reservation-confirmation" role="status">
+      <span aria-hidden className="reservation-confirmation-mark">
+        ✓
+      </span>
+      <span className="reservation-confirmation-text">
+        <strong>Table {table.id} reserved</strong>
+        <span className="reservation-confirmation-detail">
+          {table.zone} · {table.seats} people · {when}
+        </span>
+        <span className="reservation-confirmation-code">Confirmation {code}</span>
+      </span>
     </div>
   );
 }

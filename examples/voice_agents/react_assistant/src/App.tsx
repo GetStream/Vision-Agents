@@ -16,6 +16,7 @@ import { MenuIcon, NewChatIcon } from "./icons";
 import { useMediaQuery, useStoredFlag, useTheme, WIDE } from "./layout";
 import { scheduleReminders } from "./reminders";
 import { useStore } from "./store";
+import { ChatScreenContext } from "./tripComponents";
 import { VoiceMode } from "./VoiceMode";
 
 /**
@@ -220,10 +221,13 @@ function Assistant_() {
           <ReplyFormatMenu />
         </header>
         <main className="content">
-          <ChatView key={String(screenKey(screen))} screen={screen} />
-          {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
-              Picking another conversation in the sidebar hangs up, as leaving this one does. */}
-          {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
+          {/* A card the agent shows, in writing or on the call, can give the conversation's session a tool. */}
+          <ChatScreenContext value={screen}>
+            <ChatView key={String(screenKey(screen))} screen={screen} />
+            {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
+                Picking another conversation in the sidebar hangs up, as leaving this one does. */}
+            {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
+          </ChatScreenContext>
         </main>
       </div>
     </div>

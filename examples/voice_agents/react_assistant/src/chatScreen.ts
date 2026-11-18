@@ -1,4 +1,4 @@
-import type { Session } from "@stream-io/stream-agents";
+import type { Session, Tools } from "@stream-io/stream-agents";
 import { AgentChat, agentChatTransport } from "@stream-io/stream-agents/chat";
 import type { VoiceSession } from "@stream-io/stream-agents/video";
 import type { LocalMessage } from "stream-chat";
@@ -10,6 +10,7 @@ import {
 
 import { messageOf } from "./errors";
 import { photoSources } from "./photos";
+import { RESERVE_TABLE, type Reservation } from "./reserveTable";
 import { Store } from "./store";
 import { workingLabel } from "./voicePresence";
 
@@ -47,6 +48,8 @@ export interface ChatScreenSnapshot {
   readonly voiceOpenedAt: number;
   /** The conversation's session, once it is open. */
   readonly session: Session | undefined;
+  /** The table the seat selector's tool reserved in this conversation, or undefined. */
+  readonly reservation: Reservation | undefined;
 }
 
 /**
@@ -64,6 +67,11 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
   readonly chat: AgentChat<LocalMessage>;
   readonly conversation: AIConversationController;
   private readonly stops: (() => void)[] = [];
+  /**
+   * The tools the cards in the conversation brought to its session, by name, so a card shown
+   * again, such as after scrolling back to it, does not bring its tool twice.
+   */
+  private readonly brought = new Set<string>();
   private stopVoice: (() => void) | undefined;
   private left = false;
 
@@ -86,6 +94,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
       voiceFailure: undefined,
       voiceOpenedAt: 0,
       session: undefined,
+      reservation: undefined,
     });
     this.chat = new AgentChat<LocalMessage>({ sessionId, open: deps.open, pageSize: PAGE_SIZE });
     this.conversation = new AIConversationController({
@@ -114,6 +123,43 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
       void this.preview(sessionId, conversationId);
       this.chat.prepare().catch((cause: unknown) => this.update({ failure: messageOf(cause) }));
     }
+  }
+
+  /**
+   * Gives the agent a tool a card in the conversation brings, the first time the card shows. A
+   * card is shown in a reply, so the conversation has its session by then.
+   */
+  async bring(name: string, tools: Tools): Promise<void> {
+    const { session } = this.get();
+    if (!session || this.brought.has(name)) return;
+    this.brought.add(name);
+    try {
+      await session.addTools(tools);
+    } catch (cause) {
+      this.brought.delete(name);
+      this.update({ failure: messageOf(cause) });
+    }
+  }
+
+  /** Takes back a tool a card brought, once the card has done what it was for. */
+  async withdraw(name: string): Promise<void> {
+    const { session } = this.get();
+    if (!session || !this.brought.delete(name)) return;
+    try {
+      await session.removeTool(name);
+    } catch (cause) {
+      this.update({ failure: messageOf(cause) });
+    }
+  }
+
+  /**
+   * Keeps the table the seat selector's tool reserved, and takes the tool back: the card has done
+   * what it was for. The tool's answer does not wait for that, since the router waits for the
+   * call to be answered before it withdraws the tool.
+   */
+  reserved(reservation: Reservation): void {
+    this.update({ reservation });
+    void this.withdraw(RESERVE_TABLE);
   }
 
   /** Follows what the person is writing, to open a new conversation's session meanwhile. */

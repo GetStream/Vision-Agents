@@ -105,6 +105,18 @@ npm run build     # types, then the bundle
   packages. Tapping a place or sending the form is the person's next question, in their words,
   with what they did as its `uiAction`, so the agent answers with a new plan. One done while
   Juno is still answering isn't sent, and the line over the composer says so.
+- **A card brings its own tool.** Ask "Where should we eat in Ohrid tonight?" for restaurant
+  cards and a seat selector of a venue's tables (`bookingComponents.json`). The agent cannot book
+  a table until a seat selector is on the screen: the card defines `reserve_table`
+  (`reserveTable.ts`) and gives it to the conversation's session the first time it shows, with
+  `Session.addTools`. Tapping a free table then has the agent call it, which asks first
+  ("Reserve this table?") and takes only a free table from the card. Once you allow it the card
+  turns into the booking: the table, the time and a confirmation code, which it keeps if the
+  agent shows the same tables again. The card has done what it was for, so it takes the tool
+  back with `Session.removeTool`. To see the difference, ask Juno to reserve a table before any
+  seat selector is shown: it has no tool to do it with. The router's
+  `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists `reserve_table` as
+  `session` while the card's tool is given.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across and
   inline as JPEG data URIs (`photos.ts`), turned the way the camera held them. The question shows
   them at once; the router uploads them to the conversation's channel and writes them on the
@@ -130,7 +142,8 @@ npm run build     # types, then the bundle
   notification at its time, and `list_events` reads it. Notifications are asked for when the
   person allows the first reminder. A tool that asks first asks on its step in the reply.
   `send_email` has swift_assistant's backend send it through the router's proxy for the
-  person's Gmail (`POST /gmail/send`).
+  person's Gmail (`POST /gmail/send`). A seat selector card adds `reserve_table` while it
+  is shown (see "A card brings its own tool" above).
 - **Connect Gmail and Linear in the chat.** Every new conversation names
   `http://localhost:5173/connected.html` as its session's `return_url`. A call that waits for the
   person's account shows Stream's sign-in card on its step. Connect opens the router's sign-in
