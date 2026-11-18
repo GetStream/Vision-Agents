@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/uptrace/bun"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -3465,6 +3466,44 @@ func (s *ScheduledTasksSuite) TestARunByHandThatFailsListsTheReasonItFailedUnder
 	}, 30*time.Second, 250*time.Millisecond, "the run by hand never finished failing")
 	s.Require().NotNil(page.Items[0].Error)
 	s.Equal(scheduling.ReasonNoNumber, *page.Items[0].Error)
+}
+
+// Defect: a run by hand that landed counted refused, or not at all past the request that set
+// it going.
+func (s *ScheduledTasksSuite) TestARunByHandThatLandsIsCountedDelivered() {
+	config := s.agentWithScheduling(nil)
+	created := s.createTask(s.data.createUser(), taskRequest(config))
+	s.activityWritten()
+	before := s.counted(activity.AreaScheduling, activity.ClientRouter)
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
+
+	// The request that set it going, and the run.
+	s.Require().Eventually(func() bool {
+		return s.counted(activity.AreaScheduling, activity.ClientRouter).requests == before.requests+2
+	}, settleFor, 10*time.Millisecond, "the run by hand was not counted")
+	s.Equal(before.refused, s.counted(activity.AreaScheduling, activity.ClientRouter).refused)
+}
+
+// Defect: a run by hand that failed counted only as the request that set it going, so the
+// app's scheduling work shows no refusal, or one without the reason its run failed under.
+func (s *ScheduledTasksSuite) TestARunByHandThatFailsIsCountedRefusedUnderItsReason() {
+	config := s.agentWithScheduling(nil)
+	user := s.data.createUser()
+	opened := s.openScheduling(user, config, nil)
+	created := s.taskOn(user, config, opened.Id, []string{"phone"})
+	s.activityWritten()
+	before := s.counted(activity.AreaScheduling, activity.ClientRouter)
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
+
+	s.Require().Eventually(func() bool {
+		return s.counted(activity.AreaScheduling, activity.ClientRouter).refused == before.refused+1
+	}, settleFor, 10*time.Millisecond, "the failed run by hand was not counted refused")
+	after := s.counted(activity.AreaScheduling, activity.ClientRouter)
+	// The request that set it going, and the run.
+	s.Equal(before.requests+2, after.requests)
+	s.Equal(scheduling.ReasonNoNumber, after.code)
 }
 
 func (s *ScheduledTasksSuite) TestATaskForAnAgentWithoutANumberHasNoLineToRingFrom() {
