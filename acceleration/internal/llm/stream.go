@@ -378,6 +378,7 @@ type ResponseWriter struct {
 	firstTokenAt       time.Time
 	text               strings.Builder
 	reasoning          strings.Builder
+	reasoningBlocks    []ReasoningBlock
 	deltas             int
 	usage              Usage
 	usageReported      bool
@@ -436,6 +437,12 @@ func (w *ResponseWriter) ReasoningText(delta string) {
 	w.markFirstToken()
 	w.reasoning.WriteString(delta)
 	w.emit(ReasoningTextDelta{ResponseID: w.options.ResponseID, Index: w.next(), Delta: delta})
+}
+
+// ReasoningBlock records a finished block of thinking with what a replay needs. Its text
+// was already streamed through ReasoningText.
+func (w *ResponseWriter) ReasoningBlock(block ReasoningBlock) {
+	w.reasoningBlocks = append(w.reasoningBlocks, block)
 }
 
 // FunctionCall records a fragment of a call the model is asking for.
@@ -565,6 +572,7 @@ func (w *ResponseWriter) settle(failure error) {
 		Model:              w.options.Model,
 		OutputText:         w.text.String(),
 		ReasoningText:      w.reasoning.String(),
+		ReasoningBlocks:    w.reasoningBlocks,
 		ToolCalls:          calls,
 		DroppedToolCalls:   dropped,
 		Usage:              w.usage,

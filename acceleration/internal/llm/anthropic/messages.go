@@ -39,10 +39,10 @@ const defaultMaxTokens = 64000
 // tool loop reads each earlier round from the cache instead of paying for it again.
 //
 // A reasoning effort goes out as output_config.effort on the models that take one
-// (efforts). Not carried over from the compatibility endpoint: a replayed turn's thinking (dropped, as before; adaptive
-// thinking does not require it), temperature (Claude 4.7 and later refuse any but the
-// default), JSON modes (the endpoint ignored them; callers already check what comes back),
-// and the one-hour cache TTL (its writes bill at twice the input rate, which Price does
+// (efforts), and a replayed turn's thinking as the signed blocks it came as (withThinking).
+// Not carried over from the compatibility endpoint: temperature (Claude 4.7 and later
+// refuse any but the default), JSON modes (the endpoint ignored them; callers already check
+// what comes back), and the one-hour cache TTL (its writes bill at twice the input rate, which Price does
 // not model).
 type LLM struct {
 	model        string
@@ -208,6 +208,12 @@ type puller struct {
 	counted bool
 	err     error
 	done    bool
+
+	// thinking is the thinking block being streamed, recorded when it stops: a block cut
+	// off before its signature cannot be sent back. calls counts the tool calls begun so
+	// far, which is where a block stood among them.
+	thinking *llm.ReasoningBlock
+	calls    int
 }
 
 // Advance reads one event and records what it carried.
@@ -232,15 +238,33 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 			OutputTokensDetails:      usage.OutputTokensDetails,
 		})
 	case "content_block_start":
-		if block := event.ContentBlock; block.Type == "tool_use" {
+		switch block := event.ContentBlock; block.Type {
+		case "tool_use":
 			w.FunctionCall(event.Index, block.ID, block.Name, "", "")
+			p.calls++
+		case "thinking":
+			p.thinking = &llm.ReasoningBlock{AfterToolCalls: p.calls}
+		case "redacted_thinking":
+			w.ReasoningBlock(llm.ReasoningBlock{Redacted: block.Data, AfterToolCalls: p.calls})
 		}
+	case "content_block_stop":
+		if p.thinking != nil && p.thinking.Signature != "" {
+			w.ReasoningBlock(*p.thinking)
+		}
+		p.thinking = nil
 	case "content_block_delta":
 		switch delta := event.Delta; delta.Type {
 		case "text_delta":
 			w.OutputText(delta.Text)
 		case "thinking_delta":
 			w.ReasoningText(delta.Thinking)
+			if p.thinking != nil {
+				p.thinking.Text += delta.Thinking
+			}
+		case "signature_delta":
+			if p.thinking != nil {
+				p.thinking.Signature = delta.Signature
+			}
 		case "input_json_delta":
 			w.FunctionCall(event.Index, "", "", delta.PartialJSON, "")
 		}
@@ -538,6 +562,9 @@ func appendMessage(messages []anthropic.MessageParam, message llm.Message) []ant
 			}
 			blocks = append(blocks, anthropic.NewToolUseBlock(call.ID, arguments, call.Name))
 		}
+		if len(blocks) > 0 {
+			blocks = withThinking(blocks, message.ReasoningBlocks, len(blocks)-len(message.ToolCalls))
+		}
 	case llm.ToolResult:
 		result := anthropic.ToolResultBlockParam{ToolUseID: message.ToolCallID}
 		if text := messageText(message); text != "" {
@@ -574,6 +601,37 @@ func appendMessage(messages []anthropic.MessageParam, message llm.Message) []ant
 		return messages
 	}
 	return append(messages, anthropic.MessageParam{Role: role, Content: blocks})
+}
+
+// withThinking puts a replayed turn's thinking back where the model wrote it: each block
+// before the text when no tool call preceded it, otherwise straight after the call it
+// followed. The API refuses a turn whose thinking was moved, edited or left out between
+// two kept blocks, so an unsigned block (which it refuses too) is the only one dropped.
+// text is how many of blocks come before the tool calls.
+func withThinking(blocks []anthropic.ContentBlockParamUnion, thinking []llm.ReasoningBlock, text int) []anthropic.ContentBlockParamUnion {
+	if len(thinking) == 0 {
+		return blocks
+	}
+	calls := len(blocks) - text
+	out := make([]anthropic.ContentBlockParamUnion, 0, len(blocks)+len(thinking))
+	next := 0
+	emit := func(after int) {
+		for ; next < len(thinking) && min(thinking[next].AfterToolCalls, calls) <= after; next++ {
+			switch block := thinking[next]; {
+			case block.Redacted != "":
+				out = append(out, anthropic.NewRedactedThinkingBlock(block.Redacted))
+			case block.Signature != "":
+				out = append(out, anthropic.NewThinkingBlock(block.Signature, block.Text))
+			}
+		}
+	}
+	emit(0)
+	out = append(out, blocks[:text]...)
+	for i, call := range blocks[text:] {
+		out = append(out, call)
+		emit(i + 1)
+	}
+	return out
 }
 
 func image(part llm.ImagePart) *anthropic.ImageBlockParam {

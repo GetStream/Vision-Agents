@@ -854,6 +854,17 @@ type wireToolCall struct {
 	Signature string `json:"signature,omitempty"`
 }
 
+// wireReasoning is one block of an assistant turn's thinking, as a complete frame reports it
+// and a respond frame replays it. A provider that takes thinking back (Anthropic) sends the
+// signed blocks again unchanged; one without a signature or redacted is not sent.
+type wireReasoning struct {
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Redacted  string `json:"redacted,omitempty"`
+	// AfterToolCalls is how many of the turn's tool_calls came before the block.
+	AfterToolCalls int `json:"after_tool_calls,omitempty"`
+}
+
 // respond is a frame on the language-model socket: either one response to generate or a
 // list of responses to abandon.
 //
@@ -872,6 +883,7 @@ type respond struct {
 		Role       string          `json:"role"`
 		Content    json.RawMessage `json:"content"`
 		ToolCalls  []wireToolCall  `json:"tool_calls,omitempty"`
+		Reasoning  []wireReasoning `json:"reasoning,omitempty"`
 		ToolCallID string          `json:"tool_call_id,omitempty"`
 	} `json:"messages"`
 	Tools      []llm.Tool `json:"tools"`
@@ -903,6 +915,12 @@ func (r respond) params(held options.LLM) (llm.ResponseParams, error) {
 		item := llm.Message{Role: llm.Role(message.Role), ToolCallID: message.ToolCallID}
 		if len(message.ToolCalls) > 0 && item.Role != llm.Assistant {
 			return llm.ResponseParams{}, errors.New("tool_calls belong to an assistant message")
+		}
+		if len(message.Reasoning) > 0 && item.Role != llm.Assistant {
+			return llm.ResponseParams{}, errors.New("reasoning belongs to an assistant message")
+		}
+		for _, block := range message.Reasoning {
+			item.ReasoningBlocks = append(item.ReasoningBlocks, llm.ReasoningBlock(block))
 		}
 		if item.ToolCallID != "" && item.Role != llm.ToolResult {
 			return llm.ResponseParams{}, errors.New("tool_call_id belongs to a tool message")
@@ -1140,7 +1158,7 @@ func llmFrame(event llm.Event) (frame, bool) {
 				"signature": call.Signature,
 			})
 		}
-		return frame{
+		complete := frame{
 			"type":                   "complete",
 			"id":                     response.ID,
 			"provider":               response.Provider,
@@ -1155,7 +1173,15 @@ func llmFrame(event llm.Event) (frame, bool) {
 			"output_tokens":          response.Usage.OutputTokens,
 			"reasoning_tokens":       response.Usage.OutputTokensDetails.ReasoningTokens,
 			"time_to_first_token_ms": response.TimeToFirstTokenMs,
-		}, true
+		}
+		if len(response.ReasoningBlocks) > 0 {
+			reasoning := make([]wireReasoning, 0, len(response.ReasoningBlocks))
+			for _, block := range response.ReasoningBlocks {
+				reasoning = append(reasoning, wireReasoning(block))
+			}
+			complete["reasoning"] = reasoning
+		}
+		return complete, true
 	case llm.ResponseFailed:
 		return withRefusal(frame{
 			"type":    "error",

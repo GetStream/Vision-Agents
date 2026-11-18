@@ -305,8 +305,12 @@ func documentHandWritten(api huma.API) {
 			"long the caller waited for the first of them. `messages[].content` is a string, or an " +
 			"array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: " +
 			"[{id, name, arguments, signature}]`, with arguments encoded as a JSON string and " +
-			"optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to " +
-			"correlate their content. Completed tool calls include the same replay fields; " +
+			"optional opaque signature, and may replay their thinking as `reasoning: [{text, " +
+			"signature, redacted, after_tool_calls}]` exactly as a `complete` reported it, which a " +
+			"provider that signs its thinking (Anthropic) is sent again in place and every other " +
+			"provider ignores. Tool-result messages use `role: tool` and `tool_call_id` to " +
+			"correlate their content. Completed tool calls include the same replay fields, and a " +
+			"`complete` whose provider signed its thinking carries those blocks as `reasoning`; " +
 			"incomplete responses additionally report `incomplete_reason` (such as " +
 			"`max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool " +
 			"replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on " +

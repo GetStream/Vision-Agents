@@ -70,6 +70,9 @@ type Message struct {
 	// Reasoning is what an assistant turn thought before it answered, for a provider that
 	// is sent it again with the turn.
 	Reasoning string
+	// ReasoningBlocks is the same thinking as signed blocks, for a provider that only takes
+	// it back exactly as it gave it (Anthropic). Other providers leave it alone.
+	ReasoningBlocks []ReasoningBlock
 	// ToolCallID names the call a ToolResult message answers.
 	ToolCallID string
 	// Speaker names who said a User turn once more than one person has spoken. No provider
@@ -121,6 +124,18 @@ type ToolCall struct {
 	// returns one unsigned, which is how a tool result gets answered rather than
 	// refused. It is opaque and empty for providers that do not sign.
 	Signature string
+}
+
+// ReasoningBlock is one block of a response's thinking as its provider has to be handed it
+// back: its text, and the signature that vouches for it, or the encrypted Redacted form in
+// place of both. A block with neither signature nor Redacted cannot be replayed.
+type ReasoningBlock struct {
+	Text      string
+	Signature string
+	Redacted  string
+	// AfterToolCalls is how many of the response's tool calls came before the block, which
+	// is where it goes back: a provider that signs thinking also signs where it stood.
+	AfterToolCalls int
 }
 
 // LLM is a streaming large-language-model provider.

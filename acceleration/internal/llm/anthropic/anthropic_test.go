@@ -339,6 +339,94 @@ func (s *AnthropicSuite) TestAToolCallIsReplayedWithItsResultStraightAfterIt() {
 	s.Equal("are you there?", turn[1].(map[string]any)["text"])
 }
 
+func (s *AnthropicSuite) TestThinkingIsKeptWithItsSignatureWhereItStood() {
+	s.answerWith(http.StatusOK, stream(
+		thinkingBlock(0, "Plan the lookup.", "sig-1"),
+		`{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"enc-1"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}`,
+		`{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{}"}}`,
+		`{"type":"content_block_stop","index":2}`,
+		thinkingBlock(3, "", "sig-2"),
+		`{"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"toolu_2","name":"clock","input":{}}}`,
+		`{"type":"content_block_stop","index":4}`,
+		stop("tool_use", 20),
+	))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.Equal([]llm.ReasoningBlock{
+		{Text: "Plan the lookup.", Signature: "sig-1"},
+		{Redacted: "enc-1"},
+		{Signature: "sig-2", AfterToolCalls: 1},
+	}, response.ReasoningBlocks)
+	s.Equal("Plan the lookup.", response.ReasoningText)
+}
+
+func (s *AnthropicSuite) TestThinkingCutOffBeforeItsSignatureIsNotKept() {
+	s.answerWith(http.StatusOK, stream(
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"half"}}`,
+		stop("max_tokens", 3),
+	))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.Empty(response.ReasoningBlocks)
+}
+
+func (s *AnthropicSuite) TestReplayedThinkingGoesBackInPlaceBeforeTheTextAndBetweenTheCalls() {
+	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.User, Content: "find roses"},
+		{
+			Role:    llm.Assistant,
+			Content: "Looking.",
+			ToolCalls: []llm.ToolCall{
+				{ID: "toolu_1", Name: "lookup", Arguments: `{"query":"roses"}`},
+				{ID: "toolu_2", Name: "clock", Arguments: `{}`},
+			},
+			ReasoningBlocks: []llm.ReasoningBlock{
+				{Text: "Plan.", Signature: "sig-1"},
+				{Redacted: "enc-1"},
+				{Signature: "sig-2", AfterToolCalls: 1},
+				{Text: "unsigned", AfterToolCalls: 1},
+				{Signature: "sig-3", AfterToolCalls: 5},
+			},
+		},
+		{Role: llm.ToolResult, ToolCallID: "toolu_1", Content: "roses"},
+		{Role: llm.ToolResult, ToolCallID: "toolu_2", Content: "noon"},
+	}})
+	s.Require().NoError(err)
+
+	turn, err := json.Marshal(s.sent()[0].body["messages"].([]any)[1])
+	s.Require().NoError(err)
+	s.JSONEq(`{"role": "assistant", "content": [
+		{"type": "thinking", "thinking": "Plan.", "signature": "sig-1"},
+		{"type": "redacted_thinking", "data": "enc-1"},
+		{"type": "text", "text": "Looking."},
+		{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {"query": "roses"}},
+		{"type": "thinking", "thinking": "", "signature": "sig-2"},
+		{"type": "tool_use", "id": "toolu_2", "name": "clock", "input": {}},
+		{"type": "thinking", "thinking": "", "signature": "sig-3"}
+	]}`, string(turn))
+}
+
+func (s *AnthropicSuite) TestATurnWithoutSignedThinkingIsSentAsBefore() {
+	plain := toolRound(2)
+	unsigned := toolRound(2)
+	unsigned.Input[1].ReasoningBlocks = []llm.ReasoningBlock{{Text: "no signature"}}
+	provider := s.provider(Options{})
+	_, err := s.collect(provider, plain)
+	s.Require().NoError(err)
+	_, err = s.collect(provider, unsigned)
+	s.Require().NoError(err)
+
+	s.NotContains(string(s.sent()[0].raw), "thinking")
+	s.Equal(string(s.sent()[0].raw), string(s.sent()[1].raw))
+}
+
 func (s *AnthropicSuite) TestTheTokenCapEndsTheResponseIncomplete() {
 	s.answerWith(http.StatusOK, stream(textBlock(0, "and then"), stop("max_tokens", 16)))
 
@@ -460,6 +548,17 @@ func textBlock(index int, text string) string {
 	return strings.Join([]string{
 		fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`, index),
 		fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%s}}`, index, quoted),
+		fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, index),
+	}, "\n")
+}
+
+// thinkingBlock is a thinking content block streamed whole with its signature.
+func thinkingBlock(index int, thinking, signature string) string {
+	quoted, _ := json.Marshal(thinking)
+	return strings.Join([]string{
+		fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":"","signature":""}}`, index),
+		fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":%s}}`, index, quoted),
+		fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"signature_delta","signature":%q}}`, index, signature),
 		fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, index),
 	}, "\n")
 }
