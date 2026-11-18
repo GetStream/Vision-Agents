@@ -2195,7 +2195,7 @@ func buildSessions(
 		Live:               liveClient,
 		Writer:             usageWriter,
 		Logger:             logger,
-		Edge:               edgeFor(stream),
+		Edge:               edgeFor(stream, settings.Phone),
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,

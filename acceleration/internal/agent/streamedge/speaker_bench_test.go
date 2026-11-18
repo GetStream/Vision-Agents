@@ -16,7 +16,7 @@ func BenchmarkSpeakerWrite(b *testing.B) {
 		samples[i] = int16(0.2 * math.MaxInt16 * math.Sin(2*math.Pi*220*float64(i)/rate))
 	}
 	chunk := audio.PcmData{Samples: samples, SampleRate: rate, Channels: 1}
-	talker := newSpeaker(nil)
+	talker := newSpeaker(nil, nil)
 	b.ReportAllocs()
 	for b.Loop() {
 		for range 5 {

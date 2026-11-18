@@ -3,7 +3,9 @@
 // It is the transport half of internal/agent: everything about credentials, tracks,
 // subscriptions and codecs lives here, so the agent itself only ever sees 16 kHz mono PCM
 // in and out. Inbound Opus is decoded straight to 16 kHz; outbound PCM is encoded back to
-// 48 kHz Opus for the track the agent publishes.
+// 48 kHz Opus for the track the agent publishes. Where the call asks for it, the agent's
+// voice, as the track takes it, is cancelled out of a caller's decoded audio
+// (internal/echocancel) before the agent hears it.
 package streamedge
 
 import (
@@ -33,6 +35,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -75,8 +78,20 @@ type Options struct {
 
 	Logger *slog.Logger
 
+	// EchoCancellation, when set, takes the agent's voice out of what the participants it
+	// names send back, before the agent hears them. Nil cancels nobody's.
+	EchoCancellation *EchoCancellation
+
 	// clientOptions are the SDK's, for a test to point the client at a coordinator of its own.
 	clientOptions []rtc.Option
+}
+
+// EchoCancellation is whose audio has the agent's voice taken out of it, and how.
+type EchoCancellation struct {
+	Config echocancel.Config
+	// From says, by user id, whose audio comes over a line that may send the agent's voice
+	// back. A browser or an app cancels its own echo, and cancelling it again only costs.
+	From func(userID string) bool
 }
 
 // User is who the agent is in the call.
@@ -97,6 +112,8 @@ type Edge struct {
 	// call knows somebody is there to talk to.
 	attending *emit.Emitter[agent.Attendance]
 	speaker   *speaker
+	// echo cancels the agent's voice out of the lines EchoCancellation names; nil when off.
+	echo *echocancel.Call
 	// quality counts the session's media on the agent's leg, observed once when it leaves.
 	quality *mediaQuality
 
@@ -141,12 +158,21 @@ func New(options Options) (*Edge, error) {
 		options.Logger = slog.Default()
 	}
 
+	var echo *echocancel.Call
+	if options.EchoCancellation != nil {
+		var err error
+		if echo, err = echocancel.NewCall(options.EchoCancellation.Config); err != nil {
+			return nil, err
+		}
+	}
+
 	return &Edge{
 		options:   options,
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
-		speaker:   newSpeaker(options.Logger),
+		speaker:   newSpeaker(options.Logger, echo),
+		echo:      echo,
 		quality:   newMediaQuality(),
 		listening: map[string]chan struct{}{},
 		present:   map[string]string{},
@@ -525,6 +551,14 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 	stop <-chan struct{}) {
 	defer reader.Close()
 	defer e.quality.stopped(stream)
+	line := e.echoLine(participant)
+	if line != nil {
+		defer func() {
+			metrics := line.Close()
+			e.logger.Debug("stopped cancelling echo", "participant", participant.UserID,
+				"erl_db", metrics.ERL, "erle_db", metrics.ERLE, "echo_delay", metrics.Delay)
+		}()
+	}
 	for pcm, err := range reader.Frames() {
 		if err != nil {
 			e.logger.Debug("stopped hearing a participant", "participant", participant.UserID, "error", err)
@@ -536,15 +570,39 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 			return
 		default:
 		}
+		samples := pcm.ToInt16().Int16()
+		if line != nil {
+			// A call's 20 ms packets are whole frames and come back at once; anything else
+			// waits for the rest of its last frame.
+			if samples = line.Clean(samples); len(samples) == 0 {
+				continue
+			}
+		}
 		e.inbound.Send(agent.InboundAudio{
 			Participant: participant,
 			Audio: audio.PcmData{
-				Samples:    pcm.ToInt16().Int16(),
+				Samples:    samples,
 				SampleRate: stt.SampleRate,
 				Channels:   1,
 			},
 		})
 	}
+}
+
+// echoLine starts cancelling the agent's voice out of participant's audio, when it comes
+// over a line EchoCancellation names, and is nil otherwise. A line that cannot be cancelled is
+// heard as it is: the agent still hears the caller, and withoutEcho still drops its own words.
+func (e *Edge) echoLine(participant stt.Participant) *echocancel.Line {
+	if e.echo == nil || !e.options.EchoCancellation.From(participant.UserID) {
+		return nil
+	}
+	line, err := e.echo.Listen()
+	if err != nil {
+		e.logger.Warn("could not cancel echo on a participant's audio", "participant", participant.UserID, "error", err)
+		return nil
+	}
+	e.logger.Debug("cancelling echo", "participant", participant.UserID)
+	return line
 }
 
 // watchForNewTracks subscribes to whatever is published after the agent joined, which is
