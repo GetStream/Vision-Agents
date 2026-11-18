@@ -39,6 +39,23 @@ func (s *FurthestStepSuite) TestTheFurthestAreaIsTheStepWhateverItsOrder() {
 	s.Equal(activityStepDashboardReads, furthestStep([]store.ActivityArea{areaWith(activity.AreaDashboardReads, 1)}, 0))
 }
 
+// Defect: workers, voice and video or phone and SMS left off the ladder, or put in the wrong
+// place, so an organization that ran a worker or took a phone call reads as only set up.
+func (s *FurthestStepSuite) TestWorkersVoiceAndPhoneAreStepsInLadderOrder() {
+	s.Equal(activityStepWorkers, furthestStep([]store.ActivityArea{
+		areaWith(activity.AreaWorkers, 1), areaWith(activity.AreaAgentSetup, 1),
+	}, 0))
+	s.Equal(activityStepConversations, furthestStep([]store.ActivityArea{
+		areaWith(activity.AreaWorkers, 1), areaWith(activity.AreaConversations, 1),
+	}, 0))
+	s.Equal(activityStepVoiceVideo, furthestStep([]store.ActivityArea{
+		areaWith(activity.AreaVoiceVideo, 1), areaWith(activity.AreaConversations, 1),
+	}, 0))
+	s.Equal(activityStepPhoneSMS, furthestStep([]store.ActivityArea{
+		areaWith(activity.AreaVoiceVideo, 1), areaWith(activity.AreaPhoneSMS, 1),
+	}, 0))
+}
+
 // Defect: an area whose every request was refused counted as reached, so an app turned away
 // at setup reads as set up.
 func (s *FurthestStepSuite) TestAnAreaRefusedEveryTimeIsNotReached() {
@@ -56,7 +73,7 @@ func (s *FurthestStepSuite) TestAnAreaRefusedEveryTimeIsNotReached() {
 // Defect: an area that is no step, such as model calls, read as one, or as the first.
 func (s *FurthestStepSuite) TestAnAreaThatIsNoStepReachesNone() {
 	s.Equal(activityStepNone, furthestStep([]store.ActivityArea{
-		areaWith(activity.AreaModelAPI, 9), areaWith(activity.AreaWorkers, 9),
+		areaWith(activity.AreaModelAPI, 9), areaWith(activity.AreaConnectors, 9),
 	}, 2))
 }
 

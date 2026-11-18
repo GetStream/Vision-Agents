@@ -113,3 +113,13 @@ func (s *LimitsSuite) TestTheCostAnomalyCheckNamesItsEnvironmentAndLinksTheStaff
 	s.Equal(s.settings.Limits.StaffURL, options.Links.Staff)
 	s.Same(db, options.Store)
 }
+
+// Defect: the router's check left the activity digest off, so no router posts it.
+func (s *LimitsSuite) TestTheCostAnomalyCheckPostsTheActivityDigest() {
+	s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = "xoxb-test", "C123"
+
+	options, ok := costAnomalyOptions(s.settings, &store.Store{}, slog.New(slog.DiscardHandler))
+
+	s.Require().True(ok)
+	s.True(options.Digest)
+}
