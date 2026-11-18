@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -52,6 +53,30 @@ func (s *AppHooksSuite) TestAHookCarriedToAnotherNodeIsCountedOnce() {
 	s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
 	s.Never(func() bool { return s.counted(activity.AreaHooksIn, store.AuditSourceAPI).requests > 1 },
 		10*suiteActivityInterval, suiteActivityInterval, "the carried hook was counted again")
+}
+
+// Defect: a call event from the customer's own app, which may name no number, left uncounted.
+func (s *AppHooksSuite) TestACallHookTheGatewayVouchedForIsCounted() {
+	s.Require().Equal(http.StatusOK, s.fromApp(s.appPath(phone.CallHookPath), `{"type": "call.created"}`))
+
+	s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+}
+
+// Defect: a Stream Chat delivery to a customer's own app left uncounted.
+func (s *ChatInboundAppSuite) TestADeliveryIsCountedUnderItsApp() {
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(s.appID(), s.config(s.customerID()), ""), s.current))
+
+	s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+}
+
+// Defect: in deployment mode, where every hook is the deployment's own app's, a call to a
+// customer's number counted under nobody.
+func (s *CallHooksSuite) TestACallToAHeldNumberIsCountedUnderTheNumbersApp() {
+	s.hold("default", s.callID)
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
 }
 
 // Defect: a call Telnyx signed counted as a hook in general rather than as the app's phone
@@ -99,4 +124,35 @@ func (s *CallStatusSuite) TestAStatusPostIsCountedAsItsCallsPhoneWork() {
 	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"completed"}}))
 
 	s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
+}
+
+// Defect: a vendor fetching a placed call's plan, which carries only the call's token, left out
+// of the app's phone work.
+func (s *CallStatusSuite) TestAPlanFetchIsCountedAsItsCallsPhoneWork() {
+	s.useApp(s.data.createApp())
+	token := s.utils.uuid()
+	s.Require().NoError(s.store.ParkBridge(context.Background(), &store.CallBridge{
+		Token: token, CustomerID: s.customerID(), Vendor: "twilio", TrunkURI: "sip:trunk@trunk.sip.example.test",
+		CallID: s.utils.uuid(), ExpiresAt: time.Now().Add(time.Minute),
+	}))
+
+	// Twilio takes its plan on the request that places the call, so it has none to fetch: the
+	// fetch is still the app's, refused.
+	s.Require().Equal(http.StatusNotFound, s.unauthenticatedClient.do(http.MethodGet, "/v1/phone/answer/"+token, nil, nil))
+
+	s.Equal(int64(1), s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI).refused)
+}
+
+// Defect: an event the customer's own provider app delivered, checked with that app's signing
+// secret, left uncounted, or one signed with another secret counted.
+func (s *EventForwardingSuite) TestAProviderAppsEventIsCountedUnderItsCustomer() {
+	body := s.interaction(`{"type":"block_actions","team":{"id":"` + s.workspace + `"},"user":{"id":"U0000ALICE"},` +
+		`"trigger_id":"synthetic.trigger","actions":[]}`)
+
+	forged, _, _ := s.slack.DeliverInteraction(s.eventsURL(), "not the app's secret", body)
+	s.Require().Equal(http.StatusUnauthorized, forged)
+	signed, _, _ := s.slack.DeliverInteraction(s.eventsURL(), s.secret, body)
+	s.Require().Equal(http.StatusOK, signed)
+
+	s.Equal(int64(0), s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI).refused)
 }

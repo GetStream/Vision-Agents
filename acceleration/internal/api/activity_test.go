@@ -252,3 +252,25 @@ func (s *ActivitySuite) TestASocketNamingAConfigNobodyHoldsIsCountedWithItsCode(
 	s.Equal(int64(1), row.refused)
 	s.Equal(codeAgentConfigNotFound, row.code)
 }
+
+// Defect: a socket naming a session that is already open counted with the code of a request the
+// caller got wrong, not the conflict POST /v1/agents/sessions answers it with.
+func (s *ActivitySuite) TestASocketNamingAnOpenSessionIsCountedAsAConflict() {
+	opened := s.serverClient.with(clientHeader, store.AuditSourceCLI).
+		createSession(CreateSessionRequest{Incognito: pointerTo(true), Llm: pointerTo("llm-flow")})
+
+	s.refusedSocket(map[string]any{"type": "start", "session": map[string]any{"id": opened.Id}})
+
+	row := s.countedOnce(activity.AreaConversations, store.AuditSourceSDK)
+	s.Equal(int64(1), row.refused)
+	s.Equal(conflict("").Code, row.code)
+}
+
+// Defect: a socket whose session would not start counted with no code.
+func (s *ActivitySuite) TestASocketWhoseSessionWouldNotStartIsCountedAsAnInvalidRequest() {
+	s.refusedSocket(map[string]any{"type": "start", "session": map[string]any{"llm": "nobody/no-model"}})
+
+	row := s.countedOnce(activity.AreaConversations, store.AuditSourceSDK)
+	s.Equal(int64(1), row.refused)
+	s.Equal(invalidRequest("").Code, row.code)
+}
