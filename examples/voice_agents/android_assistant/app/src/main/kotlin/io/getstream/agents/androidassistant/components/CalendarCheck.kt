@@ -61,12 +61,13 @@ internal fun calendarCheck(definition: AIUIComponentDefinition) = AIUIComponent(
 private fun CalendarCheck(start: Date, end: Date) {
     val theme = OpenUITheme.current
     val context = LocalContext.current.applicationContext
-    var days by remember { mutableStateOf<List<CalendarDay>>(emptyList()) }
-    var failure by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(start, end) {
-        val loaded = CalendarDay.days(context, start, end)
-        days = loaded.orEmpty()
-        failure = if (loaded == null) "Let Juno see your calendar in Settings to check these days." else null
+    var lookup by remember { mutableStateOf<CalendarLookup?>(null) }
+    LaunchedEffect(start, end) { lookup = CalendarDay.days(context, start, end) }
+    val days = (lookup as? CalendarLookup.Days)?.days.orEmpty()
+    val failure = when (lookup) {
+        CalendarLookup.NotAllowed -> "Let Juno see your calendar in Settings to check these days."
+        CalendarLookup.Unavailable -> "Your calendar couldn't be read, so these days aren't checked."
+        else -> null
     }
     val locale = LocalLocale.current.platformLocale
     val dayFormat = remember(locale) { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, "EEEdMMM"), locale) }
@@ -102,8 +103,20 @@ private fun CalendarCheck(start: Date, end: Date) {
     }
 }
 
+/** What reading the person's calendar for a plan's days came to. */
+internal sealed interface CalendarLookup {
+    /** The days were read; a day with no events is free. */
+    class Days(val days: List<CalendarDay>) : CalendarLookup
+
+    /** The person does not let the app see their calendar. */
+    data object NotAllowed : CalendarLookup
+
+    /** The calendar could not be read, so no day is known to be free. */
+    data object Unavailable : CalendarLookup
+}
+
 /** One day of the person's calendar: what is on it, or nothing. */
-private class CalendarDay(val date: Date, val events: List<String>) {
+internal class CalendarDay(val date: Date, val events: List<String>) {
     companion object {
         private const val MAX_DAYS = 14
         private const val DAY_MILLIS = 24 * 60 * 60 * 1000L
@@ -117,12 +130,9 @@ private class CalendarDay(val date: Date, val events: List<String>) {
             null
         }
 
-        /**
-         * The days from [start] to [end], at most two weeks of them, or null when the person does
-         * not let the app see their calendar.
-         */
-        suspend fun days(context: Context, start: Date, end: Date): List<CalendarDay>? {
-            if (!Permissions.allOf(context, Manifest.permission.READ_CALENDAR)) return null
+        /** The days from [start] to [end], at most two weeks of them. */
+        suspend fun days(context: Context, start: Date, end: Date): CalendarLookup {
+            if (!Permissions.allOf(context, Manifest.permission.READ_CALENDAR)) return CalendarLookup.NotAllowed
             return withContext(Dispatchers.IO) {
                 val starts = mutableListOf<Long>()
                 val day = Calendar.getInstance().apply { time = start }
@@ -131,15 +141,25 @@ private class CalendarDay(val date: Date, val events: List<String>) {
                     day.add(Calendar.DAY_OF_MONTH, 1)
                 }
                 val last = day.timeInMillis
-                val events = events(context, starts.first(), last)
-                starts.mapIndexed { index, from ->
-                    val to = starts.getOrNull(index + 1) ?: last
-                    CalendarDay(Date(from), events.filter { it.isOn(from, to) }.map { it.text })
-                }
+                lookup(starts, last, events(context, starts.first(), last))
             }
         }
 
-        private class Event(val title: String, val begin: Long, val end: Long, val allDay: Boolean) {
+        /**
+         * The days starting at [starts], the last ending at [last], with the [events] on each, or
+         * [CalendarLookup.Unavailable] when there are no events because the calendar was not read.
+         */
+        fun lookup(starts: List<Long>, last: Long, events: List<Event>?): CalendarLookup {
+            if (events == null) return CalendarLookup.Unavailable
+            return CalendarLookup.Days(
+                starts.mapIndexed { index, from ->
+                    val to = starts.getOrNull(index + 1) ?: last
+                    CalendarDay(Date(from), events.filter { it.isOn(from, to) }.map { it.text })
+                },
+            )
+        }
+
+        class Event(val title: String, val begin: Long, val end: Long, val allDay: Boolean) {
             private val time = DateFormat.getTimeInstance(DateFormat.SHORT)
 
             val text: String get() = if (allDay) title else "${time.format(Date(begin))} $title"
@@ -154,7 +174,8 @@ private class CalendarDay(val date: Date, val events: List<String>) {
             }
         }
 
-        private fun events(context: Context, from: Long, to: Long): List<Event> {
+        /** The events from [from] to [to], or null when the calendar provider does not answer. */
+        private fun events(context: Context, from: Long, to: Long): List<Event>? {
             // All-day events are stored in UTC, so a day either side catches those of the first and last days.
             val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
                 ContentUris.appendId(it, from - DAY_MILLIS)
@@ -167,10 +188,11 @@ private class CalendarDay(val date: Date, val events: List<String>) {
                 CalendarContract.Instances.ALL_DAY,
             )
             val events = mutableListOf<Event>()
-            context.contentResolver.query(uri, columns, null, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { rows ->
-                while (rows.moveToNext()) {
-                    val title = rows.getString(0)?.ifEmpty { null } ?: "Busy"
-                    events += Event(title, rows.getLong(1), rows.getLong(2), rows.getInt(3) != 0)
+            val rows = context.contentResolver.query(uri, columns, null, null, "${CalendarContract.Instances.BEGIN} ASC") ?: return null
+            rows.use {
+                while (it.moveToNext()) {
+                    val title = it.getString(0)?.ifEmpty { null } ?: "Busy"
+                    events += Event(title, it.getLong(1), it.getLong(2), it.getInt(3) != 0)
                 }
             }
             return events

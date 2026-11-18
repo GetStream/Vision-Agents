@@ -143,10 +143,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     val callUiHost: AIUIHost = newUiHost()
 
-    /** The turns the call's session had when it was attached, whose UI the chat already showed. */
-    var turnsBeforeCall: Set<String> = emptySet()
-        private set
-
     init {
         // The backend's agent decides the format; follow it when it can say.
         viewModelScope.launch {
@@ -263,7 +259,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 session.startVoice()
                 val voice = VoiceSession.attach(getApplication(), Assistant.agents, session.id)
-                turnsBeforeCall = voice.session.conversation.value.turns.mapTo(HashSet()) { it.id }
                 calling.value = voice
                 voice.join()
                 voice.session.conversation.first { it.state == Conversation.State.Ended }

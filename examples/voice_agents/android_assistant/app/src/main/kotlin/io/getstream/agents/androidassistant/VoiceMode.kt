@@ -47,6 +47,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,7 +88,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -107,15 +107,23 @@ import stream.video.sfu.models.TrackType
  * vision skill's requests to look with what the camera showed, and the preview is that view.
  *
  * What Juno shows while it talks, such as a restaurant's tables, appears under the glow as the
- * call's session streams it: the router keeps the UI out of what is spoken, and tapping it asks
- * Juno in the conversation, as in the chat.
+ * chat's session streams it, so a change to a card the chat showed is merged onto that card: the
+ * router keeps the UI out of what is spoken, and tapping it asks Juno in the conversation, as in
+ * the chat.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @Composable
 fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifier = Modifier) {
     val voice by viewModel.voice.collectAsStateWithLifecycle()
     val failure by viewModel.voiceFailure.collectAsStateWithLifecycle()
     val approvals by session.approvals.collectAsStateWithLifecycle()
     val brand by viewModel.brand.collectAsStateWithLifecycle()
+
+    // The chat's turns when voice mode opened, before the call could add any: their UI is the
+    // chat's, not the call's. Saved, so turning the phone does not count the call's as the chat's.
+    val opened = rememberSaveable(session) { ArrayList(session.conversation.value.turns.map { it.id }) }
+    val before = remember(opened) { opened.toSet() }
+    val messages = remember(viewModel) { viewModel.conversation.flatMapLatest { it.messages } }
 
     LaunchedEffect(session) { viewModel.startVoice() }
     BackHandler(onBack = viewModel::hangUp)
@@ -129,44 +137,53 @@ fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifie
             }
 
             val current = voice
-            val call by remember(current) { current?.call ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
-            val cameraOn by remember(current) { current?.isCameraEnabled ?: MutableStateFlow(false) }.collectAsStateWithLifecycle()
-            call?.takeIf { cameraOn }?.let { CameraPreview(it) }
+            // Everything between the header and the controls shares what room is left, so the
+            // controls stay on screen when the camera and a card are taller than it.
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                val call by remember(current) { current?.call ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
+                val cameraOn by remember(current) { current?.isCameraEnabled ?: MutableStateFlow(false) }.collectAsStateWithLifecycle()
+                call?.takeIf { cameraOn }?.let { CameraPreview(it) }
 
-            AgentPresence(current, isStarting = current == null && failure == null, modifier = Modifier.weight(1f))
+                AgentPresence(current, isStarting = current == null && failure == null, modifier = Modifier.weight(1f))
 
-            // The newest of Juno's turns on the call that wrote UI, once a statement of it is finished.
-            val turnWithUI by remember(current) {
-                val before = viewModel.turnsBeforeCall
-                current?.session?.conversation
-                    ?.map { conversation ->
-                        conversation.turns.lastOrNull { it.isAgent && it.ui?.content?.isNotEmpty() == true && it.id !in before }
+                // The newest of Juno's turns on the call that wrote UI, once a statement of it is
+                // finished. Read from the chat's session, whose conversation holds the cards the chat
+                // streamed, so a patch to the card on screen merges onto it: the call's own session
+                // starts with none.
+                val card by remember(current, before) {
+                    if (current == null) {
+                        flowOf(null)
+                    } else {
+                        combine(session.conversation, messages) { conversation, messages ->
+                            callCard(conversation, before) { turnId ->
+                                messages.lastOrNull { it.turnId == turnId }?.uiDocument
+                            }
+                        }.distinctUntilChanged()
                     }
-                    ?.distinctUntilChanged()
-                    ?: flowOf(null)
-            }.collectAsStateWithLifecycle(null)
-            turnWithUI?.let { turn ->
-                ProvideOpenUITheme(brand.openUITheme()) { CallUI(viewModel.callUiHost, turn) }
-            }
-
-            approvals.firstOrNull()?.let { request ->
-                // Keyed by the call, so a second question starts with no answer sending.
-                key(request.id) {
-                    ApprovalCard(request, session, Modifier.padding(horizontal = 16.dp))
+                }.collectAsStateWithLifecycle(null)
+                card?.let {
+                    ProvideOpenUITheme(brand.openUITheme()) { CallUI(viewModel.callUiHost, it) }
                 }
-            }
-            val joining by remember(current) { current?.failure ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
-            val trouble by remember(current) { current?.session?.let(::trouble) ?: flowOf(null) }
-                .collectAsStateWithLifecycle(null)
-            val reason = failure ?: joining?.message ?: trouble
-            reason?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                )
+
+                approvals.firstOrNull()?.let { request ->
+                    // Keyed by the call, so a second question starts with no answer sending.
+                    key(request.id) {
+                        ApprovalCard(request, session, Modifier.padding(horizontal = 16.dp))
+                    }
+                }
+                val joining by remember(current) { current?.failure ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
+                val trouble by remember(current) { current?.session?.let(::trouble) ?: flowOf(null) }
+                    .collectAsStateWithLifecycle(null)
+                val reason = failure ?: joining?.message ?: trouble
+                reason?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    )
+                }
             }
             if (current != null) {
                 CallControls(
@@ -225,13 +242,46 @@ private fun CameraPreview(call: Call) {
 }
 
 /**
+ * One of Juno's turns on the call with UI to show: the UI the socket streamed for it, or else
+ * [stored], the copy in Stream Chat that the router merged, for a patch the socket had no card to
+ * merge onto, as after a reload.
+ */
+internal data class CallCard(val turn: Turn, val stored: AIUIDocument? = null) {
+    /** The UI to show. */
+    val document: AIUIDocument?
+        get() = turn.ui?.let { AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to it.customData)) } ?: stored
+}
+
+/**
+ * The newest of the agent's turns in [conversation] that is not one of [before] and has UI to
+ * show: the UI its socket streamed, once a statement of it is finished, or what [stored] holds
+ * for the turn in Stream Chat.
+ */
+internal fun callCard(conversation: Conversation, before: Set<String>, stored: (String) -> AIUIDocument?): CallCard? {
+    for (turn in conversation.turns.asReversed()) {
+        if (!turn.isAgent || turn.id in before) continue
+        if (turn.ui?.content?.isNotEmpty() == true) return CallCard(turn)
+        stored(turn.id)?.let { return CallCard(turn, it) }
+    }
+    return null
+}
+
+/** The turn a reply in Stream Chat belongs to, as the router writes it on the message. */
+private val AgentMessage.turnId: String?
+    get() {
+        val custom = message.extraData
+        val runtime = custom["support_runtime"] as? Map<*, *>
+        return (custom["turn_id"] as? String ?: runtime?.get("turn_id") as? String)?.takeIf { it.isNotEmpty() }
+    }
+
+/**
  * The UI of one of Juno's turns on the call, as it streams, in a card that scrolls when it is
  * taller than the room under the glow.
  */
 @Composable
-private fun CallUI(host: AIUIHost, turn: Turn, modifier: Modifier = Modifier) {
-    val ui = turn.ui ?: return
-    val document = remember(ui) { AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to ui.customData)) } ?: return
+private fun CallUI(host: AIUIHost, card: CallCard, modifier: Modifier = Modifier) {
+    val turn = card.turn
+    val document = remember(turn.ui, card.stored) { card.document } ?: return
     // The engines take the turn's UI before its view is asked for, as a conversation's do.
     host.receive(listOf(CallTurn(turn, document)))
     if (!host.canShow(document)) return
