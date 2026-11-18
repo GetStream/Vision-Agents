@@ -764,6 +764,7 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
   Widget build(BuildContext context, List<DiningTableItem> tables, AIUIComponentContext ui) =>
       _SeatSelectorView(
         tables: tables,
+        isStreaming: ui.isStreaming,
         onSelect: (table) => ui.emit(
           'select_table',
           label: 'Reserve table ${table.id} (${table.zone} for ${table.seats})',
@@ -773,9 +774,17 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
 }
 
 class _SeatSelectorView extends StatefulWidget {
-  const _SeatSelectorView({required this.tables, required this.onSelect});
+  const _SeatSelectorView({
+    required this.tables,
+    required this.isStreaming,
+    required this.onSelect,
+  });
 
   final List<DiningTableItem> tables;
+
+  /// Whether the agent is still writing the card, whose tables may not all be in yet.
+  final bool isStreaming;
+
   final ValueChanged<DiningTableItem> onSelect;
 
   @override
@@ -804,9 +813,21 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
     final chat = AgentChatScope.maybeOf(context);
     if (chat == null || identical(chat, _chat)) return;
     _chat = chat;
-    if (_reservationIn(chat) == null) {
-      unawaited(chat.bring(SeatSelectorComponent.reserveTable(widget.tables, chat.reserved)));
-    }
+    _bringTool();
+  }
+
+  @override
+  void didUpdateWidget(_SeatSelectorView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isStreaming && !widget.isStreaming) _bringTool();
+  }
+
+  /// Gives the conversation the card's tool once the card is written, so the tool offers all
+  /// of its tables, unless one of them is booked already.
+  void _bringTool() {
+    final chat = _chat;
+    if (chat == null || widget.isStreaming || _reservationIn(chat) != null) return;
+    unawaited(chat.bring(SeatSelectorComponent.reserveTable(widget.tables, chat.reserved)));
   }
 
   @override

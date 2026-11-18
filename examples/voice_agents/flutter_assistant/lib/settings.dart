@@ -58,6 +58,8 @@ class SettingsSheet extends StatefulWidget {
   static Future<void> show(BuildContext context) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    // As tall as the replies and the brands need, which is more than half the screen.
+    isScrollControlled: true,
     builder: (context) => const SettingsSheet(),
   );
 
@@ -118,56 +120,58 @@ class _SettingsSheetState extends State<SettingsSheet> {
     final colors = context.streamColorScheme;
     final text = context.streamTextTheme;
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text('Replies', style: text.headingSm.copyWith(color: colors.textPrimary)),
-          ),
-          for (final format in ReplyFormat.values)
-            StreamListTile(
-              title: Text(format.title),
-              trailing: format == _format ? Icon(Icons.check, color: colors.accentPrimary) : null,
-              onTap: _loaded && !_choosing ? () => _choose(format) : null,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text('Replies', style: text.headingSm.copyWith(color: colors.textPrimary)),
             ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              _failure ??
-                  'New conversations answer in this format. OpenUI and A2UI replies show '
-                      'interactive maps, restaurant cards, gauges, and forms.',
-              style: text.captionDefault.copyWith(
-                color: _failure == null ? colors.textSecondary : colors.accentError,
+            for (final format in ReplyFormat.values)
+              StreamListTile(
+                title: Text(format.title),
+                trailing: format == _format ? Icon(Icons.check, color: colors.accentPrimary) : null,
+                onTap: _loaded && !_choosing ? () => _choose(format) : null,
+              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                _failure ??
+                    'New conversations answer in this format. OpenUI and A2UI replies show '
+                        'interactive maps, restaurant cards, gauges, and forms.',
+                style: text.captionDefault.copyWith(
+                  color: _failure == null ? colors.textSecondary : colors.accentError,
+                ),
               ),
             ),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Text(
-              'Brand Design Tokens',
-              style: text.headingSm.copyWith(color: colors.textPrimary),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text(
+                'Brand Design Tokens',
+                style: text.headingSm.copyWith(color: colors.textPrimary),
+              ),
             ),
-          ),
-          ValueListenableBuilder<BrandProfile>(
-            valueListenable: BrandProfile.active,
-            builder: (context, active, _) => Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final profile in BrandProfile.values)
-                  StreamListTile(
-                    title: Text(profile.title),
-                    subtitle: Text(profile.subtitle),
-                    trailing: profile == active ? Icon(Icons.check, color: profile.accent) : null,
-                    onTap: () => BrandProfile.active.value = profile,
-                  ),
-              ],
+            ValueListenableBuilder<BrandProfile>(
+              valueListenable: BrandProfile.active,
+              builder: (context, active, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final profile in BrandProfile.values)
+                    StreamListTile(
+                      title: Text(profile.title),
+                      subtitle: Text(profile.subtitle),
+                      trailing: profile == active ? Icon(Icons.check, color: profile.accent) : null,
+                      onTap: () => BrandProfile.active.value = profile,
+                    ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-        ],
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
