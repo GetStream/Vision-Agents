@@ -29,6 +29,7 @@ import {
 } from '../agent/conversation';
 import { createDeviceTools } from '../agent/deviceTools';
 import { imagesOf } from '../agent/photos';
+import { formatSaved } from '../agent/replyFormat';
 import { THINK_HARDER } from '../chatOptions';
 
 const IDLE: ConversationSnapshot = { kind: 'idle', skills: [] };
@@ -102,11 +103,14 @@ const selector = ({ messages, session }: ChatState) => ({
 const openSession: OpenAgentSession = (sessionId) =>
   sessionId
     ? agentSessions().resume(sessionId, { tools: deviceTools.sessionTools() })
-    : agentSessions().create({
-        modelOverwrites: { llm: AgentConfig.chatModel },
-        return_url: SIGN_IN_RETURN_URL,
-        tools: deviceTools.sessionTools(),
-      });
+    : // A conversation keeps the format it starts with: one changing in Settings goes first.
+      formatSaved().then(() =>
+        agentSessions().create({
+          modelOverwrites: { llm: AgentConfig.chatModel },
+          return_url: SIGN_IN_RETURN_URL,
+          tools: deviceTools.sessionTools(),
+        }),
+      );
 
 const newChat = (sessionId?: string): Chat =>
   new AgentChat<LocalMessage>({ open: openSession, sessionId });

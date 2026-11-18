@@ -72,6 +72,9 @@ export const Settings = () => {
       setFormat(chosen);
     } catch (cause) {
       setFailure(String((cause as Error)?.message ?? cause));
+      // The backend may have taken the change before its answer was lost: show what it has.
+      setFormat(undefined);
+      await replyFormat().then(setFormat, () => undefined);
     } finally {
       setBusy(false);
     }

@@ -15,18 +15,34 @@ export const replyFormat = async (): Promise<ReplyFormat> => {
   return ((await response.json()) as { format: ReplyFormat }).format;
 };
 
+// The change on its way, which the backend may apply before it answers.
+let saving: Promise<unknown> = Promise.resolve();
+
+/**
+ * Settles once no change of the format is on its way, so a conversation starts with the format
+ * Settings shows.
+ */
+export const formatSaved = () => saving.then(
+  () => undefined,
+  () => undefined,
+);
+
 /**
  * Has the agent answer in `format`, from its next conversation on. The choice is the agent's
  * instructions, kept by the backend, so every app answers the same way, and a conversation keeps
  * the way it started with.
  */
-export const setReplyFormat = async (format: ReplyFormat) => {
-  const response = await fetch(`${AgentConfig.tokenUrl}/reply-format`, {
-    body: JSON.stringify({ format }),
-    headers: { 'Content-Type': 'application/json' },
-    method: 'PUT',
-  });
-  if (!response.ok) {
-    throw new Error(`The backend could not change how Juno answers (${response.status})`);
-  }
+export const setReplyFormat = (format: ReplyFormat) => {
+  const request = (async () => {
+    const response = await fetch(`${AgentConfig.tokenUrl}/reply-format`, {
+      body: JSON.stringify({ format }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'PUT',
+    });
+    if (!response.ok) {
+      throw new Error(`The backend could not change how Juno answers (${response.status})`);
+    }
+  })();
+  saving = request;
+  return request;
 };
