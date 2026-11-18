@@ -51,6 +51,9 @@ type AnomalyOptions struct {
 	Every time.Duration
 	// Now is the time the check runs at; defaults to time.Now.
 	Now func() time.Time
+	// Digest has the check also post the activity digest of the day before, once per UTC day
+	// (postDigest).
+	Digest bool
 }
 
 // Anomalies tells the operator, in the money limit notices' channel, of each organization whose
@@ -66,6 +69,7 @@ type Anomalies struct {
 	logger      *slog.Logger
 	every       time.Duration
 	now         func() time.Time
+	digest      bool
 
 	// baselines is each organization's median day before baselineDay, read once per day. Only
 	// the checking goroutine uses them.
@@ -93,6 +97,7 @@ func NewAnomalies(options AnomalyOptions) *Anomalies {
 	return &Anomalies{
 		store: options.Store, lock: options.Store.CostAnomalyLock(), poster: options.Poster,
 		environment: options.Environment, links: options.Links, logger: logger, every: every, now: now,
+		digest: options.Digest,
 	}
 }
 
@@ -145,6 +150,9 @@ func (a *Anomalies) check(ctx context.Context) {
 	}
 	if !held {
 		return
+	}
+	if a.digest {
+		a.postDigest(checking, now)
 	}
 	if err := a.note(checking, now); err != nil {
 		a.lock.Release()

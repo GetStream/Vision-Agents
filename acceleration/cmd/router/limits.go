@@ -98,7 +98,7 @@ func limitNotices(settings config.Config, configs *appconfig.Store, logger *slog
 }
 
 // costAnomalies is what posts to ROUTER_LIMITS_SLACK_CHANNEL when an organization's spend today
-// jumps past its own baseline, or nil when that or its token is unset or there is no Postgres
+// jumps past its own baseline, and each day the day before's activity digest, or nil when that or its token is unset or there is no Postgres
 // to read the spend from. It runs whatever the limits' mode: work is priced and recorded with
 // limits off too.
 func costAnomalies(settings config.Config, db *store.Store, logger *slog.Logger) *limitnotice.Anomalies {
@@ -118,7 +118,7 @@ func costAnomalyOptions(settings config.Config, db *store.Store, logger *slog.Lo
 	}
 	return limitnotice.AnomalyOptions{
 		Store: db, Poster: limitnotice.NewSlack(token, channel), Environment: sandboxEnvironment(),
-		Links: limitnotice.Links{Staff: settings.Limits.StaffURL}, Logger: logger,
+		Links: limitnotice.Links{Staff: settings.Limits.StaffURL}, Logger: logger, Digest: true,
 	}, true
 }
 
