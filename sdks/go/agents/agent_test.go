@@ -509,6 +509,9 @@ func TestSyncStoresTheSkillsUnderTheConfigAndEditsThemTheSecondTime(t *testing.T
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
+	if len(router.configs) != 1 {
+		t.Fatalf("syncing twice left %d configs: %+v", len(router.configs), router.configs)
+	}
 	if len(router.skills) != 1 {
 		t.Fatalf("syncing twice left %d skills: %+v", len(router.skills), router.skills)
 	}
@@ -559,6 +562,23 @@ func TestSyncSaysWhyTheRouterRefusedASkill(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
 		t.Errorf("a skill the router refused came back as %v", err)
+	}
+}
+
+func TestSyncSaysWhyTheRouterRefusedASkillEdit(t *testing.T) {
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Skills: []Skill{
+		{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
+	}}})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	router.mu.Lock()
+	router.refuseSkills = "a skill may bring at most 64 files"
+	router.mu.Unlock()
+	_, err := agent.Sync(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
+		t.Errorf("an edit the router refused came back as %v", err)
 	}
 }
 

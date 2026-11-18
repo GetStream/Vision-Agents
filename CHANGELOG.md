@@ -4,11 +4,11 @@
 
 ### The Go SDK reads a session's tokens, timeline and decisions
 
-`client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only and answer while the session runs (#2056).
+`client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
 
 ### The Go SDK compiles `ui.format: a2ui`
 
-`agents.LoadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the A2UI 1.0 prompt in a ```` ```ui:a2ui@1.0 ```` block with the catalog `getstream.io:app-catalog`, the one stream-chat-swift's renderer draws. The JavaScript SDK writes the same prompt, and both are held to one fixture (930997def).
+`agents.LoadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the A2UI 1.0 prompt in a ```` ```ui:a2ui@1.0 ```` block with the catalog `getstream.io:app-catalog`, the one stream-chat-swift's renderer draws. The JavaScript SDK writes the same prompt, and both are held to one fixture (#2028).
 
 ### A running session takes more of its caller's tools, and gives them back
 
@@ -604,7 +604,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### `agents.DefineSkills` takes the id of the agent config the skills belong to
 
-`agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it.
+`agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
 
 ### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
 
@@ -720,7 +720,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 
-`Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (AI-3342).
+`Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
 
 ### A customer's refused key no longer raises the operator's key_refused alert
 
