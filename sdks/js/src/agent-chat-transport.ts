@@ -302,13 +302,20 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
     refresh();
   };
 
-  /** Leaves the version shown for the channel's own, before branching off a message of it. */
-  const leaveOverlayFor = async (session: Session, source: M): Promise<void> => {
+  /**
+   * Leaves the version shown for the channel's own, before branching off a message of it through
+   * `responseId`.
+   */
+  const leaveOverlayFor = async (session: Session, source: M, responseId: string): Promise<void> => {
     const viewed = overlay;
     if (!viewed) {
       return;
     }
-    if (viewed.items.includes(source)) {
+    // An edit of the channel's own question goes through the reply shown under it, which can be
+    // the version's: a reply's other versions are read back without the question they share.
+    const branchesOffViewed =
+      viewed.items.includes(source) || viewed.items.some((item) => supportBranchOf(item)?.responseId === responseId);
+    if (branchesOffViewed) {
       // The router refuses to branch off a response that is not on the conversation.
       await activate(session, viewed);
       return;
@@ -456,7 +463,7 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         const remembered = lastBranch;
         const session = await chat.use();
         if (source) {
-          await leaveOverlayFor(session, source);
+          await leaveOverlayFor(session, source, responseId);
         }
         const reasoningEffort = options.reasoningEffort?.(request.chatOption);
         const effort = reasoningEffort ? { reasoningEffort } : {};
