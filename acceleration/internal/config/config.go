@@ -33,7 +33,7 @@ import (
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/v2"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
@@ -475,10 +475,12 @@ type Phone struct {
 	// EchoCancellation takes the agent's voice out of what a phone caller's line sends back
 	// (internal/echocancel), before anything of the agent's hears it: a phone with no echo
 	// cancellation of its own sends it back, and the agent hears its own words as the
-	// caller's. On by default; false turns it off for every call on the router.
+	// caller's. Off by default: a router built without GOEXPERIMENT=simd runs AEC3 in pure Go,
+	// about 0.46 ms of a core per 10 ms of every phone caller, so each environment turns it
+	// on for itself.
 	EchoCancellation bool `koanf:"echo_cancellation"`
 	// EchoMaxDelay is the longest an echo is looked for after the agent's voice went out, from
-	// echocancel.MinMaxDelay to echocancel.MaxMaxDelay. 1s by default. Each 96 ms more is another
+	// echodelay.Min to echodelay.Max. 1s by default. Each 96 ms more is another
 	// of AEC3's matched filters, the costliest part of cancelling a line.
 	EchoMaxDelay time.Duration `koanf:"echo_max_delay"`
 }
@@ -723,8 +725,7 @@ func Defaults() Config {
 		Episodes: Episodes{IdleAfter: time.Hour},
 		// Provisional, not a measurement: staging measures how long sessions.Create takes for
 		// campaign and scheduled calls, and this is set above the longest (AI-800).
-		Phone: Phone{AgentJoinTimeout: 10 * time.Second, EchoCancellation: true,
-			EchoMaxDelay: echocancel.DefaultMaxDelay},
+		Phone:       Phone{AgentJoinTimeout: 10 * time.Second, EchoMaxDelay: echodelay.Default},
 		Sandbox:     Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona, IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
@@ -945,9 +946,9 @@ func (c Config) validate() error {
 	if c.Phone.AgentJoinTimeout < 0 {
 		return fmt.Errorf("config: phone.agent_join_timeout cannot be negative, got %s", c.Phone.AgentJoinTimeout)
 	}
-	if err := echocancel.Check(echocancel.Config{MaxDelay: c.Phone.EchoMaxDelay}); err != nil {
+	if err := echodelay.Check(c.Phone.EchoMaxDelay); err != nil {
 		return fmt.Errorf("config: phone.echo_max_delay is from %s to %s, got %s",
-			echocancel.MinMaxDelay, echocancel.MaxMaxDelay, c.Phone.EchoMaxDelay)
+			echodelay.Min, echodelay.Max, c.Phone.EchoMaxDelay)
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)

@@ -660,16 +660,16 @@ func (s *ConfigSuite) TestAPlacedCallWaitsTenSecondsForAnAgentUnlessAskedFor() {
 	s.Equal(25*time.Second, config.Phone.AgentJoinTimeout)
 }
 
-func (s *ConfigSuite) TestPhoneCallsHaveTheirEchoCancelledUnlessTurnedOff() {
+func (s *ConfigSuite) TestPhoneCallsHaveTheirEchoCancelledOnlyWhenTurnedOn() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
-	s.True(config.Phone.EchoCancellation)
+	s.False(config.Phone.EchoCancellation)
 
-	s.T().Setenv("ROUTER_PHONE_ECHO_CANCELLATION", "false")
+	s.T().Setenv("ROUTER_PHONE_ECHO_CANCELLATION", "true")
 	config, _, err = Load("")
 	s.Require().NoError(err)
-	s.False(config.Phone.EchoCancellation)
-	s.Equal("false", os.Getenv("ROUTER_PHONE_ECHO_CANCELLATION"), "what is exported says the same")
+	s.True(config.Phone.EchoCancellation)
+	s.Equal("true", os.Getenv("ROUTER_PHONE_ECHO_CANCELLATION"), "what is exported says the same")
 }
 
 func (s *ConfigSuite) TestAnEchoIsLookedForASecondLateUnlessAskedFor() {
@@ -686,7 +686,8 @@ func (s *ConfigSuite) TestAnEchoIsLookedForASecondLateUnlessAskedFor() {
 // Under one of AEC3's matched filters there is nothing to look with, and 1.2 s is half again
 // the longest a voice takes to come back as echo.
 func (s *ConfigSuite) TestAnEchoLookedForLaterThanItsBoundsIsRefused() {
-	for _, delay := range []string{"100ms", "-1s", "1500ms"} {
+	// Zero would otherwise read as the default and be exported as 0s.
+	for _, delay := range []string{"0s", "100ms", "-1s", "1500ms"} {
 		s.T().Setenv("ROUTER_PHONE_ECHO_MAX_DELAY", delay)
 
 		_, _, err := Load("")
