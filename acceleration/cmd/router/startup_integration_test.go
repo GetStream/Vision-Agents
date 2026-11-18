@@ -517,8 +517,14 @@ func healthy(address string) bool {
 // still up; run has a handler for SIGTERM only while it runs, so the cleanup stops it here and
 // not by the signal killing the binary.
 func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
+	stop, _ = s.startLogged(settings)
+	return stop
+}
+
+// startLogged is start that also gives what the router logged.
+func (s *RouterStartSuite) startLogged(settings config.Config) (stop func() error, logs *listenLog) {
 	stopped := make(chan struct{})
-	logs := &listenLog{listening: make(chan struct{})}
+	logs = &listenLog{listening: make(chan struct{})}
 	var runErr error
 	go func() {
 		runErr = run(settings, slog.New(logs))
@@ -549,7 +555,7 @@ func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
 	case <-time.After(30 * time.Second):
 		s.Require().Fail("the router did not start listening")
 	}
-	return stop
+	return stop, logs
 }
 
 // Defect: the router built without its activity record (the server counts nothing), or without
@@ -639,11 +645,25 @@ func goroutines() string {
 type listenLog struct {
 	listening chan struct{}
 	once      sync.Once
+	mu        sync.Mutex
+	warnings  []string
+}
+
+// warned is every warning logged so far.
+func (l *listenLog) warned() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.warnings)
 }
 
 func (l *listenLog) Enabled(context.Context, slog.Level) bool { return true }
 
 func (l *listenLog) Handle(_ context.Context, record slog.Record) error {
+	if record.Level == slog.LevelWarn {
+		l.mu.Lock()
+		l.warnings = append(l.warnings, record.Message)
+		l.mu.Unlock()
+	}
 	if record.Message == "listening" {
 		l.once.Do(func() { close(l.listening) })
 	}
@@ -672,4 +692,26 @@ func (s *RouterStartSuite) TestARouterWithASlackChannelChecksCostAnomaliesUntilI
 	held, err := other.Hold(s.ctx)
 	s.Require().NoError(err)
 	s.True(held, "the router kept the lock after it stopped")
+}
+
+// Defect: the warning of a router with no keyring names a variable the router no longer
+// reads, and sends an operator to set it.
+func (s *RouterStartSuite) TestARouterWithNoKeyringWarnsWhichVariablesToSet() {
+	for _, name := range []string{"ROUTER_DEV_KEK", "ROUTER_AUTH_KEK", "ROUTER_AUTH_KEK_V1", "ROUTER_AUTH_KEK_V1_WRAPPED"} {
+		s.T().Setenv(name, "")
+	}
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+
+	stop, logs := s.startLogged(settings)
+	s.Require().NoError(stop())
+
+	var found string
+	for _, warning := range logs.warned() {
+		if strings.HasPrefix(warning, "no key encryption keyring set") {
+			found = warning
+		}
+	}
+	s.Require().NotEmpty(found, "warnings: %q", logs.warned())
+	s.Contains(found, "(ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED)")
 }
