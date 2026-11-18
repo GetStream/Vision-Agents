@@ -3,6 +3,7 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"math"
@@ -146,6 +147,44 @@ func (s *StoreSuite) TestEachAppAreaClientAndDayIsARowOfItsOwn() {
 	s.Equal(4, s.activityRows("app"))
 	s.Equal(1, s.activityRows("another"))
 	s.Equal(int64(1), s.activityOf("app", "agent_setup", AuditSourceCLI).requests)
+}
+
+// Defect: a hook's or a forward's row, which names only its app, written with no organization
+// when app_organizations holds the app's, so the day's digest leaves it out.
+func (s *StoreSuite) TestADeltaNamingNoOrganizationIsTheOneItsAppJoined() {
+	app, organization := "app-"+rand.Text(), "org-"+rand.Text()
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, app, organization))
+	hook := s.served(app, 1, s.base)
+	hook.OrganizationID = ""
+
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{hook}))
+
+	s.Equal(organization, s.activityOf(app, "agent_setup", AuditSourceCLI).organizationID)
+}
+
+// Defect: the organization app_organizations last saw the app under read over the one the
+// request named, which is the newer.
+func (s *StoreSuite) TestADeltaNamingAnOrganizationKeepsIt() {
+	app := "app-" + rand.Text()
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, app, "org-"+rand.Text()))
+	named := s.served(app, 1, s.base)
+	named.OrganizationID = "org-" + rand.Text()
+
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{named}))
+
+	s.Equal(named.OrganizationID, s.activityOf(app, "agent_setup", AuditSourceCLI).organizationID)
+}
+
+// Defect: an app no request has named an organization for read as NULL, which the column
+// refuses, failing the whole write.
+func (s *StoreSuite) TestADeltaOfAnAppWithNoKnownOrganizationIsWrittenWithNone() {
+	app := "app-" + rand.Text()
+	hook := s.served(app, 1, s.base)
+	hook.OrganizationID = ""
+
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{hook}))
+
+	s.Empty(s.activityOf(app, "agent_setup", AuditSourceCLI).organizationID)
 }
 
 // Defect: rows past the first statement's thousand dropped, or one written twice, at the
