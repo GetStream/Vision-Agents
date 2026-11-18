@@ -3,11 +3,17 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
@@ -330,4 +336,56 @@ func (s *DLCSuite) TestASignedReportOnACampaignIsCountedAsItsAppsPhoneWork() {
 	s.Equal(before.requests+1, after.requests)
 	s.Equal(before.refused, after.refused)
 	s.Equal(int64(0), s.counted(activity.AreaHooksIn, store.AuditSourceAPI).requests, "a report is phone work")
+}
+
+// Defect: a signed delivery that is not JSON, answered 400, left out of the app's hooks.
+func (s *ConnectionEventsSuite) TestASignedDeliveryThatIsNotJSONIsCountedRefused() {
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	sub := s.atTheFake(connection)[0]
+
+	before, after := s.hooksAfter(func() {
+		s.Require().Equal(http.StatusBadRequest, s.signedRaw(sub.URL, sub.Secret, sub.ID, []byte("not json")))
+	})
+
+	s.Equal(before.requests+1, after.requests)
+	s.Equal(before.refused+1, after.refused)
+}
+
+// signedRaw posts body signed with secret, as the MCP server signs a delivery, and returns the
+// status the router answered.
+func (s *ConnectionEventsSuite) signedRaw(url, secret, subscriptionID string, body []byte) int {
+	key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+	s.Require().NoError(err)
+	id := "msg_" + s.utils.uuid()
+	stamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(id + "." + stamp + "."))
+	mac.Write(body)
+	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("webhook-id", id)
+	request.Header.Set("webhook-timestamp", stamp)
+	request.Header.Set("webhook-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	request.Header.Set("X-MCP-Subscription-Id", subscriptionID)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	_ = response.Body.Close()
+	return response.StatusCode
+}
+
+// Defect: a signed report on an app's campaign the router failed to act on (5xx) left out of
+// the app's phone work, so the digest shows none of its failing 10DLC reports.
+func (s *DLCSuite) TestASignedReportTheRouterFailsOnIsCountedRefused() {
+	_, campaign := s.pendingWithTheVendor()
+	s.registry.set(campaign, campaignRegistryFails)
+	s.activityWritten()
+	before := s.counted(activity.AreaPhoneSMS, store.AuditSourceAPI)
+
+	s.Require().GreaterOrEqual(s.report(`{"campaignId":"`+campaign+`"}`, s.signing), http.StatusInternalServerError)
+	s.activityWritten()
+
+	after := s.counted(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(before.requests+1, after.requests)
+	s.Equal(before.refused+1, after.refused)
 }

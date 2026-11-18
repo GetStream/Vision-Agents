@@ -3,6 +3,7 @@
 package scheduling
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -149,4 +150,55 @@ func (s *SchedulerSuite) TestAnOccurrenceWhoseWorkersKeepDyingIsCountedRefused()
 	stop()
 
 	s.Equal(occurrencesCounted{requests: 1, refused: 1, code: ReasonFailed}, s.counted(task))
+}
+
+// Defect: an occurrence settled under a claim an edit fenced (the run recorded delivered, the
+// schedule left alone) left uncounted.
+func (s *SchedulerSuite) TestAnOccurrenceSettledUnderAFencedClaimIsCounted() {
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	fence := func(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+		if claimed.Task.ID == task.ID {
+			// An edit during the delivery takes the claim away.
+			_, err := s.db.DB().ExecContext(ctx, `UPDATE scheduled_tasks SET claim_id = 'fenced' WHERE id = ?`, task.ID)
+			s.Require().NoError(err)
+		}
+		return "conversation", "", nil
+	}
+	stop := s.counting(fence, nil)
+
+	s.Require().Eventually(func() bool {
+		runs := s.runs(task)
+		return len(runs) == 1 && runs[0].State == store.ScheduledTaskRunDelivered
+	}, 10*time.Second, 10*time.Millisecond)
+	stop()
+
+	s.Equal(occurrencesCounted{requests: 1}, s.counted(task))
+}
+
+// Defect: an occurrence whose run could not be written counted now, and again by the claim that
+// takes it up and settles it.
+func (s *SchedulerSuite) TestAnOccurrenceWhoseRunWasNotWrittenIsNotCounted() {
+	task := s.task(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), nil)
+	delivered := make(chan struct{}, 1)
+	lose := func(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+		if claimed.Task.ID == task.ID {
+			// The run row gone, so FinishScheduledTaskRun's read of it fails.
+			_, err := s.db.DB().ExecContext(ctx, `DELETE FROM scheduled_task_runs WHERE id = ?`, claimed.Run.ID)
+			s.Require().NoError(err)
+			delivered <- struct{}{}
+		}
+		return "conversation", "", nil
+	}
+	var scheduler *Scheduler
+	stop := s.counting(lose, func(started *Scheduler) { scheduler = started })
+
+	select {
+	case <-delivered:
+	case <-time.After(10 * time.Second):
+		s.FailNow("the occurrence was never delivered")
+	}
+	s.Require().Eventually(func() bool { return scheduler.Running() == 0 }, 10*time.Second, 10*time.Millisecond)
+	stop()
+
+	s.Equal(occurrencesCounted{}, s.counted(task))
 }

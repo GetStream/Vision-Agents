@@ -37,6 +37,10 @@ type campaignRegistry struct {
 	assigned  map[string]string
 }
 
+// campaignRegistryFails is a campaign status no vendor sends: the fake answers a read of a
+// campaign set to it with a 500.
+const campaignRegistryFails = "REGISTRY_FAILS"
+
 func (r *campaignRegistry) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -55,6 +59,10 @@ func (r *campaignRegistry) ServeHTTP(w http.ResponseWriter, request *http.Reques
 		fmt.Fprintf(w, `{"campaignId":%q,"campaignStatus":"TCR_PENDING"}`, id)
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/v2/10dlc/campaign/"):
 		id := strings.TrimPrefix(path, "/v2/10dlc/campaign/")
+		if r.campaigns[id] == campaignRegistryFails {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		fmt.Fprintf(w, `{"campaignId":%q,"campaignStatus":%q}`, id, r.campaigns[id])
 	case request.Method == http.MethodPost && path == "/v2/10dlc/phone_number_campaigns":
 		r.assigned[body["phoneNumber"]] = body["campaignId"]
