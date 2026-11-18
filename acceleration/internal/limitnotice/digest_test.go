@@ -289,3 +289,60 @@ func (s *DigestSuite) TestACheckWithoutTheDigestPostsNone() {
 
 	s.Empty(s.slack.posts())
 }
+
+// appActive records requests, refused of them, of the app appID of organizationID in area on the
+// day daysAgo days before today at hour, the latest refusal with code.
+func (s *DigestSuite) appActive(organizationID, appID, area string, daysAgo int, requests, refused int64, code string, hour int) {
+	day := time.Date(today.Year(), today.Month(), today.Day(), hour, 0, 0, 0, time.UTC).AddDate(0, 0, -daysAgo)
+	delta := store.ActivityDelta{
+		OrganizationID: organizationID, AppID: appID, Area: area, Client: store.AuditSourceAPI,
+		Day: day, Requests: requests, Refused: refused, FirstAt: day, LastAt: day,
+	}
+	if refused > 0 {
+		delta.LastRefusalCode, delta.LastRefusalAt = code, day
+	}
+	s.Require().NoError(s.db.RecordActivity(s.ctx, []store.ActivityDelta{delta}))
+}
+
+// Defect: the day before's count of organizations being a count of rows, so an organization with
+// several apps and areas counts more than once and the comparison of AC-6 is wrong.
+func (s *DigestSuite) TestTheDayBeforeCountsDistinctOrganizations() {
+	org := organization()
+	s.appActive(org, "app-a", activity.AreaAgentSetup, 2, 1, 0, "", 12)
+	s.appActive(org, "app-a", activity.AreaDashboardReads, 2, 1, 0, "", 12)
+	s.appActive(org, "app-b", activity.AreaDashboardReads, 2, 1, 0, "", 12)
+	s.appActive(organization(), "app-c", activity.AreaAgentSetup, 1, 1, 0, "", 12)
+	s.router().Start()
+	s.checked(0)
+
+	s.Require().Len(s.digests(), 1)
+	s.True(strings.HasSuffix(s.digests()[0], "(day before: 1)"), s.digests()[0])
+}
+
+// Defect: the apps of one organization in one area not summed (the larger count taken, or each
+// app kept apart), so an organization refused 14 times by one app and answered once by another
+// is shown as refused every time.
+func (s *DigestSuite) TestTheAppsOfAnOrganizationAreSummed() {
+	org := organization()
+	s.appActive(org, "app-a", activity.AreaAgentSetup, 1, 14, 14, "invalid_api_key", 10)
+	s.appActive(org, "app-b", activity.AreaAgentSetup, 1, 1, 0, "", 11)
+	s.router().Start()
+	s.checked(0)
+
+	s.Require().Len(s.digests(), 1)
+	s.Contains(s.digests()[0], "  • `"+org+"`   reached: agent_setup   agent_setup (api)\n")
+	s.Contains(s.digests()[0], "All requests refused: 0")
+}
+
+// Defect: the code named for an organization refused every time being the oldest refusal's, not
+// the latest across its apps.
+func (s *DigestSuite) TestTheCodeNamedIsTheLatestRefusalAcrossApps() {
+	org := organization()
+	s.appActive(org, "app-a", activity.AreaAgentSetup, 1, 2, 2, "older_code", 10)
+	s.appActive(org, "app-b", activity.AreaAgentSetup, 1, 1, 1, "newer_code", 11)
+	s.router().Start()
+	s.checked(0)
+
+	s.Require().Len(s.digests(), 1)
+	s.Contains(s.digests()[0], "`"+org+"`   3 requests (newer_code)")
+}
