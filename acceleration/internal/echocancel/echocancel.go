@@ -39,6 +39,10 @@ const (
 	// arrives, so a line whose audio stops for longer drops the oldest of it, and the
 	// canceller, whose voice and line no longer line up, is replaced.
 	playedFrames = 100
+	// settledFrames is how long a new canceller cleans before its estimates of the echo
+	// stand for the line, rather than its predecessor's: 3 s, by when it has found the echo
+	// again in the calls in call_test.go.
+	settledFrames = 300
 )
 
 const (
@@ -231,6 +235,13 @@ type Line struct {
 	buffered int
 	silence  [FrameSamples]int16
 	closed   bool
+	// stale is whether the canceller no longer lines the voice up with the line, after a gap
+	// longer than the voice a line holds, and is to be replaced before the next frame.
+	stale bool
+	// settled is how many frames the canceller has cleaned since it was made, and before what
+	// the one it replaced last estimated.
+	settled int
+	before  *Metrics
 }
 
 // played queues one frame of the agent's voice for the line's canceller.
@@ -300,10 +311,7 @@ func (l *Line) Clean(samples []int16) []int16 {
 // cleanFrame hands AEC3 the voice played since the frame before, then cleans this one in
 // place.
 func (l *Line) cleanFrame(frame []int16) {
-	n, dropped := l.take()
-	if dropped {
-		l.reset()
-	}
+	n := l.takeFresh()
 	for i := range n {
 		toFloat(l.render[0], l.taking[i][:])
 		// Neither call fails: the frames are built here to the size the canceller was made for.
@@ -311,7 +319,20 @@ func (l *Line) cleanFrame(frame []int16) {
 	}
 	toFloat(l.capture[0], frame)
 	_ = l.canceller.ProcessCapture(l.capture)
+	l.settled++
 	fromFloat(frame, l.capture[0])
+}
+
+// takeFresh takes the voice queued since the frame before, replacing the canceller first
+// when the voice and the line no longer line up: voice was dropped unread, or the line was
+// gone for longer than the voice it holds.
+func (l *Line) takeFresh() int {
+	n, dropped := l.take()
+	if dropped || l.stale {
+		l.stale = false
+		l.reset()
+	}
+	return n
 }
 
 // Missed steps the line over audio missing from it, d long by its timestamps: a caller's
@@ -325,13 +346,24 @@ func (l *Line) Missed(d time.Duration) {
 		return
 	}
 	if frames >= playedFrames {
-		l.reset()
+		l.stale = true
 		return
 	}
 	gapFrames.Add(float64(frames))
-	for range frames {
-		l.cleanFrame(l.silence[:])
-		clear(l.silence[:])
+	// The voice queued went out over the gap, so it is handed over a frame at a time as the
+	// silence goes by, the newest with the last silent frame: all of it at once, ahead of the
+	// first, is more than AEC3's render buffer holds once an echo's delay is added, and it
+	// starts over.
+	n := l.takeFresh()
+	fed := 0
+	for i := range frames {
+		for due := n - (frames - 1 - i); fed < due; fed++ {
+			toFloat(l.render[0], l.taking[fed][:])
+			_ = l.canceller.AnalyzeRender(l.render)
+		}
+		toFloat(l.capture[0], l.silence[:])
+		_ = l.canceller.ProcessCapture(l.capture)
+		l.settled++
 	}
 }
 
@@ -342,7 +374,11 @@ func (l *Line) reset() {
 		// NewCall built one with the same config.
 		return
 	}
-	l.canceller = canceller
+	if l.settled >= settledFrames || l.before == nil {
+		estimated := l.Metrics()
+		l.before = &estimated
+	}
+	l.canceller, l.settled = canceller, 0
 	cancellerResets.Inc()
 }
 
@@ -389,6 +425,10 @@ func (l *Line) Close() Metrics {
 	l.Detach()
 
 	metrics := l.Metrics()
+	if l.before != nil && l.settled < settledFrames {
+		// A canceller replaced shortly before the line closed has estimated nothing yet.
+		metrics = *l.before
+	}
 	l.mu.Lock()
 	voiced, closed := l.voiced, l.closed
 	l.closed = true

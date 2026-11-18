@@ -8,10 +8,12 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	webrtcaudio "github.com/GetStream/getstream-go-webrtc/audio"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 	"github.com/thesyncim/gopus"
 	"github.com/thesyncim/gopus/container/ogg"
@@ -197,10 +199,16 @@ func (s *CallSuite) converseLosing(cfg Config, phone *line, seconds float64, age
 	lay(sent, s.agent, agentAt)
 	lay(voice, s.caller, callerAt)
 
+	// Calls run side by side (alongside), so a failure here panics rather than stopping
+	// a test from a goroutine of its own.
 	call, err := NewCall(cfg)
-	s.Require().NoError(err)
+	if err != nil {
+		panic(err)
+	}
 	listening, err := call.Listen()
-	s.Require().NoError(err)
+	if err != nil {
+		panic(err)
+	}
 	defer listening.Close()
 
 	var t talk
@@ -274,47 +282,61 @@ func (s *CallSuite) replies(until time.Duration) []time.Duration {
 	return at
 }
 
-func (s *CallSuite) TestTheAgentsVoiceComingBackAQuarterSecondLateIsCancelled() {
-	t := s.converse(Config{}, newLine(250*time.Millisecond, 10), 40, s.replies(40*time.Second), nil)
-
-	first, rest := echoGone(t, 0, 3), echoGone(t, 10, 39)
-	s.T().Logf("echo 250 ms late: %.1f dB quieter in the first 3 s, %.1f dB from 10 s on", first, rest)
-	s.Greater(rest, 20.0)
+// alongside runs calls side by side, each on a goroutine of its own, and returns what each
+// came to: a call is seconds of audio cancelled 10 ms at a time, and one after the other they
+// would take minutes under the race detector.
+func alongside(calls ...func() talk) []talk {
+	talks := make([]talk, len(calls))
+	var wg sync.WaitGroup
+	for i, call := range calls {
+		wg.Go(func() { talks[i] = call() })
+	}
+	wg.Wait()
+	return talks
 }
 
-func (s *CallSuite) TestTheAgentsVoiceComingBackSevenHundredMillisecondsLateIsCancelled() {
-	t := s.converse(Config{}, newLine(700*time.Millisecond, 10), 40, s.replies(40*time.Second), nil)
+func (s *CallSuite) TestTheAgentsVoiceComingBackAQuarterAndSevenTenthsOfASecondLateIsCancelled() {
+	delays := []time.Duration{250 * time.Millisecond, 700 * time.Millisecond}
+	talks := alongside(
+		func() talk { return s.converse(Config{}, newLine(delays[0], 10), 20, s.replies(20*time.Second), nil) },
+		func() talk { return s.converse(Config{}, newLine(delays[1], 10), 20, s.replies(20*time.Second), nil) },
+	)
 
-	first, rest := echoGone(t, 0, 3), echoGone(t, 10, 39)
-	s.T().Logf("echo 700 ms late: %.1f dB quieter in the first 3 s, %.1f dB from 10 s on", first, rest)
-	s.Greater(rest, 20.0)
+	for i, t := range talks {
+		first, rest := echoGone(t, 0, 3), echoGone(t, 8, 19)
+		s.T().Logf("echo %s late: %.1f dB quieter in the first 3 s, %.1f dB from 8 s on", delays[i], first, rest)
+		s.Greater(rest, 35.0, "echo %s late", delays[i])
+	}
 }
 
 func (s *CallSuite) TestAnEchoLaterThanTheLongestDelayLookedForIsLeft() {
-	t := s.converse(Config{MaxDelay: 300 * time.Millisecond}, newLine(700*time.Millisecond, 10), 40,
-		s.replies(40*time.Second), nil)
+	t := s.converse(Config{MaxDelay: 300 * time.Millisecond}, newLine(700*time.Millisecond, 10), 20,
+		s.replies(20*time.Second), nil)
 
-	rest := echoGone(t, 10, 39)
-	s.T().Logf("echo 700 ms late, looked for up to 300 ms: %.1f dB quieter from 10 s on", rest)
+	rest := echoGone(t, 8, 19)
+	s.T().Logf("echo 700 ms late, looked for up to 300 ms: %.1f dB quieter from 8 s on", rest)
 	s.Less(rest, 10.0)
 }
 
-func (s *CallSuite) TestTheCallersVoiceIsKeptOnceTheEchoIsCancelled() {
-	t := s.converse(Config{}, newLine(250*time.Millisecond, 10), 50, s.replies(25*time.Second),
-		[]time.Duration{30 * time.Second})
+func (s *CallSuite) TestTheCallersVoiceIsKeptOnceTheEchoIsCancelledAndHeardOverTheAgent() {
+	talks := alongside(
+		// The agent says its replies for 10 s, and the caller speaks once it has stopped.
+		func() talk {
+			return s.converse(Config{}, newLine(250*time.Millisecond, 10), 24, s.replies(10*time.Second),
+				[]time.Duration{12 * time.Second})
+		},
+		// The caller speaks over the agent from 12 s on.
+		func() talk {
+			return s.converse(Config{}, newLine(250*time.Millisecond, 10), 24, s.replies(24*time.Second),
+				[]time.Duration{12 * time.Second})
+		},
+	)
 
-	kept := voiceKept(t, 30, 49)
-	s.T().Logf("caller alone after 25 s of echo: %.1f dB", kept)
+	kept, over := voiceKept(talks[0], 12, 23.9), voiceKept(talks[1], 12, 23.9)
+	s.T().Logf("caller alone after 10 s of echo: %.1f dB; caller over the agent: %.1f dB, echo before them %.1f dB quieter",
+		kept, over, echoGone(talks[1], 6, 12))
 	s.InDelta(0, kept, 1)
-}
-
-func (s *CallSuite) TestTheCallersVoiceOverTheAgentIsHeard() {
-	t := s.converse(Config{}, newLine(250*time.Millisecond, 10), 45, s.replies(45*time.Second),
-		[]time.Duration{25 * time.Second})
-
-	kept := voiceKept(t, 25, 44)
-	s.T().Logf("caller over the agent: %.1f dB, echo before them %.1f dB quieter", kept, echoGone(t, 10, 25))
-	s.Greater(kept, -6.0)
+	s.Greater(over, -6.0)
 }
 
 // losing loses the 20 ms chunks from at for d.
@@ -342,43 +364,87 @@ func dtx(hangover time.Duration) func(int, []int16) bool {
 	}
 }
 
-func (s *CallSuite) TestTheEchoStaysCancelledAcrossAChunkLost() {
-	for _, gap := range []time.Duration{20 * time.Millisecond, 100 * time.Millisecond, 600 * time.Millisecond} {
-		at := 15 * time.Second
-		t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 25, s.replies(25*time.Second), nil,
-			losing(at, gap))
+// gapAt is when the line's audio stops in the calls with a gap: after the canceller has found
+// the echo, partway through the agent's second reply.
+const gapAt = 10 * time.Second
 
-		after := (at + gap).Seconds()
-		gone := echoGone(t, after, after+2)
-		s.T().Logf("%s of the line lost at 15 s: %.1f dB quieter in the 2 s after it", gap, gone)
-		s.Greater(gone, 20.0, "after %s lost", gap)
+// gapCall is a call whose line, its echo delay late, loses gap of its audio at gapAt, running
+// on until 1.5 s after it.
+func (s *CallSuite) gapCall(delay, gap time.Duration) func() talk {
+	return func() talk {
+		end := gapAt + gap + 1500*time.Millisecond
+		return s.converseLosing(Config{}, newLine(delay, 10), end.Seconds(), s.replies(end), nil, losing(gapAt, gap))
+	}
+}
+
+// The echo of what was said during the gap comes back after it, while the canceller is
+// catching up with the voice that went out meanwhile: the second after the gap is the hardest.
+func (s *CallSuite) TestTheEchoStaysCancelledInTheSecondAfterTheLineGoesMissing() {
+	type gapped struct{ delay, gap time.Duration }
+	var cases []gapped
+	var calls []func() talk
+	for _, delay := range []time.Duration{250 * time.Millisecond, 700 * time.Millisecond, 900 * time.Millisecond} {
+		for _, gap := range []time.Duration{20 * time.Millisecond, 100 * time.Millisecond, 500 * time.Millisecond,
+			600 * time.Millisecond, 800 * time.Millisecond, 980 * time.Millisecond} {
+			cases = append(cases, gapped{delay, gap})
+			calls = append(calls, s.gapCall(delay, gap))
+		}
+	}
+
+	for i, t := range alongside(calls...) {
+		after := (gapAt + cases[i].gap).Seconds()
+		quieter := echoGone(t, after, after+1)
+		s.T().Logf("echo %s late, %s of the line lost: %.1f dB quieter in the second after", cases[i].delay,
+			cases[i].gap, quieter)
+		s.Greater(quieter, 30.0, "echo %s late, %s lost", cases[i].delay, cases[i].gap)
 	}
 }
 
 func (s *CallSuite) TestTheEchoStaysCancelledFromAPhoneThatStopsSendingWhileQuiet() {
-	for _, hangover := range []time.Duration{100 * time.Millisecond, 400 * time.Millisecond} {
-		t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 40, s.replies(40*time.Second), nil,
-			dtx(hangover))
+	hangovers := []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
+	var calls []func() talk
+	for _, hangover := range hangovers {
+		calls = append(calls, func() talk {
+			return s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 20, s.replies(20*time.Second), nil,
+				dtx(hangover))
+		})
+	}
 
-		gone := echoGone(t, 10, 39)
+	for i, t := range alongside(calls...) {
+		gone := echoGone(t, 8, 19)
 		lost := 0
 		for _, l := range t.lost {
 			if l {
 				lost++
 			}
 		}
-		s.T().Logf("a phone that stops sending %s after it goes quiet (%d%% of the line never sent): %.1f dB quieter from 10 s on",
-			hangover, lost*100/len(t.lost), gone)
-		s.Greater(gone, 20.0, "with a hangover of %s", hangover)
+		s.T().Logf("a phone that stops sending %s after it goes quiet (%d%% of the line never sent): %.1f dB quieter from 8 s on",
+			hangovers[i], lost*100/len(t.lost), gone)
+		s.Greater(gone, 35.0, "with a hangover of %s", hangovers[i])
 	}
 }
 
-func (s *CallSuite) TestALineSilentForLongerThanTheVoiceHeldIsCancelledAfresh() {
-	at := 15 * time.Second
-	t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 30, s.replies(30*time.Second), nil,
-		losing(at, 3*time.Second))
+func (s *CallSuite) TestALineSilentForLongerThanTheVoiceHeldIsCancelledAfreshOnce() {
+	resets, dropped := testutil.ToFloat64(cancellerResets), testutil.ToFloat64(voiceDropped)
+	const gap = 3 * time.Second
+	end := gapAt + gap + 6*time.Second
 
-	gone := echoGone(t, 19, 29)
-	s.T().Logf("3 s of the line lost at 15 s: %.1f dB quieter from 19 s on", gone)
-	s.Greater(gone, 20.0)
+	t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), end.Seconds(), s.replies(end), nil,
+		losing(gapAt, gap))
+
+	quieter := echoGone(t, (gapAt + gap + time.Second).Seconds(), end.Seconds())
+	s.T().Logf("%s of the line lost at %s: %.1f dB quieter from 1 s after it", gap, gapAt, quieter)
+	s.Greater(quieter, 35.0)
+	s.Equal(1.0, testutil.ToFloat64(cancellerResets)-resets, "the canceller was not replaced exactly once")
+	// The line holds a second of voice; what went out over the rest of the gap, and with the
+	// 20 ms that ended it, was let go.
+	s.Equal(float64(int(gap/FrameDuration)+2-playedFrames), testutil.ToFloat64(voiceDropped)-dropped)
+}
+
+func (s *CallSuite) TestAGapIsCountedFrameByFrame() {
+	frames := testutil.ToFloat64(gapFrames)
+
+	s.gapCall(250*time.Millisecond, 500*time.Millisecond)()
+
+	s.Equal(50.0, testutil.ToFloat64(gapFrames)-frames)
 }

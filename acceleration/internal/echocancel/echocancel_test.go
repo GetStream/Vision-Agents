@@ -195,3 +195,26 @@ func (s *LineSuite) taken(line *Line) int {
 	n, _ := line.take()
 	return n
 }
+
+// A line whose audio stops for longer than the voice it holds gets a new canceller, which has
+// estimated nothing of the echo yet when the line closes soon after.
+func (s *LineSuite) TestALineClosedJustAfterItsCancellerWasReplacedReportsWhatTheOldOneFound() {
+	voice := speech(10*SampleRate, 13)
+	// The echo comes back 100 ms late and 10 dB down.
+	echo := make([]int16, len(voice))
+	for i := 1600; i < len(voice); i++ {
+		echo[i] = voice[i-1600] / 3
+	}
+	for at := 0; at < len(voice); at += chunk {
+		s.call.Played(voice[at : at+chunk])
+		s.line.Clean(append([]int16(nil), echo[at:at+chunk]...))
+	}
+	found := s.line.Metrics()
+	s.Require().Greater(found.ERLE, 3.0, "the canceller found no echo to report")
+
+	s.line.Missed(3 * time.Second)
+	s.call.Played(make([]int16, chunk))
+	s.line.Clean(make([]int16, chunk))
+
+	s.Equal(found, s.line.Close())
+}
