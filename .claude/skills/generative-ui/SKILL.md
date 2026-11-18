@@ -125,19 +125,20 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
 
 ## In the client SDKs
 
-- `Turn.ui` (JavaScript, Dart and Swift `TurnUI`) is the turn's UI from the socket:
-  `format`, `version`, `status`, `content`, with patches merged onto the transcript's previous
+- `Turn.ui` (JavaScript, Dart, Swift and Kotlin `TurnUI`) is the turn's UI from the socket:
+  `format`, `version`, `status` (Swift's and Kotlin's `isStreaming`), `content`, with patches merged onto the transcript's previous
   card. A patch with no card before it in this transcript, as after a reload, sets no `ui`:
   Stream Chat's copy, which the router merged, is the one to show.
 - `LiveUI` lays the socket's UI over the Stream Chat reply while it is written, so the card draws
   at socket speed instead of at Chat's 150ms. JavaScript's `AgentChat` applies it to every
   message it hands out; in Dart, the app calls `liveUI.observe` and `liveUI.overlay` itself
   (`flutter_assistant/lib/agent_chat.dart`), and in Swift too (`swift_assistant`'s
-  `AgentChat.swift`, which publishes each change inside an animation). Swift's, JavaScript's and
-  Dart's `TurnUI.content` also hold back the OpenUI statement no newline has ended yet while it
-  streams, so a card grows a part at a time rather than reflowing with every delta, and `LiveUI`
-  leaves a reply its text until one statement is finished. The rules, which keep a card from
-  jumping:
+  `AgentChat.swift`, which publishes each change inside an animation) and Kotlin
+  (`android_assistant`'s `AgentTransport.kt`, which redraws the conversation when `observe` says
+  what shows changed). Swift's, JavaScript's, Kotlin's and Dart's `TurnUI.content` also hold back
+  the OpenUI statement no newline has ended yet while it streams, so a card grows a part at a time
+  rather than reflowing with every delta, and `LiveUI` leaves a reply its text until one
+  statement is finished. The rules, which keep a card from jumping:
   - A reply that names its turn (`support_runtime.turn_id`) shows only that turn's UI.
   - Before its turn id is in Chat, the newest generating reply shows `latest()`: the newest
     turn's UI, only when that turn is the agent's. The person's question (`said`) and a new

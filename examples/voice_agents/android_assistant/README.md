@@ -90,6 +90,41 @@ or newer, generated UI replies 7.18.0, and `AIConversationState` 7.19.0: `stream
   changes, Markdown included; a Markdown reply simply has no UI. Tapping in the UI or sending its form is the person's
   next question, the action's label as their words and the action as `Responses.create`'s
   `uiAction`, so the agent answers again.
+- **The trip's own components**: the map, the place cards and the calendar, `trip_map`,
+  `place_card` and `calendar_check`, are the app's own views (`components/TripComponents.kt`),
+  described once in swift_assistant's `app/SwiftAssistant/UIComponents.json`, which the build
+  copies into the app's assets, so "Plan a weekend in Ohrid" places them in either format as on
+  iOS. They load what they show on the phone: a place's photo and summary from Wikipedia
+  (`PlaceCard.kt`), and the person's own calendar for the plan's days (`CalendarCheck.kt`),
+  which the agent never sees, read through `CalendarContract` once `READ_CALENDAR` is granted,
+  asked for when the card first appears. The map (`TripMap.kt`) is MapLibre's OpenGL ES build
+  (`android-sdk-opengl`, since the default `android-sdk` requires Vulkan) with OpenFreeMap's
+  liberty style, or its dark one in dark mode, on OpenStreetMap's data, which needs no API key; its pins drop one after another
+  while the reply streams in. Tapping a place card or a pin asks about the place. Ask "Where should we eat in
+  Ohrid tonight?" for the other kind of card (`Booking.kt`): `restaurant_card` per venue, which
+  asks for its menu when tapped, `availability_gauge` of how full the first one is and
+  `seat_selector` of its tables. Tapping a free table asks to reserve it. Each reads the brand
+  from `OpenUITheme.current`.
+- **The UI streams in over the socket.** The router sends a reply's UI on the session's socket
+  as the model writes it (`ui_delta`, then `ui_completed`), apart from the words people read or
+  hear, and writes it on the reply's message in Chat later, on a slower tick. `AgentTransport`
+  gives each change of the session's conversation to the SDK's `LiveUI` (`observe`), which reads
+  each turn's UI (`Turn.ui`), and draws each reply with the custom data `overlay` answers for it,
+  until the message's own `ai_ui` is complete. While OpenUI streams, a card grows a statement at
+  a time.
+- **A change to the last card is a patch.** Asked to change the card it just wrote, such as the
+  party size, the agent writes only the statements that change, in an ```` ```openui-patch ````
+  block. The router merges them into that card before it writes the message, and the SDK does
+  the same with what streams in, so the reply shows the whole card, changed.
+- **The UI shows on a call too.** In voice mode the agent says a sentence or two and writes the
+  same UI, which the router keeps out of what is spoken. Voice mode shows the newest of it under
+  the glow, from the call's session, with a host of its own (`callUiHost`), in a card that
+  scrolls past 300dp. Tapping it asks the agent as in the chat.
+- **Settings › Brand** chooses the accent and corners the UI wears: Stream Default, Ember
+  Hospitality or Nordic Mobility (`Brand.kt`). The chat and the call show it at once, in
+  `ProvideOpenUITheme` with the brand's `OpenUITheme`, which OpenUI's parts and the app's
+  components read, and the phone keeps the choice. The agent
+  writes the same UI whichever is chosen.
 - **Photos** from the composer's button, which opens the system photo picker, go with the
   question, shrunk to 1280 pixels across and inline as JPEG data URIs (`Photos.kt`). The question
   shows them at once; the router uploads them to the conversation's channel and writes them on
@@ -144,8 +179,11 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
-- The trip's own components, the map, the place cards and the calendar that swift_assistant's
-  `UIComponents.json` describes: the app gives its renderers none, so a reply has only its
-  format's own.
+- The brand on A2UI's own parts: an A2UI reply's components from the app wear it, but its
+  other parts keep the Material look, since the A2UI renderer reads Material's theme, not
+  OpenUI's.
+- An animation as the card appears on a call: it shows at once.
 - Think harder, which iOS offers in the composer's options: Stream's Android composer has no
   options sheet.
+- A seat selector that brings its own `reserve_table` tool while it is shown, as iOS's does: the
+  Kotlin SDK cannot add a tool to a running session yet.
