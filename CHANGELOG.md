@@ -23,7 +23,7 @@ A text conversation carried on after it ended in another router process, by a me
 
 ### The Kotlin SDK shows a reply's interactive UI as the socket streams it
 
-`AgentEvent.Kind` has `UiDelta` and `UiCompleted`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time, and a turn has no `Turn.ui` until one is finished. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. `LiveUI` (`observe(conversation)`, then `overlay(messages)` for each reply's custom data) lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as Swift and JavaScript, so a new reply never shows the card of the one before it. A call screen, which shows no channel, shows the newest `Turn.ui` itself, from `TurnUI.customData`. `android_assistant` shows it in chat and on calls, with the trip's map, place cards and calendar, restaurant cards, an availability gauge and a seat selector, the app's own views described by swift_assistant's `UIComponents.json`, and brands switched live in Settings, which OpenUI cards and those views wear (AND-1948).
+`AgentEvent.Kind` has `UiDelta` and `UiCompleted`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time, and a turn has no `Turn.ui` until one is finished. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. `LiveUI` (`observe(conversation)`, then `overlay(messages)` for each reply's custom data) lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as Swift and JavaScript, so a new reply never shows the card of the one before it. A call screen, which shows no channel, shows the newest `Turn.ui` itself, from `TurnUI.customData`. `android_assistant` shows it in chat and on calls, with the trip's map, place cards and calendar, restaurant cards, an availability gauge and a seat selector, the app's own views described by swift_assistant's `UIComponents.json`, and brands switched live in Settings, which OpenUI cards and those views wear (AND-1948, #2054).
 
 ### A call through a customer's own SIP trunk survives the router node that holds it stopping
 
@@ -593,6 +593,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 `GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
 
 ## Breaking Changes
+
+### Kotlin: `Conversation` is no longer a data class
+
+`Conversation` keeps the UI text a turn is writing private, so its constructor, `copy`, `componentN`, `equals` and `toString` are written by hand. Kotlin callers need no change. Java loses the no-argument constructor: pass the three arguments, `new Conversation(turns, state, failure)`, where it called `new Conversation()` (AND-1948, #2054).
 
 ### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
 
