@@ -728,7 +728,9 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
       final summary = '${arguments['summary'] ?? ''}';
       if (when.isEmpty) throw const ToolFailure('Say when the table is for.');
       // What the person allows is the summary, so it has to name the table that is booked.
-      if (!summary.toLowerCase().contains(id.toLowerCase())) {
+      // The id as a whole word, so a summary about T10 does not pass for T1.
+      final named = RegExp('(^|[^a-z0-9])${RegExp.escape(id.toLowerCase())}(\$|[^a-z0-9])');
+      if (!named.hasMatch(summary.toLowerCase())) {
         throw ToolFailure('Name table $id in the summary: the person reads it before allowing.');
       }
       final reservation = reserve(id, when);

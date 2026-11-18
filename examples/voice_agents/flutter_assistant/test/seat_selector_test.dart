@@ -312,6 +312,22 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('refuses a booking whose summary names another table that starts the same', (
+      tester,
+    ) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T10', 'Garden', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+
+      final result = await call(tester, 'T1', summary: 'T10 in the Garden, for 4, tonight at 8pm');
+
+      expect(result['error'], contains('T1'));
+      expect(find.text('Table T1 reserved'), findsNothing);
+      await finish(tester);
+    });
+
     testWidgets('refuses a booking whose summary does not name the table', (tester) async {
       await open(tester);
       await show(tester, [
