@@ -271,7 +271,7 @@ steps and the third is the only one in `agent.yaml`.
 
 **1. Connect the line once, for the app.** This hands the router the provider's credentials
 and answers with the URL that provider should deliver to. They are sealed under the router's
-`auth.kek` and never read back, so a deployment without one refuses to hold them.
+key encryption key (`ROUTER_DEV_KEK` locally) and never read back, so a deployment without one refuses to hold them.
 
 ```bash
 curl -X POST -H "X-Customer-Id: $STREAM_ACCELERATION_CUSTOMER_ID" \

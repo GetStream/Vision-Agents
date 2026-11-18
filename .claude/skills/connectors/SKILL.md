@@ -39,7 +39,7 @@ binding on agent config "support": name linear, connection.type session, tools [
 | Setting | Why |
 |---|---|
 | `ROUTER_CONNECTORS_ENABLED=true` | Off by default |
-| `ROUTER_AUTH_KEK` (or `ROUTER_AUTH_KEK_V<n>` + `ROUTER_AUTH_KEK_VERSION`) | Seals the credentials. The router refuses to start without it when connectors are on. Changing it makes stored credentials unreadable. A hosted deployment sets `ROUTER_AUTH_KMS_KEY` + `ROUTER_AUTH_KEK_V<n>_WRAPPED` in its place: README, «The key encryption key in Cloud KMS» |
+| `ROUTER_DEV_KEK` on a laptop or in CI; `ROUTER_AUTH_KMS_KEY` + `ROUTER_AUTH_KEK_V<n>_WRAPPED` (+ `ROUTER_AUTH_KEK_VERSION`) on a hosted router | Seals the credentials. The router refuses to start without it when connectors are on, and refuses `ROUTER_DEV_KEK` beside a KMS setting. Changing it makes stored credentials unreadable. README, «The key encryption key in Cloud KMS» |
 | `ROUTER_PUBLIC_URL` | The provider sends the browser back to `<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback`. The dashboard shows this redirect URI on each OAuth connector |
 | `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin, unless the consent was started with a `return_url` (`createAuthorization`'s, or for a login or step-up the chat asks for, the session's own from `createSession`), which then replaces it. Unset, a consent without one reports to the wrong place and the dashboard waits forever |
 | `ROUTER_CORS_ORIGINS` | The dashboard origin, when the browser calls the router directly |
