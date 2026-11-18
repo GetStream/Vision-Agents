@@ -156,14 +156,14 @@ func digestMessage(environment string, links Links, digest DayDigest) string {
 		detail := organization.path()
 		if organization.allRefused() {
 			requests, _ := organization.counts()
-			detail = fmt.Sprintf("all %d requests refused%s", requests, inParentheses(organization.refusalCode()))
+			detail = fmt.Sprintf("all %s refused%s", countOf(requests), inParentheses(organization.refusalCode()))
 		}
 		return fmt.Sprintf("%s   reached: %s   %s", organizationName(links, organization.ID), reached, detail)
 	})
 	fmt.Fprintf(&b, "\nAll requests refused: %d", len(refused))
 	writeList(&b, refused, func(organization OrganizationDay) string {
 		requests, _ := organization.counts()
-		return fmt.Sprintf("%s   %d requests%s", organizationName(links, organization.ID), requests, inParentheses(organization.refusalCode()))
+		return fmt.Sprintf("%s   %s%s", organizationName(links, organization.ID), countOf(requests), inParentheses(organization.refusalCode()))
 	})
 	fmt.Fprintf(&b, "\nActive orgs: %d (day before: %d)", len(digest.Organizations), digest.ActiveBefore)
 	return b.String()
@@ -186,6 +186,14 @@ func organizationName(links Links, organization string) string {
 		return "<" + staff + "|" + organization + ">"
 	}
 	return "`" + organization + "`"
+}
+
+// countOf is how many requests there were, in words.
+func countOf(requests int64) string {
+	if requests == 1 {
+		return "1 request"
+	}
+	return fmt.Sprintf("%d requests", requests)
 }
 
 // inParentheses is " (text)", or nothing for no text.
