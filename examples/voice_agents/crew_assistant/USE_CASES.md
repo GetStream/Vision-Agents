@@ -48,8 +48,8 @@ shift leader.
   leader is your backend's: here it lands in the leaders' inbox, and yours can post it wherever
   your leaders read, such as a direct message or a channel through Stream Chat's server API.
 - **Health details:** the note to the leader takes a reason from a fixed list (`sick`, `family`,
-  `transport`, `other`), so nothing the person said about their health reaches it. The person's own
-  conversation still holds what they wrote.
+  `transport`, `other`), so the leader learns that someone is out sick but none of the symptoms
+  they described. The person's own conversation still holds what they wrote.
 - **In the sample:** "Call out sick". Try a cold (cover offered) and a fever (stay home).
 
 ## 2. Pre-shift fit check

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -349,5 +350,38 @@ func TestTheOwnerApprovesATicketAndTheDrafterHearsIt(t *testing.T) {
 	}
 	if got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false}); got.Code != http.StatusConflict {
 		t.Errorf("a decided ticket was decided again: %d", got.Code)
+	}
+	if len(heard) != 1 {
+		t.Errorf("the refused second decision told Jordan again: %+v", heard)
+	}
+}
+
+func TestADecisionMustSayApproveOrReject(t *testing.T) {
+	_, _, handler := newTestServer(t)
+	hour := time.Now().Add(time.Hour)
+	jordan, taylor := tokenFor(t, "crew-jordan", testSecret, hour), tokenFor(t, owner, testSecret, hour)
+	drafted := request(t, handler, "POST", "/crew/tickets", jordan, map[string]string{"summary": "Fryer down", "details": "E-41"})
+	var ticket struct {
+		ID string `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(drafted.Body.Bytes(), &ticket); err != nil || ticket.ID == "" {
+		t.Fatalf("drafting: %d %s", drafted.Code, drafted.Body)
+	}
+	decision := "/crew/tickets/" + ticket.ID + "/decision"
+	if got := request(t, handler, "POST", decision, taylor, map[string]any{"details": "Oil smoked"}); got.Code != http.StatusBadRequest {
+		t.Errorf("an edit without approve decided the ticket: %d", got.Code)
+	}
+	if got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false}); got.Code != http.StatusOK {
+		t.Errorf("the ticket wasn't still waiting after the refused edit: %d %s", got.Code, got.Body)
+	}
+}
+
+func TestADecisionNoticeQuotesABoundedTitle(t *testing.T) {
+	long := strings.Repeat("é", noticeTitleRunes+50)
+	if got := excerpt(long, noticeTitleRunes); utf8.RuneCountInString(got) != noticeTitleRunes+1 {
+		t.Errorf("the excerpt has %d runes, want %d and an ellipsis", utf8.RuneCountInString(got), noticeTitleRunes)
+	}
+	if got := excerpt("Fryer down", noticeTitleRunes); got != "Fryer down" {
+		t.Errorf("a short title was cut: %q", got)
 	}
 }

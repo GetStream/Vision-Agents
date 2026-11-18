@@ -490,10 +490,12 @@ func (r *restaurant) ticket(userID, asset, summary, details, priority, sessionID
 		Kind: "ticket", Title: title, Details: details, Status: "Draft, waiting for " + reviewer,
 		WaitingFor: owner, drafter: userID, session: sessionID, timezone: timezone,
 	})
-	return map[string]any{
-		"ticket_id": item.ID,
-		"status":    "sent to " + reviewer + ", the owner, to approve; they hear here once it's decided",
-	}, nil
+	status := "sent to " + reviewer + ", the owner, to approve"
+	if sessionID != "" {
+		// Only a ticket from a conversation can be answered in it.
+		status += "; they hear here once it's decided"
+	}
+	return map[string]any{"ticket_id": item.ID, "status": status}, nil
 }
 
 // decide approves or rejects a drafted ticket as userID, who must be the one it waits for, with

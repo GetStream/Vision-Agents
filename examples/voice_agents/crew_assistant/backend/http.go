@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -172,26 +174,46 @@ func (s *server) ticket(w http.ResponseWriter, r *http.Request, userID string) {
 // then tells the person who drafted it, in the conversation they drafted it in.
 func (s *server) decide(w http.ResponseWriter, r *http.Request, userID string) {
 	var asked struct {
-		Approve bool   `json:"approve"`
+		// Approve is required, so a body that only edits the ticket doesn't reject it.
+		Approve *bool  `json:"approve"`
 		Title   string `json:"title"`
 		Details string `json:"details"`
 	}
 	if !decode(w, r, &asked) {
 		return
 	}
-	item, err := s.crew.decide(userID, r.PathValue("id"), asked.Approve, asked.Title, asked.Details)
+	if asked.Approve == nil {
+		http.Error(w, "approve is required: true to submit the ticket, false to reject it", http.StatusBadRequest)
+		return
+	}
+	item, err := s.crew.decide(userID, r.PathValue("id"), *asked.Approve, asked.Title, asked.Details)
 	if err != nil {
 		http.Error(w, err.Error(), statusOf(err))
 		return
 	}
 	if item.session != "" {
-		instructions := fmt.Sprintf("Tell the person what happened to the repair ticket they drafted, %q: %s. "+
-			"Say it in one or two short sentences, and call no tools.", item.Title, item.Status)
-		if _, err := s.speak(r.Context(), item.drafter, item.session, "Your repair ticket", instructions, item.timezone); err != nil {
-			log.Printf("couldn't tell %s about %s: %v", item.drafter, item.ID, err)
+		instructions := fmt.Sprintf("Tell the person what happened to the repair ticket they drafted, %q (%s): %s. "+
+			"Say it in one or two short sentences, and call no tools.", excerpt(item.Title, noticeTitleRunes), item.ID, item.Status)
+		// The decision is made: the notice doesn't end with the owner's request.
+		telling, done := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+		defer done()
+		if _, err := s.speak(telling, item.drafter, item.session, "Your repair ticket", instructions, item.timezone); err != nil {
+			slog.Error("couldn't tell the drafter about a decided ticket", "ticket", item.ID, "drafter", item.drafter, "err", err)
 		}
 	}
 	answer(w, item)
+}
+
+// noticeTitleRunes is how much of a ticket's title a decision's notice quotes, which keeps it
+// well within a scheduled task's 2,000-character instructions.
+const noticeTitleRunes = 200
+
+// excerpt is text cut to at most n runes, with an ellipsis when it was cut.
+func excerpt(text string, n int) string {
+	if utf8.RuneCountInString(text) <= n {
+		return text
+	}
+	return string([]rune(text)[:n]) + "…"
 }
 
 func (s *server) checkIn(w http.ResponseWriter, r *http.Request, userID string) {

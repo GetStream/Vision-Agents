@@ -43,7 +43,8 @@ export default function LeaderView() {
   const [pulse, setPulse] = useState<Pulse>();
   const [failure, setFailure] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
-  const [deciding, setDeciding] = useState<string>();
+  // The tickets whose decision is on its way, so none can be decided twice.
+  const [deciding, setDeciding] = useState<ReadonlySet<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -66,7 +67,7 @@ export default function LeaderView() {
   }, [load]);
 
   const decide = async (id: string, approve: boolean) => {
-    setDeciding(id);
+    setDeciding((ids) => new Set(ids).add(id));
     try {
       await crewBackend(`crew/tickets/${id}/decision`, {
         body: { approve },
@@ -76,7 +77,11 @@ export default function LeaderView() {
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error));
     } finally {
-      setDeciding(undefined);
+      setDeciding((ids) => {
+        const left = new Set(ids);
+        left.delete(id);
+        return left;
+      });
     }
   };
 
@@ -113,7 +118,7 @@ export default function LeaderView() {
             {item.waiting_for === AgentConfig.leader.id ? (
               <View style={styles.actions}>
                 <Pressable
-                  disabled={deciding === item.id}
+                  disabled={deciding.has(item.id)}
                   onPress={() => void decide(item.id, true)}
                   style={[styles.action, styles.approve]}
                   testID='ticket-approve'
@@ -121,7 +126,7 @@ export default function LeaderView() {
                   <Text style={styles.approveText}>Approve and submit</Text>
                 </Pressable>
                 <Pressable
-                  disabled={deciding === item.id}
+                  disabled={deciding.has(item.id)}
                   onPress={() => void decide(item.id, false)}
                   style={styles.action}
                   testID='ticket-reject'

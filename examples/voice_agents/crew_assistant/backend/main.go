@@ -31,6 +31,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -177,8 +178,11 @@ func agentSpeaksFirst(ctx context.Context, userID, sessionID, title, instruction
 	// The task was only a way to run once now: it goes once its run is well under way.
 	go func(id string) {
 		time.Sleep(2 * time.Minute)
-		if deleted, err := client.DeleteScheduledTaskWithResponse(context.Background(), id); err != nil || deleted.StatusCode() >= http.StatusMultipleChoices {
-			log.Printf("the %q task %s stays scheduled: %v", title, id, err)
+		deleted, err := client.DeleteScheduledTaskWithResponse(context.Background(), id)
+		if err != nil {
+			slog.Warn("the task stays scheduled", "task", id, "title", title, "err", err)
+		} else if deleted.StatusCode() >= http.StatusMultipleChoices {
+			slog.Warn("the task stays scheduled", "task", id, "title", title, "status", deleted.StatusCode())
 		}
 	}(task.Id)
 	return task.Id, nil

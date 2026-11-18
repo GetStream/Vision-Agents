@@ -93,7 +93,10 @@ no file in the folder holds. A sync over them, which the CLI asks for once `conf
 
 The backend listens on `:8097` and connects out to the router to host the tools, so it needs no
 public address for them. The phone reaches it for its token, events, the asked-first tools and the
-leaders' inbox, so a deployed app needs it somewhere public. Run one backend per agent: the router
+leaders' inbox, so a deployed app needs it somewhere public. Its `POST /stream-token` signs a
+token for any user it's asked for, so anyone who can reach it can act as anyone, the owner
+approving tickets included: replace it with your own sign-in before it's reachable outside a
+demo. Run one backend per agent: the router
 shares an agent's tool calls between every process hosting them. `GOWORK=off go test ./...` in
 `backend/` checks the tokens, the leaders' inbox, enrolment and that each person only acts on their
 own shifts.

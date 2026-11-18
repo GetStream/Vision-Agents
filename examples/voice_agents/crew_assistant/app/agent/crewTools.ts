@@ -52,13 +52,15 @@ const localContext: AIClientTool = {
 /**
  * The phone's IANA timezone, which the agent speaking first needs. Hermes can't always name it, as
  * on an iOS simulator, so the phone's offset from UTC stands in, as a zone such as `Etc/GMT-1`
- * (whose sign is the reverse of the offset).
+ * (whose sign is the reverse of the offset). No such zone has a half hour, so a phone at one, as
+ * in India, falls back to UTC: the agent then reads its dates in UTC, but still speaks.
  */
 export const phoneTimezone = () => {
   const named = Intl.DateTimeFormat().resolvedOptions().timeZone;
   if (named) return named;
   const hours = new Date().getTimezoneOffset() / 60;
-  return Number.isInteger(hours) ? `Etc/GMT${hours < 0 ? '' : '+'}${hours}` : undefined;
+  if (!Number.isInteger(hours)) return 'UTC';
+  return `Etc/GMT${hours < 0 ? '' : '+'}${hours}`;
 };
 
 /**
