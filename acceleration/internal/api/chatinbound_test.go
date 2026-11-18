@@ -250,12 +250,12 @@ func (s *ChatInboundRefusalSuite) TestARouterWithNoStreamAppServesNone() {
 }
 
 // namesTheDeliveryApp is a line that names deliveryApp as its app.
-var namesTheDeliveryApp = regexp.MustCompile(`^[^\n]* app_id=1257545(\s[^\n]*)?\n$`)
+var namesTheDeliveryApp = regexp.MustCompile(`^[^\n]* app_id=` + strconv.Itoa(deliveryApp) + `(\s[^\n]*)?\n$`)
 
 // A delivery names its app only once Stream's signature and the app it names are checked: the
 // access line and the lines logged on its way then carry it, without a key, which none was used.
 func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedDeliveryNameItsApp() {
-	body := `{"type": "reaction.new", "app_id": 1257545, "channel_type": "agent", "channel_id": "chat-1"}`
+	body := `{"type": "reaction.new", "app_id": ` + strconv.Itoa(deliveryApp) + `, "channel_type": "agent", "channel_id": "chat-1"}`
 
 	status, line := s.logLine(s.signed(body, s.current))
 
