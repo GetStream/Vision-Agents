@@ -26,8 +26,8 @@ github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09 h1:5
 github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09/go.mod h1:UFt1oRSMqxYnOCQC8rjm4e+dhijp98kc/2RY8r83Kek=
 github.com/GetStream/getstream-go/v5 v5.2.0 h1:nrZkIL0mzHtByMeAeNFD4jpGIT5XPa0P3ItFL9bCIr8=
 github.com/GetStream/getstream-go/v5 v5.2.0/go.mod h1:qnod4MVOSwxfpqtXLpxjbMo7lDcepOlg8X2GrpBs/cw=
-github.com/GetStream/goaec3 v0.0.0-20261118143938-1d3c5133fcd6 h1:HUSS8JkdiFVXLvjdXNNxBG03vk8yztqHAl7x692CVOA=
-github.com/GetStream/goaec3 v0.0.0-20261118143938-1d3c5133fcd6/go.mod h1:l0nwpf068reylNG59pTtn27CWLoFhFRfGdPHfvq89Q4=
+github.com/GetStream/goaec3 v0.0.0-20261118174117-72a41d664362 h1:SMG2KNqqF+oAt6gBDK/xQPpbB2rAZoQqJq7H7NAqtgE=
+github.com/GetStream/goaec3 v0.0.0-20261118174117-72a41d664362/go.mod h1:l0nwpf068reylNG59pTtn27CWLoFhFRfGdPHfvq89Q4=
 github.com/GetStream/protocol v1.49.0 h1:AzTRH6+PRNHjFjBlcymbjZsVE+wZBp/wPG6w+/9FCw4=
 github.com/GetStream/protocol v1.49.0/go.mod h1:jZALur2IoWnpcLnFzLtnFomgItt4SBHj+U1TjPYC114=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 h1:l7+6kwRMJNwdCvYdDl7Eax+wzEYHSnNY7zrrfbhDdTA=
