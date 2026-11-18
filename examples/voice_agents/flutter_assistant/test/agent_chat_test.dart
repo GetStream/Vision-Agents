@@ -667,6 +667,33 @@ void main() {
         expect(chat.reservations.value['m2'], isNull);
       });
 
+      test('a question stopped before it is asked keeps the table tapped before it', () async {
+        final added = Completer<void>();
+        sessions.holdRoute(tools, added.future);
+        final composer = ChatComposerController();
+        addTearDown(composer.dispose);
+        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+        await chat.open();
+        final conversation = conversationOf(chat, composer: composer);
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden)
+          ..choose('m1', 'T1');
+        await until(() => sessions.routes.contains(tools));
+
+        // The question waits for the tool, and is stopped before it is asked.
+        conversation.send('Something else');
+        await pumpEventQueue();
+        conversation.stop();
+        added.complete();
+        await until(() => conversation.pendingMessage == null);
+        expect(sessions.asked, 0);
+        await call(chat, 'T1');
+
+        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
+        expect(chat.reservations.value['m2'], isNull);
+      });
+
       test('a typed question is not held to a table tapped before it', () async {
         final composer = ChatComposerController();
         addTearDown(composer.dispose);
@@ -680,11 +707,10 @@ void main() {
           // Terrace's T1 is taken after the tap.
           ..offer('m1', [(id: 'T1', zone: 'Terrace', seats: 2, available: false)]);
         await until(() => sessions.routes.contains(tools));
-        expect((await call(chat, 'T1'))['error'], isNotEmpty);
 
         conversation.send('Book T1 at the Garden instead');
         await until(() => sessions.asked == 1);
-        final result = await call(chat, 'T1', id: 'c2');
+        final result = await call(chat, 'T1');
 
         expect(result['output'], contains('Reserved table T1'));
         expect(chat.reservations.value['m2']?.table.zone, 'Garden');

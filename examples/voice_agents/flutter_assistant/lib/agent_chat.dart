@@ -380,8 +380,6 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   Future<void> send(AIConversationRequest<AgentMessage> request) async {
     _checkNotClosed();
     _failure.value = null;
-    // A question of their own is not about the tables they tapped before it.
-    _chosen.clear();
     final stops = _stops;
     final session = await open();
     _checkNotStopped(stops, request);
@@ -399,6 +397,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     _checkNotStopped(stops, request);
     // Only now, so a new conversation whose first question was never asked is not listed.
     _usedSessionId.value = session.id;
+    // A question of their own is not about the tables they tapped before it, once it is asked.
+    _chosen.clear();
     await session.responses.create(
       request.text,
       images: images,
