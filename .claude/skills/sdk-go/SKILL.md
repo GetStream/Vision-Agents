@@ -112,7 +112,8 @@ Every identifier in a code block exists; the quickstart is the example file verb
 
 1. Land the change on `accelerate`, with the `CHANGELOG.md` entry and `Version` in
    `stream/backend.go` set to `X.Y.Z`: it is the `User-Agent` every request sends
-   (`stream-agents-go/X.Y.Z`), and nothing else sets it.
+   (`stream-agents-go/X.Y.Z`), and nothing else sets it. `release-sdk-go.yml` fails a tag
+   whose `Version` differs.
 2. Run the smoke set with `E2E_REQUIRED=1`, as above, and keep its output.
 3. Copy onto a branch off `main`, and check the copy is exact:
 
