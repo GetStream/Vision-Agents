@@ -32,12 +32,6 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	}
 
 	skills := a.syncedSkills()
-	if len(skills) > 0 {
-		if err := defineSkills(ctx, client, skills); err != nil {
-			return nil, err
-		}
-	}
-
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
@@ -55,7 +49,17 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 		wanted.Skills = &named
 	}
 
-	return defineAgent(ctx, client, wanted)
+	config, err := defineAgent(ctx, client, wanted)
+	if err != nil {
+		return nil, err
+	}
+	// A skill belongs to a config, so it is stored once the config has an id to name.
+	if len(skills) > 0 {
+		if err := defineSkills(ctx, client, config.Id, skills); err != nil {
+			return nil, err
+		}
+	}
+	return config, nil
 }
 
 // syncFolder stores the agent's directory in one request. What the code set wins over what
@@ -623,18 +627,19 @@ func defineAgent(
 	return answer(created.JSON201, created.HTTPResponse, created.Body)
 }
 
-// DefineSkills stores skills on the router backend points at, editing whichever is already
-// under each name.
-func DefineSkills(ctx context.Context, backend stream.Backend, skills []Skill) error {
+// DefineSkills stores skills on the router backend points at, as the skills of the agent
+// config with this id, editing whichever of its skills is already under each name.
+func DefineSkills(ctx context.Context, backend stream.Backend, configID string, skills []Skill) error {
 	client, err := backend.Client()
 	if err != nil {
 		return err
 	}
-	return defineSkills(ctx, client, skills)
+	return defineSkills(ctx, client, configID, skills)
 }
 
-func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses, skills []Skill) error {
-	listed, err := client.ListSkillsWithResponse(ctx, nil)
+func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses, configID string, skills []Skill) error {
+	// Names are unique among one config's skills, so only this config's are looked at.
+	listed, err := client.ListSkillsWithResponse(ctx, &acceleration.ListSkillsParams{ConfigId: &configID})
 	if err != nil {
 		return fmt.Errorf("agents: listing skills: %w", err)
 	}
@@ -650,6 +655,7 @@ func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 
 	for _, skill := range skills {
 		body := skillRequestOf(skill)
+		body.ConfigId = configID
 		if id, ok := known[skill.Name]; ok {
 			updated, err := client.UpdateSkillWithResponse(ctx, id, body)
 			if err != nil {
