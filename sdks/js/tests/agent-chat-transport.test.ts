@@ -554,22 +554,28 @@ describe("agentChatTransport, branching", () => {
 
   it("brings the version shown back before editing the question it answers", async () => {
     const { streamChat, transport, feed } = await connected();
-    activating(streamChat as TestChat, 0);
+    // r3 answers q1 with a response of its own, resp_3, where q1 keeps the mark of resp_1: the edit
+    // must go through the reply shown, not the question's mark.
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_3/activate", () => {
+      arrive(streamChat, chatMessage("c_q1", 10, { ...mark("resp_1", "question", 1, 1), resent_from: "q1" }));
+      arrive(streamChat, chatMessage("c_r3", 11, { ...mark("resp_3", "reply", 3, 3, "resp_1"), resent_from: "r3" }, "agent"));
+      return { body: { leaf_response_id: "resp_3", already_active: false, resent: 2, rewound_to: { message_id: "r0", inclusive: false } } };
+    });
     // The router reads a reply's other version back without the question it shares, so the
     // question shown stays the channel's own.
-    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/branch", {
-      body: { active: false, items: [branchOf("resp_1", 1, 4).body.items[1]], has_more: false },
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_3/branch", {
+      body: { active: false, items: [branchOf("resp_3", 3, 6).body.items[1]], has_more: false },
     });
     router.serve("POST", responsesPath, answering({ message_id: "c_q1", inclusive: true }));
-    await transport.switchBranch(feed.find("r2"), "previous");
-    assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r1"]);
+    await transport.switchBranch(feed.find("r2"), "next");
+    assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r3"]);
 
-    // r1, which answers the question on screen, is the version's, not the conversation's.
+    // r3, which answers the question on screen, is the version's, not the conversation's.
     await transport.send(request({ kind: "edit", message: feed.find("q1"), messageId: "ctl_edit", text: "Rome instead" }));
 
-    // The router edits only through a response on the conversation, which r1 is once brought back.
-    assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
-    assert.equal((router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>)["replaces"], "resp_1");
+    // The router edits only through a response on the conversation, which r3 is once brought back.
+    assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_3/activate", responsesPath]);
+    assert.equal((router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>)["replaces"], "resp_3");
   });
 
   it("brings the version shown back before regenerating a reply of it", async () => {

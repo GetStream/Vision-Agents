@@ -735,7 +735,7 @@ stream-chat 10 times a `channel.rewound` event's `rewind.created_at` in unix nan
 
 ### The JavaScript SDK edits a question while another version of its reply is shown
 
-With a reply's earlier version shown (‹ 1/2 ›), editing the question above it was refused with a 409 and nothing changed. The router reads a reply's other versions back without the question they share, so the question was the channel's own while the reply that answers it on screen, which an edit goes through, was the version's, not the conversation's. `agentChatTransport` now brings that version back first, as asking anything on it already does, and the edit goes through (AI-3198).
+With a reply's earlier version shown (‹ 1/2 ›), editing the question above it was refused with a 409 and nothing changed. The router reads a reply's other versions back without the question they share, so the question was the channel's own while the reply that answers it on screen, which an edit goes through, was the version's, not the conversation's. `agentChatTransport` now brings that version back first, as asking anything on it already does, and the edit goes through (AI-3198, #2084).
 
 ### A customer's refused key no longer raises the operator's key_refused alert
 
