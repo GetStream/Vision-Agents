@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	phonetelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -86,6 +87,8 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bridge, err := s.phone.InboundBridge(r.Context(), "telnyx", to)
+	// InboundBridge notes the number's app once the number resolves, before it refuses one.
+	logger = logger.With("customer", activity.NotedCustomer(r.Context()))
 	if errors.Is(err, phone.ErrNoSealer) {
 		hangUp(w, logger, "hung up a telnyx call: this router has no key to open trunk passwords: "+
 			"set ROUTER_AUTH_KEK, then attach the number again", "to", to)
@@ -134,8 +137,9 @@ func hangUp(w http.ResponseWriter, logger *slog.Logger, why string, attributes .
 }
 
 // reject refuses a call without answering it, for a refusal the customer is billed nothing for.
+// It is a warning all the same: the person calling the customer's number reached nobody.
 func reject(w http.ResponseWriter, logger *slog.Logger, why string, attributes ...any) {
-	logger.Info(why, attributes...)
+	logger.Warn(why, attributes...)
 	writePlan(w, logger, phonetelnyx.RenderReject())
 }
 

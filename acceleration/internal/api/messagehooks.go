@@ -374,7 +374,8 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 					}, "")
 					if err != nil {
 						s.logger.Error("nobody could answer an arriving message",
-							"channel", event.ChannelID, "session", found.ID(), "error", err)
+							"channel", event.ChannelID, "session", found.ID(), "customer", found.Spec().CustomerID,
+							"error", err)
 						if errors.Is(err, node.ErrNoReply) {
 							// The other node may have placed it before its reply was lost: queued
 							// again, it would be placed twice.
@@ -814,7 +815,8 @@ func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, even
 			continue
 		}
 		if err != nil {
-			s.logger.Error("could not answer a message", "channel", event.ChannelID, "session", found.ID(), "error", err)
+			s.logger.Error("could not answer a message", "channel", event.ChannelID, "session", found.ID(),
+				"customer", found.Spec().CustomerID, "error", err)
 		}
 		return
 	}
@@ -838,7 +840,7 @@ func (s *Server) answerMessage(origin hookOrigin, found *session.Session, event 
 	text, images := s.messagePhotos(ctx, found.SeesImagesInWriting(), heard, event)
 	if _, err := found.Ask(ctx, text, images...); err != nil {
 		s.logger.Error("could not answer a message",
-			"channel", event.ChannelID, "session", found.ID(), "error", err)
+			"channel", event.ChannelID, "session", found.ID(), "customer", found.Spec().CustomerID, "error", err)
 		return
 	}
 	s.logger.Debug("answered a message in writing",

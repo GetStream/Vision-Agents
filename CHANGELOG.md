@@ -6,6 +6,10 @@
 
 A hook Stream, Telnyx or a channel's provider signed is counted in the activity record under its app and organization once its signature or token checks out: `hooks_in`, or `phone_sms` for phone and SMS. A forward to an event destination counts once under `webhooks_out`, refused with why when it is given up, and a `/v1/agents/socket` start refused in a frame counts as refused with its code rather than as answered (#2066).
 
+### The router names the app where a customer gets stuck
+
+A call, text or chat message the router rejects or cannot answer is logged with `customer=<app id>` once its number, line or session is known: a Telnyx call to a suspended app or one that may not pay (now Warn), a placed call's plan, a channel line no agent answers on, a chat message nobody answered, a campaign dial and a connector refresh that will need a reconnect. A Stream call that rang a number no number reaches is a Warn, not Debug; a video call stays Debug (#2073).
+
 ### The Go and JavaScript SDKs name themselves and their release
 
 Every Go SDK request sends `User-Agent: stream-agents-go/<version>` beside `X-Stream-Client: sdk`, with the new `stream.Version`. The JavaScript SDK now sends `X-Stream-Client: sdk`, so its calls are counted as the SDK's rather than the API's, and from Node also `User-Agent: stream-agents-js/<version>` (`VERSION`); a page sends `X-Stream-Client` alone (#2065).
