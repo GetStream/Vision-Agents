@@ -97,3 +97,10 @@ func (s *CallHooksSuite) TestAVideoCallNoNumberReachesIsNotWarnedAbout() {
 	s.True(s.loggedLine("level=DEBUG", `msg="no number reaches an arriving call"`, callID))
 	s.False(s.loggedLine("level=WARN", `msg="no number reaches an arriving call"`))
 }
+
+// Defect: a call named for a number, which no number reaches, logged at Debug as a video call is.
+func (s *CallHooksSuite) TestACallNamedForANumberNoNumberReachesIsWarnedAbout() {
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.True(s.loggedLine("level=WARN", `msg="no number reaches an arriving call"`, s.loggedAs(s.callID)))
+}

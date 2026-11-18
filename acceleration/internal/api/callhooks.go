@@ -193,8 +193,8 @@ func (s *Server) dispatchArrivingCall(w http.ResponseWriter, r *http.Request, or
 		err = streamapp.ErrReadOnly
 	}
 	if err != nil {
-		// A call that names no number and that no number reaches is most often a video call,
-		// which every call in the app is: only a call to a number is a customer's caller stuck.
+		// Every call in the app arrives here: one that neither carries a number nor is named
+		// for one, which no number reaches, is a video call rather than a caller stuck.
 		level := slog.LevelWarn
 		if !fresh && errors.Is(err, store.ErrNoNumber) {
 			level = slog.LevelDebug
