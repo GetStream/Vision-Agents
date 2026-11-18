@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"strconv"
 )
 
 // The names a log line gives the app and the key a request was made with: the Stream
@@ -26,9 +28,34 @@ func WithLoggedApp(ctx context.Context, appID, apiKey string) context.Context {
 	return context.WithValue(ctx, loggedAppContextKey{}, loggedApp{appID: appID, apiKey: apiKey})
 }
 
+// loggedHook is r marked with the Stream app a hook was verified to come from, for every line
+// logged with its context and for its access line (withRequestLog). Only a verified origin is
+// named, never the app in the path, so a forged hook writes no line under another app. No key
+// was used, so none is named, and the deployment's app while its id is not known is no app.
+func loggedHook(r *http.Request, origin hookOrigin) *http.Request {
+	if origin.app == 0 {
+		return r
+	}
+	app := strconv.FormatInt(origin.app, 10)
+	if failure, ok := r.Context().Value(requestFailureContextKey{}).(*requestFailure); ok {
+		failure.app = app
+	}
+	return r.WithContext(WithLoggedApp(r.Context(), app, ""))
+}
+
+// loggedContext is ctx marked with the app of the hook the request's handler verified
+// (loggedHook): withRequestLog's own context is the one from before the handler ran.
+func (f *requestFailure) loggedContext(ctx context.Context) context.Context {
+	if f.app == "" {
+		return ctx
+	}
+	return WithLoggedApp(ctx, f.app, "")
+}
+
 // logHandler adds the app and the public key of an authenticated request to every record
-// logged with its context (InfoContext and the rest). A request nobody authenticated, a hook
-// among them, and a record logged without the request's context gain nothing.
+// logged with its context (InfoContext and the rest), and the app of a verified hook
+// (loggedHook). A request nobody authenticated or verified and a record logged without the
+// request's context gain nothing.
 type logHandler struct {
 	slog.Handler
 	// attached holds the fields a With already put on the logger, which Handle must not repeat.

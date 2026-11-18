@@ -23,6 +23,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -646,6 +648,55 @@ func (s *LogAppSuite) TestTheAccessLineOfAServerErrorNamesTheAppAndItsPublicKey(
 	s.Contains(line, " api_key="+s.app.key)
 }
 
+// A handler's verified hook names its app on the lines withRequestLog writes after it: a 5xx
+// and a panic as well as a success, and on the lines the handler logs with its context. The key
+// whose secret signed it is no key the request was made with, so none of them names it.
+func (s *LogAppSuite) TestTheLinesAfterAHandlerVerifiedAHookNameItsApp() {
+	for msg, answer := range map[string]func(http.ResponseWriter){
+		`msg="served a request" method=POST path=/probe-ok `:      func(http.ResponseWriter) {},
+		`msg="served a request" method=POST path=/probe-500 `:     func(w http.ResponseWriter) { w.WriteHeader(http.StatusInternalServerError) },
+		`msg="a request panicked" method=POST path=/probe-panic `: func(http.ResponseWriter) { panic("probe panic") },
+	} {
+		path := strings.Fields(strings.SplitAfter(msg, "path=")[1])[0]
+		routes := chi.NewRouter()
+		routes.Post(path, func(w http.ResponseWriter, r *http.Request) {
+			marked := loggedHook(r, hookOrigin{app: 1234567, apiKey: "the-signing-key"})
+			s.router.logger.InfoContext(marked.Context(), "probe from a hook at "+path)
+			answer(w)
+		})
+		node := httptest.NewUnstartedServer(s.router.withRequestLog(routes, routes))
+		node.Config.ErrorLog = log.New(io.Discard, "", 0)
+		node.Start()
+		s.T().Cleanup(node.Close)
+
+		// A panic goes on to net/http after the 500, which drops the connection.
+		if response, err := node.Client().Post(node.URL+path, "application/json", nil); err == nil {
+			s.Require().NoError(response.Body.Close())
+		}
+
+		var line string
+		s.Require().Eventually(func() bool {
+			for l := range strings.Lines(s.logged.String()) {
+				if strings.Contains(l, msg) {
+					line = l
+					return true
+				}
+			}
+			return false
+		}, 5*time.Second, 20*time.Millisecond, msg)
+		s.Contains(line, " app_id=1234567", msg)
+		s.NotContains(line, "api_key", msg)
+		var probe string
+		for l := range strings.Lines(s.logged.String()) {
+			if strings.Contains(l, "probe from a hook at "+path) {
+				probe = l
+			}
+		}
+		s.Contains(probe, " app_id=1234567", path)
+		s.NotContains(probe, "api_key", path)
+	}
+}
+
 // servedAs is the access line of a GET by client.
 func (s *appLogSuite) servedAs(client *testClient) string {
 	id := s.utils.uuid()
@@ -766,4 +817,81 @@ func (s *LogAppProxiedSuite) TestTheAccessLineOfACallerTheProxyNamedNoKeyForName
 
 	s.Contains(line, " app_id="+s.customerID())
 	s.NotContains(line, "api_key")
+}
+
+// LogAppHookSuite is a router in app mode, where the gateway vouches for each app's own hooks
+// once it checked their signature with the app's secret, and what the lines of a hook name.
+type LogAppHookSuite struct {
+	appLogSuite
+
+	apiKey string
+}
+
+func TestLogAppHookSuite(t *testing.T) {
+	hooks := new(LogAppHookSuite)
+	hooks.appMode = true
+	runSuite(t, hooks)
+}
+
+func (s *LogAppHookSuite) SetupTest() {
+	s.useApp(s.numberedApp(streamAppID()))
+	s.apiKey = "own-key-" + s.utils.uuid()
+	s.answerAs(s.apiKey, s.appID())
+	s.forwarded(s.apiKey)
+}
+
+// The line of a hook to an app's own path, as Stream delivers them in app mode, names the app.
+func (s *LogAppHookSuite) TestTheAccessLineOfAHookTheGatewayVouchedForNamesItsApp() {
+	for _, hook := range []string{phone.CallHookPath, chat.MessageHookPath} {
+		request := s.hookTo(hook + "/" + s.customerID())
+		vouched(request, s.appID(), s.apiKey)
+
+		status, line := s.hookLine(request)
+
+		s.Equal(http.StatusOK, status, hook)
+		s.Contains(line, " app_id="+s.customerID(), hook)
+		s.NotContains(line, "api_key", hook)
+	}
+}
+
+// A hook nobody verified names no app, whichever its path names.
+func (s *LogAppHookSuite) TestTheAccessLineOfAHookNobodyVouchedForNamesNoApp() {
+	for _, hook := range []string{phone.CallHookPath, chat.MessageHookPath} {
+		path := hook + "/" + s.customerID()
+		unvouched := s.hookTo(path)
+		forAnother := s.hookTo(path)
+		vouched(forAnother, s.appID()+1, s.apiKey)
+
+		for name, request := range map[string]*http.Request{"no mark": unvouched, "another app's mark": forAnother} {
+			status, line := s.hookLine(request)
+
+			s.Equal(http.StatusUnauthorized, status, hook, name)
+			s.NotContains(line, "app_id", hook, name)
+		}
+	}
+}
+
+// A hook to the path naming no app is the deployment's, signed with its secret.
+func (s *LogAppHookSuite) TestTheAccessLineOfTheDeploymentsHookNamesTheDeploymentsApp() {
+	status, line := s.hookLine(s.hookTo(chat.MessageHookPath))
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(line, " app_id="+strconv.Itoa(suiteStreamApp))
+}
+
+// hookTo is an event the hooks do not act on, posted to path and signed with the deployment's
+// secret, which no app's own hook is checked with.
+func (s *LogAppHookSuite) hookTo(path string) *http.Request {
+	body := `{"type": "reaction.new"}`
+	return s.request(path, body, sign(body, suiteStreamSecret))
+}
+
+// hookLine sends request and is its status and its access line.
+func (s *LogAppHookSuite) hookLine(request *http.Request) (int, string) {
+	id := s.utils.uuid()
+	request.Header.Set(RequestIDHeader, id)
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	return response.StatusCode, s.lineOf(id)
 }
