@@ -958,7 +958,7 @@ still passes and only the one test that needed an answer steps aside.
 
 ### Releasing
 
-The **Release JS SDK** workflow publishes to npm, run by hand from the `accelerate` branch.
+The **Release JS SDK** workflow publishes to npm, run by hand from the `main` branch.
 semantic-release (`release.config.mjs`) reads the commits since the last `sdk-js-v*` tag and
 counts only those scoped `sdk-js`: `feat(sdk-js):` moves the minor, `fix(sdk-js):` and
 `perf(sdk-js):` the patch, and while the package is 0.x a breaking change moves the minor too.

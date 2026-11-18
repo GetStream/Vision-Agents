@@ -33,6 +33,10 @@ type backend struct {
 	syncs   []acceleration.SyncAgentRequest
 	syncRaw [][]byte
 	updates []string
+	// refuseSkills, when set, is the reason POST /v1/agents/skills answers 400.
+	refuseSkills string
+	// refuseSkillEdits, when set, is the reason PUT /v1/agents/skills/{id} answers 400.
+	refuseSkillEdits string
 	// ignoresUI stores a sync without its ui_instructions, as a router older than them does.
 	ignoresUI bool
 	// connections answers GET /v1/agents/connections. Nil answers an empty page.
@@ -58,7 +62,7 @@ func newBackend(t *testing.T) *backend {
 		router.mu.Lock()
 		defer router.mu.Unlock()
 		stored := acceleration.AgentConfig{
-			Id: "config-1", Name: request.Name, Instructions: request.Instructions,
+			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
 			KnowledgeNamespace: request.KnowledgeNamespace, Skills: request.Skills,
 			Subagent: request.Subagent, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -84,19 +88,39 @@ func newBackend(t *testing.T) *backend {
 		reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such config"}})
 	})
 
-	mux.HandleFunc("GET /v1/agents/skills", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /v1/agents/skills", func(w http.ResponseWriter, r *http.Request) {
 		router.mu.Lock()
 		defer router.mu.Unlock()
-		reply(w, http.StatusOK, router.skills)
+		listed := []acceleration.Skill{}
+		for _, skill := range router.skills {
+			if configID := r.URL.Query().Get("config_id"); configID == "" || skill.ConfigId == configID {
+				listed = append(listed, skill)
+			}
+		}
+		reply(w, http.StatusOK, listed)
 	})
+	// A skill belongs to a config that exists, as the router's createSkill and updateSkill
+	// insist, and its name is unique among that config's own skills.
 	mux.HandleFunc("POST /v1/agents/skills", func(w http.ResponseWriter, r *http.Request) {
 		var request acceleration.SkillRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
+		if !router.skillAllowed(w, request) {
+			return
+		}
+		for _, skill := range router.skills {
+			if skill.ConfigId == request.ConfigId && skill.Name == request.Name {
+				reply(w, http.StatusConflict, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+					Message: "this agent already has a skill with this name",
+				}})
+				return
+			}
+		}
 		stored := acceleration.Skill{
-			Id: "skill-" + request.Name, Name: request.Name, Description: request.Description,
+			Id: "skill-" + request.ConfigId + "-" + request.Name, ConfigId: request.ConfigId,
+			Name: request.Name, Description: request.Description,
 			Instructions: request.Instructions, DeadlineMs: request.DeadlineMs,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
@@ -109,11 +133,25 @@ func newBackend(t *testing.T) *backend {
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
+		if router.refuseSkillEdits != "" {
+			reply(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: router.refuseSkillEdits}})
+			return
+		}
+		if !router.skillAllowed(w, request) {
+			return
+		}
 		router.updates = append(router.updates, r.PathValue("id"))
-		reply(w, http.StatusOK, acceleration.Skill{
-			Id: r.PathValue("id"), Name: request.Name, Description: request.Description,
-			Instructions: request.Instructions, CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		})
+		for index, skill := range router.skills {
+			if skill.Id != r.PathValue("id") {
+				continue
+			}
+			router.skills[index].Description = request.Description
+			router.skills[index].Instructions = request.Instructions
+			router.skills[index].UpdatedAt = time.Now()
+			reply(w, http.StatusOK, router.skills[index])
+			return
+		}
+		reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such skill"}})
 	})
 
 	mux.HandleFunc("GET /v1/agents/connections", func(w http.ResponseWriter, r *http.Request) {
@@ -166,6 +204,28 @@ func newBackend(t *testing.T) *backend {
 	router.Server = httptest.NewServer(mux)
 	t.Cleanup(router.Close)
 	return router
+}
+
+// skillAllowed answers a skill the router would refuse, with the router's own words, and
+// says whether it was fine. The caller holds the lock.
+func (b *backend) skillAllowed(w http.ResponseWriter, request acceleration.SkillRequest) bool {
+	if strings.TrimSpace(request.ConfigId) == "" {
+		reply(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Message: "a skill belongs to an agent config, so one has to be named",
+		}})
+		return false
+	}
+	if b.refuseSkills != "" {
+		reply(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: b.refuseSkills}})
+		return false
+	}
+	for _, config := range b.configs {
+		if config.Id == request.ConfigId {
+			return true
+		}
+	}
+	reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such agent config"}})
+	return false
 }
 
 func (b *backend) answerConnections(answer func(*http.Request) acceleration.ConnectionPage) {
@@ -432,6 +492,127 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 	}
 	if *router.configs[0].Instructions != "Be briefer." {
 		t.Errorf("the stored config still says %q", *router.configs[0].Instructions)
+	}
+}
+
+func TestSyncStoresTheSkillsUnderTheConfigAndEditsThemTheSecondTime(t *testing.T) {
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Skills: []Skill{
+		{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
+	}}})
+
+	stored, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Skills == nil || len(*stored.Skills) != 1 || (*stored.Skills)[0] != "think" {
+		t.Fatalf("the config names %+v", stored.Skills)
+	}
+
+	agent.options.Harness.Skills[0].Instructions = "Reason it through twice."
+	again, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Id != stored.Id {
+		t.Errorf("syncing twice stored a second config: %s then %s", stored.Id, again.Id)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.configs) != 1 {
+		t.Fatalf("syncing twice left %d configs: %+v", len(router.configs), router.configs)
+	}
+	if len(router.skills) != 1 {
+		t.Fatalf("syncing twice left %d skills: %+v", len(router.skills), router.skills)
+	}
+	if router.skills[0].ConfigId != stored.Id || router.skills[0].Instructions != "Reason it through twice." {
+		t.Errorf("the skill is %+v, where the config is %s", router.skills[0], stored.Id)
+	}
+}
+
+func TestSyncEditsOnlyItsOwnSkillWhenAnotherAgentHasOneByTheSameName(t *testing.T) {
+	router := newBackend(t)
+	think := func(instructions string) *Harness {
+		return &Harness{Skills: []Skill{{Name: "think", Description: "Work it out", Instructions: instructions}}}
+	}
+	anna := agentOn(t, router, Options{Name: "anna", Harness: think("Anna's way.")})
+	jean := agentOn(t, router, Options{Name: "jean", Harness: think("Jean's way.")})
+	for _, agent := range []*Agent{anna, jean} {
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	jean.options.Harness.Skills[0].Instructions = "Jean's other way."
+	if _, err := jean.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.skills) != 2 {
+		t.Fatalf("the skills stored are %+v", router.skills)
+	}
+	if router.skills[0].ConfigId != "config-anna" || router.skills[0].Instructions != "Anna's way." {
+		t.Errorf("another agent's skill was changed: %+v", router.skills[0])
+	}
+	if router.skills[1].ConfigId != "config-jean" || router.skills[1].Instructions != "Jean's other way." {
+		t.Errorf("the agent's own skill is %+v", router.skills[1])
+	}
+}
+
+func TestSyncSaysWhyTheRouterRefusedASkill(t *testing.T) {
+	router := newBackend(t)
+	router.refuseSkills = "a skill may bring at most 64 files"
+	agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Skills: []Skill{
+		{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
+	}}})
+
+	_, err := agent.Sync(t.Context())
+
+	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
+		t.Errorf("a skill the router refused came back as %v", err)
+	}
+}
+
+func TestSyncSaysWhyTheRouterRefusedASkillEdit(t *testing.T) {
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Skills: []Skill{
+		{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
+	}}})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	router.mu.Lock()
+	router.refuseSkillEdits = "a skill may bring at most 64 files"
+	router.mu.Unlock()
+	_, err := agent.Sync(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
+		t.Errorf("an edit the router refused came back as %v", err)
+	}
+}
+
+func TestDefineSkillsStoresThemUnderTheConfigNamed(t *testing.T) {
+	router := newBackend(t)
+	backend := stream.Backend{URL: router.URL, CustomerID: "acme"}
+	config, err := DefineAgent(t.Context(), backend, acceleration.AgentConfigRequest{Name: "jean"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	skills := []Skill{{Name: "think", Description: "Work it out", Instructions: "Reason it through."}}
+
+	if err := DefineSkills(t.Context(), backend, config.Id, skills); err != nil {
+		t.Fatal(err)
+	}
+	if err := DefineSkills(t.Context(), backend, "nobody", skills); err == nil {
+		t.Error("skills were stored for a config that does not exist")
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.skills) != 1 || router.skills[0].ConfigId != config.Id {
+		t.Errorf("the skills stored are %+v", router.skills)
 	}
 }
 
