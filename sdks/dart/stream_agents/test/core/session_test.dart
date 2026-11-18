@@ -290,6 +290,19 @@ void main() {
       },
     );
 
+    test('interrupts the current reply, or only the one answering a request', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat
+        ..interrupt()
+        ..interrupt(requestId: 'm1');
+
+      expect(await socket.next(), {'type': 'interrupt'});
+      expect(await socket.next(), {'type': 'interrupt', 'request_id': 'm1'});
+      await chat.close();
+    });
+
     test('a picture tool that asks first sends its pictures once allowed', () async {
       final chat = await agents.chat(
         SessionOptions(
