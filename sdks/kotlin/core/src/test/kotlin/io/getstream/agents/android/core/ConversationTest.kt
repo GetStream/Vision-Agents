@@ -456,6 +456,21 @@ class ConversationTest {
     }
 
     @Test
+    fun `an OpenUI patch after an A2UI card sets no UI`() {
+        // The router's base is the A2UI card, which takes no patch, not the OpenUI one before it.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_completed","turn_id":"t2","format":"a2ui","content":"{\"createSurface\":{}}"}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertNull(conversation.turns[2].ui)
+    }
+
+    @Test
     fun `a patch with no card before it sets no UI`() {
         // As after a reload: the card it changes is only in Stream Chat, which shows it merged.
         val conversation = Conversation().after(

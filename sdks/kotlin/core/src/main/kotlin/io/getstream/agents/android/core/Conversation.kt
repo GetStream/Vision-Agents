@@ -250,9 +250,9 @@ public class Conversation private constructor(
      * Shows [written], what the turn's UI block wrote, as the UI of agent turn [turnId], starting
      * the turn if the router sent UI for one we never saw begin. Of OpenUI, only the statements
      * [keep] says count; it is streaming while only the finished ones do, and sets no UI until
-     * one counts. A patch is merged onto the UI of the latest earlier turn in the same format,
-     * earlier than this one even when its UI comes late; with none in this transcript, such as
-     * after a reload, it sets no UI, and Stream Chat's copy, which the router merged, is the one
+     * one counts. A patch is merged onto the UI of the latest earlier turn, earlier than this
+     * one even when its UI comes late, when that UI is OpenUI; when it is not, or with none in
+     * this transcript, such as after a reload, it sets no UI, and Stream Chat's copy, which the router merged, is the one
      * to show.
      */
     private fun writeUi(turnId: String, written: UiWritten, keep: TurnUI.Keep, at: Instant): Conversation {
@@ -263,9 +263,9 @@ public class Conversation private constructor(
         if (written.mode == "patch" && openUi) {
             // A turn we never saw begin starts after every one there is.
             val earlier = if (index < 0) turns else turns.subList(0, index)
-            val base = earlier.lastOrNull {
-                it.isAgent && it.id != turnId && it.ui?.format == TurnUI.OPEN_UI && it.ui.content.isNotEmpty()
-            }?.ui ?: return this
+            // The card before is the router's base whatever its format; only OpenUI takes a patch.
+            val base = earlier.lastOrNull { it.isAgent && it.id != turnId && it.ui?.content?.isNotEmpty() == true }?.ui
+            if (base?.format != TurnUI.OPEN_UI) return this
             content = TurnUI.merge(base.content, content)
         }
         val ui = TurnUI(written.format, written.version, keep == TurnUI.Keep.Finished, content)
