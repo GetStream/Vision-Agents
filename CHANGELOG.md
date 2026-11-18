@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router counts its own work for an app
+
+A scheduled task's occurrence (`scheduling`), a campaign's dial (`phone_sms`) and a simulation run (`evals`) are counted in the activity record under their app, once each, refused with why when the occurrence failed or was missed, the dial placed no call or the run errored. A signed MCP connection event counts under `hooks_in` and a 10DLC campaign report under `phone_sms` (#2071).
+
 ### The router counts hooks, forwards and socket refusals under the app
 
 A hook Stream, Telnyx or a channel's provider signed is counted in the activity record under its app and organization once its signature or token checks out: `hooks_in`, or `phone_sms` for phone and SMS. A forward to an event destination counts once under `webhooks_out`, refused with why when it is given up, and a `/v1/agents/socket` start refused in a frame counts as refused with its code rather than as answered (#2066).
