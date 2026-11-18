@@ -12,6 +12,12 @@ export const API_KEY_ENV = "STREAM_API_KEY";
 export const API_SECRET_ENV = "STREAM_API_SECRET";
 export const AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE";
 
+/**
+ * This SDK's release, the version in package.json. It is written here by hand at each release,
+ * and a test fails while the two differ.
+ */
+export const VERSION = "0.4.3";
+
 /** How long a token minted here lasts. */
 const TOKEN_VALIDITY_SECONDS = 60 * 60;
 
@@ -587,6 +593,11 @@ export class Backend {
    * guest asked for by nobody yet.
    */
   async headers(anonymously = false): Promise<Record<string, string>> {
+    return { ...clientHeaders(), ...(await this.credentials(anonymously)) };
+  }
+
+  /** Who is calling, as `headers` sends it. */
+  private async credentials(anonymously: boolean): Promise<Record<string, string>> {
     if (anonymously) {
       return this.authenticate
         ? { api_key: this.apiKey, "stream-auth-type": "anonymous" }
@@ -914,6 +925,21 @@ function base64urlBytes(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * What every request says this SDK is: the router counts a call that says `sdk` as the SDK's
+ * rather than the API's, and logs the User-Agent with the release that made it.
+ *
+ * A browser sends `X-Stream-Client` alone. It names its own User-Agent, and both the router's
+ * and the proxy's CORS lists allow `X-Stream-Client` and not `User-Agent`, so a page that set
+ * one would have its requests refused at the preflight.
+ */
+function clientHeaders(): Record<string, string> {
+  const node = (globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node;
+  return node
+    ? { "X-Stream-Client": "sdk", "User-Agent": `stream-agents-js/${VERSION}` }
+    : { "X-Stream-Client": "sdk" };
 }
 
 /**

@@ -1,8 +1,32 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { after, before, describe, it } from "node:test";
 
-import { Backend, Client, ConfigurationError, DEFAULT_URL, regionUrl, signToken } from "../src/index.js";
+import {
+  Backend,
+  Client,
+  ConfigurationError,
+  DEFAULT_URL,
+  VERSION,
+  regionUrl,
+  signToken,
+} from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
+
+/** What every request from Node says the SDK is, beside who is calling. */
+const FROM_NODE = { "X-Stream-Client": "sdk", "User-Agent": `stream-agents-js/${VERSION}` };
+
+/** Runs `body` where there is no `process`, as in a page. */
+async function inABrowser<T>(body: () => Promise<T>): Promise<T> {
+  const process = Object.getOwnPropertyDescriptor(globalThis, "process");
+  assert.ok(process);
+  Object.defineProperty(globalThis, "process", { value: undefined, configurable: true });
+  try {
+    return await body();
+  } finally {
+    Object.defineProperty(globalThis, "process", process);
+  }
+}
 
 describe("Backend", () => {
   let router: TestRouter;
@@ -19,6 +43,40 @@ describe("Backend", () => {
   // arrives afterwards: a page builds a client against a URL and a key and calls setUser once
   // its own backend has said who is looking. Throwing on the constructor line would make that
   // shape impossible to write.
+
+  it("names the SDK and its release on every request from Node", async () => {
+    // The router counts a call that names no client as the API's, and logs Node's own
+    // User-Agent with no release; the release is the one npm published, from package.json.
+    const manifest = await readFile(new URL("../../package.json", import.meta.url), "utf8");
+    const published = JSON.parse(manifest) as { version: string };
+    router.serve("GET", "/v1/teams", { body: [] });
+    const api = new Client({ url: router.url, apiKey: "vak_live_x", apiSecret: "shh" });
+
+    await api.teams.list();
+
+    assert.equal(router.last.headers["user-agent"], `stream-agents-js/${published.version}`);
+    assert.equal(router.last.headers["x-stream-client"], "sdk");
+    const anonymous = await new Backend({ url: router.url, apiKey: "vak_live_x" }).headers(true);
+    assert.equal(anonymous["User-Agent"], `stream-agents-js/${published.version}`, "a guest asked for anonymously");
+    assert.equal(anonymous["X-Stream-Client"], "sdk", "a guest asked for anonymously");
+  });
+
+  it("names the SDK alone from a page, whose User-Agent the CORS lists do not allow", async () => {
+    const page = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await page.setUser({ id: "jlahey" }, "token-for-jim");
+
+    assert.deepEqual(await inABrowser(() => page.headers()), {
+      "X-Stream-Client": "sdk",
+      "X-Api-Key": "vak_live_x",
+      Authorization: "Bearer token-for-jim",
+      "Stream-Auth-Type": "jwt",
+    });
+    assert.deepEqual(await inABrowser(() => page.headers(true)), {
+      "X-Stream-Client": "sdk",
+      "X-Api-Key": "vak_live_x",
+      "Stream-Auth-Type": "anonymous",
+    });
+  });
 
   it("refuses a request from a backend nobody is billed for", async () => {
     const backend = new Backend({ url: "http://localhost:8080" });
@@ -116,6 +174,7 @@ describe("Backend", () => {
     assert.equal(backend.userId, "jlahey");
     assert.equal(backend.identity?.name, "Jim Lahey");
     assert.deepEqual(await backend.headers(), {
+      ...FROM_NODE,
       "X-Api-Key": "vak_live_x",
       Authorization: "Bearer token-for-jim",
       "Stream-Auth-Type": "jwt",
@@ -196,7 +255,7 @@ describe("Backend", () => {
       return `token-${minted}`;
     });
 
-    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" });
+    assert.deepEqual(await backend.headers(), { ...FROM_NODE, "X-Customer-Id": "local" });
     assert.deepEqual(backend.query(), { user_id: "jlahey", "stream-auth-type": "jwt" });
     const url = new URL(await backend.socketURL("/v1/agents/sessions/x/events"));
     assert.equal(url.searchParams.get("customer_id"), "local");
@@ -254,7 +313,7 @@ describe("Backend", () => {
   it("names the customer when that is all there is to go on", async () => {
     const backend = new Backend({ url: router.url, customerId: "local" });
 
-    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" });
+    assert.deepEqual(await backend.headers(), { ...FROM_NODE, "X-Customer-Id": "local" });
     assert.equal(backend.serverSide, true);
   });
 
@@ -346,7 +405,7 @@ describe("Backend", () => {
     try {
       const backend = new Backend({ url: router.url, customerId: "local" });
 
-      assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" });
+      assert.deepEqual(await backend.headers(), { ...FROM_NODE, "X-Customer-Id": "local" });
     } finally {
       delete process.env["STREAM_API_KEY"];
     }
@@ -457,7 +516,11 @@ describe("Backend", () => {
     assert.equal(url.searchParams.get("customer_id"), "local");
     assert.equal(url.searchParams.get("user_id"), "ana");
     assert.deepEqual(backend.query(), { user_id: "ana" });
-    assert.deepEqual(await backend.headers(), { "X-Customer-Id": "local" }, "no header a page's CORS would refuse");
+    assert.deepEqual(
+      await inABrowser(() => backend.headers()),
+      { "X-Customer-Id": "local", "X-Stream-Client": "sdk" },
+      "no header a page's CORS would refuse",
+    );
     assert.deepEqual(new Backend({ url: router.url, customerId: "local" }).query(), {});
   });
 
