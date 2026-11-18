@@ -193,10 +193,11 @@ func (s *Server) dispatchArrivingCall(w http.ResponseWriter, r *http.Request, or
 		err = streamapp.ErrReadOnly
 	}
 	if err != nil {
-		// Every call in the app arrives here: one that neither carries a number nor is named
-		// for one, which no number reaches, is a video call rather than a caller stuck.
+		// Every call in the app arrives here: one no number reaches that is not named for a
+		// number (store.ErrNoNumber) is a video call rather than a caller stuck. A call that
+		// carries a number fails NumberRungInApp with another error, so it warns.
 		level := slog.LevelWarn
-		if !fresh && errors.Is(err, store.ErrNoNumber) {
+		if errors.Is(err, store.ErrNoNumber) {
 			level = slog.LevelDebug
 		}
 		s.logger.Log(r.Context(), level, "no number reaches an arriving call",
