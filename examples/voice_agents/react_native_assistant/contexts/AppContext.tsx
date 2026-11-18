@@ -29,6 +29,7 @@ import {
 } from '../agent/conversation';
 import { createDeviceTools } from '../agent/deviceTools';
 import { imagesOf } from '../agent/photos';
+import { formatSaved } from '../agent/replyFormat';
 import { THINK_HARDER } from '../chatOptions';
 
 const IDLE: ConversationSnapshot = { kind: 'idle', skills: [] };
@@ -102,23 +103,24 @@ const selector = ({ messages, session }: ChatState) => ({
 const openSession: OpenAgentSession = (sessionId) =>
   sessionId
     ? agentSessions().resume(sessionId, { tools: deviceTools.sessionTools() })
-    : agentSessions().create({
-        modelOverwrites: { llm: AgentConfig.chatModel },
-        return_url: SIGN_IN_RETURN_URL,
-        tools: deviceTools.sessionTools(),
-      });
+    : // A conversation keeps the format it starts with: one changing in Settings goes first.
+      formatSaved().then(() =>
+        agentSessions().create({
+          modelOverwrites: { llm: AgentConfig.chatModel },
+          return_url: SIGN_IN_RETURN_URL,
+          tools: deviceTools.sessionTools(),
+        }),
+      );
 
 const newChat = (sessionId?: string): Chat =>
   new AgentChat<LocalMessage>({ open: openSession, sessionId });
 
 // The conversation's state over the chat. Asking goes through the session, which records the
 // question in the channel and answers it there; the router takes photos as data URIs, and
-// thinking harder as a high reasoning effort.
+// thinking harder as a high reasoning effort. A reply written again, or a question edited, keeps
+// its earlier versions, which the transport switches between with ‹ i/n ›.
 const conversationOf = (chat: Chat) =>
   new AIConversationController({
-    // The agents router keeps the conversation in Stream Chat and can't rewind it, so a reply
-    // can't be written again or a message edited: either would only be asked again as new.
-    actions: { edit: false, regenerate: false },
     approver: approverFor(chat),
     transport: agentChatTransport(chat, {
       adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
