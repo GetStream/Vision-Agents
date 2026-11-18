@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -82,4 +84,26 @@ func (s *AreaSuite) TestEveryOperationAnAppCallsHasAnArea() {
 			}
 		}
 	}
+}
+
+// RefusalCodeSuite covers the code a socket session's refusal is counted with (refusalCode).
+type RefusalCodeSuite struct {
+	suite.Suite
+}
+
+func TestRefusalCodeSuite(t *testing.T) {
+	suite.Run(t, new(RefusalCodeSuite))
+}
+
+// Defect: a store failure, which is no APIError, counted with no code, so the activity record
+// shows the socket answered rather than refused.
+func (s *RefusalCodeSuite) TestAFailureThatIsNoAPIErrorIsCountedAsAnInternalError() {
+	s.Equal(internalError().Code, refusalCode(errors.New("store: connection refused")))
+}
+
+// Defect: an APIError, wrapped on its way up or not, counted with another code than the one an
+// API route answers it with.
+func (s *RefusalCodeSuite) TestAnAPIErrorIsCountedWithItsOwnCode() {
+	s.Equal(errUnknownConfig.Code, refusalCode(errUnknownConfig))
+	s.Equal(errUnknownConfig.Code, refusalCode(fmt.Errorf("config: %w", errUnknownConfig)))
 }
