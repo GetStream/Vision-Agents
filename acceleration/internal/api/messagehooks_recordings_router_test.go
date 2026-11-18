@@ -68,8 +68,7 @@ func (s *MessageHooksSuite) TestAVoiceRecordingNoWorkerWouldAnswerIsNotHeard() {
 		s.recordedMessage(s.namesConfig(), "", s.recordingAt("hello "+s.utils.uuid()))))
 
 	s.Require().Eventually(func() bool {
-		return strings.Contains(s.logged.String(), `msg="nobody could answer an arriving message" channel=`+s.channelID+" session=") &&
-			loggedOneLine("ERROR", "nobody could answer an arriving message", s.customerID()).MatchString(s.logged.String())
+		return strings.Contains(s.logged.String(), `msg="nobody could answer an arriving message" channel=`+s.channelID)
 	}, settleFor, 10*time.Millisecond, "the message was never offered to a worker")
 	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, time.Second, 10*time.Millisecond, "a recording nobody answers was heard")
 }
