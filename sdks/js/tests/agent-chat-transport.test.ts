@@ -13,7 +13,7 @@ import {
 import { Client, Session, supportBranchOf, type SupportBranch } from "../src/index.js";
 import { messageField } from "../src/message-field.js";
 import { TestRouter } from "./router.js";
-import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, rewind, until, update, type TestChat } from "./stream-chat.js";
+import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, heldIds, rewind, until, update, type TestChat } from "./stream-chat.js";
 
 /** What the app makes of a Stream message: what the tests read back of the feed. */
 interface Shown {
@@ -341,15 +341,19 @@ describe("agentChatTransport, branching", () => {
     const edited = chatMessage("ctl_edit", 10, mark("resp_9", "question", 2, 2));
     arrive(streamChat as TestChat, edited);
     await until(() => feed.ids.join() === "q0,r0,ctl_edit", `shows ${feed.ids.join()}`);
-    router.serve("POST", QUERY_PATH, channelPage([q0, r0, edited]));
-    const reads = router.requestsTo("POST", QUERY_PATH).length;
+    // The read after the rewind also brings the question's answer, which only that read holds:
+    // once the channel holds it, the read was applied, and the prune after it is all that is left.
+    const answer = chatMessage("r9", 11, { ...mark("resp_9", "reply", 2, 2), ai_generated: true }, "agent");
+    router.serve("POST", QUERY_PATH, channelPage([q0, r0, edited, answer]));
+    const channel = streamChat.channel("agent", "support-1");
 
     // Chat's event for the rewind the edit made, a moment before the question was written.
     rewind(streamChat as TestChat, "q1", true, 9);
-    await until(() => router.requestsTo("POST", QUERY_PATH).length > reads, "the channel was never read again");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await until(() => heldIds(channel).includes("r9"), `the read after the rewind never landed: ${heldIds(channel).join()}`);
+    // The prune follows the read in the same task, so it has run once the next one starts.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    assert.deepEqual(feed.ids, ["q0", "r0", "ctl_edit"], "the question written after the rewind stays");
+    assert.deepEqual(heldIds(channel), ["q0", "r0", "ctl_edit", "r9"], "what was written after the rewind stays");
   });
 
   it("refuses a message from before branches, before asking the router anything", async () => {
