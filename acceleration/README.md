@@ -2153,7 +2153,10 @@ curl -H "X-Ops-Key: $ROUTER_AUTH_OPS_KEY" "localhost:8080/v1/ops/orgs/$ORG_ID/ac
 
 `areas` is one item per area and client, `meters` one per modality (requests, tokens, audio,
 characters, time and cost), and `first_seen` and `last_seen` the first and last request of any
-area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
+area. A hook counts under the app its signature or token was checked for, from client `api`:
+`phone_sms` for a phone or SMS vendor's, else `hooks_in`. A forward to an event destination
+counts once under `webhooks_out` from `api`, refused when given up. A socket refused in a frame
+after its 101 counts as refused, with the code. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
 with a request answered rather than refused, or `steady_use` once conversations or model calls
 were answered on three UTC days, else `none`. Areas, `first_seen`, `last_seen` and
 `furthest_step` come from `customer_activity`, which counts only since it was first deployed,
