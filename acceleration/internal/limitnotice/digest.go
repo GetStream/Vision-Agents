@@ -52,7 +52,9 @@ func organizationDays(areas []store.OrganizationDayArea) []OrganizationDay {
 			days[last].Areas = append(days[last].Areas, area.ActivityArea)
 			continue
 		}
-		days = append(days, OrganizationDay{ID: area.OrganizationID, New: area.FirstDay, Areas: []store.ActivityArea{area.ActivityArea}})
+		days = append(days, OrganizationDay{
+			ID: area.OrganizationID, New: area.FirstDay, Areas: []store.ActivityArea{area.ActivityArea},
+		})
 	}
 	return days
 }
@@ -100,7 +102,9 @@ func (o OrganizationDay) path() string {
 		}
 	}
 	areas := slices.Collect(maps.Keys(clients))
-	slices.SortFunc(areas, func(a, b string) int { return cmp.Or(cmp.Compare(stepRank(a), stepRank(b)), cmp.Compare(a, b)) })
+	slices.SortFunc(areas, func(a, b string) int {
+		return cmp.Or(cmp.Compare(stepRank(a), stepRank(b)), cmp.Compare(a, b))
+	})
 	var steps, others []string
 	for _, area := range areas {
 		named := area + " (" + strings.Join(clients[area], ", ") + ")"
@@ -161,7 +165,8 @@ func digestMessage(environment string, links Links, digest DayDigest) string {
 	fmt.Fprintf(&b, "\nAll requests refused: %d", len(refused))
 	writeList(&b, refused, func(organization OrganizationDay) string {
 		requests, _ := organization.counts()
-		return fmt.Sprintf("%s   %s%s", organizationName(links, organization.ID), countOf(requests), inParentheses(organization.refusalCode()))
+		return fmt.Sprintf("%s   %s%s", organizationName(links, organization.ID), countOf(requests),
+			inParentheses(organization.refusalCode()))
 	})
 	fmt.Fprintf(&b, "\nActive orgs: %d (day before: %d)", len(digest.Organizations), digest.ActiveBefore)
 	return b.String()
