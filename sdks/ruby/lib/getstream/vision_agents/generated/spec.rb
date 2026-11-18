@@ -2477,9 +2477,21 @@ module GetStream
           properties: %w[name url].freeze,
           required: %w[url].freeze, open: false
         }.freeze,
+        "FloorCheck" => {
+          properties: %w[acted at kind latency_ms options paused_ms point ruling].freeze,
+          required: %w[acted at kind latency_ms ruling].freeze, open: false
+        }.freeze,
         "FloorControl" => {
           properties: %w[max_wait_ms model].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "FloorOption" => {
+          properties: %w[option probability].freeze,
+          required: %w[option probability].freeze, open: false
+        }.freeze,
+        "FloorRuling" => {
+          properties: %w[cannot disposition floor tool].freeze,
+          required: %w[disposition floor].freeze, open: false
         }.freeze,
         "ForkSessionRequest" => {
           properties: %w[agent config_id custom description incognito messages model_overwrites project_id response_id title tool_timeout_ms].freeze,
@@ -3202,7 +3214,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
-          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
+          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[started_at turn_id].freeze, open: false
         }.freeze,
         "ToolApprovalAnswer" => {

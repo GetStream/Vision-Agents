@@ -50,6 +50,9 @@ final readonly class TimelineEntry
         public ?float $ttsToAudioMs = null,
         // The wait between sending the first sentence and the first audio.
         public ?float $ttsTtfbMs = null,
+        // The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest...
+        /** @var list<FloorCheck>|null */
+        public ?array $floorChecks = null,
     ) {
     }
 
@@ -79,6 +82,7 @@ final readonly class TimelineEntry
             textToTtsMs: array_key_exists('text_to_tts_ms', $data) && $data['text_to_tts_ms'] !== null ? Json::float($data, 'text_to_tts_ms') : null,
             ttsToAudioMs: array_key_exists('tts_to_audio_ms', $data) && $data['tts_to_audio_ms'] !== null ? Json::float($data, 'tts_to_audio_ms') : null,
             ttsTtfbMs: array_key_exists('tts_ttfb_ms', $data) && $data['tts_ttfb_ms'] !== null ? Json::float($data, 'tts_ttfb_ms') : null,
+            floorChecks: array_key_exists('floor_checks', $data) && $data['floor_checks'] !== null ? array_map(FloorCheck::fromArray(...), Json::objects($data, 'floor_checks')) : null,
         );
     }
 
@@ -145,6 +149,9 @@ final readonly class TimelineEntry
         }
         if ($this->ttsTtfbMs !== null) {
             $out['tts_ttfb_ms'] = $this->ttsTtfbMs;
+        }
+        if ($this->floorChecks !== null) {
+            $out['floor_checks'] = array_map(static fn (FloorCheck $each): array => $each->toArray(), $this->floorChecks);
         }
         return $out;
     }
