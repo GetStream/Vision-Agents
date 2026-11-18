@@ -167,9 +167,18 @@ func (s *ConnectorSealerSuite) TestAVersionWithoutItsKeyIsRefused() {
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
-	s.ErrorContains(err, "needs a key for the version ROUTER_AUTH_KEK_VERSION names: "+
-		"set the matching ROUTER_AUTH_KEK_V<n>_WRAPPED")
-	s.ErrorContains(err, "versions set: [1]")
+	s.EqualError(err, "connectors.enabled needs a key for the version ROUTER_AUTH_KEK_VERSION names, and ROUTER_DEV_KEK is version 1 only: "+
+		"unset ROUTER_AUTH_KEK_VERSION or set it to 1")
+}
+
+func (s *ConnectorSealerSuite) TestAWrappedVersionWithoutItsKeyIsRefused() {
+	kms := newLocalKMS(s)
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
+	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
+
+	_, err := readKeyring(s.T().Context(), kms, "the test needs")
+	s.EqualError(err, "the test needs a key for the version ROUTER_AUTH_KEK_VERSION names: "+
+		"set the matching ROUTER_AUTH_KEK_V<n>_WRAPPED (versions set: [1])")
 }
 
 func (s *ConnectorSealerSuite) TestAVersionThatIsNotANumberIsRefused() {
@@ -269,6 +278,12 @@ func (s *ConnectorSealerSuite) TestAPlainKeyUnderARetiredNameRefusesToStart() {
 			}
 
 			_, err := newSecretSealer(s.T().Context(), s.settings)
+			if c.name == "ROUTER_AUTH_KEK_V2" {
+				// ROUTER_DEV_KEK is version 1 only: it cannot open the rows of version 2.
+				s.EqualError(err, c.name+" is no longer read: set "+c.replacement+
+					" with auth.kms_key (ROUTER_AUTH_KMS_KEY) on a hosted router")
+				return
+			}
 			s.EqualError(err, c.name+" is no longer read: set ROUTER_DEV_KEK on a laptop or in CI, or "+
 				c.replacement+" with auth.kms_key (ROUTER_AUTH_KMS_KEY) on a hosted router")
 		})

@@ -158,7 +158,7 @@ func (s *TelnyxHookSuite) TestWithoutAKeyringACallSaysWhatToSet() {
 
 	s.Equal(http.StatusOK, status)
 	s.Contains(body, "<Response><Hangup/></Response>")
-	s.True(s.loggedLine(masked(s.e164), "no key to open trunk passwords", "set ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED"))
+	s.True(s.loggedLine(masked(s.e164), "no key to open trunk passwords", "set ROUTER_DEV_KEK (local), or ROUTER_AUTH_KEK_V1_WRAPPED with ROUTER_AUTH_KMS_KEY (hosted)"))
 	s.False(s.loggedLine(masked(s.e164), "attached before its trunk was kept"), "the key is what is missing")
 }
 

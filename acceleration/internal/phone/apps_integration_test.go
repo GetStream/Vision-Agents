@@ -1276,7 +1276,7 @@ func (s *AppsSuite) TestWithoutASealerATelnyxNumberIsNotAttached() {
 	_, err = service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: e164})
 
 	s.ErrorIs(err, ErrNoSealer)
-	s.ErrorContains(err, "set ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED", "the error names what to set")
+	s.ErrorContains(err, "set ROUTER_DEV_KEK (local), or ROUTER_AUTH_KEK_V1_WRAPPED with ROUTER_AUTH_KMS_KEY (hosted)", "the error names what to set")
 	s.Empty(s.deployment.Trunks(), "nothing is made in Stream")
 	s.Empty(telnyx.inbound.E164, "telnyx is not told to send calls anywhere")
 }

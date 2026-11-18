@@ -411,6 +411,11 @@ func checkKeySources(settings config.Config) error {
 		if retired[0] == authKEKEnvVar {
 			replacement = authKEKEnvVar + "_V1" + authKEKWrappedSuffix
 		}
+		// ROUTER_DEV_KEK is version 1 only, so it is no way to keep the rows of a later version.
+		if retired[0] != authKEKEnvVar && retired[0] != authKEKEnvVar+"_V1" {
+			return fmt.Errorf("%s is no longer read: set %s with auth.kms_key (ROUTER_AUTH_KMS_KEY) "+
+				"on a hosted router", retired[0], replacement)
+		}
 		return fmt.Errorf("%s is no longer read: set %s on a laptop or in CI, or %s with "+
 			"auth.kms_key (ROUTER_AUTH_KMS_KEY) on a hosted router", retired[0], devKEKEnvVar, replacement)
 	}
@@ -489,6 +494,12 @@ func readKeyring(ctx context.Context, unwrapper kekUnwrapper, needs string) (*au
 	if keys[current] == "" {
 		if os.Getenv(authKEKVersionEnvVar) == "" {
 			return nil, fmt.Errorf("%s a key encryption keyring to seal the secrets it holds: %s", needs, setAKeyring)
+		}
+		// ROUTER_DEV_KEK is version 1, and a wrapped key beside it is refused: only the selector
+		// can change.
+		if os.Getenv(devKEKEnvVar) != "" {
+			return nil, fmt.Errorf("%s a key for the version %s names, and %s is version 1 only: "+
+				"unset %s or set it to 1", needs, authKEKVersionEnvVar, devKEKEnvVar, authKEKVersionEnvVar)
 		}
 		// The version is not named: an all-digit key pasted into ROUTER_AUTH_KEK_VERSION
 		// parses as one, and naming it would send the key to the logs and Sentry. The
@@ -1649,8 +1660,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 			defer inbound.Close()
 		}
 	} else {
-		logger.Warn("no key encryption keyring set ("+devKEKEnvVar+" or "+authKEKEnvVar+"_V1"+authKEKWrappedSuffix+
-			"), so no channel can be "+
+		logger.Warn("no key encryption keyring set ("+devKEKEnvVar+" (local), or "+authKEKEnvVar+"_V1"+
+			authKEKWrappedSuffix+" with ROUTER_AUTH_KMS_KEY (hosted)), so no channel can be "+
 			"connected: there is nowhere safe to keep a provider's credentials",
 			"endpoint", "POST /v1/agents/channels")
 	}

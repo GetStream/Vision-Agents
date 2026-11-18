@@ -713,5 +713,5 @@ func (s *RouterStartSuite) TestARouterWithNoKeyringWarnsWhichVariablesToSet() {
 		}
 	}
 	s.Require().NotEmpty(found, "warnings: %q", logs.warned())
-	s.Contains(found, "(ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED)")
+	s.Contains(found, "(ROUTER_DEV_KEK (local), or ROUTER_AUTH_KEK_V1_WRAPPED with ROUTER_AUTH_KMS_KEY (hosted))")
 }
