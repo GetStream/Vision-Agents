@@ -378,6 +378,7 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
     final call = voiceState?.call;
     final colors = context.streamColorScheme;
     final text = context.streamTextTheme;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final request = widget.session.approvals.value.firstOrNull;
     final failure = _failure ?? voiceState?.failure?.toString() ?? _trouble;
 
@@ -440,21 +441,54 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                       },
                     ),
                   ),
-                  ValueListenableBuilder(
-                    valueListenable: _caption,
-                    builder: (context, shown, _) =>
-                        CaptionView(caption: shown.caption, isVisible: shown.isVisible),
-                  ),
-                  if (_latestVoiceTurnWithUI(voice) case final Turn turn)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 280),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: BrandThemeScope(
-                          child: _VoiceLiveUI(host: _voiceUI, turn: turn),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ValueListenableBuilder(
+                        valueListenable: _caption,
+                        builder: (context, shown, _) =>
+                            CaptionView(caption: shown.caption, isVisible: shown.isVisible),
+                      ),
+                      // The card grows as Juno writes it, which moves the glow above it: both
+                      // ease into place, and a new card comes up from below.
+                      AnimatedSize(
+                        duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 400),
+                        curve: Curves.easeOutCubic,
+                        alignment: Alignment.topCenter,
+                        child: AnimatedSwitcher(
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 300),
+                          transitionBuilder: (child, animation) => FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: Tween(
+                                begin: const Offset(0, 0.25),
+                                end: Offset.zero,
+                              ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+                              child: child,
+                            ),
+                          ),
+                          child: switch (_latestVoiceTurnWithUI(voice)) {
+                            final Turn turn => Padding(
+                              key: ValueKey(turn.id),
+                              padding: const EdgeInsets.only(top: 16),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(maxHeight: 280),
+                                child: SingleChildScrollView(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  child: BrandThemeScope(
+                                    child: _VoiceLiveUI(host: _voiceUI, turn: turn),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            _ => const SizedBox(width: double.infinity),
+                          },
                         ),
                       ),
-                    ),
+                    ],
+                  ),
                 ],
               ),
             ),

@@ -121,6 +121,23 @@ class _ChatScreenState extends State<ChatScreen> {
         // Core has no waveform glyph.
         icon: const Icon(Icons.graphic_eq),
       ),
+      // A reply's text gives way to its UI as the UI arrives, rather than jumping.
+      assistantMessage: (context, props) => AnimatedSize(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+        alignment: Alignment.topCenter,
+        child: AIAssistantMessageView(
+          text: props.text,
+          isGenerating: props.isGenerating,
+          parts: props.parts,
+          attachments: props.attachments,
+          approver: props.approver,
+          reasoningText: props.message.reasoningText,
+          onAttachmentTap: props.onAttachmentTap,
+        ),
+      ),
     ),
   );
 
@@ -216,7 +233,11 @@ class _ChatScreenState extends State<ChatScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (context) => VoiceScreen(session: session),
+        // The route is not under this screen, so the cards on the call are given the chat too.
+        builder: (context) => AgentChatScope(
+          chat: _chat,
+          child: VoiceScreen(session: session),
+        ),
       ),
     );
   }
@@ -246,18 +267,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     }
                     return false;
                   },
-                  child: BrandThemeScope(
-                    child: AIConversationView.conversation(
-                      conversation: _conversation,
-                      ui: _chat.ui,
-                      footer: _conversation.status.isAnswering && activity?.text != null
-                          ? AITypingIndicatorView(text: activity!.text!)
-                          : null,
-                      emptyContent: Padding(
-                        padding: EdgeInsets.only(bottom: _barHeight),
-                        child: const _Welcome(),
+                  child: AgentChatScope(
+                    chat: _chat,
+                    child: BrandThemeScope(
+                      child: AIConversationView.conversation(
+                        conversation: _conversation,
+                        ui: _chat.ui,
+                        footer: _conversation.status.isAnswering && activity?.text != null
+                            ? AITypingIndicatorView(text: activity!.text!)
+                            : null,
+                        emptyContent: Padding(
+                          padding: EdgeInsets.only(bottom: _barHeight),
+                          child: const _Welcome(),
+                        ),
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
                       ),
-                      padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
                     ),
                   ),
                 ),

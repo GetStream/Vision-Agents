@@ -1,5 +1,6 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 
 /// Brand design-system presets applied to both OpenUI and A2UI generated surfaces as well as
@@ -36,9 +37,27 @@ enum BrandProfile {
   final Color accent;
   final double cornerRadius;
 
-  A2UIThemeData get a2uiTheme => A2UIThemeData(accent: accent, cornerRadius: cornerRadius);
+  A2UIThemeData get a2uiTheme => A2UIThemeData(
+    accent: accent,
+    cornerRadius: cornerRadius,
+    buttonCornerRadius: cornerRadius * 0.75,
+    controlCornerRadius: cornerRadius / 2,
+  );
 
+  /// The brand chosen in Settings, kept between launches once [load] has run.
   static final ValueNotifier<BrandProfile> active = ValueNotifier(BrandProfile.stream);
+
+  /// Where the chosen brand is kept, by its name.
+  static const _storageKey = 'brand';
+
+  /// Reads the brand chosen at an earlier launch into [active], and keeps each one chosen from
+  /// now on.
+  static Future<void> load() async {
+    final preferences = SharedPreferencesAsync();
+    final stored = await preferences.getString(_storageKey);
+    active.value = values.asNameMap()[stored] ?? active.value;
+    active.addListener(() => preferences.setString(_storageKey, active.value.name));
+  }
 }
 
 /// Inherited brand tokens read by OpenUI components and custom portable widgets.

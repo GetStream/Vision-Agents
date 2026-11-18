@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
@@ -99,6 +100,14 @@ class AgentChat with AIConversationTransport<AgentMessage> {
 
   /// Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick.
   final liveUI = LiveUI();
+
+  /// The table the seat selector's tool reserved in this conversation, or null.
+  ValueListenable<Reservation?> get reservation => _reservation;
+  final _reservation = ValueNotifier<Reservation?>(null);
+
+  /// The tools the cards in the conversation brought to its session, by name, so a card shown
+  /// again, such as after scrolling back to it, does not bring its tool twice.
+  final _brought = <String>{};
 
   /// The composer option that asks for more reasoning.
   static const thinkHarder = 'think_harder';
@@ -460,6 +469,38 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     }
   }
 
+  /// Gives the agent a tool a card in the conversation brings, the first time the card shows.
+  /// A card is shown in a reply, so the conversation has its session by then.
+  Future<void> bring(AgentTool tool) async {
+    final session = _session;
+    if (session == null || _closed || !_brought.add(tool.name)) return;
+    try {
+      await session.addTools([tool]);
+    } on Object catch (error) {
+      _brought.remove(tool.name);
+      if (!_closed) _failure.value = '$error';
+    }
+  }
+
+  /// Takes back a tool a card brought, once the card has done what it was for.
+  Future<void> withdraw(String name) async {
+    final session = _session;
+    if (session == null || _closed || !_brought.remove(name)) return;
+    try {
+      await session.removeTool(name);
+    } on Object catch (error) {
+      if (!_closed) _failure.value = '$error';
+    }
+  }
+
+  /// Keeps the table the seat selector's tool reserved, and takes the tool back: the card has
+  /// done what it was for. The tool's answer does not wait for that, since the router takes the
+  /// tool back only once the call that reserved it has finished.
+  void reserved(Reservation reservation) {
+    _reservation.value = reservation;
+    unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
+  }
+
   /// Loads the messages before the oldest one loaded.
   @override
   Future<void> loadOlderMessages() async {
@@ -515,10 +556,26 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// Releases what the chat holds, once [close] has completed.
   void dispose() {
     ui.dispose();
+    _reservation.dispose();
     _usedSessionId.dispose();
     _sessionFailure.dispose();
     _failure.dispose();
   }
+}
+
+/// Makes [chat] the conversation the cards below it are shown in, which a card that brings its
+/// own tool, such as the seat selector, gives it to.
+class AgentChatScope extends InheritedWidget {
+  const AgentChatScope({super.key, required this.chat, required super.child});
+
+  final AgentChat chat;
+
+  /// The conversation above [context], or null where a card is shown outside one.
+  static AgentChat? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<AgentChatScope>()?.chat;
+
+  @override
+  bool updateShouldNotify(AgentChatScope oldWidget) => oldWidget.chat != chat;
 }
 
 extension on List<stream.Message> {

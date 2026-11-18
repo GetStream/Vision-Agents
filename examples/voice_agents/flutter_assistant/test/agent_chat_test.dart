@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show WebSocket;
 
 import 'package:flutter_assistant/agent_chat.dart';
+import 'package:flutter_assistant/trip_components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
@@ -525,6 +527,81 @@ void main() {
       chat.dispose();
     });
 
+    group('a seat selector', () {
+      const tables = <DiningTableItem>[
+        (id: 'T1', zone: 'Cliff Terrace', seats: 2, available: false),
+        (id: 'T4', zone: 'Harbor Window', seats: 4, available: true),
+      ];
+
+      AgentTool reserveTable(AgentChat chat) =>
+          SeatSelectorComponent.reserveTable(tables, chat.reserved);
+
+      /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
+      /// returns the result sent back.
+      Future<Map<String, Object?>> call(AgentChat chat, String tableId) async {
+        (await sessions.socket()).add(
+          jsonEncode({
+            'type': 'tool_call',
+            'id': 'c1',
+            'name': SeatSelectorComponent.reserveTableTool,
+            'arguments': jsonEncode({
+              'table_id': tableId,
+              'when': 'tonight at 8pm',
+              'summary': 'Harbor Window, for 4, tonight at 8pm',
+            }),
+          }),
+        );
+        final session = chat.session!;
+        await until(() => session.approvals.value.isNotEmpty);
+        session.decide('c1', allowed: true);
+        await until(() => sessions.said.any((m) => m.contains('"tool_result"')));
+        return jsonDecode(sessions.said.lastWhere((m) => m.contains('"tool_result"')))
+            as Map<String, Object?>;
+      }
+
+      test('brings its tool to the session once, however often it shows', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+
+        await chat.bring(reserveTable(chat));
+        await chat.bring(reserveTable(chat));
+
+        expect(
+          sessions.routes.where((r) => r == 'POST /v1/agents/sessions/s1/tools'),
+          hasLength(1),
+        );
+      });
+
+      test('reserves a free table, keeps the booking and takes its tool back', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        await chat.bring(reserveTable(chat));
+
+        final result = await call(chat, 'T4');
+
+        expect(result['output'], contains('Reserved table T4'));
+        expect(result['error'], isEmpty);
+        expect(chat.reservation.value?.table.id, 'T4');
+        expect(chat.reservation.value?.when, 'tonight at 8pm');
+        expect(chat.reservation.value?.tables, {'T1', 'T4'});
+        await until(
+          () => sessions.routes.contains('DELETE /v1/agents/sessions/s1/tools/reserve_table'),
+        );
+      });
+
+      test('refuses a taken table, naming the free ones, and keeps its tool', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        await chat.bring(reserveTable(chat));
+
+        final result = await call(chat, 'T1');
+
+        expect(result['error'], allOf(contains('T1 is not a free table'), contains('T4')));
+        expect(chat.reservation.value, isNull);
+        expect(sessions.routes.where((r) => r.startsWith('DELETE')), isEmpty);
+      });
+    });
+
     test('opening twice at once starts one session', () async {
       final chat = closing(AgentChat(null, sessions: sessions));
 
@@ -610,6 +687,12 @@ class _FakeSessions extends AgentSessions {
   int started = 0;
   final deleted = <String>[];
 
+  /// The requests the router took, each as `METHOD /path`, oldest first.
+  List<String> get routes => _router.arrived;
+
+  /// What the sessions' sockets sent, oldest first.
+  List<String> get said => _router.said;
+
   /// How many questions the router was asked.
   int get asked => _router.arrived.where((route) => route.endsWith('/responses')).length;
 
@@ -642,7 +725,9 @@ class _FakeSessions extends AgentSessions {
     _router
       ..answer('POST /v1/agents/sessions', 201, sessionJson(id))
       ..answer('GET /v1/agents/sessions/$id', 200, sessionJson(id))
-      ..answer('POST /v1/agents/sessions/$id/responses', 202, responseJson(id));
+      ..answer('POST /v1/agents/sessions/$id/responses', 202, responseJson(id))
+      ..answer('POST /v1/agents/sessions/$id/tools', 204)
+      ..answer('DELETE /v1/agents/sessions/$id/tools/reserve_table', 204);
     return sessionId != null ? _agents.attach(sessionId) : _agents.chat();
   }
 

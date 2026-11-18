@@ -4,14 +4,18 @@ import 'dart:math' as math;
 
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:stream_agents/stream_agents.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 
+import 'agent_chat.dart';
+import 'assistant.dart';
 import 'brand_theme.dart';
 import 'device_tools.dart';
 
@@ -540,7 +544,7 @@ class RestaurantCardComponent extends AIUIComponent<RestaurantArguments> {
   Widget build(BuildContext context, RestaurantArguments venue, AIUIComponentContext ui) {
     final colors = context.streamColorScheme;
     final text = context.streamTextTheme;
-    final brand = BrandProfile.active.value;
+    final brand = BrandThemeData.of(context);
     final badge = venue.priceTier == null
         ? '★ ${venue.rating.toStringAsFixed(1)}'
         : '★ ${venue.rating.toStringAsFixed(1)} · ${venue.priceTier}';
@@ -596,7 +600,7 @@ class AvailabilityGaugeComponent extends AIUIComponent<AvailabilityArguments> {
   Widget build(BuildContext context, AvailabilityArguments gauge, AIUIComponentContext ui) {
     final colors = context.streamColorScheme;
     final text = context.streamTextTheme;
-    final brand = BrandProfile.active.value;
+    final brand = BrandThemeData.of(context);
     final clamped = gauge.occupancyPct.clamp(0.0, 100.0);
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -670,11 +674,80 @@ class _GaugePainter extends CustomPainter {
 
 typedef DiningTableItem = ({String id, String zone, int seats, bool available});
 
+/// A booking the seat selector's tool made, and the tables of the card it was made from.
+typedef Reservation = ({DiningTableItem table, String when, String code, Set<String> tables});
+
+/// A venue's tables, by zone and seats. Tapping a free one chooses it and asks to reserve it;
+/// a taken one can't be tapped.
+///
+/// The card brings its own tool, `reserve_table`: the agent has no way to book a table until a
+/// card offering tables is on the screen, so the card gives the conversation's session the tool
+/// the first time it shows ([AgentSession.addTools]), and takes it back once a table is
+/// reserved ([AgentSession.removeTool]).
 class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
   SeatSelectorComponent(this.definition);
 
   @override
   final AIUIComponentDefinition definition;
+
+  /// What the tool the card brings is called.
+  static const reserveTableTool = 'reserve_table';
+
+  /// Reserves one of the free [tables] a card offers, once the person says it may.
+  /// [onReserved] hears the reservation.
+  static AgentTool reserveTable(
+    List<DiningTableItem> tables,
+    void Function(Reservation reservation) onReserved,
+  ) => AgentTool(
+    name: reserveTableTool,
+    description:
+        "Reserves a table from the seat selector on the person's screen. Call it when they "
+        "chose a table, such as by tapping one, with that table's id.",
+    parameters: AgentTool.strings(
+      {
+        'table_id': 'the id of the table, as the seat selector shows it, such as T4',
+        'when': 'the day and time of the booking as they would read it, such as tomorrow at 8pm',
+        'summary':
+            'the table, the party and the time as they would read it, such as Terrace, for 4, '
+            'tomorrow at 8pm',
+      },
+      required: ['table_id', 'when', 'summary'],
+    ),
+    displayTitle: 'Reserving your table',
+    approval: const ToolApproval(
+      title: 'Reserve this table?',
+      message: 'Juno books it under your name.',
+      reasonArgument: 'summary',
+      allowTitle: 'Reserve',
+      declineTitle: 'Not now',
+    ),
+    run: (arguments) async {
+      final id = '${arguments['table_id'] ?? ''}';
+      final when = '${arguments['when'] ?? ''}';
+      final table = tables.where((t) => t.id == id && t.available).firstOrNull;
+      if (table == null) {
+        final free = tables.where((t) => t.available).map((t) => t.id).join(', ');
+        throw ToolFailure('$id is not a free table on the seat selector. The free ones are $free.');
+      }
+      if (when.isEmpty) throw const ToolFailure('Say when the table is for.');
+      final reservation = (
+        table: table,
+        when: when,
+        code: _confirmationCode(),
+        tables: {for (final t in tables) t.id},
+      );
+      onReserved(reservation);
+      return 'Reserved table ${table.id} (${table.zone}, for ${table.seats}) for $when, under '
+          '${Assistant.userName}. The confirmation code is ${reservation.code}. The seat '
+          'selector on their screen now shows this booking, so confirm it in a sentence and do '
+          'not show or patch the seat selector again.';
+    },
+  );
+
+  static String _confirmationCode() {
+    final random = math.Random.secure();
+    return [for (var i = 0; i < 6; i++) '0123456789ABCDEF'[random.nextInt(16)]].join();
+  }
 
   @override
   List<DiningTableItem> readArguments(AIUIArguments arguments) => [
@@ -712,11 +785,35 @@ class _SeatSelectorView extends StatefulWidget {
 class _SeatSelectorViewState extends State<_SeatSelectorView> {
   late String? _selected = widget.tables.where((t) => t.available).firstOrNull?.id;
 
+  /// The conversation the card is shown in, which holds the session its tool is given to.
+  /// Null where the card is shown outside one.
+  AgentChat? _chat;
+
+  Set<String> get _ids => {for (final table in widget.tables) table.id};
+
+  /// The booking of one of these tables, which ends what the card is for. The agent can show
+  /// the same tables again after it, and they show the booking too.
+  Reservation? _reservationIn(AgentChat chat) => switch (chat.reservation.value) {
+    final reservation? when setEquals(reservation.tables, _ids) => reservation,
+    _ => null,
+  };
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final chat = AgentChatScope.maybeOf(context);
+    if (chat == null || identical(chat, _chat)) return;
+    _chat = chat;
+    if (_reservationIn(chat) == null) {
+      unawaited(chat.bring(SeatSelectorComponent.reserveTable(widget.tables, chat.reserved)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.streamColorScheme;
-    final text = context.streamTextTheme;
-    final brand = BrandProfile.active.value;
+    final brand = BrandThemeData.of(context);
+    final chat = _chat;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colors.backgroundSurface,
@@ -724,34 +821,96 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: chat == null
+            ? _picker(context)
+            : ValueListenableBuilder(
+                valueListenable: chat.reservation,
+                builder: (context, _, _) => switch (_reservationIn(chat)) {
+                  final reservation? => _ReservationConfirmation(reservation: reservation),
+                  null => _picker(context),
+                },
+              ),
+      ),
+    );
+  }
+
+  Widget _picker(BuildContext context) {
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final brand = BrandThemeData.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      spacing: 8,
+      children: [
+        Text(
+          'Select a table zone',
+          style: text.captionEmphasis.copyWith(color: colors.textPrimary),
+        ),
+        Wrap(
           spacing: 8,
+          runSpacing: 8,
           children: [
-            Text(
-              'Select a table zone',
-              style: text.captionEmphasis.copyWith(color: colors.textPrimary),
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final table in widget.tables)
-                  ChoiceChip(
-                    label: Text('${table.id} · ${table.zone} (${table.seats}p)'),
-                    selected: _selected == table.id,
-                    selectedColor: brand.accent.withValues(alpha: 0.16),
-                    onSelected: table.available
-                        ? (_) {
-                            setState(() => _selected = table.id);
-                            widget.onSelect(table);
-                          }
-                        : null,
-                  ),
-              ],
-            ),
+            for (final table in widget.tables)
+              ChoiceChip(
+                label: Text('${table.id} · ${table.zone} (${table.seats}p)'),
+                selected: _selected == table.id,
+                selectedColor: brand.accent.withValues(alpha: 0.16),
+                onSelected: table.available
+                    ? (_) {
+                        setState(() => _selected = table.id);
+                        widget.onSelect(table);
+                      }
+                    : null,
+              ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+/// What a seat selector shows once one of its tables is booked.
+class _ReservationConfirmation extends StatelessWidget {
+  const _ReservationConfirmation({required this.reservation});
+
+  final Reservation reservation;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final brand = BrandThemeData.of(context);
+    final table = reservation.table;
+    return MergeSemantics(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 10,
+        children: [
+          Icon(Icons.check_circle, size: 28, color: brand.accent),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              spacing: 4,
+              children: [
+                Text(
+                  'Table ${table.id} reserved',
+                  style: text.bodyEmphasis.copyWith(color: colors.textPrimary),
+                ),
+                Text(
+                  '${table.zone} · ${table.seats} people · ${reservation.when}',
+                  style: text.captionDefault.copyWith(color: colors.textSecondary),
+                ),
+                Text(
+                  'Confirmation ${reservation.code}',
+                  style: text.captionDefault.copyWith(
+                    color: colors.textPrimary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

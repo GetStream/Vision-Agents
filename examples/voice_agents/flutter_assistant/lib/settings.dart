@@ -24,7 +24,7 @@ enum ReplyFormat {
   static Uri _url(Uri? backend) => (backend ?? Assistant.backendUrl).resolve('/reply-format');
 
   /// The format the agent answers in, asked of [backend], or null for one the app does not
-  /// offer, such as OpenUI, which another app chose.
+  /// offer, which another app chose.
   static Future<ReplyFormat?> current({Uri? backend}) async =>
       _read(await http.get(_url(backend)).timeout(_answering));
 

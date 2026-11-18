@@ -59,8 +59,11 @@ there with `configure` and run the backend with that app's `STREAM_API_KEY` and
 The chat asks for `xai/grok-4.7`, a model that reads photos and streams its reasoning, so the
 router needs `XAI_API_KEY`. A call needs `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and
 `INWORLD_API_KEY`. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or
-`PERPLEXITY_API_KEY`. The AI components and the A2UI renderer come from `stream-chat-flutter-ai`
-at the head of its AI parity features pull request (#90), pinned by commit, until they are released.
+`PERPLEXITY_API_KEY`.
+
+The AI components and the A2UI renderer are `stream_chat_flutter_ai` and
+`stream_chat_flutter_ai_a2ui` 0.2.0 from pub.dev. The OpenUI renderer is the app's own
+(`lib/openui_renderer.dart`) until Stream's is published.
 
 ## Gmail and Linear
 
@@ -112,32 +115,27 @@ swift_assistant's `go run ./configure` again, which binds both:
 
 ## What the app shows
 
-- **Replies in Markdown or A2UI**, the formats the Flutter app supports for now: the gear
-  beside New chat in the drawer opens Settings, whose Replies list is kept by the
-  swift_assistant backend (`GET` and `PUT /reply-format`) as what the agent is told. A conversation keeps the
-  instructions it started with, so the next new one answers the new way. The app has nothing to
-  switch: its `AIUIHost` has an `A2UIRenderer` and the trip components
-  (`lib/trip_components.dart`, from `assets/UIComponents.json`), and a reply shows whichever UI
-  it carries in `custom.ai_ui`. Ask "Plan a weekend in Ohrid" to see it.
 - **Conversations** are the router's, in the drawer the menu button opens: `sessions.query()`
   lists this user's, `sessions.search` finds them by title, and the router titles each one as it
   goes. They are under Today, Yesterday, This week and then their month, by when they started.
   Pull the list down to read it again; swipe one away to delete it. A new chat opens its session
   as its first message is typed, since opening one takes seconds, and one left unsent is deleted
-  again on leaving it. One that ended carries on when it is next asked something.
+  again on leaving it. One that ended carries on when it is next asked something, with the
+  phone's tools.
 - **Chat** is Stream's AI components (`stream_chat_flutter_ai`) over the session's channel.
   `AIConversationView` lays it out in turns: a question moves to the top and shows at once, and
   its reply writes itself out below it, with the model's reasoning as it thinks (reassembled
   from the live updates by `LiveReasoning`), each tool call as it runs, and the answer streaming
   in. Older messages load as you scroll up. Under a finished reply you can copy, share and rate
   it; sharing opens the platform's share sheet, and ratings stay on the phone, as the router
-  takes none yet. The composer floats over the bottom
-  of the conversation, which fades away under it, and its options sheet has **Think harder**,
-  which asks with a higher `reasoning_effort`.
+  takes none yet. The composer floats over the bottom of the conversation, which fades away
+  under it, and its options sheet has **Think harder**, which asks with a higher
+  `reasoning_effort`.
 - The app is drawn in Stream's design system (`stream_core_flutter`, which
   `stream_chat_flutter_ai` is built on and re-exports): `StreamTheme` in light and dark,
   `StreamAppBar`, `StreamButton`, `StreamListTile` and `StreamTextInput` in the drawer, and
-  `StreamIcons`. The composer's slots are registered with `streamAIComponentBuilders`.
+  `StreamIcons`. The composer's slots and the agent's messages are registered with
+  `streamAIComponentBuilders`.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across,
   turned the way the camera held them, and inline as JPEG data URIs (`photos.dart`). The question
   shows them at once; the router uploads them to the conversation's channel and writes them on
@@ -149,8 +147,8 @@ swift_assistant's `go run ./configure` again, which binds both:
   card over the call; the call is followed by a second session with none. The agent is Stream's
   voice glow, moving with its voice in Stream's colors and with yours in red, with a word for
   what it is doing and captions a sentence at a time, paced to its voice, as swift_assistant's
-  are. The microphone is asked for as voice mode opens. Hang up, the
-  close button or Back take the agent off the call and go back to the chat.
+  are. The microphone is asked for as voice mode opens. Hang up, the close button or Back take
+  the agent off the call and go back to the chat.
 - **The camera** button in voice mode shows Juno what the phone is pointing at, through the back
   lens, with a preview of it. Ask "what's this?" and the agent's `vision` skill asks the call's
   session to look (`get_video_frames`), which answers with pictures the camera takes then: unlike
@@ -163,11 +161,64 @@ swift_assistant's `go run ./configure` again, which binds both:
   the reply. On iOS a reminder goes in Reminders; Android has no Reminders an app can add to, so
   there it is an event in the calendar new events go in, at the time it is due, with an alert
   then, and it takes a due time, as android_assistant's does. `send_email` has swift_assistant's
-  backend send it through the router's proxy for the person's Gmail (`POST /gmail/send`).
+  backend send it through the router's proxy for the person's Gmail (`POST /gmail/send`). A seat
+  selector card adds `reserve_table` while it is shown (see [Interactive UI](#interactive-ui)).
 
 The app is the user `juno-owner`, Alex, as the iOS and Android apps are, so all three phones
 list the same conversations. `assistant.dart` holds the whole configuration: the router's and
 the backend's URLs, the customer id, the Stream key, the agent's name and the user.
+
+## Interactive UI
+
+The gear beside New chat in the drawer opens Settings, where **Replies** chooses how the agent
+answers: in Markdown, or with interactive UI in A2UI or OpenUI. swift_assistant's backend keeps
+the choice as what the agent is told (`GET` and `PUT /reply-format`), so the app has nothing to
+switch: its `AIUIHost` has a renderer for each format, and a reply shows whichever UI it carries
+in `custom.ai_ui`. A conversation keeps the instructions it started with, so the next new one is
+the first to answer the new way, and earlier replies keep theirs. How the agent learns to write
+each format, and the prompts generated for it, are in
+[swift_assistant's README](../swift_assistant/README.md#interactive-ui).
+
+With A2UI or OpenUI chosen, ask "Plan a weekend in Ohrid" and the reply is UI rather than text: a
+map of the places, the person's own calendar for those days, place cards with their photos, and
+follow-ups. The map, the place cards and the calendar are the app's own widgets
+(`lib/trip_components.dart`), described in `assets/UIComponents.json`, a copy of
+swift_assistant's, and both formats place them. They load what they show on the phone: the photos
+from Wikipedia and the calendar from the device, which the agent never sees. Tapping a place, a
+follow-up or a form's button asks the agent again: the person's message says what they did in
+words and carries the action as `custom.ai_ui_action` (`responses.create(uiAction:)`).
+
+Ask "Where should we eat in Ohrid tonight?" for the other kind of card: a `RestaurantCard` per
+venue, an `AvailabilityGauge` of how full the first one is and a `SeatSelector` of its tables,
+also the app's own. Tapping a free table asks to reserve it.
+
+- **A card brings its own tool.** The agent cannot book a table until a seat selector is on the
+  screen: the card defines `reserve_table` (`SeatSelectorComponent.reserveTable`) and gives it to
+  the conversation's session the first time it shows, with `AgentSession.addTools`. Tapping a
+  free table then has the agent call it, which asks first ("Reserve this table?") and takes only
+  a free table from the card. Once you allow it the card turns into the booking: the table, the
+  time and a confirmation code, which it keeps if the agent shows the same tables again. The
+  card has done what it was for, so it takes the tool back with `AgentSession.removeTool`. The
+  router's `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists
+  `reserve_table` as `session` while the card's tool is given.
+- **The UI streams in over the socket.** The router sends a reply's UI on the session's socket
+  as the model writes it (`ui_delta`, then `ui_completed`), and writes it on the reply's message
+  in Chat later, on a slower tick. `AgentChat` reads each turn's UI into the SDK's `LiveUI`, which
+  shows it on the reply until the message's own `ai_ui` is complete. Each part of the card
+  animates in as it arrives, and the reply's text gives way to it rather than jumping.
+- **A change to the last card is a patch.** Asked to change the card it just wrote, the agent
+  writes only the statements that change, in an ```` ```openui-patch ```` block. The router
+  merges them into that card before it writes the message, and the SDK does the same with what
+  streams in, so the reply shows the whole card, changed.
+- **The UI shows on a call too.** In voice mode the agent says a sentence or two and writes the
+  same UI, which the router keeps out of what is spoken. Voice mode shows the newest of it under
+  the glow, from the call's session: it comes up from below and grows as it is written, moving
+  the glow, and tapping it asks the agent as in the chat. The animations follow the phone's
+  reduce-motion setting.
+- **Settings › Brand** chooses the accent and corners the UI wears: Stream Default, Ember
+  Hospitality or Nordic Mobility (`brand_theme.dart`), kept between launches. Cards already on
+  screen take it on at once: the A2UI and OpenUI renderers and the app's widgets read it from
+  the widget tree. The agent writes the same UI whichever is chosen.
 
 ## What is not here yet
 
@@ -189,11 +240,7 @@ app.
 - A sign-in goes back to the app that started the conversation, the `return_url` of its
   session: one started on iOS or Android goes back to that app, and one from before
   `return_url` to the dashboard, so the page never comes back here. Start a new chat.
-- A conversation opened again from the list, after it was left, runs without the phone's tools
-  and on the agent's own model rather than Grok: the router does not keep either with the
-  session yet, and the iOS and Android apps have the same gap.
-- The conversation keeps its messages clear of the composer floating over it, but its
-  scroll-to-latest button sits under the composer: `AIConversationView` places it at a fixed
-  offset.
+- A card's UI makes room for itself in the chat a part at a time: Stream's components animate
+  each part in, but not the reply growing around it, which the app cannot reach.
 - The Think harder chip reads "Think harder" rather than iOS's shorter "Think", since
   `ChatOption` has no short title.
