@@ -6613,7 +6613,7 @@ type FileSource struct {
 
 // FloorCheck defines model for FloorCheck.
 type FloorCheck struct {
-	// Acted Whether the router acted on the ruling: the caller's turn ended on this check, or, while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur. False for a ruling the router let go of, as for words since replaced.
+	// Acted Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced.
 	Acted bool `json:"acted"`
 
 	// At When the check was asked.

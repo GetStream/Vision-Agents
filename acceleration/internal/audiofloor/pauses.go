@@ -735,7 +735,8 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	t.mu.Unlock()
 	handed := stopping != nil && stopping.Words != ""
 	if !deferred {
-		report(ended || handed)
+		// An utterance ended over the agent on a ruling to go on was no interruption of it.
+		report(handed || actedOn(turn.Speaking, ended, checked.Ruling))
 	}
 	if handed {
 		asker.Overheard(c.participant, *stopping)

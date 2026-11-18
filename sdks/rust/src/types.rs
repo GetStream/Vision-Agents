@@ -5997,7 +5997,7 @@ pub struct FileSource {
 ///`FloorCheck`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct FloorCheck {
-    ///Whether the router acted on the ruling: the caller's turn ended on this check, or, while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur. False for a ruling the router let go of, as for words since replaced.
+    ///Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced.
     pub acted: bool,
     ///When the check was asked.
     pub at: ::std::string::String,

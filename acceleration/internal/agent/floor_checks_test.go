@@ -140,6 +140,19 @@ func TestAPauseCheckAndACheckOverTheAgentAreKeptWithTheirTurn(t *testing.T) {
 	require.Nil(t, w.take("turn-1"), "a turn's checks are carried once")
 }
 
+// Settled words over the agent that the model rules it go on over end the caller's utterance,
+// but are no interruption of the reply: not acted on.
+func TestARulingToGoOnOverTheAgentIsNotActedOn(t *testing.T) {
+	w := watchedFloor(t, `{"answer":"continue","answer_probability":0.9,"options":[{"name":"stop","p":0.05},`+
+		`{"name":"shorten","p":0.03},{"name":"continue","p":0.9},{"name":"ignore","p":0.02}],"ruling":{"disposition":"ignore","floor":"continue"}}`)
+	w.hear(t, harness.FlowTurn{ID: "turn-2", ReplyID: "turn-1", ParticipantID: "alice", Instructions: "i", Audio: someAudio,
+		Speaking: true, Paused: 200 * time.Millisecond}, true)
+	kept := w.record()
+	require.Len(t, kept, 1)
+	require.Equal(t, live.FloorCheckOverAgent, kept[0].check.Kind)
+	require.False(t, kept[0].check.Acted)
+}
+
 // A check whose ruling the flow controller let go of, its words since replaced, is reported
 // all the same, not acted on.
 func TestACheckWhoseRulingWasLetGoOfIsNotActedOn(t *testing.T) {

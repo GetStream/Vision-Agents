@@ -928,7 +928,12 @@ func (s *PausesSuite) TestAPauseCheckOverTheAgentIsReportedAsOneOverTheAgent() {
 	s.InDelta(200, float64(checked.Paused.Milliseconds()), 40, "at the pause's first check")
 	s.Equal("turn-3", checked.Turn)
 	s.Equal(harness.Stop, harness.Floor(checked.Answer.Ruling.Floor))
-	s.True(checked.Acted, "its stop was handed to the agent")
+	s.Require().Eventually(func() bool { return len(s.agent.overheardSoFar()) == 1 }, 5*time.Second, time.Millisecond,
+		"the stop was handed to the agent")
+	handed := s.agent.overheardSoFar()[0]
+	s.Equal(harness.Stop, handed.Ruling.Floor)
+	s.Equal("Stop.", handed.Words)
+	s.True(checked.Acted, "reported as the handoff it was")
 	s.Empty(checked.Point, "no bar over the agent")
 }
 

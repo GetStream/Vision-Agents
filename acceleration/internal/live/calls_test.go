@@ -169,6 +169,8 @@ func (s *LiveSuite) TestACallsFloorChecksAreKeptApartFromItsDecisions() {
 		check("turn-1", now.Add(-2*time.Second)),
 		s.decision("wait", "still talking", now.Add(-time.Second)),
 		check("", now.Add(-3*time.Second)),
+		check("before", now.Add(-2*time.Minute)),
+		check("after", now.Add(time.Minute)),
 	}))
 
 	decisions, err := s.client.CallEvents(s.ctx, s.customer, "call-1", now.Add(-time.Minute), nil, 0)
@@ -178,7 +180,7 @@ func (s *LiveSuite) TestACallsFloorChecksAreKeptApartFromItsDecisions() {
 
 	checks, err := s.client.CallFloorChecks(s.ctx, s.customer, "call-1", now.Add(-time.Minute), nil)
 	s.Require().NoError(err)
-	s.Require().Len(checks, 2)
+	s.Require().Len(checks, 2, "none from before the start, nor from after now")
 	s.Empty(checks[0].TurnID, "oldest first")
 	s.Equal("turn-1", checks[1].TurnID)
 	s.Equal([]FloorOption{{Option: "respond", Probability: 0.91}, {Option: "wait", Probability: 0.09}}, checks[1].FloorCheck.Options)
@@ -188,6 +190,6 @@ func (s *LiveSuite) TestACallsFloorChecksAreKeptApartFromItsDecisions() {
 	before := now.Add(-2500 * time.Millisecond)
 	checks, err = s.client.CallFloorChecks(s.ctx, s.customer, "call-1", now.Add(-time.Minute), &before)
 	s.Require().NoError(err)
-	s.Require().Len(checks, 1, "those up to the call's end")
+	s.Require().Len(checks, 1, "those from the start up to the call's end")
 	s.Empty(checks[0].TurnID)
 }

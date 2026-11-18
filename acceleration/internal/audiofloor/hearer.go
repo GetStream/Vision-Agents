@@ -97,9 +97,10 @@ type Checked struct {
 	OverAgent bool
 	Paused    time.Duration
 	Answer    Answer
-	// Acted says the router acted on the check's ruling: the turn ended on it, or its stop or
-	// shorten was handed to the agent, which may still keep talking over its own echo or a
-	// murmur. A ruling it let go of, as for words since replaced, was not acted on.
+	// Acted says the router acted on the check's ruling: with the floor free, the turn ended
+	// on it; while the agent talked, its stop or shorten was handed to the agent, which may
+	// still keep talking over its own echo or a murmur, or the turn ended on it. A ruling to go
+	// on, or one the router let go of, as for words since replaced, was not acted on.
 	Acted bool
 	// Point is the agent's end-of-turn point the check was read by (Ending.Name), empty over
 	// the agent, where there is no bar.
@@ -131,6 +132,13 @@ func checkedTurn(turn harness.FlowTurn, free string) string {
 		return turn.ReplyID
 	}
 	return free
+}
+
+// actedOn says a check's ruling was acted on, once applied: with the floor free, the turn
+// ended on it; while the agent talked, a stop or shorten of it, which a ruling to go on, though
+// it ends the caller's utterance, is not.
+func actedOn(speaking, applied bool, ruling harness.Decided) bool {
+	return applied && (!speaking || takesFloor(ruling))
 }
 
 // takesFloor says a ruling over the agent stops or shortens it.
@@ -179,11 +187,10 @@ func (h *Hearer) Check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if err == nil {
 		checkSeconds.Observe(time.Since(start).Seconds())
 		reported := Checked{Participant: turn.ParticipantID, Turn: checkedTurn(turn, turn.ID), At: start, Latency: latency,
-			OverAgent: turn.Speaking, Answer: check.Answer, Acted: check.Ended, Point: check.Ending.Name}
-		if turnOf(turn).Unfinished {
-			// Words still coming are at no pause, and only a stop or shorten of them is acted on.
-			reported.Acted = check.Ended && takesFloor(check.Ruling)
-		} else {
+			OverAgent: turn.Speaking, Answer: check.Answer, Acted: actedOn(turn.Speaking, check.Ended, check.Ruling),
+			Point: check.Ending.Name}
+		if !turnOf(turn).Unfinished {
+			// Words still coming are at no pause.
 			reported.Paused = turn.Paused
 		}
 		// Reported once the flow controller says whether it acted on the ruling.

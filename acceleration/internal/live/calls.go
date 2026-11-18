@@ -304,13 +304,14 @@ func (c *Client) CallFloorChecks(ctx context.Context, customerID, callID string,
 	if customerID == "" || callID == "" {
 		return nil, stack.Wrap(errors.New("live: a customer and a call id are required"))
 	}
-	if forgotten := time.Now().Add(-RecentFor); from.Before(forgotten) {
+	now := time.Now()
+	if forgotten := now.Add(-RecentFor); from.Before(forgotten) {
 		from = forgotten
 	}
-	until := "+inf"
-	if to != nil {
-		until = strconv.FormatInt(to.UnixMilli(), 10)
+	if to == nil {
+		to = &now
 	}
+	until := strconv.FormatInt(to.UnixMilli(), 10)
 	members, err := c.redis.Do(ctx, c.redis.B().Zrange().Key(floorChecksKey(customerID, callID)).
 		Min(strconv.FormatInt(from.UnixMilli(), 10)).Max(until).Byscore().Build()).AsStrSlice()
 	if err != nil {

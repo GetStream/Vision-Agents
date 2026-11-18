@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class FloorCheck
 {
     public function __construct(
-        // Whether the router acted on the ruling: the caller's turn ended on this check, or, while the agent talked,...
+        // Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while t...
         public bool $acted,
         // When the check was asked.
         public \DateTimeImmutable $at,
