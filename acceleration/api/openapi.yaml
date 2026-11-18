@@ -394,12 +394,15 @@ components:
         - latest
       type: object
     ActivityStep:
-      description: 'The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
+      description: 'The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
       enum:
         - none
         - dashboard_reads
         - agent_setup
+        - workers
         - conversations
+        - voice_video
+        - phone_sms
         - steady_use
       type: string
     AddContactsRequest:
