@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Client, ConfigurationError, RouterError, USD, type Schemas } from "../src/index.js";
+import { Client, ConfigurationError, RouterError, USD, VERSION, type Schemas } from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 /** A limit as the router describes one, with only the fields a test cares about set. */
@@ -402,7 +402,11 @@ describe("a team on the client", () => {
   it("sends no header when there is no team", async () => {
     const api = new Client({ url: router.url, customerId: "local" });
 
-    assert.deepEqual(await api.backend.headers(), { "X-Customer-Id": "local" });
+    assert.deepEqual(await api.backend.headers(), {
+      "X-Stream-Client": "sdk",
+      "User-Agent": `stream-agents-js/${VERSION}`,
+      "X-Customer-Id": "local",
+    });
   });
 
   it("refuses a team or categories beside a token, which carries its own", async () => {

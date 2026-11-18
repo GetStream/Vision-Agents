@@ -12,6 +12,12 @@ export const API_KEY_ENV = "STREAM_API_KEY";
 export const API_SECRET_ENV = "STREAM_API_SECRET";
 export const AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE";
 
+/**
+ * This SDK's release, the version in package.json. It is written here by hand at each release,
+ * and a test fails while the two differ.
+ */
+export const VERSION = "0.4.3";
+
 /** How long a token minted here lasts. */
 const TOKEN_VALIDITY_SECONDS = 60 * 60;
 
@@ -587,6 +593,11 @@ export class Backend {
    * guest asked for by nobody yet.
    */
   async headers(anonymously = false): Promise<Record<string, string>> {
+    return { ...clientHeaders(), ...(await this.credentials(anonymously)) };
+  }
+
+  /** Who is calling, as `headers` sends it. */
+  private async credentials(anonymously: boolean): Promise<Record<string, string>> {
     if (anonymously) {
       return this.authenticate
         ? { api_key: this.apiKey, "stream-auth-type": "anonymous" }
@@ -678,6 +689,14 @@ export class Backend {
       throw new ConfigurationError(
         "there is no WebSocket here; pass one as the webSocket option or run on Node 22 or newer",
       );
+    }
+    // Node's own WebSocket takes headers as its second argument, so the router counts a
+    // socket as the SDK's. A browser's takes protocols there, and a socket passed in as the
+    // `webSocket` option is the app's to configure, so neither is given the object.
+    if (this.webSocketImpl === globalWebSocket() && runsOnNode()) {
+      return new (this.webSocketImpl as unknown as new (url: string, options: object) => WebSocketLike)(url, {
+        headers: clientHeaders(),
+      });
     }
     return new this.webSocketImpl(url);
   }
@@ -914,6 +933,24 @@ function base64urlBytes(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function runsOnNode(): boolean {
+  return Boolean((globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node);
+}
+
+/**
+ * What every request says this SDK is: the router counts a call that says `sdk` as the SDK's
+ * rather than the API's, and logs the User-Agent with the release that made it.
+ *
+ * A browser sends `X-Stream-Client` alone. It names its own User-Agent, and both the router's
+ * and the proxy's CORS lists allow `X-Stream-Client` and not `User-Agent`, so a page that set
+ * one would have its requests refused at the preflight.
+ */
+function clientHeaders(): Record<string, string> {
+  return runsOnNode()
+    ? { "X-Stream-Client": "sdk", "User-Agent": `stream-agents-js/${VERSION}` }
+    : { "X-Stream-Client": "sdk" };
 }
 
 /**
