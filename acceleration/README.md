@@ -2156,7 +2156,11 @@ characters, time and cost), and `first_seen` and `last_seen` the first and last 
 area. A hook counts under the app its signature or token was checked for, from client `api`:
 `phone_sms` for a phone or SMS vendor's, else `hooks_in`. A forward to an event destination
 counts once under `webhooks_out` from `api`, refused when given up. A socket refused in a frame
-after its 101 counts as refused, with the code.
+after its 101 counts as refused, with the code. Work the router starts itself also counts from
+`api`, once each: a scheduled task's occurrence or run by hand under `scheduling` (refused when
+missed or failed), a campaign dial under `phone_sms`, and a simulation run under `evals`
+(refused when it errored). A signed MCP event counts under `hooks_in`, and a signed 10DLC report
+on an app's campaign under `phone_sms`.
 
 `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
 with a request answered rather than refused, or `steady_use` once conversations or model calls
