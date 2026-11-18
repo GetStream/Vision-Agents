@@ -129,13 +129,17 @@ type ToolCall struct {
 // ReasoningBlock is one block of a response's thinking as its provider has to be handed it
 // back: its text, and the signature that vouches for it, or the encrypted Redacted form in
 // place of both. A block with neither signature nor Redacted cannot be replayed.
+//
+// A provider that signs thinking signs what came before it too, so a block also says where it
+// stood: after AfterToolCalls of the turn's tool calls and, before the first of them, after
+// AfterText bytes of the turn's text. A block after a call stands after all of the text, and
+// its AfterText is 0.
 type ReasoningBlock struct {
-	Text      string
-	Signature string
-	Redacted  string
-	// AfterToolCalls is how many of the response's tool calls came before the block, which
-	// is where it goes back: a provider that signs thinking also signs where it stood.
+	Text           string
+	Signature      string
+	Redacted       string
 	AfterToolCalls int
+	AfterText      int
 }
 
 // LLM is a streaming large-language-model provider.

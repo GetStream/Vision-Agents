@@ -104,3 +104,50 @@ func (s *RespondReasoningSuite) TestCompleteWithoutThinkingHasNoReasoningField()
 
 	s.NotContains(sent, "reasoning")
 }
+
+func (s *RespondReasoningSuite) TestReasoningAtAPlaceTheTurnDoesNotHaveIsRefused() {
+	for name, reasoning := range map[string]string{
+		"negative calls":        `[{"signature":"a","after_tool_calls":-1}]`,
+		"beyond the calls":      `[{"signature":"a","after_tool_calls":2}]`,
+		"negative text":         `[{"signature":"a","after_text":-1}]`,
+		"beyond the text":       `[{"signature":"a","after_text":7}]`,
+		"inside a character":    `[{"signature":"a","after_text":2}]`,
+		"text after a call":     `[{"signature":"a","after_tool_calls":1,"after_text":3}]`,
+		"calls going backwards": `[{"signature":"a","after_tool_calls":1},{"signature":"b"}]`,
+		"text going backwards":  `[{"signature":"a","after_text":3},{"signature":"b","after_text":1}]`,
+	} {
+		var decoded respond
+		s.Require().NoError(json.Unmarshal([]byte(`{"messages":[{"role":"assistant","content":"héllo",
+			"tool_calls":[{"id":"t1","name":"lookup","arguments":"{}"}],"reasoning":`+reasoning+`}]}`), &decoded), name)
+
+		_, err := decoded.params(options.LLM{})
+
+		s.ErrorContains(err, "reasoning", name)
+	}
+}
+
+func (s *RespondReasoningSuite) TestReasoningAtPlacesTheTurnHasIsKeptAsSent() {
+	var decoded respond
+	s.Require().NoError(json.Unmarshal([]byte(`{"messages":[{"role":"assistant","content":"héllo",
+		"tool_calls":[{"id":"t1","name":"lookup","arguments":"{}"}],
+		"reasoning":[{"signature":"a"},{"signature":"b","after_text":3},{"signature":"c","after_text":6},{"redacted":"d","after_tool_calls":1}]}]}`), &decoded))
+
+	params, err := decoded.params(options.LLM{})
+
+	s.Require().NoError(err)
+	s.Equal([]llm.ReasoningBlock{
+		{Signature: "a"},
+		{Signature: "b", AfterText: 3},
+		{Signature: "c", AfterText: 6},
+		{Redacted: "d", AfterToolCalls: 1},
+	}, params.Input[0].ReasoningBlocks)
+}
+
+func (s *RespondReasoningSuite) TestEachBlockIsAFrameAsItFinishes() {
+	sent, ok := llmFrame(llm.ReasoningBlockDone{ResponseID: "r1", Block: llm.ReasoningBlock{Signature: "sig-1", AfterText: 4}})
+	s.Require().True(ok)
+
+	raw, err := json.Marshal(sent)
+	s.Require().NoError(err)
+	s.JSONEq(`{"type": "reasoning", "id": "r1", "block": {"signature": "sig-1", "after_text": 4}}`, string(raw))
+}

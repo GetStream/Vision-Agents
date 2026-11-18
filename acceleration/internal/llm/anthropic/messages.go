@@ -210,10 +210,39 @@ type puller struct {
 	done    bool
 
 	// thinking is the thinking block being streamed, recorded when it stops: a block cut
-	// off before its signature cannot be sent back. calls counts the tool calls begun so
-	// far, which is where a block stood among them.
-	thinking *llm.ReasoningBlock
-	calls    int
+	// off before its signature cannot be sent back.
+	thinking     *llm.ReasoningBlock
+	thinkingText strings.Builder
+	// calls, text and last are where the response stands: the tool calls begun, the bytes
+	// of text written and the type of the latest block. A block is recorded at that place.
+	calls int
+	text  int
+	last  string
+	// textAt is where the latest text block began, so one that ends empty is noticed: a
+	// replay has no block to put back for it.
+	textAt int
+	// unreplayable is a response laid out as a replay cannot rebuild it from one text and
+	// its calls (replayable); no block from that point on is recorded.
+	unreplayable bool
+}
+
+// place marks where a block of thinking starting now stands: after the text written so far
+// while no tool call has started, after the calls otherwise (a replay puts all the text
+// before the calls).
+func (p *puller) place() llm.ReasoningBlock {
+	if p.calls > 0 {
+		return llm.ReasoningBlock{AfterToolCalls: p.calls}
+	}
+	return llm.ReasoningBlock{AfterText: p.text}
+}
+
+// replayable reports whether a text block starting now still leaves the response one a
+// replay rebuilds exactly. The socket carries a turn's text as one string ahead of its calls,
+// so text after a call, or two text blocks with no thinking between them to split them, would
+// come back moved or merged, and thinking after them would be sent with a prefix Claude never
+// wrote.
+func (p *puller) replayable() bool {
+	return p.calls == 0 && p.last != "text"
 }
 
 // Advance reads one event and records what it carried.
@@ -239,16 +268,32 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		})
 	case "content_block_start":
 		switch block := event.ContentBlock; block.Type {
+		case "text":
+			p.unreplayable = p.unreplayable || !p.replayable()
+			p.textAt = p.text
 		case "tool_use":
 			w.FunctionCall(event.Index, block.ID, block.Name, "", "")
 			p.calls++
 		case "thinking":
-			p.thinking = &llm.ReasoningBlock{AfterToolCalls: p.calls}
+			if !p.unreplayable {
+				placed := p.place()
+				p.thinking = &placed
+				p.thinkingText.Reset()
+			}
 		case "redacted_thinking":
-			w.ReasoningBlock(llm.ReasoningBlock{Redacted: block.Data, AfterToolCalls: p.calls})
+			if !p.unreplayable {
+				placed := p.place()
+				placed.Redacted = block.Data
+				w.ReasoningBlock(placed)
+			}
 		}
+		p.last = string(event.ContentBlock.Type)
 	case "content_block_stop":
+		if p.last == "text" && p.text == p.textAt {
+			p.unreplayable = true
+		}
 		if p.thinking != nil && p.thinking.Signature != "" {
+			p.thinking.Text = p.thinkingText.String()
 			w.ReasoningBlock(*p.thinking)
 		}
 		p.thinking = nil
@@ -256,10 +301,11 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		switch delta := event.Delta; delta.Type {
 		case "text_delta":
 			w.OutputText(delta.Text)
+			p.text += len(delta.Text)
 		case "thinking_delta":
 			w.ReasoningText(delta.Thinking)
 			if p.thinking != nil {
-				p.thinking.Text += delta.Thinking
+				p.thinkingText.WriteString(delta.Thinking)
 			}
 		case "signature_delta":
 			if p.thinking != nil {
@@ -552,18 +598,17 @@ func appendMessage(messages []anthropic.MessageParam, message llm.Message) []ant
 	switch message.Role {
 	case llm.Assistant:
 		role = anthropic.MessageParamRoleAssistant
-		if text := messageText(message); text != "" {
-			blocks = append(blocks, anthropic.NewTextBlock(text))
-		}
+		text := messageText(message)
+		var calls []anthropic.ContentBlockParamUnion
 		for _, call := range message.ToolCalls {
 			arguments := json.RawMessage(call.Arguments)
 			if !json.Valid(arguments) {
 				arguments = json.RawMessage("{}")
 			}
-			blocks = append(blocks, anthropic.NewToolUseBlock(call.ID, arguments, call.Name))
+			calls = append(calls, anthropic.NewToolUseBlock(call.ID, arguments, call.Name))
 		}
-		if len(blocks) > 0 {
-			blocks = withThinking(blocks, message.ReasoningBlocks, len(blocks)-len(message.ToolCalls))
+		if text != "" || len(calls) > 0 {
+			blocks = withThinking(text, calls, message.ReasoningBlocks)
 		}
 	case llm.ToolResult:
 		result := anthropic.ToolResultBlockParam{ToolUseID: message.ToolCallID}
@@ -603,21 +648,29 @@ func appendMessage(messages []anthropic.MessageParam, message llm.Message) []ant
 	return append(messages, anthropic.MessageParam{Role: role, Content: blocks})
 }
 
-// withThinking puts a replayed turn's thinking back where the model wrote it: each block
-// before the text when no tool call preceded it, otherwise straight after the call it
-// followed. The API refuses a turn whose thinking was moved, edited or left out between
-// two kept blocks, so an unsigned block (which it refuses too) is the only one dropped.
-// text is how many of blocks come before the tool calls.
-func withThinking(blocks []anthropic.ContentBlockParamUnion, thinking []llm.ReasoningBlock, text int) []anthropic.ContentBlockParamUnion {
-	if len(thinking) == 0 {
-		return blocks
+// withThinking lays out an assistant turn with its thinking back where the model wrote it:
+// a block before any call goes after the bytes of text that preceded it (AfterText), which
+// splits the text into the blocks it came as, and a block after a call goes straight after
+// that call. The API refuses a turn whose thinking was moved, edited or left out between two
+// kept blocks, so an unsigned block (which it refuses too) is the only one dropped. Positions
+// are checked where they arrive (the socket's respond frame); the bounds here only keep a
+// slice in range.
+func withThinking(text string, calls []anthropic.ContentBlockParamUnion, thinking []llm.ReasoningBlock) []anthropic.ContentBlockParamUnion {
+	out := make([]anthropic.ContentBlockParamUnion, 0, 1+len(calls)+len(thinking))
+	written, next := 0, 0
+	writeText := func(upTo int) {
+		if upTo = min(upTo, len(text)); upTo > written {
+			out = append(out, anthropic.NewTextBlock(text[written:upTo]))
+			written = upTo
+		}
 	}
-	calls := len(blocks) - text
-	out := make([]anthropic.ContentBlockParamUnion, 0, len(blocks)+len(thinking))
-	next := 0
-	emit := func(after int) {
-		for ; next < len(thinking) && min(thinking[next].AfterToolCalls, calls) <= after; next++ {
-			switch block := thinking[next]; {
+	think := func(after int) {
+		for ; next < len(thinking) && min(thinking[next].AfterToolCalls, len(calls)) <= after; next++ {
+			block := thinking[next]
+			if after == 0 {
+				writeText(block.AfterText)
+			}
+			switch {
 			case block.Redacted != "":
 				out = append(out, anthropic.NewRedactedThinkingBlock(block.Redacted))
 			case block.Signature != "":
@@ -625,11 +678,11 @@ func withThinking(blocks []anthropic.ContentBlockParamUnion, thinking []llm.Reas
 			}
 		}
 	}
-	emit(0)
-	out = append(out, blocks[:text]...)
-	for i, call := range blocks[text:] {
+	think(0)
+	writeText(len(text))
+	for i, call := range calls {
 		out = append(out, call)
-		emit(i + 1)
+		think(i + 1)
 	}
 	return out
 }

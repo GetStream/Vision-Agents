@@ -854,15 +854,47 @@ type wireToolCall struct {
 	Signature string `json:"signature,omitempty"`
 }
 
-// wireReasoning is one block of an assistant turn's thinking, as a complete frame reports it
-// and a respond frame replays it. A provider that takes thinking back (Anthropic) sends the
-// signed blocks again unchanged; one without a signature or redacted is not sent.
+// wireReasoning is one block of an assistant turn's thinking, as a reasoning or complete
+// frame reports it and a respond frame replays it. A provider that takes thinking back
+// (Anthropic) sends the signed blocks again unchanged; one without a signature or redacted
+// is not sent.
 type wireReasoning struct {
 	Text      string `json:"text,omitempty"`
 	Signature string `json:"signature,omitempty"`
 	Redacted  string `json:"redacted,omitempty"`
 	// AfterToolCalls is how many of the turn's tool_calls came before the block.
 	AfterToolCalls int `json:"after_tool_calls,omitempty"`
+	// AfterText is how many bytes of the turn's text (UTF-8) came before a block that no
+	// tool call preceded. A block after a call follows all of the text, and has none.
+	AfterText int `json:"after_text,omitempty"`
+}
+
+func (w wireReasoning) block() llm.ReasoningBlock {
+	return llm.ReasoningBlock{Text: w.Text, Signature: w.Signature, Redacted: w.Redacted, AfterToolCalls: w.AfterToolCalls, AfterText: w.AfterText}
+}
+
+func wireBlock(b llm.ReasoningBlock) wireReasoning {
+	return wireReasoning{Text: b.Text, Signature: b.Signature, Redacted: b.Redacted, AfterToolCalls: b.AfterToolCalls, AfterText: b.AfterText}
+}
+
+// replayable checks that a turn's reasoning names places the turn has, in order: a replay
+// puts each block exactly there, and a block moved is one Claude refuses.
+func replayable(reasoning []wireReasoning, text string, calls int) error {
+	calledBefore, textBefore := 0, 0
+	for _, block := range reasoning {
+		switch {
+		case block.AfterToolCalls < 0 || block.AfterToolCalls > calls:
+			return fmt.Errorf("reasoning after_tool_calls %d is not a place in a turn with %d tool calls", block.AfterToolCalls, calls)
+		case block.AfterText < 0 || block.AfterText > len(text) || block.AfterText < len(text) && !utf8.RuneStart(text[block.AfterText]):
+			return fmt.Errorf("reasoning after_text %d is not a place in the turn's text", block.AfterText)
+		case block.AfterToolCalls > 0 && block.AfterText != 0:
+			return errors.New("reasoning after a tool call follows all of the text and takes no after_text")
+		case block.AfterToolCalls < calledBefore || block.AfterToolCalls == calledBefore && block.AfterText < textBefore:
+			return errors.New("reasoning goes back in the order the model wrote it")
+		}
+		calledBefore, textBefore = block.AfterToolCalls, block.AfterText
+	}
+	return nil
 }
 
 // respond is a frame on the language-model socket: either one response to generate or a
@@ -919,8 +951,15 @@ func (r respond) params(held options.LLM) (llm.ResponseParams, error) {
 		if len(message.Reasoning) > 0 && item.Role != llm.Assistant {
 			return llm.ResponseParams{}, errors.New("reasoning belongs to an assistant message")
 		}
+		said := text
+		if len(parts) > 0 {
+			said = llm.TextOf(parts)
+		}
+		if err := replayable(message.Reasoning, said, len(message.ToolCalls)); err != nil {
+			return llm.ResponseParams{}, err
+		}
 		for _, block := range message.Reasoning {
-			item.ReasoningBlocks = append(item.ReasoningBlocks, llm.ReasoningBlock(block))
+			item.ReasoningBlocks = append(item.ReasoningBlocks, block.block())
 		}
 		if item.ToolCallID != "" && item.Role != llm.ToolResult {
 			return llm.ResponseParams{}, errors.New("tool_call_id belongs to a tool message")
@@ -1147,6 +1186,8 @@ func llmFrame(event llm.Event) (frame, bool) {
 		return frame{"type": "delta", "id": typed.ResponseID, "text": typed.Delta}, true
 	case llm.ReasoningTextDelta:
 		return frame{"type": "reasoning_delta", "id": typed.ResponseID, "text": typed.Delta}, true
+	case llm.ReasoningBlockDone:
+		return frame{"type": "reasoning", "id": typed.ResponseID, "block": wireBlock(typed.Block)}, true
 	case llm.ResponseCompleted:
 		response := typed.Response
 		calls := make([]frame, 0, len(response.ToolCalls))
@@ -1177,7 +1218,7 @@ func llmFrame(event llm.Event) (frame, bool) {
 		if len(response.ReasoningBlocks) > 0 {
 			reasoning := make([]wireReasoning, 0, len(response.ReasoningBlocks))
 			for _, block := range response.ReasoningBlocks {
-				reasoning = append(reasoning, wireReasoning(block))
+				reasoning = append(reasoning, wireBlock(block))
 			}
 			complete["reasoning"] = reasoning
 		}

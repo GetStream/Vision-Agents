@@ -439,10 +439,12 @@ func (w *ResponseWriter) ReasoningText(delta string) {
 	w.emit(ReasoningTextDelta{ResponseID: w.options.ResponseID, Index: w.next(), Delta: delta})
 }
 
-// ReasoningBlock records a finished block of thinking with what a replay needs. Its text
-// was already streamed through ReasoningText.
+// ReasoningBlock records a finished block of thinking with what a replay needs, as soon as
+// it is finished, so a caller can put it in place among the text that follows. Its text was
+// already streamed through ReasoningText.
 func (w *ResponseWriter) ReasoningBlock(block ReasoningBlock) {
 	w.reasoningBlocks = append(w.reasoningBlocks, block)
+	w.emit(ReasoningBlockDone{ResponseID: w.options.ResponseID, Block: block})
 }
 
 // FunctionCall records a fragment of a call the model is asking for.
@@ -561,8 +563,11 @@ func (w *ResponseWriter) settle(failure error) {
 	// A failed response asks for nothing: refused by a screen or broken off by its provider,
 	// it is not an answer that stands, and a caller running its calls would act on it anyway.
 	calls, dropped := w.assembled(), []ToolCall(nil)
+	reasoning := w.reasoningBlocks
 	if w.status == StatusFailed {
-		calls, dropped = nil, calls
+		// Its thinking goes with its calls: a block placed after a dropped call has nowhere
+		// to go back to.
+		calls, dropped, reasoning = nil, calls, nil
 	}
 
 	w.emit(ResponseCompleted{Response: Response{
@@ -572,7 +577,7 @@ func (w *ResponseWriter) settle(failure error) {
 		Model:              w.options.Model,
 		OutputText:         w.text.String(),
 		ReasoningText:      w.reasoning.String(),
-		ReasoningBlocks:    w.reasoningBlocks,
+		ReasoningBlocks:    reasoning,
 		ToolCalls:          calls,
 		DroppedToolCalls:   dropped,
 		Usage:              w.usage,

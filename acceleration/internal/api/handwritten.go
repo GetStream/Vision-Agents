@@ -306,12 +306,21 @@ func documentHandWritten(api huma.API) {
 			"array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: " +
 			"[{id, name, arguments, signature}]`, with arguments encoded as a JSON string and " +
 			"optional opaque signature, and may replay their thinking as `reasoning: [{text, " +
-			"signature, redacted, after_tool_calls}]` exactly as a `complete` reported it, which a " +
-			"provider that signs its thinking (Anthropic) is sent again in place and every other " +
-			"provider ignores. Tool-result messages use `role: tool` and `tool_call_id` to " +
-			"correlate their content. Completed tool calls include the same replay fields, and a " +
-			"`complete` whose provider signed its thinking carries those blocks as `reasoning`; " +
-			"incomplete responses additionally report `incomplete_reason` (such as " +
+			"signature, redacted, after_tool_calls, after_text}]` exactly as the model's `reasoning` " +
+			"frames reported it: a provider that signs its thinking (Anthropic) is sent each block " +
+			"again where it stood, after `after_tool_calls` of the turn's tool calls and, before " +
+			"the first of them, after `after_text` bytes (UTF-8) of its text; every other provider " +
+			"ignores it. A position the turn does not have, or out of order, is refused. Claude " +
+			"accepts the blocks only with what came before them unchanged too: the same " +
+			"instructions, tools and earlier messages as when they were written, with new turns " +
+			"only appended. Tool-result messages use `role: tool` and `tool_call_id` to " +
+			"correlate their content. Completed tool calls include the same replay fields. A " +
+			"provider that signs its thinking sends a `reasoning` frame `{id, block}` as each " +
+			"block finishes, between the `delta`s of the text around it, and a `complete` " +
+			"carries them all as `reasoning`, except a failed one. A block that a replay could " +
+			"not put back exactly (one after text that followed a tool call, or after two texts " +
+			"with no thinking between them) is not reported, nor is any after it. A `complete`'s " +
+			"incomplete status additionally reports `incomplete_reason` (such as " +
 			"`max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool " +
 			"replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on " +
 			"`image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does " +

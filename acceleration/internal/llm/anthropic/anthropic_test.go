@@ -413,6 +413,93 @@ func (s *AnthropicSuite) TestReplayedThinkingGoesBackInPlaceBeforeTheTextAndBetw
 	]}`, string(turn))
 }
 
+// replayedTurn is the assistant turn of the request that sends back what the stub answered
+// with, between a user turn and a result for each call (or another user turn).
+func (s *AnthropicSuite) replayedTurn(answer string) string {
+	s.answerWith(http.StatusOK, answer)
+	provider := s.provider(Options{})
+	response, err := s.collect(provider, llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "find roses"}}})
+	s.Require().NoError(err)
+
+	input := []llm.Message{
+		{Role: llm.User, Content: "find roses"},
+		{Role: llm.Assistant, Content: response.OutputText, ToolCalls: response.ToolCalls, ReasoningBlocks: response.ReasoningBlocks},
+	}
+	for _, call := range response.ToolCalls {
+		input = append(input, llm.Message{Role: llm.ToolResult, ToolCallID: call.ID, Content: "done"})
+	}
+	if len(response.ToolCalls) == 0 {
+		input = append(input, llm.Message{Role: llm.User, Content: "go on"})
+	}
+	_, err = s.collect(provider, llm.ResponseParams{Input: input})
+	s.Require().NoError(err)
+	turn, err := json.Marshal(s.sent()[len(s.sent())-1].body["messages"].([]any)[1].(map[string]any)["content"])
+	s.Require().NoError(err)
+	return string(turn)
+}
+
+func toolUse(index int, id string) string {
+	return fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":%q,"name":"lookup","input":{}}}`, index, id) + "\n" +
+		fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":"{}"}}`, index) + "\n" +
+		fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, index)
+}
+
+func (s *AnthropicSuite) TestThinkingAfterTheTextGoesBackAfterIt() {
+	turn := s.replayedTurn(stream(textBlock(0, "Looking."), thinkingBlock(1, "", "sig-1"), toolUse(2, "toolu_1"), stop("tool_use", 9)))
+
+	s.JSONEq(`[
+		{"type": "text", "text": "Looking."},
+		{"type": "thinking", "thinking": "", "signature": "sig-1"},
+		{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {}}
+	]`, turn)
+}
+
+func (s *AnthropicSuite) TestThinkingBeforeTheTextGoesBackBeforeIt() {
+	turn := s.replayedTurn(stream(thinkingBlock(0, "", "sig-1"), textBlock(1, "Looking."), toolUse(2, "toolu_1"), stop("tool_use", 9)))
+
+	s.JSONEq(`[
+		{"type": "thinking", "thinking": "", "signature": "sig-1"},
+		{"type": "text", "text": "Looking."},
+		{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {}}
+	]`, turn)
+}
+
+func (s *AnthropicSuite) TestThinkingBetweenTwoTextsSplitsThemAgain() {
+	turn := s.replayedTurn(stream(textBlock(0, "Héllo. "), thinkingBlock(1, "", "sig-1"), textBlock(2, "Done."), stop("end_turn", 9)))
+
+	s.JSONEq(`[
+		{"type": "text", "text": "Héllo. "},
+		{"type": "thinking", "thinking": "", "signature": "sig-1"},
+		{"type": "text", "text": "Done."}
+	]`, turn)
+}
+
+func (s *AnthropicSuite) TestThinkingAfterTextARelayCannotRebuildIsNotKept() {
+	s.answerWith(http.StatusOK, stream(
+		thinkingBlock(0, "", "sig-1"),
+		toolUse(1, "toolu_1"),
+		textBlock(2, "after the call"),
+		thinkingBlock(3, "", "sig-2"),
+		toolUse(4, "toolu_2"),
+		stop("tool_use", 9),
+	))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.Equal([]llm.ReasoningBlock{{Signature: "sig-1"}}, response.ReasoningBlocks,
+		"text after a call comes back before it, so the thinking after that text would be sent with a prefix Claude never wrote")
+}
+
+func (s *AnthropicSuite) TestThinkingAfterTwoTextsInARowIsNotKept() {
+	s.answerWith(http.StatusOK, stream(textBlock(0, "one"), textBlock(1, "two"), thinkingBlock(2, "", "sig-1"), stop("end_turn", 9)))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.Empty(response.ReasoningBlocks, "the two texts come back as one")
+}
+
 func (s *AnthropicSuite) TestATurnWithoutSignedThinkingIsSentAsBefore() {
 	plain := toolRound(2)
 	unsigned := toolRound(2)
