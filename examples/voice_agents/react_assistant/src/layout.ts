@@ -24,19 +24,22 @@ export function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches);
 }
 
+/** The choice `useStoredFlag` keeps under `key`, read once, or `initial` when there is none. */
+export function storedFlag(key: string, initial: boolean): boolean {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored === null ? initial : stored === "true";
+  } catch {
+    return initial;
+  }
+}
+
 /**
  * A choice the person made that the page keeps for next time, in localStorage. Storage can be
  * blocked, in a private window say, and the choice then lasts as long as the page.
  */
 export function useStoredFlag(key: string, initial: boolean): [boolean, (value: boolean) => void] {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = localStorage.getItem(key);
-      return stored === null ? initial : stored === "true";
-    } catch {
-      return initial;
-    }
-  });
+  const [value, setValue] = useState(() => storedFlag(key, initial));
   const store = useCallback(
     (next: boolean) => {
       setValue(next);

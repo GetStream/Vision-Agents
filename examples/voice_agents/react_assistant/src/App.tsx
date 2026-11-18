@@ -10,7 +10,7 @@ import { approverFor, ChatView } from "./ChatView";
 import { ConversationList, SidebarRail } from "./ConversationList";
 import { Conversations, displayTitle, type SessionRow } from "./conversations";
 import { messageOf } from "./errors";
-import { ReplyFormatMenu } from "./ReplyFormatMenu";
+import { cardsInNewConversations, ReplyFormatMenu } from "./ReplyFormatMenu";
 import { deviceTools } from "./deviceTools";
 import { MenuIcon, NewChatIcon } from "./icons";
 import { useMediaQuery, useStoredFlag, useTheme, WIDE } from "./layout";
@@ -255,6 +255,8 @@ function screenDeps(tools: Tools): ChatScreenDeps {
           modelOverwrites: { llm: Assistant.chatModel },
           returnUrl: Assistant.returnUrl,
           tools,
+          // Off leaves the UI instructions the backend chose out of this conversation.
+          ...(cardsInNewConversations() ? {} : { ui: false }),
         });
       }
       try {

@@ -3,6 +3,18 @@ import { useEffect, useRef, useState } from "react";
 import { Assistant } from "./assistant";
 import { BRAND_PROFILES, useBrandProfile } from "./brandTheme";
 import { messageOf } from "./errors";
+import { storedFlag, useStoredFlag } from "./layout";
+
+/** Where whether this page's new conversations may have UI is kept, as the iOS app keeps it. */
+const CARDS_KEY = "cardsInNewConversations";
+
+/**
+ * Whether a new conversation is told the UI instructions the reply format chose. Off, it opens
+ * with `ui: false` and the agent answers in text. On unless the person turned it off.
+ */
+export function cardsInNewConversations(): boolean {
+  return storedFlag(CARDS_KEY, true);
+}
 
 /** How the agent answers: in Markdown, or with interactive UI in a format. */
 export type ReplyFormat = "markdown" | "a2ui" | "openui";
@@ -41,6 +53,7 @@ export function ReplyFormatMenu() {
   const [format, setFormat] = useState<ReplyFormat | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const [brand, setBrand] = useBrandProfile();
+  const [cards, setCards] = useStoredFlag(CARDS_KEY, true);
   const menu = useRef<HTMLDivElement>(null);
 
   // A tap anywhere else, or Escape, closes it, as a menu does.
@@ -116,6 +129,16 @@ export function ReplyFormatMenu() {
             ))}
           </div>
           <p className="reply-format-note">New conversations answer this way.</p>
+          <label className="reply-format-option">
+            <input checked={cards} onChange={(event) => setCards(event.target.checked)} type="checkbox" />
+            <span>
+              <strong>Interactive UI</strong>
+              <span>
+                Off opens this page's new conversations without the UI instructions chosen above, so
+                the agent answers in text.
+              </span>
+            </span>
+          </label>
           <hr className="reply-format-divider" />
           <h3>Brand Design Tokens</h3>
           <div role="radiogroup" aria-label="Brand Design Tokens">
