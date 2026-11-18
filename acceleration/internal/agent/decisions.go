@@ -54,8 +54,8 @@ type decisionRecorder struct {
 	// closing guards the queue against a send after Close: a floor check is reported from
 	// the transcriber's and the flow controller's goroutines, which may outlast the call, and
 	// a send on a closed channel panics even from a select with a default.
-	closing   sync.RWMutex
-	closed    bool
+	closing sync.RWMutex
+	closed  bool
 	// admitting makes a floor check's look at the queue and its send one step, so that two
 	// can never both take the last of floorCheckRoom.
 	admitting sync.Mutex
