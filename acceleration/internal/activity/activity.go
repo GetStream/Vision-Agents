@@ -3,9 +3,9 @@
 //
 // Every authenticated request is one, and so is a hook checked as an app's (NoteCustomer), and
 // the work the router does for an app on its own: a forward to its endpoint, a scheduled task's
-// occurrence, a campaign's dial and a simulation run. So the counting is in memory and the writing is not on
-// the request path: a minute's requests for one app, area, client and day are one row's
-// update. Nothing here fails a request: counting it is not what the caller asked for.
+// occurrence, a campaign's dial and a simulation run. So the counting is in memory and the
+// writing is not on the request path: a minute's requests for one app, area, client and day are
+// one row's update. Nothing here fails a request: counting it is not what the caller asked for.
 package activity
 
 import (
