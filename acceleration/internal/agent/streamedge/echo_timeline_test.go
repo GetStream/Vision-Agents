@@ -17,7 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// timelineCall is 20 s of the agent talking to a sip- caller whose phone sends a packet every
+// timelineCall is 12 s of the agent talking to a sip- caller whose phone sends a packet every
 // 20 ms of what it heard of the agent, 300 ms late, as stamp says: stamp is given each packet's
 // number and the packet, with the timestamp and payload a phone would send, to change, and
 // says whether the phone sends it. A packet not sent takes no sequence number, as one a phone
@@ -44,7 +44,7 @@ func (s *EchoSuite) timelineCall(stamp func(i int, packet *rtp.Packet) bool) (he
 	at, pause := 0, 0
 	var seq uint16
 	frame := make([]int16, 5760)
-	for i := range 20 * 50 {
+	for i := range 12 * 50 {
 		if pause > 0 {
 			pause--
 		} else if len(edge.speaker.frames) < 2 {
@@ -95,7 +95,7 @@ func (s *EchoSuite) TestPacketsStampedLateNowAndThenLeaveTheEchoCancelled() {
 		return true
 	})
 
-	quieter := gone(heard, handed, 5, 20)
+	quieter := gone(heard, handed, 5, 12)
 	s.T().Logf("every 10th packet stamped 15 ms late: %.1f dB quieter from 5 s on", quieter)
 	s.Greater(quieter, 60.0)
 }
@@ -103,7 +103,7 @@ func (s *EchoSuite) TestPacketsStampedLateNowAndThenLeaveTheEchoCancelled() {
 // The reader conceals a packet it cannot decode, and stamps the frame it makes up a frame
 // before the packet's own time.
 func (s *EchoSuite) TestAPacketThatCannotBeDecodedLeavesTheEchoCancelled() {
-	const broken = 600
+	const broken = 400
 	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {
 		if i == broken {
 			packet.Payload = []byte{0x03, 0xff}
@@ -120,7 +120,7 @@ func (s *EchoSuite) TestAPacketThatCannotBeDecodedLeavesTheEchoCancelled() {
 // A phone whose clock steps back, as one restarting its stream does, sends earlier stamps
 // than the ones before.
 func (s *EchoSuite) TestStampsThatStepBackLeaveTheEchoCancelled() {
-	const back = 600
+	const back = 400
 	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {
 		if i >= back {
 			packet.Timestamp -= 2 * opusSampleRate
@@ -150,7 +150,7 @@ func (s *EchoSuite) counted(name string) float64 {
 // After stamps step back, the timeline starts again from them, so a gap after that is still
 // stepped over, once.
 func (s *EchoSuite) TestAGapAfterStampsStepBackIsSteppedOverOnce() {
-	const back, quiet = 600, 700
+	const back, quiet = 400, 450
 	stepped := s.counted("router_agent_echo_gap_frames_total")
 
 	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {

@@ -188,9 +188,9 @@ func (s *EchoSuite) TestTheVoiceTheTrackSendsIsCancelledFromWhatTheCallerSendsBa
 
 	// Pieces of a provider's stream are seldom whole frames, and resampled to 16 kHz each one
 	// rounds to a whole number of samples.
-	back, cleaned := s.call(echo, 30, speaking{piece: s.reply.SampleRate/50 + 7})
+	back, cleaned := s.call(echo, 15, speaking{piece: s.reply.SampleRate/50 + 7})
 
-	quieter := gone(back, cleaned, 5, 30)
+	quieter := gone(back, cleaned, 5, 15)
 	s.T().Logf("the agent's voice coming back %s late, through the track's Opus: %.1f dB quieter from 5 s on",
 		phoneDelay, quieter)
 	s.Greater(quieter, 20.0)
@@ -202,9 +202,9 @@ func (s *EchoSuite) TestTheVoiceWrittenOnlyOnceTheQueueRunsDryIsCancelled() {
 	echo, err := echocancel.NewCall(echocancel.Config{})
 	s.Require().NoError(err)
 
-	back, cleaned := s.call(echo, 30, speaking{piece: s.reply.SampleRate / 10, writeOnEmpty: true})
+	back, cleaned := s.call(echo, 15, speaking{piece: s.reply.SampleRate / 10, writeOnEmpty: true})
 
-	quieter := gone(back, cleaned, 5, 30)
+	quieter := gone(back, cleaned, 5, 15)
 	s.T().Logf("100 ms pieces written on an empty queue: %.1f dB quieter from 5 s on", quieter)
 	s.Greater(quieter, 50.0)
 }

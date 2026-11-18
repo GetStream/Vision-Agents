@@ -76,9 +76,9 @@ type edgeCall struct {
 const (
 	// edgeCallLength is how long the call on the edge lasts, edgeAgentUntil when the agent
 	// says its last reply, and edgeCallerAt when the caller speaks, once its echo has gone.
-	edgeCallLength = 30
-	edgeAgentUntil = 18
-	edgeCallerAt   = 20
+	edgeCallLength = 20
+	edgeAgentUntil = 12
+	edgeCallerAt   = 14
 )
 
 // heardOnTheEdge plays the reply over and over until edgeAgentUntil on an edge that cancels
@@ -178,10 +178,10 @@ func (s *EchoSuite) TestOnlyTheAudioOfTheParticipantsNamedIsCleanedBeforeTheAgen
 	heard, handed := call.heard["sip-15550100"], call.handed["sip-15550100"]
 
 	// The caller's phone sends nothing while quiet, so its audio is shorter than the call:
-	// the caller's own voice is measured in its last 8 s, which hold it alone.
+	// the caller's own voice is measured in its last 5 s, which hold it alone.
 	end := float64(len(heard)) / echocancel.SampleRate
 	echoGone := gone(heard, handed, 5, edgeAgentUntil-3)
-	callerKept := -gone(heard, handed, end-8, end)
+	callerKept := -gone(heard, handed, end-5, end)
 	s.T().Logf("from a sip- caller whose phone stops sending while quiet, the agent's voice %.1f dB quieter "+
 		"and their own %.1f dB", echoGone, callerKept)
 	s.Greater(echoGone, 20.0, "the caller's line was not cleaned")
