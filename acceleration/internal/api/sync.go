@@ -229,7 +229,10 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if err != nil {
 		return nil, err
 	}
-	if found && existing.SyncHash == hash {
+	// A router older than ui_instructions kept a sync's hash and dropped them, so the same sync
+	// sent again with UI the config lacks is written rather than found unchanged.
+	missingUI := value(body.UiInstructions) != "" && existing.UIInstructions == ""
+	if found && existing.SyncHash == hash && !missingUI {
 		drifted, err := s.driftedSinceSync(ctx, customerID, existing.ID, body)
 		if err != nil {
 			return nil, err

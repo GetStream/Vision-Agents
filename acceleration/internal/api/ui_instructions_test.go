@@ -124,15 +124,18 @@ func (s *ConfigsSuite) TestAPatchLeavingTheUIInstructionsOutKeepsThem() {
 
 	s.patch(created.Id, map[string]any{"instructions": "Be brief."})
 
-	s.Equal("Draw a card.", s.uiInstructions(created.Id))
+	stored := s.readConfig(created.Id)
+	s.Equal("Be brief.", value(stored.Instructions), "the patch was applied")
+	s.Equal("Draw a card.", value(stored.UiInstructions))
 }
 
 func (s *ConfigsSuite) TestAPatchWithEmptyUIInstructionsRemovesThem() {
 	created := s.createConfig(map[string]any{"name": "concierge", "ui_instructions": "Draw a card."})
+	s.Require().Equal("Draw a card.", s.uiInstructions(created.Id), "the config starts with them")
 
 	s.patch(created.Id, map[string]any{"ui_instructions": ""})
 
-	s.Empty(s.uiInstructions(created.Id))
+	s.Nil(s.readConfig(created.Id).UiInstructions)
 }
 
 // The directory is the whole of what the agent is told, so a sync of one whose agent.yaml no
@@ -142,11 +145,32 @@ func (s *SyncSuite) TestASyncStoresTheDirectorysUIInstructionsAndOneWithoutThemR
 		"ui_instructions": "Draw a card."})
 	s.Equal("Draw a card.", value(s.storedConfig(synced.Config.Id).UiInstructions), "the first sync stores them")
 
-	s.sync(map[string]any{"name": "concierge", "hash": "v2", "instructions": "Be brief."})
+	s.sync(map[string]any{"name": "concierge", "hash": "v2", "instructions": "Be briefer."})
 
 	stored := s.storedConfig(synced.Config.Id)
 	s.Nil(stored.UiInstructions, "a sync without them removes them")
-	s.Equal("Be brief.", value(stored.Instructions))
+	s.Equal("Be briefer.", value(stored.Instructions), "the second sync was written")
+}
+
+// A router older than ui_instructions kept a sync's hash and dropped them, so the SDK sends the
+// same sync again once the router keeps them, and it is written.
+func (s *SyncSuite) TestASyncOfTheSameHashWritesUIInstructionsTheConfigLacks() {
+	synced := s.sync(map[string]any{"name": "concierge", "hash": "v1", "instructions": "Be brief."})
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v1", "instructions": "Be brief.",
+		"ui_instructions": "Draw a card."})
+
+	s.False(again.Unchanged)
+	s.Equal("Draw a card.", value(s.storedConfig(synced.Config.Id).UiInstructions))
+}
+
+// The control: a config that has its UI is not written again for the same hash.
+func (s *SyncSuite) TestASyncOfTheSameHashWithTheUIStoredIsUnchanged() {
+	s.sync(map[string]any{"name": "concierge", "hash": "v1", "ui_instructions": "Draw a card."})
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v1", "ui_instructions": "Draw a card."})
+
+	s.True(again.Unchanged)
 }
 
 // storedConfig is the config as the router reads it back, not as a write answered.
@@ -158,7 +182,12 @@ func (s *SyncSuite) storedConfig(id string) AgentConfig {
 
 // uiInstructions are what the config is read back with, empty when it has none.
 func (s *ConfigsSuite) uiInstructions(id string) string {
+	return value(s.readConfig(id).UiInstructions)
+}
+
+// readConfig is the config as the router reads it back, not as a write answered.
+func (s *ConfigsSuite) readConfig(id string) AgentConfig {
 	var stored AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &stored))
-	return value(stored.UiInstructions)
+	return stored
 }

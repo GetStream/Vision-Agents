@@ -63,9 +63,9 @@ public struct SessionOptions: Sendable {
     /// phone cannot open.
     public var returnURL: URL?
     /// Whether the model is told its config's UI instructions in this session. False is for an
-    /// app that shows no UI: they are left out, so the agent answers in prose unless its own
-    /// instructions teach UI. It is no filter: a UI block the model still writes reaches the
-    /// reply. Nil leaves them in. Reopening the session keeps it.
+    /// app that shows no UI: they are left out and prose is the expected answer, but it does not
+    /// prevent the model from writing UI, and a block it writes still reaches the reply. Nil
+    /// leaves them in. Reopening the session keeps it.
     public var ui: Bool?
 
     public init(agent: String? = nil) {
