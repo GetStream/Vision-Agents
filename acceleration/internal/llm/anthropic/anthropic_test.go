@@ -491,6 +491,55 @@ func (s *AnthropicSuite) TestThinkingAfterTextARelayCannotRebuildIsNotKept() {
 		"text after a call comes back before it, so the thinking after that text would be sent with a prefix Claude never wrote")
 }
 
+// Text after a call goes back before the calls, inside the prefix of the thinking already
+// written after the first call, so that thinking is withheld too.
+func (s *AnthropicSuite) TestTextAfterACallWithholdsTheThinkingAlreadyWrittenAfterACall() {
+	turn := s.replayedTurn(stream(
+		thinkingBlock(0, "", "sig-first"),
+		toolUse(1, "toolu_1"),
+		thinkingBlock(2, "", "sig-second"),
+		textBlock(3, "late"),
+		toolUse(4, "toolu_2"),
+		stop("tool_use", 9),
+	))
+
+	s.JSONEq(`[
+		{"type": "thinking", "thinking": "", "signature": "sig-first"},
+		{"type": "text", "text": "late"},
+		{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {}},
+		{"type": "tool_use", "id": "toolu_2", "name": "lookup", "input": {}}
+	]`, turn)
+}
+
+func (s *AnthropicSuite) TestACallThatTakesNothingAsksWithAnEmptyObject() {
+	s.answerWith(http.StatusOK, stream(
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"clock","input":{}}}`,
+		`{"type":"content_block_stop","index":0}`,
+		stop("tool_use", 3),
+	))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.Equal([]llm.ToolCall{{ID: "toolu_1", Name: "clock", Arguments: "{}"}}, response.ToolCalls, "replayed, a call needs JSON arguments")
+}
+
+func (s *AnthropicSuite) TestAnUnsignedBlockDoesNotSplitTheText() {
+	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.User, Content: "find roses"},
+		{Role: llm.Assistant, Content: "Looking.", ReasoningBlocks: []llm.ReasoningBlock{{Text: "unsigned", AfterText: 4}, {Signature: "sig-1", AfterText: 8}}},
+		{Role: llm.User, Content: "go on"},
+	}})
+	s.Require().NoError(err)
+
+	turn, err := json.Marshal(s.sent()[0].body["messages"].([]any)[1].(map[string]any)["content"])
+	s.Require().NoError(err)
+	s.JSONEq(`[
+		{"type": "text", "text": "Looking."},
+		{"type": "thinking", "thinking": "", "signature": "sig-1"}
+	]`, string(turn))
+}
+
 func (s *AnthropicSuite) TestThinkingAfterTwoTextsInARowIsNotKept() {
 	s.answerWith(http.StatusOK, stream(textBlock(0, "one"), textBlock(1, "two"), thinkingBlock(2, "", "sig-1"), stop("end_turn", 9)))
 

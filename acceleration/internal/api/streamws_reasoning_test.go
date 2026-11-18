@@ -105,25 +105,46 @@ func (s *RespondReasoningSuite) TestCompleteWithoutThinkingHasNoReasoningField()
 	s.NotContains(sent, "reasoning")
 }
 
-func (s *RespondReasoningSuite) TestReasoningAtAPlaceTheTurnDoesNotHaveIsRefused() {
-	for name, reasoning := range map[string]string{
-		"negative calls":        `[{"signature":"a","after_tool_calls":-1}]`,
-		"beyond the calls":      `[{"signature":"a","after_tool_calls":2}]`,
-		"negative text":         `[{"signature":"a","after_text":-1}]`,
-		"beyond the text":       `[{"signature":"a","after_text":7}]`,
-		"inside a character":    `[{"signature":"a","after_text":2}]`,
-		"text after a call":     `[{"signature":"a","after_tool_calls":1,"after_text":3}]`,
-		"calls going backwards": `[{"signature":"a","after_tool_calls":1},{"signature":"b"}]`,
-		"text going backwards":  `[{"signature":"a","after_text":3},{"signature":"b","after_text":1}]`,
-	} {
-		var decoded respond
-		s.Require().NoError(json.Unmarshal([]byte(`{"messages":[{"role":"assistant","content":"héllo",
-			"tool_calls":[{"id":"t1","name":"lookup","arguments":"{}"}],"reasoning":`+reasoning+`}]}`), &decoded), name)
+// refused is the error respond gives a one-call assistant turn saying "héllo" whose
+// reasoning is the JSON given.
+func (s *RespondReasoningSuite) refused(reasoning string) error {
+	var decoded respond
+	s.Require().NoError(json.Unmarshal([]byte(`{"messages":[{"role":"assistant","content":"héllo",
+		"tool_calls":[{"id":"t1","name":"lookup","arguments":"{}"}],"reasoning":`+reasoning+`}]}`), &decoded))
+	_, err := decoded.params(options.LLM{})
+	return err
+}
 
-		_, err := decoded.params(options.LLM{})
+func (s *RespondReasoningSuite) TestANegativeCallCountIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_tool_calls":-1}]`), "reasoning")
+}
 
-		s.ErrorContains(err, "reasoning", name)
-	}
+func (s *RespondReasoningSuite) TestACallCountBeyondTheCallsIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_tool_calls":2}]`), "reasoning")
+}
+
+func (s *RespondReasoningSuite) TestANegativeTextOffsetIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_text":-1}]`), "reasoning")
+}
+
+func (s *RespondReasoningSuite) TestATextOffsetBeyondTheTextIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_text":7}]`), "reasoning")
+}
+
+func (s *RespondReasoningSuite) TestATextOffsetInsideACharacterIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_text":2}]`), "reasoning")
+}
+
+func (s *RespondReasoningSuite) TestATextOffsetAfterACallIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_tool_calls":1,"after_text":3}]`), "reasoning")
+}
+
+func (s *RespondReasoningSuite) TestCallCountsGoingBackwardsIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_tool_calls":1},{"signature":"b"}]`), "reasoning")
+}
+
+func (s *RespondReasoningSuite) TestTextOffsetsGoingBackwardsIsRefused() {
+	s.ErrorContains(s.refused(`[{"signature":"a","after_text":3},{"signature":"b","after_text":1}]`), "reasoning")
 }
 
 func (s *RespondReasoningSuite) TestReasoningAtPlacesTheTurnHasIsKeptAsSent() {

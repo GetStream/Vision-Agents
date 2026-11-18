@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -564,6 +565,12 @@ func (w *ResponseWriter) settle(failure error) {
 	// it is not an answer that stands, and a caller running its calls would act on it anyway.
 	calls, dropped := w.assembled(), []ToolCall(nil)
 	reasoning := w.reasoningBlocks
+	// A call dropped for arguments that do not parse is missing from the turn a caller sends
+	// back, so a block after it would stand after a different call or none: from the first
+	// one dropped, no block after a call is kept.
+	if kept := w.callsBeforeADrop(); kept < len(w.order) {
+		reasoning = slices.DeleteFunc(slices.Clone(reasoning), func(block ReasoningBlock) bool { return block.AfterToolCalls > kept })
+	}
 	if w.status == StatusFailed {
 		// Its thinking goes with its calls: a block placed after a dropped call has nowhere
 		// to go back to.
@@ -590,6 +597,17 @@ func (w *ResponseWriter) settle(failure error) {
 		TimeToFirstTokenMs: timeToFirstToken,
 		DurationMs:         float64(time.Since(w.startedAt).Microseconds()) / 1000,
 	}})
+}
+
+// callsBeforeADrop is how many calls the response asked for before the first assembled
+// drops, or all of them.
+func (w *ResponseWriter) callsBeforeADrop() int {
+	for i, index := range w.order {
+		if arguments := w.calls[index].arguments.String(); arguments != "" && !json.Valid([]byte(arguments)) {
+			return i
+		}
+	}
+	return len(w.order)
 }
 
 // assembled returns the tool calls in the order the model asked for them.

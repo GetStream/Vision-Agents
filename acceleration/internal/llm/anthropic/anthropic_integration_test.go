@@ -4,6 +4,7 @@ package anthropic
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -111,21 +112,26 @@ func (s *AnthropicIntegrationSuite) TestThinkingIsReplayedThroughAToolRound() {
 	s.Contains(answered.OutputText, "14")
 }
 
-// recorder keeps what passes between the adapter and the Messages API.
+// recorder keeps each exchange between the adapter and the Messages API, with its status:
+// the SDK retries a failed one, and only the ones that succeeded are the conversation.
 type recorder struct {
-	mu   sync.Mutex
-	sent [][]byte
-	got  [][]byte
+	mu        sync.Mutex
+	exchanges []exchange
 }
+
+type exchange struct {
+	sent   []byte
+	status int
+	got    []byte
+}
+
+type sentKey struct{}
 
 func (r *recorder) requests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
 		req.Body = io.NopCloser(bytes.NewReader(body))
-		r.mu.Lock()
-		r.sent = append(r.sent, body)
-		r.mu.Unlock()
-		next.ServeHTTP(w, req)
+		next.ServeHTTP(w, req.WithContext(context.WithValue(req.Context(), sentKey{}, body)))
 	})
 }
 
@@ -135,21 +141,34 @@ func (r *recorder) response(response *http.Response) error {
 		return err
 	}
 	response.Body = io.NopCloser(bytes.NewReader(body))
+	sent, _ := response.Request.Context().Value(sentKey{}).([]byte)
 	r.mu.Lock()
-	r.got = append(r.got, body)
+	r.exchanges = append(r.exchanges, exchange{sent: sent, status: response.StatusCode, got: body})
 	r.mu.Unlock()
 	return nil
 }
 
-// streamed is the content of the first response, rebuilt from its events as a request
-// would carry it.
-func (r *recorder) streamed(t *testing.T) []map[string]any {
+// succeeded are the exchanges the API answered with a 200, in order.
+func (r *recorder) succeeded(t *testing.T, want int) []exchange {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	require.NotEmpty(t, r.got)
+	var ok []exchange
+	for _, e := range r.exchanges {
+		if e.status == http.StatusOK {
+			ok = append(ok, e)
+		}
+	}
+	require.Len(t, ok, want)
+	return ok
+}
+
+// streamed is the content of the first successful response, rebuilt from its events as a request
+// would carry it.
+func (r *recorder) streamed(t *testing.T) []map[string]any {
+	first := r.succeeded(t, 1)[0]
 	var blocks []map[string]any
 	inputs := map[int]*strings.Builder{}
-	for _, line := range strings.Split(string(r.got[0]), "\n") {
+	for _, line := range strings.Split(string(first.got), "\n") {
 		data, ok := strings.CutPrefix(line, "data: ")
 		if !ok {
 			continue
@@ -198,17 +217,15 @@ func (r *recorder) streamed(t *testing.T) []map[string]any {
 	return blocks
 }
 
-// replayedTurn is the assistant turn of the second request, without its cache breakpoints.
+// replayedTurn is the assistant turn of the request that continued successfully, without its cache breakpoints.
 func (r *recorder) replayedTurn(t *testing.T) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	require.Len(t, r.sent, 2)
+	continued := r.succeeded(t, 2)[1]
 	var request struct {
 		Messages []struct {
 			Content []map[string]any `json:"content"`
 		} `json:"messages"`
 	}
-	require.NoError(t, json.Unmarshal(r.sent[1], &request))
+	require.NoError(t, json.Unmarshal(continued.sent, &request))
 	turn := request.Messages[1].Content
 	for _, block := range turn {
 		delete(block, "cache_control")

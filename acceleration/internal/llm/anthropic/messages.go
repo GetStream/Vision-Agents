@@ -224,6 +224,21 @@ type puller struct {
 	// unreplayable is a response laid out as a replay cannot rebuild it from one text and
 	// its calls (replayable); no block from that point on is recorded.
 	unreplayable bool
+	// held are the blocks after a tool call, recorded only once the response ends: text
+	// arriving after a call is put back before the calls, inside the prefix they were signed
+	// with, so it withholds them all.
+	held []llm.ReasoningBlock
+	// argued is whether the tool call being streamed has had arguments.
+	argued bool
+}
+
+// keep records a finished block, or holds it until the end when it follows a tool call.
+func (p *puller) keep(w *llm.ResponseWriter, block llm.ReasoningBlock) {
+	if block.AfterToolCalls > 0 {
+		p.held = append(p.held, block)
+		return
+	}
+	w.ReasoningBlock(block)
 }
 
 // place marks where a block of thinking starting now stands: after the text written so far
@@ -271,9 +286,13 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 		case "text":
 			p.unreplayable = p.unreplayable || !p.replayable()
 			p.textAt = p.text
+			if p.calls > 0 {
+				p.held = nil
+			}
 		case "tool_use":
 			w.FunctionCall(event.Index, block.ID, block.Name, "", "")
 			p.calls++
+			p.argued = false
 		case "thinking":
 			if !p.unreplayable {
 				placed := p.place()
@@ -284,17 +303,21 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 			if !p.unreplayable {
 				placed := p.place()
 				placed.Redacted = block.Data
-				w.ReasoningBlock(placed)
+				p.keep(w, placed)
 			}
 		}
 		p.last = string(event.ContentBlock.Type)
 	case "content_block_stop":
-		if p.last == "text" && p.text == p.textAt {
+		switch {
+		case p.last == "text" && p.text == p.textAt:
 			p.unreplayable = true
+		case p.last == "tool_use" && !p.argued:
+			// A call that takes nothing streams no arguments; replayed, it needs an object.
+			w.FunctionCall(event.Index, "", "", "{}", "")
 		}
 		if p.thinking != nil && p.thinking.Signature != "" {
 			p.thinking.Text = p.thinkingText.String()
-			w.ReasoningBlock(*p.thinking)
+			p.keep(w, *p.thinking)
 		}
 		p.thinking = nil
 	case "content_block_delta":
@@ -313,6 +336,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 			}
 		case "input_json_delta":
 			w.FunctionCall(event.Index, "", "", delta.PartialJSON, "")
+			p.argued = p.argued || delta.PartialJSON != ""
 		}
 	case "message_delta":
 		p.counted = true
@@ -367,6 +391,9 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
+	for _, block := range p.held {
+		w.ReasoningBlock(block)
+	}
 	switch err := p.upstream.Err(); {
 	case err == nil:
 	case errors.Is(err, context.Canceled):
@@ -667,13 +694,15 @@ func withThinking(text string, calls []anthropic.ContentBlockParamUnion, thinkin
 	think := func(after int) {
 		for ; next < len(thinking) && min(thinking[next].AfterToolCalls, len(calls)) <= after; next++ {
 			block := thinking[next]
+			if block.Redacted == "" && block.Signature == "" {
+				continue
+			}
 			if after == 0 {
 				writeText(block.AfterText)
 			}
-			switch {
-			case block.Redacted != "":
+			if block.Redacted != "" {
 				out = append(out, anthropic.NewRedactedThinkingBlock(block.Redacted))
-			case block.Signature != "":
+			} else {
 				out = append(out, anthropic.NewThinkingBlock(block.Signature, block.Text))
 			}
 		}

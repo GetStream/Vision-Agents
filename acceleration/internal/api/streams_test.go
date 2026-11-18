@@ -1086,19 +1086,25 @@ func (s *StreamsSuite) TestThinkingComesBackToTheModelWhereItWasWritten() {
 
 	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r1",
 		"messages": []frame{{"role": "user", "content": "find roses"}}}))
-	var order []string
+	var order []any
 	var complete frame
 	for complete == nil {
 		switch got := s.nextFrame(answering); got["type"] {
 		case "delta":
-			order = append(order, "text:"+got["text"].(string))
+			order = append(order, got["text"])
 		case "reasoning":
-			order = append(order, "thinking")
+			s.Equal("r1", got["id"])
+			order = append(order, got["block"])
 		case "complete":
 			complete = got
 		}
 	}
-	s.Equal([]string{"thinking", "text:Looking.", "thinking", "thinking"}, order, "each block arrives where it was written")
+	s.Equal([]any{
+		map[string]any{"text": "plan", "signature": "sig-1"},
+		"Looking.",
+		map[string]any{"signature": "sig-2", "after_text": float64(len("Looking."))},
+		map[string]any{"redacted": "enc-1", "after_tool_calls": float64(1)},
+	}, order, "each block arrives where it was written")
 	s.Equal([]any{
 		map[string]any{"text": "plan", "signature": "sig-1"},
 		map[string]any{"signature": "sig-2", "after_text": float64(len("Looking."))},
