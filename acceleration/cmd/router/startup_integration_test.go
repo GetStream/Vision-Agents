@@ -51,6 +51,10 @@ func TestRouterStartSuite(t *testing.T) {
 	suite.Run(t, new(RouterStartSuite))
 }
 
+func (s *RouterStartSuite) SetupTest() {
+	clearKeySources(s.T())
+}
+
 func (s *RouterStartSuite) SetupSuite() {
 	dsn := os.Getenv(dsnEnvVar)
 	if dsn == "" {
@@ -462,7 +466,7 @@ func (s *RouterStartSuite) proxySettings() config.Config {
 	}
 	settings := s.settings
 	settings.Redis.Addr = address
-	s.T().Setenv("ROUTER_DEV_KEK", "listen-fd-key")
+	setDevKEK(s.T(), "listen-fd-key")
 	settings.Connectors.Enabled = true
 	settings.CodeSandbox.ProxyCACert, settings.CodeSandbox.ProxyCAKey = newCA(s.T())
 	return settings
@@ -599,7 +603,7 @@ func (s *RouterStartSuite) TestARunningRouterSaysItTakesTrunkCallsOverUntilItSto
 	settings := s.settings
 	settings.Addr = freeAddress(s.T())
 	settings.Redis.Addr = address
-	s.T().Setenv("ROUTER_DEV_KEK", "trunk-key")
+	setDevKEK(s.T(), "trunk-key")
 
 	stop := s.start(settings)
 
