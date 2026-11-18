@@ -113,7 +113,9 @@ npm run build     # types, then the bundle
   ("Reserve this table?") and takes only a free table from the card. Once you allow it the card
   turns into the booking: the table, the time and a confirmation code, which it keeps if the
   agent shows the same tables again. The card has done what it was for, so it takes the tool
-  back with `Session.removeTool`. To see the difference, ask Juno to reserve a table before any
+  back with `Session.removeTool`. A second seat selector in the conversation takes the tool over
+  for its own tables, swapping it with `removeTool` then `addTools`, and each card keeps its own
+  booking. To see the difference, ask Juno to reserve a table before any
   seat selector is shown: it has no tool to do it with. The router's
   `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists `reserve_table` as
   `session` while the card's tool is given.

@@ -21,6 +21,11 @@ export function isReservationOf(reservation: Reservation | undefined, tables: re
   return tables.every((table) => reservation.tables.includes(table.id));
 }
 
+/** What a seat selector offers, told apart from another's: its tables and which are free. */
+export function offerOf(tables: readonly DiningTable[]): string {
+  return JSON.stringify(tables.map(({ id, zone, seats, available }) => [id, zone, seats, available]));
+}
+
 /**
  * Reserves one of the free tables a seat selector offers, under `guest`'s name, once the person
  * says it may. `onReserved` hears the reservation.

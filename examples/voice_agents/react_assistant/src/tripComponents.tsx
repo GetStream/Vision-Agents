@@ -15,7 +15,7 @@ import { Assistant } from "./assistant";
 import bookingDescribed from "./bookingComponents.json";
 import type { ChatScreen, ChatScreenSnapshot } from "./chatScreen";
 import { calendarDays } from "./reminders";
-import { isReservationOf, RESERVE_TABLE, reserveTable, type DiningTable, type Reservation } from "./reserveTable";
+import { isReservationOf, offerOf, RESERVE_TABLE, reserveTable, type DiningTable, type Reservation } from "./reserveTable";
 import { useSelected } from "./store";
 
 /**
@@ -275,12 +275,14 @@ type SeatSelectorArguments = { tables: DiningTable[] };
  * card offering tables is on the screen, so the card gives the conversation's session the tool
  * the first time it shows (`Session.addTools`), and takes it back once a table is reserved
  * (`Session.removeTool`). Its tables then show the booking, even if the agent shows them again.
+ * A second card, or the same tables with others free, takes the tool over for its own tables.
  */
 function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArguments>) {
   const screen = useContext(ChatScreenContext);
   const shown: CardState = screen ?? noScreen;
+  // Each card shows the booking made from its own tables, however many were made since.
   const reservation = useSelected(shown, (state) =>
-    isReservationOf(state.reservation, args.tables) ? state.reservation : undefined,
+    state.reservations.find((each) => isReservationOf(each, args.tables)),
   );
   const [selected, setSelected] = useState<string | undefined>(
     () => args.tables.find((t) => t.available)?.id,
@@ -291,15 +293,18 @@ function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArgument
   // brings its tool once the session is open.
   const isOpen = useSelected(shown, (state) => state.session !== undefined);
   const isBooked = reservation !== undefined;
+  const offer = offerOf(args.tables);
 
-  // Brought once the tables are all in, which is when the tool can tell a free one.
+  // Brought once the tables are all in, which is when the tool can tell a free one, and again
+  // when they change. The latest card shown owns the tool, so its tables are the ones booked.
   useEffect(() => {
     if (!screen || !isOpen || isBooked || context.isStreaming) return;
     void screen.bring(
       RESERVE_TABLE,
+      offer,
       reserveTable(tables.current, Assistant.user.name, (made) => screen.reserved(made)),
     );
-  }, [screen, isOpen, isBooked, context.isStreaming]);
+  }, [screen, isOpen, isBooked, context.isStreaming, offer]);
 
   if (reservation) return <ReservationConfirmation reservation={reservation} />;
   return (
@@ -331,13 +336,13 @@ function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArgument
 
 /** What of the conversation a seat selector follows: its session and the booking made in it. */
 type CardState = {
-  get: () => Pick<ChatScreenSnapshot, "session" | "reservation">;
+  get: () => Pick<ChatScreenSnapshot, "session" | "reservations">;
   subscribe: (listener: () => void) => () => void;
 };
 
-/** No session or reservation, for a seat selector shown outside a conversation. */
+/** No session or reservations, for a seat selector shown outside a conversation. */
 const noScreen: CardState = {
-  get: () => ({ session: undefined, reservation: undefined }),
+  get: () => ({ session: undefined, reservations: [] }),
   subscribe: () => () => undefined,
 };
 

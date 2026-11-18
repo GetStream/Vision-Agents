@@ -48,8 +48,8 @@ export interface ChatScreenSnapshot {
   readonly voiceOpenedAt: number;
   /** The conversation's session, once it is open. */
   readonly session: Session | undefined;
-  /** The table the seat selector's tool reserved in this conversation, or undefined. */
-  readonly reservation: Reservation | undefined;
+  /** The tables the seat selectors' tool reserved in this conversation, in the order they were. */
+  readonly reservations: readonly Reservation[];
 }
 
 /**
@@ -68,10 +68,11 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
   readonly conversation: AIConversationController;
   private readonly stops: (() => void)[] = [];
   /**
-   * The tools the cards in the conversation brought to its session, by name, so a card shown
-   * again, such as after scrolling back to it, does not bring its tool twice.
+   * The tools the cards in the conversation brought to its session, by name, with what the card
+   * offered that each one is for: a card shown again, such as after scrolling back to it, does
+   * not bring its tool twice, and another card's offer replaces it.
    */
-  private readonly brought = new Set<string>();
+  private readonly brought = new Map<string, string>();
   private stopVoice: (() => void) | undefined;
   private left = false;
 
@@ -94,7 +95,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
       voiceFailure: undefined,
       voiceOpenedAt: 0,
       session: undefined,
-      reservation: undefined,
+      reservations: [],
     });
     this.chat = new AgentChat<LocalMessage>({ sessionId, open: deps.open, pageSize: PAGE_SIZE });
     this.conversation = new AIConversationController({
@@ -126,17 +127,23 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
   }
 
   /**
-   * Gives the agent a tool a card in the conversation brings, the first time the card shows. A
-   * card is shown in a reply, so the conversation has its session by then.
+   * Gives the agent a tool a card in the conversation brings, for what the card offers (`offer`,
+   * such as its tables), the first time the card shows. A card offering something else, such as
+   * a second seat selector or the same one with other tables free, replaces it: the tool is for
+   * the latest offer. A card is shown in a reply, so the conversation has its session by then.
    */
-  async bring(name: string, tools: Tools): Promise<void> {
+  async bring(name: string, offer: string, tools: Tools): Promise<void> {
     const { session } = this.get();
-    if (!session || this.brought.has(name)) return;
-    this.brought.add(name);
+    const was = this.brought.get(name);
+    if (!session || was === offer) return;
+    this.brought.set(name, offer);
     try {
+      // The session never replaces a tool in place, so that no call runs half under each: the
+      // one for the earlier offer is taken back first. The session makes the changes in order.
+      if (was !== undefined) await session.removeTool(name);
       await session.addTools(tools);
     } catch (cause) {
-      this.brought.delete(name);
+      if (this.brought.get(name) === offer) this.brought.delete(name);
       this.update({ failure: messageOf(cause) });
     }
   }
@@ -158,7 +165,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
    * call to be answered before it withdraws the tool.
    */
   reserved(reservation: Reservation): void {
-    this.update({ reservation });
+    this.update({ reservations: [...this.get().reservations, reservation] });
     void this.withdraw(RESERVE_TABLE);
   }
 

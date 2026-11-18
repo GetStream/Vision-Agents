@@ -4,7 +4,7 @@ import type { VoiceSession } from "@stream-io/stream-agents/video";
 import { describe, expect, it } from "vitest";
 
 import { ChatScreen, THINK_HARDER_ID, type ChatScreenDeps } from "../src/chatScreen";
-import { RESERVE_TABLE, reserveTable, type DiningTable } from "../src/reserveTable";
+import { offerOf, RESERVE_TABLE, reserveTable, type DiningTable } from "../src/reserveTable";
 
 type Message = { id: string; text: string; custom: Record<string, unknown> };
 
@@ -307,8 +307,8 @@ describe("a card's own tool", () => {
     const { screen, session } = await opened();
     const tool = () => reserveTable(tables, "Alex", (made) => screen.reserved(made));
 
-    await screen.bring(RESERVE_TABLE, tool());
-    await screen.bring(RESERVE_TABLE, tool());
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
 
     expect([...session.added.keys()]).toEqual([RESERVE_TABLE]);
     expect(screen.get().failure).toBeUndefined();
@@ -319,17 +319,17 @@ describe("a card's own tool", () => {
     const tool = () => reserveTable(tables, "Alex", (made) => screen.reserved(made));
     session.refuseNext = "a tool by that name is the agent's own";
 
-    await screen.bring(RESERVE_TABLE, tool());
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
     expect(screen.get().failure).toContain("the agent's own");
     expect(session.added.size).toBe(0);
 
-    await screen.bring(RESERVE_TABLE, tool());
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
     expect([...session.added.keys()]).toEqual([RESERVE_TABLE]);
   });
 
   it("keeps the booking it made and is taken back from the session", async () => {
     const { screen, session } = await opened();
-    await screen.bring(RESERVE_TABLE, reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
 
     const tools = session.added.get(RESERVE_TABLE)!;
     await tools.call(
@@ -339,8 +339,58 @@ describe("a card's own tool", () => {
     );
     await settle();
 
-    expect(screen.get().reservation?.table.id).toBe("T4");
-    expect(screen.get().reservation?.when).toBe("tonight at 8pm");
+    expect(screen.get().reservations.map((each) => each.table.id)).toEqual(["T4"]);
+    expect(screen.get().reservations[0]?.when).toBe("tonight at 8pm");
+    expect(session.added.size).toBe(0);
+    expect(screen.get().failure).toBeUndefined();
+  });
+
+  /** Books `table` with whichever tool the session has now, as the agent would. */
+  async function book(session: FakeSession, table: string) {
+    await session.added.get(RESERVE_TABLE)!.call(
+      RESERVE_TABLE,
+      JSON.stringify({ table_id: table, when: "tonight at 8pm", summary: `${table}, tonight at 8pm` }),
+      new AbortController().signal,
+    );
+    await settle();
+  }
+
+  const courtyard: DiningTable[] = [
+    { id: "C1", zone: "Courtyard", seats: 6, available: true },
+    { id: "C2", zone: "Courtyard", seats: 2, available: false },
+  ];
+
+  it("is taken over by a second card, for that card's tables", async () => {
+    const { screen, session } = await opened();
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+
+    await screen.bring(RESERVE_TABLE, offerOf(courtyard), reserveTable(courtyard, "Alex", (made) => screen.reserved(made)));
+    await book(session, "C1");
+
+    expect(screen.get().failure).toBeUndefined();
+    expect(screen.get().reservations.map((each) => each.table.id)).toEqual(["C1"]);
+  });
+
+  it("is taken over by the same tables once others are free", async () => {
+    const { screen, session } = await opened();
+    const freed = tables.map((each) => ({ ...each, available: true }));
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+
+    await screen.bring(RESERVE_TABLE, offerOf(freed), reserveTable(freed, "Alex", (made) => screen.reserved(made)));
+    await book(session, "T1");
+
+    expect(screen.get().reservations.map((each) => each.table.id)).toEqual(["T1"]);
+  });
+
+  it("keeps each card's booking when a later card books too", async () => {
+    const { screen, session } = await opened();
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+    await book(session, "T4");
+
+    await screen.bring(RESERVE_TABLE, offerOf(courtyard), reserveTable(courtyard, "Alex", (made) => screen.reserved(made)));
+    await book(session, "C1");
+
+    expect(screen.get().reservations.map((each) => each.tables)).toEqual([["T1", "T4"], ["C1", "C2"]]);
     expect(session.added.size).toBe(0);
     expect(screen.get().failure).toBeUndefined();
   });
@@ -349,7 +399,7 @@ describe("a card's own tool", () => {
     const { deps } = router();
     const screen = new ChatScreen(undefined, deps, () => undefined);
 
-    await screen.bring(RESERVE_TABLE, reserveTable(tables, "Alex", () => undefined));
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", () => undefined));
 
     expect(screen.get().failure).toBeUndefined();
     expect(screen.get().session).toBeUndefined();
