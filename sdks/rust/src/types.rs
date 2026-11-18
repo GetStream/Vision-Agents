@@ -5999,24 +5999,14 @@ pub struct FileSource {
 pub struct FloorCheck {
     ///Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
     pub acted: bool,
-    ///The option the model found most likely.
-    pub answer: ::std::string::String,
-    ///The probability of answer.
-    pub answer_probability: f64,
     ///When the check was asked.
     pub at: ::std::string::String,
-    ///What the server took to decide, as it reported it.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub decide_ms: ::std::option::Option<f64>,
     pub kind: FloorCheckKind,
     ///The round trip to the chorus-asr server.
     pub latency_ms: f64,
-    ///Every option's probability, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an agent with tools, cannot and each tool. Absent from a server that does not report them.
+    ///The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub options: ::std::option::Option<::std::vec::Vec<FloorOption>>,
-    ///The probability the caller has finished, one minus that of wait. Absent over the agent.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub p_eot: ::std::option::Option<f64>,
     ///How far into the pause the check was asked. Absent over the agent.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub paused_ms: ::std::option::Option<f64>,
@@ -13418,7 +13408,7 @@ pub struct TimelineEntry {
     ///Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub first_frame_queued_ms: ::std::option::Option<f64>,
-    ///The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control.
+    ///The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began after it. Absent for an agent without chorus-asr floor control.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_checks: ::std::option::Option<::std::vec::Vec<FloorCheck>>,
     ///What the caller said, when it can be matched to this exchange.

@@ -486,8 +486,9 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		return
 	}
 	// The check is reported once it is known whether its ruling was handed to the agent, which
-	// waits for its words.
-	reported := Checked{Participant: c.participant.ID, At: c.asked, Latency: latency, OverAgent: true, Answer: checked.Answer}
+	// waits for its words, about the reply it was asked over: a stop ends that reply.
+	reported := Checked{Participant: c.participant.ID, Turn: turn.ReplyID, At: c.asked, Latency: latency, OverAgent: true,
+		Answer: checked.Answer}
 	defer func() { asker.Hearer().report(reported) }()
 	var words Words
 	select {
@@ -648,7 +649,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	}
 	t.logCheck(turn, c, checked, heard, err)
 	if err == nil {
-		asker.Hearer().report(Checked{Participant: c.participant.ID, At: c.asked, Latency: latency, Paused: c.paused,
+		asker.Hearer().report(Checked{Participant: c.participant.ID, Turn: checkedTurn(turn, ""), At: c.asked, Latency: latency, Paused: c.paused,
 			Answer: checked.Answer, Acted: checked.Ended || stopping != nil, Point: checked.Ending.Name})
 	}
 	t.mu.Lock()

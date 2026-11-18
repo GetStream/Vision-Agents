@@ -25,6 +25,11 @@ const (
 	defaultCallEvents = 1000
 )
 
+// maxFloorChecks is the most chorus-asr floor checks one call keeps, the latest ones: a
+// timeline shows forty a turn, and the model is asked every 300 ms while the caller talks
+// over the agent.
+const maxFloorChecks = 4000
+
 // Turn is one exchange in a conversation, measured the way the caller experienced it.
 // The legs are pointers because a pipeline need not have all of them, and an interrupted
 // turn stops partway through.
@@ -64,9 +69,6 @@ type Turn struct {
 	// Set on a turn that was not interrupted, it means the agent cut itself off.
 	AudioDroppedMs *float64 `json:"audio_dropped_ms,omitempty"`
 	Interrupted    bool     `json:"interrupted,omitempty"`
-	// FloorChecks are the chorus-asr model's checks on the floor that led to the turn and
-	// were made over its reply, the latest of them, oldest first.
-	FloorChecks []FloorCheck `json:"floor_checks,omitempty"`
 }
 
 // The kinds of FloorCheck: at a pause in the caller's speech, or while they talked over the
@@ -76,22 +78,18 @@ const (
 	FloorCheckOverAgent = "over_agent"
 )
 
-// FloorCheck is one check the chorus-asr model made on the floor: what it was asked, every
+// FloorCheck is one check the chorus-asr model made on the floor: where it was asked, every
 // answer's probability, and what the router made of it. A value the model did not give is
 // absent.
 type FloorCheck struct {
-	At                time.Time     `json:"at"`
-	Kind              string        `json:"kind"`
-	PausedMs          *float64      `json:"paused_ms,omitempty"`
-	Answer            string        `json:"answer"`
-	AnswerProbability float64       `json:"answer_probability"`
-	PEOT              *float64      `json:"p_eot,omitempty"`
-	DecideMs          *float64      `json:"decide_ms,omitempty"`
-	Options           []FloorOption `json:"options,omitempty"`
-	Ruling            FloorRuling   `json:"ruling"`
-	Acted             bool          `json:"acted"`
-	LatencyMs         float64       `json:"latency_ms"`
-	Point             string        `json:"point,omitempty"`
+	At        time.Time     `json:"at"`
+	Kind      string        `json:"kind"`
+	PausedMs  *float64      `json:"paused_ms,omitempty"`
+	Options   []FloorOption `json:"options,omitempty"`
+	Ruling    FloorRuling   `json:"ruling"`
+	Acted     bool          `json:"acted"`
+	LatencyMs float64       `json:"latency_ms"`
+	Point     string        `json:"point,omitempty"`
 }
 
 // FloorOption is one answer the model was offered, and its probability.
@@ -130,6 +128,11 @@ type CallEvent struct {
 	Said string `json:"said,omitempty"`
 	// LatencyMs is what the flow controller took to rule, where anything was asked.
 	LatencyMs *float64 `json:"latency_ms,omitempty"`
+	// FloorCheck makes the event one of the chorus-asr model's checks on the floor rather
+	// than a judgement of the conversation's, about TurnID when that was known as it was
+	// asked. Checks are kept apart from the judgements (CallFloorChecks), the latest
+	// maxFloorChecks of a call, so that a call's checks never crowd its judgements out.
+	FloorCheck *FloorCheck `json:"floor_check,omitempty"`
 }
 
 // RecordTurn keeps one turn for RecentFor, in one round trip. Turns are kept by agent and
@@ -186,12 +189,13 @@ func (c *Client) CallTurns(ctx context.Context, customerID, agentID string, from
 }
 
 // RecordCallEvents keeps a batch of judgements for RecentFor after the last one, in one
-// round trip. A call keeps its latest maxCallEvents.
+// round trip. A call keeps its latest maxCallEvents, and its latest maxFloorChecks floor checks.
 func (c *Client) RecordCallEvents(ctx context.Context, events []CallEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
 	byCall := map[string][]string{}
+	kept := map[string]int64{}
 	var order []string
 	for _, event := range events {
 		if event.CustomerID == "" || event.CallID == "" {
@@ -204,18 +208,22 @@ func (c *Client) RecordCallEvents(ctx context.Context, events []CallEvent) error
 		if err != nil {
 			return fmt.Errorf("live: encode call event: %w", err)
 		}
-		key := callEventsKey(event.CustomerID, event.CallID)
+		key, keep := callEventsKey(event.CustomerID, event.CallID), int64(maxCallEvents)
+		if event.FloorCheck != nil {
+			key, keep = floorChecksKey(event.CustomerID, event.CallID), maxFloorChecks
+		}
 		if _, seen := byCall[key]; !seen {
 			order = append(order, key)
 		}
 		byCall[key] = append(byCall[key], string(encoded))
+		kept[key] = keep
 	}
 
 	commands := make(rueidis.Commands, 0, 3*len(order))
 	for _, key := range order {
 		commands = append(commands,
 			c.redis.B().Rpush().Key(key).Element(byCall[key]...).Build(),
-			c.redis.B().Ltrim().Key(key).Start(-maxCallEvents).Stop(-1).Build(),
+			c.redis.B().Ltrim().Key(key).Start(-kept[key]).Stop(-1).Build(),
 			c.redis.B().Pexpire().Key(key).Milliseconds(RecentFor.Milliseconds()).Build(),
 		)
 	}
@@ -266,4 +274,34 @@ func turnsKey(customerID, agentID string) string {
 
 func callEventsKey(customerID, callID string) string {
 	return "call_events:" + customerID + ":" + callID
+}
+
+func floorChecksKey(customerID, callID string) string {
+	return "floor_checks:" + customerID + ":" + callID
+}
+
+// CallFloorChecks returns the chorus-asr floor checks kept for one call, oldest first, each
+// with the turn it was about when that was known as it was asked. Checks older than RecentFor
+// are gone.
+func (c *Client) CallFloorChecks(ctx context.Context, customerID, callID string) ([]CallEvent, error) {
+	if customerID == "" || callID == "" {
+		return nil, stack.Wrap(errors.New("live: a customer and a call id are required"))
+	}
+	members, err := c.redis.Do(ctx, c.redis.B().Lrange().Key(floorChecksKey(customerID, callID)).
+		Start(0).Stop(-1).Build()).AsStrSlice()
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("live: floor checks: %w", err))
+	}
+	checks := make([]CallEvent, 0, len(members))
+	for _, member := range members {
+		var check CallEvent
+		if err := json.Unmarshal([]byte(member), &check); err != nil {
+			return nil, stack.Wrap(fmt.Errorf("live: decode floor check: %w", err))
+		}
+		if check.FloorCheck != nil {
+			checks = append(checks, check)
+		}
+	}
+	slices.SortStableFunc(checks, func(a, b CallEvent) int { return a.At.Compare(b.At) })
+	return checks, nil
 }

@@ -6616,17 +6616,8 @@ type FloorCheck struct {
 	// Acted Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
 	Acted bool `json:"acted"`
 
-	// Answer The option the model found most likely.
-	Answer string `json:"answer"`
-
-	// AnswerProbability The probability of answer.
-	AnswerProbability float64 `json:"answer_probability"`
-
 	// At When the check was asked.
 	At time.Time `json:"at"`
-
-	// DecideMs What the server took to decide, as it reported it.
-	DecideMs *float64 `json:"decide_ms,omitempty"`
 
 	// Kind Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
 	Kind FloorCheckKind `json:"kind"`
@@ -6634,11 +6625,8 @@ type FloorCheck struct {
 	// LatencyMs The round trip to the chorus-asr server.
 	LatencyMs float64 `json:"latency_ms"`
 
-	// Options Every option's probability, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an agent with tools, cannot and each tool. Absent from a server that does not report them.
+	// Options The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
 	Options *[]FloorOption `json:"options,omitempty"`
-
-	// PEot The probability the caller has finished, one minus that of wait. Absent over the agent.
-	PEot *float64 `json:"p_eot,omitempty"`
 
 	// PausedMs How far into the pause the check was asked. Absent over the agent.
 	PausedMs *float64 `json:"paused_ms,omitempty"`
@@ -10396,7 +10384,7 @@ type TimelineEntry struct {
 	// FirstFrameQueuedMs Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
 	FirstFrameQueuedMs *float64 `json:"first_frame_queued_ms,omitempty"`
 
-	// FloorChecks The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control.
+	// FloorChecks The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began after it. Absent for an agent without chorus-asr floor control.
 	FloorChecks *[]FloorCheck `json:"floor_checks,omitempty"`
 
 	// Heard What the caller said, when it can be matched to this exchange.

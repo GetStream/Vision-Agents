@@ -105,7 +105,7 @@ func TestATimelineEntryCarriesWhenTheFirstFrameWasQueuedAndHeard(t *testing.T) {
 		{TurnID: "turn-2", RoundtripMs: &roundtrip},
 	}
 
-	timeline := timelineOf(turns, nil, nil)
+	timeline := timelineOf(turns, nil, nil, nil)
 
 	require.Len(t, timeline, 2)
 	require.Equal(t, &queued, timeline[0].FirstFrameQueuedMs)
@@ -124,7 +124,7 @@ func TestATimelineEntryDoesNotTakeAReplyTalkedOverAsSaid(t *testing.T) {
 		{Speaker: "agent", Agent: true, Text: "It is, and it will be all week.", At: start.Add(time.Second), Interrupted: true},
 	}
 
-	timeline := timelineOf(turns, said, nil)
+	timeline := timelineOf(turns, said, nil, nil)
 
 	require.Equal(t, "Is it raining?", *timeline[0].Heard)
 	require.Nil(t, timeline[0].Said, "what it was going to say is not what it said")
@@ -233,7 +233,7 @@ func timelineCall(t *testing.T, request store.Request) []byte {
 	request.StartedAt = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	request.Provider, request.Model, request.LatencyMs = "stub", "fast", &latency
 	request.InputTokens, request.OutputTokens = 10, 2
-	timeline := timelineOf([]live.Turn{{TurnID: "turn-1"}}, nil, []store.Request{request})
+	timeline := timelineOf([]live.Turn{{TurnID: "turn-1"}}, nil, []store.Request{request}, nil)
 	require.Len(t, timeline, 1)
 	require.NotNil(t, timeline[0].ModelCalls)
 	raw, err := json.Marshal(*timeline[0].ModelCalls)
@@ -489,25 +489,23 @@ func TestAUIPatchAndVersionAreIncludedWhenPresent(t *testing.T) {
 		string(marshalled(t, completed, ok)))
 }
 
-// pauseFloorCheck and overAgentFloorCheck are chorus-asr checks as a turn's row keeps them:
-// one at a pause that ended the turn, with the tool the caller wants, and one over the agent,
-// which has no p_eot and no point.
-func pauseFloorCheck() live.FloorCheck {
-	paused, pEOT, decide := 600.0, 0.93, 41.5
+// pauseFloorCheck and overAgentFloorCheck are chorus-asr checks as a call keeps them: one at a
+// pause that ended the turn, with the tool the caller wants, and one over the agent, which has
+// no pause and no point.
+func pauseFloorCheck(at time.Time) live.FloorCheck {
+	paused := 600.0
 	return live.FloorCheck{
-		At: time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC), Kind: live.FloorCheckPause, PausedMs: &paused,
-		Answer: "respond", AnswerProbability: 0.91, PEOT: &pEOT, DecideMs: &decide,
+		At: at, Kind: live.FloorCheckPause, PausedMs: &paused,
 		Options: []live.FloorOption{{Option: "respond", Probability: 0.91}, {Option: "wait", Probability: 0.07},
-			{Option: "clarify", Probability: 0}, {Option: "ignore", Probability: 0.02}},
+			{Option: "clarify", Probability: 0.000001}, {Option: "ignore", Probability: 0.02}},
 		Ruling: live.FloorRuling{Disposition: "respond", Floor: "continue", Tool: "get_weather"},
-		Acted:  true, LatencyMs: 38.2, Point: "balanced",
+		Acted:  true, LatencyMs: 38.2, Point: "preset:balanced",
 	}
 }
 
-func overAgentFloorCheck() live.FloorCheck {
+func overAgentFloorCheck(at time.Time) live.FloorCheck {
 	return live.FloorCheck{
-		At: time.Date(2026, 1, 2, 10, 0, 2, 0, time.UTC), Kind: live.FloorCheckOverAgent,
-		Answer: "stop", AnswerProbability: 0.7,
+		At: at, Kind: live.FloorCheckOverAgent,
 		Options: []live.FloorOption{{Option: "stop", Probability: 0.7}, {Option: "shorten", Probability: 0.2},
 			{Option: "continue", Probability: 0.1}, {Option: "ignore", Probability: 0}},
 		Ruling: live.FloorRuling{Disposition: "respond", Floor: "stop", Cannot: true},
@@ -515,46 +513,83 @@ func overAgentFloorCheck() live.FloorCheck {
 	}
 }
 
-func TestATimelineEntryCarriesItsFloorChecksWithEveryOptionsProbability(t *testing.T) {
+// floorChecked is a check as the call's record keeps it, about turn.
+func floorChecked(turn string, check live.FloorCheck) live.CallEvent {
+	return live.CallEvent{At: check.At, Kind: "floor_check", TurnID: turn, FloorCheck: &check}
+}
+
+// A call's checks join the turn each names, a reply's late checks included, and a check that
+// names none, or a turn with no entry, joins the first turn that began after it.
+func TestATimelineEntryCarriesTheFloorChecksOfItsTurn(t *testing.T) {
+	start := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
 	turns := []live.Turn{
-		{TurnID: "turn-1", FloorChecks: []live.FloorCheck{pauseFloorCheck(), overAgentFloorCheck()}},
-		{TurnID: "turn-2"},
+		{TurnID: "turn-1", StartedAt: start.Add(time.Second)},
+		{TurnID: "turn-2", StartedAt: start.Add(5 * time.Second)},
+		{TurnID: "turn-3", StartedAt: start.Add(8 * time.Second)},
+	}
+	checks := []live.CallEvent{
+		floorChecked("", pauseFloorCheck(start.Add(500*time.Millisecond))),
+		floorChecked("superseded", pauseFloorCheck(start.Add(4*time.Second))),
+		floorChecked("turn-1", overAgentFloorCheck(start.Add(6*time.Second))),
+		floorChecked("", pauseFloorCheck(start.Add(9*time.Second))),
 	}
 
-	timeline := timelineOf(turns, nil, nil)
+	timeline := timelineOf(turns, nil, nil, checks)
 
 	require.NotNil(t, timeline[0].FloorChecks)
 	raw, err := json.Marshal(*timeline[0].FloorChecks)
 	require.NoError(t, err)
 	require.JSONEq(t, `[
-		{"at":"2026-01-02T10:00:00Z","kind":"pause","paused_ms":600,"answer":"respond","answer_probability":0.91,
-		 "p_eot":0.93,"decide_ms":41.5,
+		{"at":"2026-01-02T10:00:00.5Z","kind":"pause","paused_ms":600,
 		 "options":[{"option":"respond","probability":0.91},{"option":"wait","probability":0.07},
-		            {"option":"clarify","probability":0},{"option":"ignore","probability":0.02}],
+		            {"option":"clarify","probability":0.000001},{"option":"ignore","probability":0.02}],
 		 "ruling":{"disposition":"respond","floor":"continue","tool":"get_weather"},
-		 "acted":true,"latency_ms":38.2,"point":"balanced"},
-		{"at":"2026-01-02T10:00:02Z","kind":"over_agent","answer":"stop","answer_probability":0.7,
+		 "acted":true,"latency_ms":38.2,"point":"preset:balanced"},
+		{"at":"2026-01-02T10:00:06Z","kind":"over_agent",
 		 "options":[{"option":"stop","probability":0.7},{"option":"shorten","probability":0.2},
 		            {"option":"continue","probability":0.1},{"option":"ignore","probability":0}],
 		 "ruling":{"disposition":"respond","floor":"stop","cannot":true},
 		 "acted":true,"latency_ms":44}
-	]`, string(raw), "every option in the model's order, as the router got it, and nothing it did not get")
-
-	require.Nil(t, timeline[1].FloorChecks, "a turn without chorus-asr floor control has none")
-	raw, err = json.Marshal(timeline[1])
+	]`, string(raw), "the pause that led to it and the check over its reply after turn-2 began, as the router got them")
+	require.Len(t, *timeline[1].FloorChecks, 1, "words let go of lead to the next turn")
+	require.Nil(t, timeline[2].FloorChecks, "a check after the last turn began leads to none yet")
+	raw, err = json.Marshal(timeline[2])
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "floor_checks")
 }
 
-func TestAFloorCheckFrameIsTheTimelinesEntryWithItsTurn(t *testing.T) {
-	sent, ok := frameOf(agent.FloorChecked{TurnID: "turn-1", Participant: "alice", Check: overAgentFloorCheck()})
+// A turn carries its latest 40 checks, oldest first.
+func TestATimelineEntryCarriesItsLatestFortyFloorChecks(t *testing.T) {
+	start := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	var checks []live.CallEvent
+	for i := range 45 {
+		checks = append(checks, floorChecked("turn-1", overAgentFloorCheck(start.Add(time.Duration(44-i)*time.Second))))
+	}
+
+	timeline := timelineOf([]live.Turn{{TurnID: "turn-1", StartedAt: start}}, nil, nil, checks)
+
+	kept := *timeline[0].FloorChecks
+	require.Len(t, kept, floorChecksPerTurn)
+	require.Equal(t, start.Add(5*time.Second), kept[0].At)
+	require.Equal(t, start.Add(44*time.Second), kept[floorChecksPerTurn-1].At)
+}
+
+// The live account of a turn's checks is its turn frame, as a timeline entry has them; an
+// agent without chorus-asr floor control sends the frame it always did.
+func TestATurnFrameCarriesItsFloorChecksAsTheTimelineDoes(t *testing.T) {
+	at := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	sent, ok := frameOf(agent.Turn{TurnID: "turn-1", FloorChecks: []live.FloorCheck{overAgentFloorCheck(at)}})
 
 	require.True(t, ok)
 	raw, err := json.Marshal(sent)
 	require.NoError(t, err)
-	entry, err := json.Marshal(floorCheckOf(overAgentFloorCheck()))
+	entry, err := json.Marshal([]FloorCheck{floorCheckOf(overAgentFloorCheck(at))})
 	require.NoError(t, err)
-	require.JSONEq(t, `"floor_check"`, string(mustField(t, raw, "type")))
-	require.JSONEq(t, `"turn-1"`, string(mustField(t, raw, "turn_id")))
-	require.JSONEq(t, string(entry), string(mustField(t, raw, "check")))
+	require.JSONEq(t, string(entry), string(mustField(t, raw, "floor_checks")))
+
+	plain, ok := frameOf(agent.Turn{TurnID: "turn-2"})
+	require.True(t, ok)
+	raw, err = json.Marshal(plain)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "floor_checks")
 }

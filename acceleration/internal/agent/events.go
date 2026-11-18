@@ -335,25 +335,14 @@ type Turn struct {
 	// because it arrived after the turn had been abandoned.
 	AudioDroppedMs float64
 	Interrupted    bool
-	// FloorChecks are the chorus-asr model's checks on the floor that led to the turn and
-	// were made over its reply, the latest floorChecksKept of them, oldest first. None for an
-	// agent without chorus-asr floor control.
+	// FloorChecks are the chorus-asr model's checks on the floor that led to the turn and were
+	// made over its reply by the time it is reported, the latest floorChecksKept of them,
+	// oldest first: the live account of them. The call's record has them all (Options.Live),
+	// those made later included. None for an agent without chorus-asr floor control.
 	FloorChecks []live.FloorCheck
 }
 
 func (Turn) isAgentEvent() {}
-
-// FloorChecked is one check the chorus-asr model made on the floor, reported as it joins its
-// turn: a check over the agent at once, with the turn it was talking over, and a pause's
-// check once the participant's words it was about are put to the flow controller as TurnID.
-// Each is reported again with its turn (Turn.FloorChecks).
-type FloorChecked struct {
-	TurnID      string
-	Participant string
-	Check       live.FloorCheck
-}
-
-func (FloorChecked) isAgentEvent() {}
 
 // Delegated means the model handed a piece of work to the subagent and carried on
 // talking. The caller hears the filler around it, never the request itself.

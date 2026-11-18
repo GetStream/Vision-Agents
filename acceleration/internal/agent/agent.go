@@ -793,7 +793,6 @@ func New(options Options) (*Agent, error) {
 		cadence:          settling,
 		duplex:           listening,
 	}
-	agent.audioFloor.watch(agent.onTurn, emitter.Send)
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
 	// still measured and still reports itself, it is just not kept. Neither is kept for an
@@ -803,10 +802,15 @@ func New(options Options) (*Agent, error) {
 		agent.turnStore = newTurnRecorder(options.Store, options.Live, owner, logger)
 	}
 	var record func(Decided)
+	// The model's checks on the floor are kept with the decisions, and carried by the turns
+	// they lead to either way.
+	var recordFloorCheck func(string, live.FloorCheck)
 	if options.Live != nil && options.CallID != "" && !options.Incognito {
 		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
+		recordFloorCheck = agent.decisionStore.RecordFloorCheck
 	}
+	agent.audioFloor.watch(recordFloorCheck)
 	if agent.audioFloor.asksOnPauses() {
 		// Acting on chorus-asr, its transcriber's final is the end the agent's end-of-turn
 		// point ruled, which is answered at once.
@@ -856,19 +860,13 @@ func (a *Agent) finishTurn(turn Turn) {
 	if started.kind == kindCaller && !started.scheduled {
 		observeTurnLatency(turn, started.pipeline)
 	}
-	turn.FloorChecks = a.audioFloor.take(turn.TurnID)
+	turn.FloorChecks = a.audioFloor.take(turn.TurnID, turn.StartedAt)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
 	}
 }
 
-// onTurn is the turn the agent is on, which a check over it is about.
-func (a *Agent) onTurn() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.speakingTurn
-}
 
 // Join opens the model and voice sessions, then joins the call and starts listening.
 //
@@ -2171,6 +2169,7 @@ func (a *Agent) ask(ready candidate) {
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
 	reply, unsaid := a.replyLocked(history)
 	heard, measured := a.replyHeardLocked(reply, time.Now())
+	replyID := a.speakingTurn
 	anotherVoice := a.anotherVoiceLocked(ready)
 	participant := ready.Participant.Name
 	if participant == "" {
@@ -2191,6 +2190,7 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
+		ReplyID:      replyID,
 		Heard:        heard,
 		Measured:     measured,
 		Unsaid:       unsaid,

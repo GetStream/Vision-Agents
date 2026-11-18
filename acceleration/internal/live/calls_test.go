@@ -153,3 +153,35 @@ func (s *LiveSuite) TestALimitKeepsTheEarliestDecisions() {
 func (s *LiveSuite) TestRecordingNoDecisionsIsNotAnError() {
 	s.Require().NoError(s.client.RecordCallEvents(s.ctx, nil))
 }
+
+// A call's floor checks are kept apart from its judgements, each with the turn it is about, so
+// that neither crowds the other out, and read back oldest first.
+func (s *LiveSuite) TestACallsFloorChecksAreKeptApartFromItsDecisions() {
+	now := time.Now().UTC()
+	paused := 300.0
+	check := func(turn string, at time.Time) CallEvent {
+		return CallEvent{CustomerID: s.customer, CallID: "call-1", AgentID: "agent-1", At: at, Kind: "floor_check", TurnID: turn,
+			FloorCheck: &FloorCheck{At: at, Kind: FloorCheckPause, PausedMs: &paused,
+				Options: []FloorOption{{Option: "respond", Probability: 0.91}, {Option: "wait", Probability: 0.09}},
+				Ruling:  FloorRuling{Disposition: "respond", Floor: "continue", Tool: "get_weather"}, Acted: true, LatencyMs: 38}}
+	}
+	s.Require().NoError(s.client.RecordCallEvents(s.ctx, []CallEvent{
+		check("turn-1", now.Add(-2*time.Second)),
+		s.decision("wait", "still talking", now.Add(-time.Second)),
+		check("", now.Add(-3*time.Second)),
+	}))
+
+	decisions, err := s.client.CallEvents(s.ctx, s.customer, "call-1", now.Add(-time.Minute), nil, 0)
+	s.Require().NoError(err)
+	s.Require().Len(decisions, 1, "the judgements alone")
+	s.Nil(decisions[0].FloorCheck)
+
+	checks, err := s.client.CallFloorChecks(s.ctx, s.customer, "call-1")
+	s.Require().NoError(err)
+	s.Require().Len(checks, 2)
+	s.Empty(checks[0].TurnID, "oldest first")
+	s.Equal("turn-1", checks[1].TurnID)
+	s.Equal([]FloorOption{{Option: "respond", Probability: 0.91}, {Option: "wait", Probability: 0.09}}, checks[1].FloorCheck.Options)
+	s.Equal("get_weather", checks[1].FloorCheck.Ruling.Tool)
+	s.InDelta(300, *checks[1].FloorCheck.PausedMs, 0.001)
+}

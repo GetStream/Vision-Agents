@@ -2478,8 +2478,8 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "FloorCheck" => {
-          properties: %w[acted answer answer_probability at decide_ms kind latency_ms options p_eot paused_ms point ruling].freeze,
-          required: %w[acted answer answer_probability at kind latency_ms ruling].freeze, open: false
+          properties: %w[acted at kind latency_ms options paused_ms point ruling].freeze,
+          required: %w[acted at kind latency_ms ruling].freeze, open: false
         }.freeze,
         "FloorControl" => {
           properties: %w[max_wait_ms model].freeze,

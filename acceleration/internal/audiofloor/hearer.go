@@ -70,9 +70,10 @@ type Hearer struct {
 // Checked is one check as it went, for whoever watches a call (OnCheck): what the model was
 // asked, every option's probability, and what the router made of it.
 type Checked struct {
-	// Participant is whose words were asked about, by ID. Turn is the flow controller's turn
-	// when it was the one asking (Check), and empty for a transcriber's own checks, whose turn
-	// is the participant's next.
+	// Participant is whose words were asked about, by ID. Turn is the turn the check is
+	// about, as it was when asked: the reply the agent was saying (FlowTurn.ReplyID), the
+	// flow controller's own turn when it asked with the floor free (Check), and otherwise
+	// empty, a pause's check leading to the participant's next turn.
 	Participant string
 	Turn        string
 	// At is when the check was asked, and Latency the round trip to the server.
@@ -93,7 +94,8 @@ type Checked struct {
 }
 
 // OnCheck has watch told of every check the Hearer reads from now on, on the goroutine that
-// made it: it must not block. Nil stops it.
+// made it, which may be the flow controller's: watch must return at once, never waiting on
+// anything. Nil stops it.
 func (h *Hearer) OnCheck(watch func(Checked)) {
 	if watch == nil {
 		h.watcher.Store(nil)
@@ -107,6 +109,15 @@ func (h *Hearer) report(checked Checked) {
 	if watch := h.watcher.Load(); watch != nil {
 		(*watch)(checked)
 	}
+}
+
+// checkedTurn is the turn a check of turn is about: the reply the agent was saying, and
+// otherwise free, the turn the floor was free for.
+func checkedTurn(turn harness.FlowTurn, free string) string {
+	if turn.Speaking {
+		return turn.ReplyID
+	}
+	return free
 }
 
 // takesFloor says a ruling over the agent stops or shortens it.
@@ -155,7 +166,7 @@ func (h *Hearer) Check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if err == nil {
 		checkSeconds.Observe(time.Since(start).Seconds())
 		over := turnOf(turn).Unfinished
-		h.report(Checked{Participant: turn.ParticipantID, Turn: turn.ID, At: start, Latency: latency, OverAgent: over,
+		h.report(Checked{Participant: turn.ParticipantID, Turn: checkedTurn(turn, turn.ID), At: start, Latency: latency, OverAgent: over,
 			Paused: turn.Paused, Answer: check.Answer, Acted: check.Ended && (!over || takesFloor(check.Ruling)), Point: check.Ending.Name})
 	}
 	return check, err

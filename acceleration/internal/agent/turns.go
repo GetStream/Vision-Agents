@@ -768,7 +768,6 @@ func (r *turnRecorder) Record(turn Turn) {
 		AudioOutMs:           measured(turn.AudioOutMs),
 		AudioDroppedMs:       measured(turn.AudioDroppedMs),
 		Interrupted:          turn.Interrupted,
-		FloorChecks:          turn.FloorChecks,
 	}
 
 	// A turn can finish after the recorder has been closed: interrupting a session closes

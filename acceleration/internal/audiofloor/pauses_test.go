@@ -31,6 +31,8 @@ type asking struct {
 	overheard []Ruled
 	// hearing counts the times the agent was told the caller is in an utterance.
 	hearing int
+	// reply is the turn the agent is saying, which a ruling to stop over it ends.
+	reply string
 }
 
 func (a *asking) Hearing(stt.Participant) {
@@ -57,6 +59,7 @@ func (a *asking) Overheard(_ stt.Participant, ruled Ruled) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.overheard = append(a.overheard, ruled)
+	a.reply = ""
 }
 
 func (a *asking) GivenWay() bool {
@@ -102,7 +105,7 @@ func (a *asking) Moment(stt.Participant) harness.FlowTurn {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.asked++
-	return harness.FlowTurn{Instructions: "You book ferry crossings.", Speaking: a.speaking, Reply: "Your crossing is"}
+	return harness.FlowTurn{Instructions: "You book ferry crossings.", Speaking: a.speaking, Reply: "Your crossing is", ReplyID: a.reply}
 }
 
 func (a *asking) Ruled(_ stt.Participant, ruled Ruled) {
@@ -203,6 +206,51 @@ func (s *PausesSuite) TestAPauseIsOneRequestAndItsWordsTheFinal() {
 	s.none()
 	decisions, _, _ = s.counts()
 	s.Equal(1, decisions, "an ended utterance is asked about no more")
+}
+
+// A check over the agent is about the reply it was asked over, which its stop ends: it is
+// reported once its words are in, with that reply's turn though the agent is on none by then,
+// every option's probability, and that it was acted on.
+func (s *PausesSuite) TestACheckOverTheAgentIsReportedForTheReplyItStopped() {
+	var mu sync.Mutex
+	var reported []Checked
+	s.agent.hearer.OnCheck(func(c Checked) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, c)
+	})
+	s.transcriber.interims = true
+	s.say(1000, true)
+	s.True(next[stt.Transcript](&s.transcribing).Interim)
+
+	s.agent.mu.Lock()
+	s.agent.speaking, s.agent.reply = true, "turn-7"
+	s.agent.mu.Unlock()
+	s.server.mu.Lock()
+	s.server.decision = `{"answer":"stop","answer_probability":0.9,"decide_ms":1,"options":[{"name":"stop","p":0.9},` +
+		`{"name":"shorten","p":0.06},{"name":"continue","p":0.03},{"name":"ignore","p":0.01}],"ruling":{"disposition":"wait","floor":"stop"}}`
+	s.server.words = "No, no, stop."
+	s.server.mu.Unlock()
+	s.say(120, true)
+	s.Eventually(func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(reported) == 1
+	}, 5*time.Second, time.Millisecond)
+
+	mu.Lock()
+	checked := reported[0]
+	mu.Unlock()
+	s.Equal("turn-7", checked.Turn, "the reply it stopped, as it was when asked")
+	s.agent.mu.Lock()
+	s.Empty(s.agent.reply, "the agent had given that reply up by the time the check was reported")
+	s.agent.mu.Unlock()
+	s.True(checked.OverAgent)
+	s.True(checked.Acted, "its stop was handed to the agent")
+	s.Zero(checked.Paused)
+	s.Equal([]Option{{Name: "stop", P: 0.9}, {Name: "shorten", P: 0.06}, {Name: "continue", P: 0.03}, {Name: "ignore", P: 0.01}},
+		checked.Answer.Options)
+	s.Positive(checked.Latency)
 }
 
 // Over the agent, a caller voiced for overAfter is asked about without waiting for a pause,

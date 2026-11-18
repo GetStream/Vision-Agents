@@ -7435,36 +7435,19 @@ export type components = {
         readonly FloorCheck: {
             /** @description Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur. */
             readonly acted: boolean;
-            /** @description The option the model found most likely. */
-            readonly answer: string;
-            /**
-             * Format: double
-             * @description The probability of answer.
-             */
-            readonly answer_probability: number;
             /**
              * Format: date-time
              * @description When the check was asked.
              */
             readonly at: string;
-            /**
-             * Format: double
-             * @description What the server took to decide, as it reported it.
-             */
-            readonly decide_ms?: number;
             readonly kind: components["schemas"]["FloorCheckKind"];
             /**
              * Format: double
              * @description The round trip to the chorus-asr server.
              */
             readonly latency_ms: number;
-            /** @description Every option's probability, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an agent with tools, cannot and each tool. Absent from a server that does not report them. */
+            /** @description The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them. */
             readonly options?: readonly components["schemas"]["FloorOption"][];
-            /**
-             * Format: double
-             * @description The probability the caller has finished, one minus that of wait. Absent over the agent.
-             */
-            readonly p_eot?: number;
             /**
              * Format: double
              * @description How far into the pause the check was asked. Absent over the agent.
@@ -10835,7 +10818,7 @@ export type components = {
              * @description Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
              */
             readonly first_frame_queued_ms?: number | null;
-            /** @description The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control. */
+            /** @description The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began after it. Absent for an agent without chorus-asr floor control. */
             readonly floor_checks?: readonly components["schemas"]["FloorCheck"][];
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;

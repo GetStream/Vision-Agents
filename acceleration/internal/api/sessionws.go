@@ -765,7 +765,7 @@ func frameOf(event session.Event) (frame, bool) {
 		}, typed.Message), true
 
 	case agent.Turn:
-		return frame{
+		measured := frame{
 			"type":                     "turn",
 			"turn_id":                  typed.TurnID,
 			"participant":              participantOf(typed.Participant),
@@ -785,10 +785,12 @@ func frameOf(event session.Event) (frame, bool) {
 			"speech_end_to_audible_ms": typed.SpeechEndToAudibleMs,
 			"audio_out_ms":             typed.AudioOutMs,
 			"interrupted":              typed.Interrupted,
-		}, true
-
-	case agent.FloorChecked:
-		return frame{"type": "floor_check", "turn_id": typed.TurnID, "check": floorCheckOf(typed.Check)}, true
+		}
+		// Only an agent with chorus-asr floor control adds them, as a timeline entry does.
+		if len(typed.FloorChecks) > 0 {
+			measured["floor_checks"] = floorChecksOf(typed.FloorChecks)
+		}
+		return measured, true
 
 	case agent.ModelCall:
 		called := frame{

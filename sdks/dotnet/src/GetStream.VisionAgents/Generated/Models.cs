@@ -7582,28 +7582,10 @@ namespace GetStream.VisionAgents.Models
         public bool Acted { get; set; } = default!;
 
         /// <summary>
-        /// The option the model found most likely.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("answer")]
-        public string Answer { get; set; } = default!;
-
-        /// <summary>
-        /// The probability of answer.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("answer_probability")]
-        public double AnswerProbability { get; set; } = default!;
-
-        /// <summary>
         /// When the check was asked.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("at")]
         public System.DateTimeOffset At { get; set; } = default!;
-
-        /// <summary>
-        /// What the server took to decide, as it reported it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("decide_ms")]
-        public double? DecideMs { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         public string Kind { get; set; } = default!;
@@ -7615,16 +7597,10 @@ namespace GetStream.VisionAgents.Models
         public double LatencyMs { get; set; } = default!;
 
         /// <summary>
-        /// Every option's probability, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an agent with tools, cannot and each tool. Absent from a server that does not report them.
+        /// The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("options")]
         public System.Collections.Generic.List<FloorOption>? Options { get; set; } = default!;
-
-        /// <summary>
-        /// The probability the caller has finished, one minus that of wait. Absent over the agent.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("p_eot")]
-        public double? PEot { get; set; } = default!;
 
         /// <summary>
         /// How far into the pause the check was asked. Absent over the agent.
@@ -16017,7 +15993,7 @@ namespace GetStream.VisionAgents.Models
         public double? FirstFrameQueuedMs { get; set; } = default!;
 
         /// <summary>
-        /// The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control.
+        /// The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began after it. Absent for an agent without chorus-asr floor control.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_checks")]
         public System.Collections.Generic.List<FloorCheck>? FloorChecks { get; set; } = default!;

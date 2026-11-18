@@ -104,6 +104,26 @@ func (r *decisionRecorder) Record(decided Decided) {
 	}
 }
 
+// RecordFloorCheck queues one of the chorus-asr model's checks on the floor, about turn when
+// that was known as it was asked, dropping it if the writer is too far behind. It never
+// waits: a check may be reported on the flow controller's goroutine.
+func (r *decisionRecorder) RecordFloorCheck(turn string, check live.FloorCheck) {
+	row := live.CallEvent{
+		CustomerID: r.owner.CustomerID,
+		CallID:     r.owner.CallID,
+		AgentID:    r.owner.AgentID,
+		At:         check.At,
+		Kind:       "floor_check",
+		TurnID:     turn,
+		FloorCheck: &check,
+	}
+	select {
+	case r.queue <- row:
+	default:
+		r.dropped.Add(1)
+	}
+}
+
 // Close drains the queue and stops the writer, giving the writes drainTimeout between
 // them. Judgements still unwritten then are dropped and counted with the rest.
 func (r *decisionRecorder) Close() {
