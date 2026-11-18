@@ -223,6 +223,30 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('refuses a tapped table taken since rather than booking another card\'s', (
+      tester,
+    ) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Terrace', 2, true)]),
+        _card('m2', [('T1', 'Garden', 2, true)]),
+      ]);
+      await settle(tester, brought, 'The cards never brought their tool.');
+      await tester.tap(find.textContaining('T1 · Terrace'));
+      await settle(tester, () => sessions.routes.contains(_asked), 'The table was never asked.');
+      // Terrace's T1 is taken before the agent books it.
+      await show(tester, [
+        _card('m1', [('T1', 'Terrace', 2, false)]),
+        _card('m2', [('T1', 'Garden', 2, true)]),
+      ]);
+
+      final result = await call(tester, 'T1');
+
+      expect(result['error'], contains('T1'));
+      expect(find.text('Garden · 2 people · tonight at 8pm'), findsNothing);
+      await finish(tester);
+    });
+
     testWidgets('books a table a finished card gained when it was written again', (tester) async {
       await open(tester);
       await show(tester, [

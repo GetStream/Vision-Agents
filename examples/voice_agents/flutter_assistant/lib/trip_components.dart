@@ -878,7 +878,8 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
                 selected: _selected == table.id,
                 selectedColor: brand.accent.withValues(alpha: 0.16),
                 side: _selected == table.id ? BorderSide(color: brand.accent) : null,
-                onSelected: table.available
+                // Nothing is asked while the agent is still writing the card.
+                onSelected: table.available && !widget.isStreaming
                     ? (_) {
                         setState(() => _selected = table.id);
                         _chat?.choose(widget.offer, table.id);

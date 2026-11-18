@@ -52,6 +52,24 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       await tester.pumpAndSettle();
     }
 
+    testWidgets('can\'t be tapped while the agent is still writing it', (tester) async {
+      final chat = AgentChat(null);
+      addTearDown(chat.dispose);
+      await show(tester, chat, [
+        UIMessage(
+          'm1',
+          'root = SeatSelector([{id: "T1", zone: "Cliff Terrace", seats: 2, available: true}, '
+              '{id: "T4", zone: "Harbor Window", seats: 4, available: true}])',
+          isStreaming: true,
+        ),
+      ]);
+
+      final chip = tester.widget<ChoiceChip>(
+        find.ancestor(of: find.textContaining('T4 · Harbor'), matching: find.byType(ChoiceChip)),
+      );
+      expect(chip.onSelected, isNull);
+    });
+
     testWidgets('shows the booking of one of its tables in place of the tables', (tester) async {
       final chat = AgentChat(null);
       addTearDown(chat.dispose);

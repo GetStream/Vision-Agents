@@ -551,17 +551,19 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     final booked = _reservations.value;
     final newestFirst = _offers.entries.toList().reversed;
     final chosen = _chosen[tableId];
-    // The offer the table was tapped on comes first.
-    final candidates = [
-      if (chosen != null && _offers[chosen] != null) MapEntry(chosen, _offers[chosen]!),
-      ...newestFirst,
-    ];
+    // The offer the table was tapped on is the one booked: if it can no longer be, the table is
+    // refused rather than booked at another venue whose table shares the id.
+    final candidates = switch (_offers[chosen]) {
+      final tables? => [MapEntry(chosen!, tables)],
+      null => newestFirst,
+    };
     for (final MapEntry(key: offer, value: tables) in candidates) {
       if (booked.containsKey(offer)) continue;
       final table = tables.where((t) => t.id == tableId && t.available).firstOrNull;
       if (table == null) continue;
       final reservation = (table: table, when: when, code: _confirmationCode(), offer: offer);
       _reservations.value = {...booked, offer: reservation};
+      _chosen.remove(tableId);
       if (_offers.keys.every(_reservations.value.containsKey)) {
         unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
       }

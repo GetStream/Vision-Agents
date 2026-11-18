@@ -76,6 +76,13 @@ void main() {
       await BrandProfile.load();
 
       expect(BrandProfile.active.value, BrandProfile.stream);
+      // The next brand chosen is still kept.
+      BrandProfile.active.value = BrandProfile.nordic;
+      final preferences = SharedPreferencesAsync();
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (await preferences.getString('brand') != 'nordic') {
+        if (DateTime.now().isAfter(deadline)) fail('The chosen brand was not kept.');
+      }
     });
 
     testWidgets('a card already shown takes on a newly chosen brand', (tester) async {
