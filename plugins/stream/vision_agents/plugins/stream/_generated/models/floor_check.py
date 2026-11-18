@@ -23,8 +23,9 @@ T = TypeVar("T", bound="FloorCheck")
 class FloorCheck:
     """
     Attributes:
-        acted (bool): Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent,
-            its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+        acted (bool): Whether the router acted on the ruling: the caller's turn ended on this check, or, while the agent
+            talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+            False for a ruling the router let go of, as for words since replaced.
         at (datetime.datetime): When the check was asked.
         kind (FloorCheckKind): What a chorus-asr floor-control check asked: pause, with the floor free, whether the
             caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a

@@ -6613,7 +6613,7 @@ type FileSource struct {
 
 // FloorCheck defines model for FloorCheck.
 type FloorCheck struct {
-	// Acted Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+	// Acted Whether the router acted on the ruling: the caller's turn ended on this check, or, while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur. False for a ruling the router let go of, as for words since replaced.
 	Acted bool `json:"acted"`
 
 	// At When the check was asked.
@@ -10384,7 +10384,7 @@ type TimelineEntry struct {
 	// FirstFrameQueuedMs Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
 	FirstFrameQueuedMs *float64 `json:"first_frame_queued_ms,omitempty"`
 
-	// FloorChecks The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began after it. Absent for an agent without chorus-asr floor control.
+	// FloorChecks The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control.
 	FloorChecks *[]FloorCheck `json:"floor_checks,omitempty"`
 
 	// Heard What the caller said, when it can be matched to this exchange.

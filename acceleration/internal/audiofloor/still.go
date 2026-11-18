@@ -270,10 +270,17 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		return
 	}
 	checkSeconds.Observe(time.Since(c.asked).Seconds())
-	// The check is reported once its words say whether the turn ended on it.
-	reported := Checked{Participant: c.participant.ID, At: c.asked, Latency: latency, Paused: c.paused, Answer: checked.Answer,
-		Point: checked.Ending.Name}
-	defer func() { asker.Hearer().report(reported) }()
+	// The check is reported once its words say whether the turn ended on it, and before they
+	// go out as the utterance's final (finish), which the turn it leads to is put to the flow
+	// controller with; with nothing ended, as it returns.
+	reported := Checked{Participant: c.participant.ID, Utterance: c.utterance, At: c.asked, Latency: latency, Paused: c.paused,
+		Answer: checked.Answer, Point: checked.Ending.Name}
+	pending := true
+	defer func() {
+		if pending {
+			asker.Hearer().report(reported)
+		}
+	}()
 	var words Words
 	select {
 	case words = <-said:
@@ -324,7 +331,8 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	}
 	t.mu.Unlock()
 	t.logHeld(c, checked, held, why, nil)
-	reported.Acted = ends
+	reported.Acted, pending = ends, false
+	asker.Hearer().report(reported)
 	if ends {
 		stillEnds.Inc()
 		t.finish(epoch)

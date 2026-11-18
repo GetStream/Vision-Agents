@@ -50,7 +50,7 @@ final readonly class TimelineEntry
         public ?float $ttsToAudioMs = null,
         // The wait between sending the first sentence and the first audio.
         public ?float $ttsTtfbMs = null,
-        // The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest firs...
+        // The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest...
         /** @var list<FloorCheck>|null */
         public ?array $floorChecks = null,
     ) {

@@ -335,10 +335,11 @@ type Turn struct {
 	// because it arrived after the turn had been abandoned.
 	AudioDroppedMs float64
 	Interrupted    bool
-	// FloorChecks are the chorus-asr model's checks on the floor that led to the turn and were
-	// made over its reply by the time it is reported, the latest floorChecksKept of them,
-	// oldest first: the live account of them. The call's record has them all (Options.Live),
-	// those made later included. None for an agent without chorus-asr floor control.
+	// FloorChecks are the chorus-asr model's checks on the floor about the turn by the time it
+	// is reported, the latest floorChecksKept of them by when they were asked, oldest first: the
+	// live account of them. The call's record (Options.Live) can also have checks made after
+	// it, within what the recorder keeps up with and keeps. None for an agent without
+	// chorus-asr floor control.
 	FloorChecks []live.FloorCheck
 }
 

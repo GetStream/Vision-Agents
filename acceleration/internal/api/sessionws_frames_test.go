@@ -509,13 +509,13 @@ func overAgentFloorCheck(at time.Time) live.FloorCheck {
 		Options: []live.FloorOption{{Option: "stop", Probability: 0.7}, {Option: "shorten", Probability: 0.2},
 			{Option: "continue", Probability: 0.1}, {Option: "ignore", Probability: 0}},
 		Ruling: live.FloorRuling{Disposition: "respond", Floor: "stop", Cannot: true},
-		Acted:  true, LatencyMs: 44,
+		Acted:  false, LatencyMs: 44,
 	}
 }
 
-// floorChecked is a check as the call's record keeps it, about turn.
+// floorChecked is a check as call-1's record keeps it, about turn.
 func floorChecked(turn string, check live.FloorCheck) live.CallEvent {
-	return live.CallEvent{At: check.At, Kind: "floor_check", TurnID: turn, FloorCheck: &check}
+	return live.CallEvent{CallID: "call-1", At: check.At, Kind: "floor_check", TurnID: turn, FloorCheck: &check}
 }
 
 // A call's checks join the turn each names, a reply's late checks included, and a check that
@@ -536,8 +536,7 @@ func TestATimelineEntryCarriesTheFloorChecksOfItsTurn(t *testing.T) {
 
 	timeline := timelineOf(turns, nil, nil, checks)
 
-	require.NotNil(t, timeline[0].FloorChecks)
-	raw, err := json.Marshal(*timeline[0].FloorChecks)
+	raw, err := json.Marshal(timeline[0])
 	require.NoError(t, err)
 	require.JSONEq(t, `[
 		{"at":"2026-01-02T10:00:00.5Z","kind":"pause","paused_ms":600,
@@ -549,13 +548,39 @@ func TestATimelineEntryCarriesTheFloorChecksOfItsTurn(t *testing.T) {
 		 "options":[{"option":"stop","probability":0.7},{"option":"shorten","probability":0.2},
 		            {"option":"continue","probability":0.1},{"option":"ignore","probability":0}],
 		 "ruling":{"disposition":"respond","floor":"stop","cannot":true},
-		 "acted":true,"latency_ms":44}
-	]`, string(raw), "the pause that led to it and the check over its reply after turn-2 began, as the router got them")
+		 "acted":false,"latency_ms":44}
+	]`, string(mustField(t, raw, "floor_checks")), "the pause that led to it and the check over its reply after turn-2 began, as the router got them")
 	require.Len(t, *timeline[1].FloorChecks, 1, "words let go of lead to the next turn")
 	require.Nil(t, timeline[2].FloorChecks, "a check after the last turn began leads to none yet")
 	raw, err = json.Marshal(timeline[2])
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "floor_checks")
+}
+
+// A check joins only a turn of its own call, though an agent's turns of a call that overlaps
+// it are read with them; and a check while the agent talked joins only the reply it names.
+func TestATimelineJoinsOnlyItsOwnCallsFloorChecks(t *testing.T) {
+	start := time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)
+	turns := []live.Turn{
+		{TurnID: "other-1", CallID: "call-2", StartedAt: start.Add(time.Second)},
+		{TurnID: "turn-1", CallID: "call-1", StartedAt: start.Add(2 * time.Second)},
+	}
+	other := floorChecked("other-1", overAgentFloorCheck(start))
+	other.CallID = "call-2"
+	checks := []live.CallEvent{
+		floorChecked("", pauseFloorCheck(start.Add(500*time.Millisecond))),
+		floorChecked("other-1", overAgentFloorCheck(start.Add(600*time.Millisecond))),
+		floorChecked("", overAgentFloorCheck(start.Add(700*time.Millisecond))),
+	}
+
+	timeline := timelineOf(turns, nil, nil, checks)
+
+	require.Nil(t, timeline[0].FloorChecks, "call-2's turn takes none of call-1's checks, though one names it")
+	require.Len(t, *timeline[1].FloorChecks, 1, "the pause, not the check over a reply it does not name")
+	require.Equal(t, FloorCheckKindPause, (*timeline[1].FloorChecks)[0].Kind)
+
+	timeline = timelineOf(turns, nil, nil, []live.CallEvent{other})
+	require.Len(t, *timeline[0].FloorChecks, 1, "call-2's own")
 }
 
 // A turn carries its latest 40 checks, oldest first.
@@ -569,9 +594,10 @@ func TestATimelineEntryCarriesItsLatestFortyFloorChecks(t *testing.T) {
 	timeline := timelineOf([]live.Turn{{TurnID: "turn-1", StartedAt: start}}, nil, nil, checks)
 
 	kept := *timeline[0].FloorChecks
-	require.Len(t, kept, floorChecksPerTurn)
-	require.Equal(t, start.Add(5*time.Second), kept[0].At)
-	require.Equal(t, start.Add(44*time.Second), kept[floorChecksPerTurn-1].At)
+	require.Len(t, kept, 40)
+	for i, check := range kept {
+		require.Equal(t, start.Add(time.Duration(5+i)*time.Second), check.At)
+	}
 }
 
 // The live account of a turn's checks is its turn frame, as a timeline entry has them; an

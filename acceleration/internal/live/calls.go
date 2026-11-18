@@ -129,9 +129,9 @@ type CallEvent struct {
 	// LatencyMs is what the flow controller took to rule, where anything was asked.
 	LatencyMs *float64 `json:"latency_ms,omitempty"`
 	// FloorCheck makes the event one of the chorus-asr model's checks on the floor rather
-	// than a judgement of the conversation's, about TurnID when that was known as it was
-	// asked. Checks are kept apart from the judgements (CallFloorChecks), the latest
-	// maxFloorChecks of a call, so that a call's checks never crowd its judgements out.
+	// than a judgement of the conversation's, about TurnID. Checks are kept apart from the
+	// judgements (CallFloorChecks), the latest maxFloorChecks of a call by when they were
+	// asked, so that a call's checks never crowd its judgements out.
 	FloorCheck *FloorCheck `json:"floor_check,omitempty"`
 }
 
@@ -189,14 +189,19 @@ func (c *Client) CallTurns(ctx context.Context, customerID, agentID string, from
 }
 
 // RecordCallEvents keeps a batch of judgements for RecentFor after the last one, in one
-// round trip. A call keeps its latest maxCallEvents, and its latest maxFloorChecks floor checks.
+// round trip. A call keeps its latest maxCallEvents, and its maxFloorChecks floor checks asked
+// last.
 func (c *Client) RecordCallEvents(ctx context.Context, events []CallEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
 	byCall := map[string][]string{}
-	kept := map[string]int64{}
 	var order []string
+	// A call's floor checks are ranked by when they were asked, as a check over the agent is
+	// reported once its words are in, after checks asked since: its latest maxFloorChecks are
+	// kept by that, not by when they came.
+	checks := map[string][]rueidis.Completed{}
+	var checkKeys []string
 	for _, event := range events {
 		if event.CustomerID == "" || event.CallID == "" {
 			return errors.New("live: a customer and a call id are required")
@@ -208,22 +213,34 @@ func (c *Client) RecordCallEvents(ctx context.Context, events []CallEvent) error
 		if err != nil {
 			return fmt.Errorf("live: encode call event: %w", err)
 		}
-		key, keep := callEventsKey(event.CustomerID, event.CallID), int64(maxCallEvents)
 		if event.FloorCheck != nil {
-			key, keep = floorChecksKey(event.CustomerID, event.CallID), maxFloorChecks
+			key := floorChecksKey(event.CustomerID, event.CallID)
+			if _, seen := checks[key]; !seen {
+				checkKeys = append(checkKeys, key)
+			}
+			checks[key] = append(checks[key],
+				c.redis.B().Zadd().Key(key).ScoreMember().ScoreMember(float64(event.At.UnixMilli()), string(encoded)).Build())
+			continue
 		}
+		key := callEventsKey(event.CustomerID, event.CallID)
 		if _, seen := byCall[key]; !seen {
 			order = append(order, key)
 		}
 		byCall[key] = append(byCall[key], string(encoded))
-		kept[key] = keep
 	}
 
-	commands := make(rueidis.Commands, 0, 3*len(order))
+	commands := make(rueidis.Commands, 0, 3*(len(order)+len(checkKeys)))
 	for _, key := range order {
 		commands = append(commands,
 			c.redis.B().Rpush().Key(key).Element(byCall[key]...).Build(),
-			c.redis.B().Ltrim().Key(key).Start(-kept[key]).Stop(-1).Build(),
+			c.redis.B().Ltrim().Key(key).Start(-maxCallEvents).Stop(-1).Build(),
+			c.redis.B().Pexpire().Key(key).Milliseconds(RecentFor.Milliseconds()).Build(),
+		)
+	}
+	for _, key := range checkKeys {
+		commands = append(commands, checks[key]...)
+		commands = append(commands,
+			c.redis.B().Zremrangebyrank().Key(key).Start(0).Stop(-maxFloorChecks-1).Build(),
 			c.redis.B().Pexpire().Key(key).Milliseconds(RecentFor.Milliseconds()).Build(),
 		)
 	}
@@ -287,13 +304,17 @@ func (c *Client) CallFloorChecks(ctx context.Context, customerID, callID string,
 	if customerID == "" || callID == "" {
 		return nil, stack.Wrap(errors.New("live: a customer and a call id are required"))
 	}
-	members, err := c.redis.Do(ctx, c.redis.B().Lrange().Key(floorChecksKey(customerID, callID)).
-		Start(0).Stop(-1).Build()).AsStrSlice()
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("live: floor checks: %w", err))
-	}
 	if forgotten := time.Now().Add(-RecentFor); from.Before(forgotten) {
 		from = forgotten
+	}
+	until := "+inf"
+	if to != nil {
+		until = strconv.FormatInt(to.UnixMilli(), 10)
+	}
+	members, err := c.redis.Do(ctx, c.redis.B().Zrange().Key(floorChecksKey(customerID, callID)).
+		Min(strconv.FormatInt(from.UnixMilli(), 10)).Max(until).Byscore().Build()).AsStrSlice()
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("live: floor checks: %w", err))
 	}
 	checks := make([]CallEvent, 0, len(members))
 	for _, member := range members {

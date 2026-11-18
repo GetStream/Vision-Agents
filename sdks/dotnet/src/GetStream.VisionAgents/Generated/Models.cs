@@ -7576,7 +7576,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+        /// Whether the router acted on the ruling: the caller's turn ended on this check, or, while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur. False for a ruling the router let go of, as for words since replaced.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("acted")]
         public bool Acted { get; set; } = default!;
@@ -15993,7 +15993,7 @@ namespace GetStream.VisionAgents.Models
         public double? FirstFrameQueuedMs { get; set; } = default!;
 
         /// <summary>
-        /// The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began after it. Absent for an agent without chorus-asr floor control.
+        /// The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_checks")]
         public System.Collections.Generic.List<FloorCheck>? FloorChecks { get; set; } = default!;

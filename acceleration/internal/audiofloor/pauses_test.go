@@ -232,7 +232,7 @@ func (s *PausesSuite) TestACheckOverTheAgentIsReportedForTheReplyItStopped() {
 	s.server.words = "No, no, stop."
 	s.server.mu.Unlock()
 	s.say(120, true)
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(reported) == 1
@@ -915,7 +915,7 @@ func (s *PausesSuite) TestAPauseCheckOverTheAgentIsReportedAsOneOverTheAgent() {
 	s.agent.mu.Unlock()
 	s.say(280, true)
 	s.pausing(200)
-	s.Eventually(func() bool {
+	s.Require().Eventually(func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(reported) > 0

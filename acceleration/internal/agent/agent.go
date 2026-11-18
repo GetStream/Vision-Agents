@@ -860,7 +860,7 @@ func (a *Agent) finishTurn(turn Turn) {
 	if started.kind == kindCaller && !started.scheduled {
 		observeTurnLatency(turn, started.pipeline)
 	}
-	turn.FloorChecks = a.audioFloor.take(turn.TurnID, turn.StartedAt)
+	turn.FloorChecks = a.audioFloor.take(turn.TurnID)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)

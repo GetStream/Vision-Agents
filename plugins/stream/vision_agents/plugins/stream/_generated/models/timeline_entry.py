@@ -50,9 +50,11 @@ class TimelineEntry:
         text_to_tts_ms (float | Unset): First text delta to the first TTS request.
         tts_to_audio_ms (float | Unset): First TTS request to the first audio chunk published to the edge.
         tts_ttfb_ms (float | None | Unset): The wait between sending the first sentence and the first audio.
-        floor_checks (list[FloorCheck] | Unset): The chorus-asr model's floor-control checks that led to this turn and
-            were made over its reply, oldest first: the latest 40. A check at a pause leads to the first turn that began
-            after it. Absent for an agent without chorus-asr floor control.
+        floor_checks (list[FloorCheck] | Unset): The chorus-asr model's floor-control checks about this turn, the latest
+            40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was
+            asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A
+            check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent
+            without chorus-asr floor control.
     """
 
     started_at: datetime.datetime

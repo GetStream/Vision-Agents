@@ -15,7 +15,10 @@ import (
 // which is too many to write one at a time, and none of them is worth making a caller
 // wait for.
 const (
-	decisionQueueSize   = 1024
+	decisionQueueSize = 1024
+	// floorCheckRoom is how much of the queue floor checks may take, which leaves the rest to
+	// the judgements: a writer that has fallen behind drops checks first.
+	floorCheckRoom      = decisionQueueSize * 3 / 4
 	decisionBatchSize   = 64
 	decisionFlushEvery  = time.Second
 	decisionWriteTimout = 5 * time.Second
@@ -131,6 +134,13 @@ func (r *decisionRecorder) RecordFloorCheck(turn string, check live.FloorCheck) 
 		Kind:       "floor_check",
 		TurnID:     turn,
 		FloorCheck: &check,
+	}
+	r.closing.RLock()
+	full := len(r.queue) >= floorCheckRoom
+	r.closing.RUnlock()
+	if full {
+		r.dropped.Add(1)
+		return
 	}
 	r.enqueue(row)
 }

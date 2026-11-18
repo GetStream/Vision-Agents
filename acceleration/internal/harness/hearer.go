@@ -18,6 +18,12 @@ type Hearer interface {
 	HearDeadline(turn FlowTurn) time.Duration
 }
 
+// Applier is a Hearer told whether the flow controller acted on each ruling it gave: one for
+// words since replaced, or a conversation that is over, is let go of.
+type Applier interface {
+	Applied(candidate string, applied bool)
+}
+
 // Audio is a recording of the speaker, encoded as a Hearer's server takes it.
 type Audio struct {
 	// Type is Data's media type.
@@ -43,8 +49,14 @@ func (f *flow) runHearer(asked *candidate) bool {
 	ctx, cancel := context.WithTimeout(asked.ctx, f.hearer.HearDeadline(asked.turn))
 	defer cancel()
 	ruling, err := f.hearer.Hear(ctx, asked.turn)
+	applied := func(acted bool) {
+		if applier, ok := f.hearer.(Applier); ok && err == nil {
+			applier.Applied(asked.turn.ID, acted)
+		}
+	}
 	if errors.Is(asked.ctx.Err(), context.Canceled) {
 		// Newer words replaced these, or the conversation is over.
+		applied(false)
 		return true
 	}
 	if err != nil {
@@ -52,9 +64,11 @@ func (f *flow) runHearer(asked *candidate) bool {
 		return false
 	}
 	if f.forget(asked.turn.ID) == nil {
+		applied(false)
 		return true
 	}
 	ruling.CandidateID, ruling.TookMs, ruling.Ruler = asked.turn.ID, millis(time.Since(asked.askedAt)), Heard
 	f.emitter.Send(ruling)
+	applied(true)
 	return true
 }

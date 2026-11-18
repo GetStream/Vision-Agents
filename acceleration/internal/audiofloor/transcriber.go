@@ -189,6 +189,9 @@ type Transcriber struct {
 	// before the words come ends the pause, and not what was ruled on it. The utterance ending
 	// forgets them.
 	stopping map[int64]Ruled
+	// stoppingChecked is the check each of those stops was ruled at, reported once it is known
+	// whether the stop was handed over.
+	stoppingChecked map[int64]Checked
 	// still is the utterance's words as the requests that wrote them with the floor free last
 	// read them, which end a turn the speech gate held voiced (still.go), and stillBound how long
 	// they must hold still, under the agent's point as its last check resolved it.

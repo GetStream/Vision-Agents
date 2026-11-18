@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,9 +64,16 @@ type Hearer struct {
 	// inARow counts each participant's checks in a row that reached their bar.
 	inARow runs
 	// watcher is told of every check the Hearer reads, its own and its transcriber's
-	// (OnCheck), nil when nobody watches.
-	watcher atomic.Pointer[func(Checked)]
+	// (OnCheck), nil when nobody watches. answered are its own checks, by candidate, until the
+	// flow controller says whether it acted on their rulings (Applied).
+	watcher  atomic.Pointer[func(Checked)]
+	mu       sync.Mutex
+	answered map[string]Checked
 }
+
+// maxAnswered bounds the Hearer's checks waiting to hear whether they were acted on: the flow
+// controller says so of each as soon as the check returns.
+const maxAnswered = 64
 
 // Checked is one check as it went, for whoever watches a call (OnCheck): what the model was
 // asked, every option's probability, and what the router made of it.
@@ -73,9 +81,12 @@ type Checked struct {
 	// Participant is whose words were asked about, by ID. Turn is the turn the check is
 	// about, as it was when asked: the reply the agent was saying (FlowTurn.ReplyID), the
 	// flow controller's own turn when it asked with the floor free (Check), and otherwise
-	// empty, a pause's check leading to the participant's next turn.
+	// empty. Utterance is the transcriber's utterance a check of its own was of, whose turn
+	// it leads to once the utterance's words are put to the flow controller, and none if they
+	// never are.
 	Participant string
 	Turn        string
+	Utterance   int64
 	// At is when the check was asked, and Latency the round trip to the server.
 	At      time.Time
 	Latency time.Duration
@@ -86,9 +97,9 @@ type Checked struct {
 	OverAgent bool
 	Paused    time.Duration
 	Answer    Answer
-	// Acted says the router acted on the check's ruling: at a pause, the turn ended on it;
-	// over the agent, its stop or shorten was handed to the agent, which may still keep
-	// talking over its own echo or a murmur.
+	// Acted says the router acted on the check's ruling: the turn ended on it, or its stop or
+	// shorten was handed to the agent, which may still keep talking over its own echo or a
+	// murmur. A ruling it let go of, as for words since replaced, was not acted on.
 	Acted bool
 	// Point is the agent's end-of-turn point the check was read by (Ending.Name), empty over
 	// the agent, where there is no bar.
@@ -175,9 +186,28 @@ func (h *Hearer) Check(ctx context.Context, turn harness.FlowTurn) (Check, error
 		} else {
 			reported.Paused = turn.Paused
 		}
-		h.report(reported)
+		// Reported once the flow controller says whether it acted on the ruling.
+		h.mu.Lock()
+		if h.answered == nil || len(h.answered) >= maxAnswered {
+			h.answered = map[string]Checked{}
+		}
+		h.answered[turn.ID] = reported
+		h.mu.Unlock()
 	}
 	return check, err
+}
+
+// Applied reports the check that ruled on candidate, acted on only if the flow controller
+// acted on its ruling (harness.Applier).
+func (h *Hearer) Applied(candidate string, applied bool) {
+	h.mu.Lock()
+	reported, ok := h.answered[candidate]
+	delete(h.answered, candidate)
+	h.mu.Unlock()
+	if ok {
+		reported.Acted = reported.Acted && applied
+		h.report(reported)
+	}
 }
 
 // check asks the model about turn and reads its answer, and says how long the server took
