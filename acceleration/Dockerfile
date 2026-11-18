@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # The router, for local development.
 #
 # This image is what compose.yaml builds and nothing else. Production does not
@@ -17,7 +18,15 @@ FROM golang:1.27-bookworm AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+# goaec3, the echo canceller, is a private GetStream module. Pass a read-only
+# token as a build secret (compose does, from GOAEC3_READ_TOKEN); it is used for
+# this one download and never written into a layer.
+ENV GOPRIVATE=github.com/GetStream/goaec3
+RUN --mount=type=secret,id=goaec3_token,required=true \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/goaec3_token)@github.com/GetStream/goaec3.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://github.com/GetStream/goaec3" \
+    go mod download
 
 COPY . .
 # Go's SIMD experiment compiles the Opus codec's vector kernels, on amd64 and arm64.

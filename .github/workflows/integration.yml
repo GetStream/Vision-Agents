@@ -108,6 +108,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # goaec3, the echo canceller, is a private GetStream module: Go fetches it over git with
+      # a read-only token, and only it skips the public proxy and checksum database.
+      - name: Give Go read access to the private goaec3 module
+        env:
+          GOAEC3_READ_TOKEN: ${{ secrets.GOAEC3_READ_TOKEN }}
+        run: |
+          if [ -z "$GOAEC3_READ_TOKEN" ]; then
+            echo "::error::GOAEC3_READ_TOKEN is not available to this run (fork pull requests get no secrets); acceleration/ cannot fetch github.com/GetStream/goaec3"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${GOAEC3_READ_TOKEN}@github.com/GetStream/goaec3".insteadOf "https://github.com/GetStream/goaec3"
+          echo "GOPRIVATE=github.com/GetStream/goaec3" >> "$GITHUB_ENV"
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: acceleration/go.mod
