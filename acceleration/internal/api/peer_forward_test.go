@@ -440,7 +440,7 @@ func (s *ScheduledTasksSuite) TestAPeerStillOnTheOlderKeyDeliversToARotatedNode(
 func (s *ScheduledTasksSuite) TestANodeWithNoKeyringRefusesEveryForward() {
 	var logged bytes.Buffer
 	other, _ := s.otherRouterSealedBy(nil, nil, slog.New(slog.NewTextHandler(&logged, nil)))
-	s.Contains(logged.String(), "setting=ROUTER_AUTH_KEK", "the node never said which setting it lacks")
+	s.Contains(logged.String(), "setting=\"ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED\"", "the node never said which setting it lacks")
 
 	text, _, err := s.forwardDelivery(other, s.suiteCredential())
 	s.refused(text, err)

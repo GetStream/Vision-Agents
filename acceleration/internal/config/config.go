@@ -286,9 +286,6 @@ type Shutdown struct {
 type Auth struct {
 	// Mode is api_key, proxy, noauth or custom. Empty means api_key.
 	Mode string `koanf:"mode"`
-	// KEK unseals the stored key secrets. It belongs in the environment rather than in a
-	// file checked in beside the code: it is what makes a leaked backup ciphertext.
-	KEK string `koanf:"kek"`
 	// KMSKey names the KMS key that unwraps each ROUTER_AUTH_KEK_V<n>_WRAPPED at startup, so
 	// the keyring itself is in no variable. Empty reads only the plain keys.
 	KMSKey string `koanf:"kms_key"`
@@ -605,7 +602,6 @@ var variables = map[string]string{
 	"listen_fd":            "ROUTER_LISTEN_FD",
 	"shutdown.drain":       "ROUTER_SHUTDOWN_DRAIN",
 	"auth.mode":            "ROUTER_AUTH_MODE",
-	"auth.kek":             "ROUTER_AUTH_KEK",
 	"auth.kms_key":         "ROUTER_AUTH_KMS_KEY",
 	"auth.ops_key":         "ROUTER_AUTH_OPS_KEY",
 	"auth.manage_key":      "ROUTER_AUTH_MANAGE_KEY",
@@ -802,6 +798,12 @@ func Load(path string) (Config, string, error) {
 	config := Defaults()
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
+	}
+	// A file that still holds a plain key would otherwise start a router that silently
+	// lacks it. The router refuses the variable that once carried it at its own start.
+	if k.Exists("auth.kek") {
+		return Config{}, "", fmt.Errorf("config: %s: auth.kek is no longer read: set ROUTER_DEV_KEK on a laptop "+
+			"or in CI, or ROUTER_AUTH_KEK_V1_WRAPPED with auth.kms_key on a hosted router", name)
 	}
 	if os.Getenv("ROUTER_CHORUS_ASR_MODE") != "" || k.Exists("agent.chorus_asr_mode") {
 		config.Retired = append(config.Retired, chorusASRModeRetired)
@@ -1191,7 +1193,6 @@ func (c Config) export() error {
 		"listen_fd":                     listenFD(c.ListenFD),
 		"shutdown.drain":                c.Shutdown.Drain.String(),
 		"auth.mode":                     c.Auth.Mode,
-		"auth.kek":                      c.Auth.KEK,
 		"auth.kms_key":                  c.Auth.KMSKey,
 		"auth.ops_key":                  c.Auth.OpsKey,
 		"auth.manage_key":               c.Auth.ManageKey,

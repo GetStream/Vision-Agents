@@ -140,7 +140,7 @@ func (s *DrainSuite) TestARouterDrainingAnInboundWriteTakesNoMoreMessages() {
 	settings.Addr = "127.0.0.1:0"
 	settings.Auth.Mode = string(auth.NoAuth)
 	// Connectors, for the channel bridge, seal under a keyring.
-	settings.Auth.KEK = "drain-key"
+	s.T().Setenv("ROUTER_DEV_KEK", "drain-key")
 	settings.Connectors.Enabled = true
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
 	settings.Chat.InboundKeys = []string{base64.StdEncoding.EncodeToString(public)}
@@ -314,7 +314,7 @@ func (s *DrainSuite) TestADrainingRouterStopsSayingItTakesTrunkCallsOver() {
 	settings := config.Defaults()
 	settings.Postgres.DSN = s.dsn
 	settings.Auth.Mode = string(auth.NoAuth)
-	settings.Auth.KEK = "drain-key"
+	s.T().Setenv("ROUTER_DEV_KEK", "drain-key")
 	settings.Redis.Addr = address
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
 	settings.Stream.AppID = 1

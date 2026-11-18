@@ -79,7 +79,7 @@ func (c *cloudKMS) Close() error {
 }
 
 // unwrapKEK unwraps the base64 ciphertext of the key of version n into the key itself, the
-// same string a plain ROUTER_AUTH_KEK_V<n> holds, so the rows it sealed still open.
+// same string the plain key it took the place of held, so the rows it sealed still open.
 func unwrapKEK(ctx context.Context, unwrapper kekUnwrapper, version int, encoded string) (string, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {

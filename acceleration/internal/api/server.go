@@ -688,7 +688,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			// derives, so without one no node can be let in and none of this node's
 			// requests is answered by another.
 			logger.Warn("peers cannot forward to or from this node without a key encryption key",
-				"setting", "ROUTER_AUTH_KEK")
+				"setting", "ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED")
 		} else {
 			credential, server.peerCredentials = options.Secrets.Derive(node.CredentialPurpose)
 		}

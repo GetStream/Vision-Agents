@@ -46,11 +46,12 @@ func TestConnectorSealerSuite(t *testing.T) {
 }
 
 func (s *ConnectorSealerSuite) SetupTest() {
-	// The keyring is read from every ROUTER_AUTH_KEK_V<n> in the environment, so any the
-	// shell running the tests happens to hold are cleared too.
-	variables := []string{authKEKEnvVar, authKEKVersionEnvVar}
+	// The keyring is read from ROUTER_DEV_KEK and every ROUTER_AUTH_KEK_V<n>_WRAPPED in the
+	// environment, and a retired ROUTER_AUTH_KEK refuses a start, so any the shell running the
+	// tests happens to hold are cleared too.
+	variables := []string{devKEKEnvVar}
 	for _, variable := range os.Environ() {
-		if name, _, _ := strings.Cut(variable, "="); strings.HasPrefix(name, authKEKEnvVar+"_V") {
+		if name, _, _ := strings.Cut(variable, "="); strings.HasPrefix(name, authKEKEnvVar) {
 			variables = append(variables, name)
 		}
 	}
@@ -73,9 +74,9 @@ func (s *ConnectorSealerSuite) TestProxyStartsWithoutAKEKWhenConnectorsAreOff() 
 
 func (s *ConnectorSealerSuite) TestAKeyringIsBuiltWhenSetEvenIfNothingRequiresIt() {
 	// Channels seal a provider's credentials under the keyring when there is one, though
-	// they do not refuse to start without it, so a key set only as ROUTER_AUTH_KEK_V1 has
+	// they do not refuse to start without it, so a key set only as ROUTER_DEV_KEK has
 	// to reach them as much as connectors and app mode.
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)
@@ -84,7 +85,7 @@ func (s *ConnectorSealerSuite) TestAKeyringIsBuiltWhenSetEvenIfNothingRequiresIt
 }
 
 func (s *ConnectorSealerSuite) TestAKeyringNothingRequiresIsStillChecked() {
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "two")
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
@@ -97,21 +98,21 @@ func (s *ConnectorSealerSuite) TestProxyWithConnectorsOnRefusesToStartWithoutAKe
 	_, err := newSecretSealer(s.T().Context(), s.settings)
 	s.ErrorContains(err, "connectors.enabled needs a key encryption keyring")
 	s.NotContains(err.Error(), "stream.tenancy")
-	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1")
+	s.ErrorContains(err, "set ROUTER_DEV_KEK on a laptop or in CI, or ROUTER_AUTH_KEK_V1_WRAPPED with auth.kms_key")
 }
 
 func (s *ConnectorSealerSuite) TestProxyWithConnectorsOnBuildsTheSealerFromTheKeyring() {
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)
 	s.Equal(1, sealer.CurrentVersion())
 }
 
-func (s *ConnectorSealerSuite) TestAuthKEKIsVersionOne() {
+func (s *ConnectorSealerSuite) TestTheDevKEKIsVersionOne() {
 	s.settings.Connectors.Enabled = true
-	s.settings.Auth.KEK = "first-key"
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	apiSecrets, err := auth.NewSealer("first-key")
 	s.Require().NoError(err)
 	sealed, err := apiSecrets.Seal("vas_live_s3cret")
@@ -125,16 +126,16 @@ func (s *ConnectorSealerSuite) TestAuthKEKIsVersionOne() {
 }
 
 func (s *ConnectorSealerSuite) TestARowSealedUnderVersionOneOpensAfterVersionTwoIsAdded() {
-	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
-	before, err := newSecretSealer(s.T().Context(), s.settings)
+	kms := newLocalKMS(s)
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
+	before, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.Require().NoError(err)
 	sealed, err := before.SealWithAAD("connector secret", []byte("connection"))
 	s.Require().NoError(err)
 
-	s.T().Setenv("ROUTER_AUTH_KEK_V2", "second-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", kms.wrap("second-key", "router-kek-v2"))
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
-	after, err := newSecretSealer(s.T().Context(), s.settings)
+	after, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.Require().NoError(err)
 	s.Equal(2, after.CurrentVersion())
 	opened, err := after.OpenWithAADVersion(sealed, []byte("connection"), 1)
@@ -144,17 +145,18 @@ func (s *ConnectorSealerSuite) TestARowSealedUnderVersionOneOpensAfterVersionTwo
 
 func (s *ConnectorSealerSuite) TestAVersionWithoutItsKeyIsRefused() {
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
-	s.ErrorContains(err, "needs a key for the version ROUTER_AUTH_KEK_VERSION names")
+	s.ErrorContains(err, "needs a key for the version ROUTER_AUTH_KEK_VERSION names: "+
+		"set the matching ROUTER_AUTH_KEK_V<n>_WRAPPED")
 	s.ErrorContains(err, "versions set: [1]")
 }
 
 func (s *ConnectorSealerSuite) TestAVersionThatIsNotANumberIsRefused() {
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "two")
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
@@ -163,7 +165,7 @@ func (s *ConnectorSealerSuite) TestAVersionThatIsNotANumberIsRefused() {
 
 func (s *ConnectorSealerSuite) TestAKeyPastedIntoTheVersionIsNotRepeatedInTheError() {
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "pasted-key-encryption-key")
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
@@ -173,7 +175,7 @@ func (s *ConnectorSealerSuite) TestAKeyPastedIntoTheVersionIsNotRepeatedInTheErr
 
 func (s *ConnectorSealerSuite) TestAnAllDigitKeyPastedIntoTheVersionIsNotRepeatedInTheError() {
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "8473019385746201")
 
 	_, err := newSecretSealer(s.T().Context(), s.settings)
@@ -182,17 +184,17 @@ func (s *ConnectorSealerSuite) TestAnAllDigitKeyPastedIntoTheVersionIsNotRepeate
 }
 
 func (s *ConnectorSealerSuite) TestMovingTheVersionBackKeepsNewerKeysLoaded() {
-	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
-	s.T().Setenv("ROUTER_AUTH_KEK_V2", "second-key")
+	kms := newLocalKMS(s)
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
+	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", kms.wrap("second-key", "router-kek-v2"))
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
-	forward, err := newSecretSealer(s.T().Context(), s.settings)
+	forward, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.Require().NoError(err)
 	sealed, err := forward.SealWithAAD("connector secret", []byte("connection"))
 	s.Require().NoError(err)
 
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "1")
-	back, err := newSecretSealer(s.T().Context(), s.settings)
+	back, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.Require().NoError(err)
 	s.Equal(1, back.CurrentVersion())
 	opened, err := back.OpenWithAADVersion(sealed, []byte("connection"), 2)
@@ -201,9 +203,11 @@ func (s *ConnectorSealerSuite) TestMovingTheVersionBackKeepsNewerKeysLoaded() {
 }
 
 func (s *ConnectorSealerSuite) TestOnlyThePlainSpellingOfAVersionIsAKey() {
+	// _V01 never named a key, so it is neither read nor refused as a retired one.
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_V01", "another-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V01_WRAPPED", "another-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)
@@ -216,19 +220,64 @@ func (s *ConnectorSealerSuite) TestOnlyThePlainSpellingOfAVersionIsAKey() {
 	s.Equal("connector secret", opened)
 }
 
-func (s *ConnectorSealerSuite) TestTwoDifferentVersionOneKeysAreRefused() {
-	s.settings.Connectors.Enabled = true
-	s.settings.Auth.KEK = "first-key"
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "another-key")
+func (s *ConnectorSealerSuite) TestAPlainKeyUnderARetiredNameRefusesToStart() {
+	cases := []struct {
+		name        string
+		set         map[string]string
+		connectors  bool
+		replacement string
+	}{
+		{"ROUTER_AUTH_KEK", map[string]string{"ROUTER_AUTH_KEK": "first-key"}, true, "ROUTER_AUTH_KEK_V1_WRAPPED"},
+		{"ROUTER_AUTH_KEK_V1", map[string]string{"ROUTER_AUTH_KEK_V1": "first-key"}, true, "ROUTER_AUTH_KEK_V1_WRAPPED"},
+		{"ROUTER_AUTH_KEK_V2", map[string]string{"ROUTER_AUTH_KEK_V2": "first-key"}, true, "ROUTER_AUTH_KEK_V2_WRAPPED"},
+		// Nothing needs a keyring here, so a start that only looked for one when needed
+		// would leave the old key unread without a word.
+		{"ROUTER_AUTH_KEK", map[string]string{"ROUTER_AUTH_KEK": "first-key"}, false, "ROUTER_AUTH_KEK_V1_WRAPPED"},
+		{"ROUTER_AUTH_KEK_V1", map[string]string{"ROUTER_AUTH_KEK_V1": "first-key"}, false, "ROUTER_AUTH_KEK_V1_WRAPPED"},
+		// The dev key beside it does not make the old one acceptable.
+		{"ROUTER_AUTH_KEK", map[string]string{"ROUTER_AUTH_KEK": "first-key", "ROUTER_DEV_KEK": "first-key"}, true,
+			"ROUTER_AUTH_KEK_V1_WRAPPED"},
+		// Beside a wrapped key of the same version, the plain one is what is refused.
+		{"ROUTER_AUTH_KEK_V1", map[string]string{"ROUTER_AUTH_KEK_V1": "first-key", "ROUTER_AUTH_KEK_V1_WRAPPED": "d3JhcHBlZA=="},
+			true, "ROUTER_AUTH_KEK_V1_WRAPPED"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.SetupTest()
+			s.settings.Connectors.Enabled = c.connectors
+			for name, value := range c.set {
+				s.T().Setenv(name, value)
+			}
 
-	_, err := newSecretSealer(s.T().Context(), s.settings)
-	s.ErrorContains(err, "both version 1 and differ")
+			_, err := newSecretSealer(s.T().Context(), s.settings)
+			s.EqualError(err, c.name+" is no longer read: set ROUTER_DEV_KEK on a laptop or in CI, or "+
+				c.replacement+" with auth.kms_key (ROUTER_AUTH_KMS_KEY) on a hosted router")
+		})
+	}
+}
+
+func (s *ConnectorSealerSuite) TestMintingAKeyRefusesARetiredPlainKeyToo() {
+	s.T().Setenv("ROUTER_AUTH_KEK", "first-key")
+
+	_, err := loadKeyring(s.T().Context(), s.settings, "minting a key needs")
+	s.ErrorContains(err, "ROUTER_AUTH_KEK is no longer read")
+}
+
+func (s *ConnectorSealerSuite) TestARetiredNameSetEmptyIsNotAKey() {
+	// A compose file that passes the old variable through from an .env without it sets it
+	// empty, which holds no key to refuse.
+	s.T().Setenv("ROUTER_AUTH_KEK", "")
+	s.T().Setenv("ROUTER_AUTH_KEK_V1", "")
+
+	sealer, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	s.Nil(sealer)
 }
 
 func (s *ConnectorSealerSuite) TestAppTenancyBuildsTheSealerInProxyMode() {
 	// Every Stream app's keys are sealed under the keyring, whatever decides who calls.
 	s.settings.Stream.Tenancy = config.TenancyApp
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 
@@ -243,7 +292,7 @@ func (s *ConnectorSealerSuite) TestAppTenancyWithoutAKeyringRefusesToStart() {
 	_, err := newSecretSealer(s.T().Context(), s.settings)
 
 	s.ErrorContains(err, "stream.tenancy=app needs a key encryption keyring")
-	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1")
+	s.ErrorContains(err, "set ROUTER_DEV_KEK")
 }
 
 func (s *ConnectorSealerSuite) TestARefusalNamesEverySettingThatNeedsTheKeyring() {
@@ -308,9 +357,9 @@ func (s *ConnectorSealerSuite) requireOpensWhatTheBaseSealed(sealer *auth.Sealer
 	s.Equal(derivedOnBase, hex.EncodeToString(current))
 }
 
-func (s *ConnectorSealerSuite) TestAPlainKeyringOpensWhatItSealedBefore() {
+func (s *ConnectorSealerSuite) TestTheDevKEKOpensWhatThePlainKeySealedBefore() {
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)
@@ -321,7 +370,7 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyOpensWhatThePlainOneSealed() {
 	kms := newLocalKMS(s)
 	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
 
-	sealer, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
+	sealer, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.Require().NoError(err)
 	s.Equal(1, sealer.CurrentVersion())
 	s.requireOpensWhatTheBaseSealed(sealer)
@@ -329,11 +378,11 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyOpensWhatThePlainOneSealed() {
 
 func (s *ConnectorSealerSuite) TestAWrappedKeyCanSealNewRows() {
 	kms := newLocalKMS(s)
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
 	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", kms.wrap("second-key", "router-kek-v2"))
 	s.T().Setenv("ROUTER_AUTH_KEK_VERSION", "2")
 
-	sealer, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
+	sealer, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.Require().NoError(err)
 	s.Equal(2, sealer.CurrentVersion())
 	sealed, err := sealer.SealWithAAD("connector secret", []byte("connection"))
@@ -347,11 +396,10 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyCanSealNewRows() {
 
 func (s *ConnectorSealerSuite) TestAWrappedKeyUnwrapsOnlyUnderItsOwnVersion() {
 	kms := newLocalKMS(s)
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
 	wrapped := kms.wrap("first-key", "router-kek-v1")
 	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", wrapped)
 
-	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
+	_, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V2_WRAPPED: unwrap")
 	s.requireNoCiphertextOrKey(err, wrapped)
 }
@@ -360,19 +408,36 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyThatUnwrapsToNothingIsRefused() {
 	kms := newLocalKMS(s)
 	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("", "router-kek-v1"))
 
-	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
+	_, err := readKeyring(s.T().Context(), kms, "the test needs")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: unwrapped to an empty key")
 }
 
-func (s *ConnectorSealerSuite) TestAVersionSetBothPlainAndWrappedIsRefused() {
-	kms := newLocalKMS(s)
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
-	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", kms.wrap("first-key", "router-kek-v1"))
+func (s *ConnectorSealerSuite) TestTheDevKEKBesideAWrappedKeyIsRefused() {
+	// Of any version: a dev key beside a wrapped version 2 would still seal version 1 rows.
+	for _, wrapped := range []string{"ROUTER_AUTH_KEK_V1_WRAPPED", "ROUTER_AUTH_KEK_V2_WRAPPED"} {
+		s.Run(wrapped, func() {
+			s.SetupTest()
+			s.settings.Connectors.Enabled = true
+			s.T().Setenv("ROUTER_DEV_KEK", "first-key")
+			s.T().Setenv(wrapped, newLocalKMS(s).wrap("first-key", "router-kek-v1"))
 
-	_, err := readKeyring(s.T().Context(), s.settings, kms, "the test needs")
-	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED and a plain version 1 key")
-	s.ErrorContains(err, "are both set")
-	s.NotContains(err.Error(), "first-key")
+			_, err := newSecretSealer(s.T().Context(), s.settings)
+			s.EqualError(err, "ROUTER_DEV_KEK is for a laptop or CI and is never set with "+wrapped+": unset ROUTER_DEV_KEK")
+		})
+	}
+}
+
+func (s *ConnectorSealerSuite) TestTheDevKEKBesideAKMSKeyIsRefusedBeforeAKMSClientOpens() {
+	// A client opened with these fails, so a refusal that came after opening one would
+	// say that instead.
+	kmsClientOptions = []option.ClientOption{option.WithCredentialsJSON([]byte("{}"))}
+	s.T().Cleanup(func() { kmsClientOptions = nil })
+	s.settings.Auth.KMSKey = testKMSKey
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
+
+	_, err := newSecretSealer(s.T().Context(), s.settings)
+	s.EqualError(err, "ROUTER_DEV_KEK is for a laptop or CI and is never set with auth.kms_key (ROUTER_AUTH_KMS_KEY): "+
+		"unset ROUTER_DEV_KEK")
 }
 
 func (s *ConnectorSealerSuite) TestAWrappedKeyWithoutAKMSKeyIsRefused() {
@@ -386,7 +451,7 @@ func (s *ConnectorSealerSuite) TestAWrappedKeyWithoutAKMSKeyIsRefused() {
 func (s *ConnectorSealerSuite) TestAWrappedKeyThatIsNotBase64IsNotRepeatedInTheError() {
 	s.T().Setenv("ROUTER_AUTH_KEK_V1_WRAPPED", "first-key pasted here")
 
-	_, err := readKeyring(s.T().Context(), s.settings, newLocalKMS(s), "the test needs")
+	_, err := readKeyring(s.T().Context(), newLocalKMS(s), "the test needs")
 	s.ErrorContains(err, "ROUTER_AUTH_KEK_V1_WRAPPED: not standard base64")
 	s.NotContains(err.Error(), "first-key")
 }
@@ -557,7 +622,7 @@ func (s *ConnectorSealerSuite) TestWithoutAKMSKeyNoCloudKMSClientIsOpened() {
 	kmsClientOptions = []option.ClientOption{option.WithCredentialsJSON([]byte("{}"))}
 	s.T().Cleanup(func() { kmsClientOptions = nil })
 	s.settings.Connectors.Enabled = true
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)
@@ -598,7 +663,8 @@ func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithoutTheKeyringUnwrapsNothing(
 
 	_, err := newAuthenticator(s.T().Context(), s.settings, configs, nil, slog.New(slog.DiscardHandler))
 	s.EqualError(err, "auth.mode=api_key needs a key encryption keyring to seal the secrets it holds: "+
-		"set ROUTER_AUTH_KEK_V1 (ROUTER_AUTH_KEK is version 1)")
+		"set ROUTER_DEV_KEK on a laptop or in CI, or ROUTER_AUTH_KEK_V1_WRAPPED with auth.kms_key "+
+		"(ROUTER_AUTH_KMS_KEY) on a hosted router")
 	s.Equal(int64(0), fake.decrypts.Load())
 }
 
@@ -609,12 +675,13 @@ func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithoutAKeyIsRefusedAsBefore() {
 	s.Require().NoError(err)
 	_, err = newAuthenticator(s.T().Context(), s.settings, configs, secrets, slog.New(slog.DiscardHandler))
 	s.EqualError(err, "auth.mode=api_key needs a key encryption keyring to seal the secrets it holds: "+
-		"set ROUTER_AUTH_KEK_V1 (ROUTER_AUTH_KEK is version 1)")
+		"set ROUTER_DEV_KEK on a laptop or in CI, or ROUTER_AUTH_KEK_V1_WRAPPED with auth.kms_key "+
+		"(ROUTER_AUTH_KMS_KEY) on a hosted router")
 }
 
-func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithAPlainKeyAuthenticates() {
+func (s *ConnectorSealerSuite) TestAnAPIKeyStartWithTheDevKEKAuthenticates() {
 	configs := s.apiKeyConfigs()
-	s.T().Setenv("ROUTER_AUTH_KEK_V1", "first-key")
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 
 	secrets, err := newSecretSealer(s.T().Context(), s.settings)
 	s.Require().NoError(err)

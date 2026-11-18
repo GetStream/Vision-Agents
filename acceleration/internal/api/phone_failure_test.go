@@ -289,7 +289,8 @@ func TestAttachingWithoutAKeyringIsNotConfiguredAndNamesNoSetting(t *testing.T) 
 	answer := answered(t, response.Body.Bytes())
 	require.Equal(t, "not_configured", answer.Code)
 	require.NotContains(t, response.Body.String(), "ROUTER_AUTH_KEK")
-	require.Contains(t, logged.String(), "ROUTER_AUTH_KEK", "the operator still learns what to set")
+	require.NotContains(t, response.Body.String(), "ROUTER_DEV_KEK")
+	require.Contains(t, logged.String(), "set ROUTER_DEV_KEK or ROUTER_AUTH_KEK_V1_WRAPPED", "the operator still learns what to set")
 }
 
 func TestAHookThatCannotBePointedIsAnsweredWithTryAgain(t *testing.T) {
