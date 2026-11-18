@@ -1032,6 +1032,53 @@ func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
 	}
 }
 
+func TestSyncSendsTheUIApartFromTheInstructions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
+	write(t, root, "instructions.md", "You are Juno.\n")
+	router := newBackend(t)
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	sent := router.syncs[0]
+	if got := deref(sent.Instructions); got != "You are Juno." {
+		t.Errorf("the instructions went as %q", got)
+	}
+	if ui := deref(sent.UiInstructions); !strings.HasPrefix(ui, "## Interactive UI Generation") || !strings.Contains(ui, "CardHeader(") {
+		t.Errorf("the UI went as %q", ui)
+	}
+}
+
+func TestAChangedUIBlueprintIsSyncedAgain(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
+	write(t, root, "ui/blueprints.yaml", "- name: booking\n  when: booking a table\n  order: [CardHeader]\n")
+	router := newBackend(t)
+
+	for range 2 {
+		if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, root, "ui/blueprints.yaml", "- name: booking\n  when: booking a table for tonight\n  order: [CardHeader]\n")
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Fatalf("three syncs, one of them after the blueprint changed, sent %d requests", len(router.syncs))
+	}
+	if ui := deref(router.syncs[1].UiInstructions); !strings.Contains(ui, "booking a table for tonight") {
+		t.Errorf("the second sync sent the UI %q", ui)
+	}
+}
+
 func TestWhatTheCodeSetsIsPartOfWhatIsSynced(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\n")

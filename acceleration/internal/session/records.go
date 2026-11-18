@@ -474,6 +474,7 @@ func sessionRow(created *Session) store.AgentSession {
 		CallerTools:     StoredTools(spec.Tools),
 		ForkedFrom:      spec.ForkedFrom,
 		ReturnURL:       spec.ReturnURL,
+		NoUI:            spec.NoUI,
 		State:           store.SessionRunning,
 		Modality:        created.Modality(),
 		CreatedAt:       created.created.UTC(),

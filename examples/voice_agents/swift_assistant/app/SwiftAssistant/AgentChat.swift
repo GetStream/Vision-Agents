@@ -219,6 +219,10 @@ final class AgentChat: AIConversationTransport {
             options.llm = Assistant.chatModel
             options.tools = Assistant.tools
             options.returnURL = Assistant.returnURL
+            // Off opens the conversation without UI, whatever the backend has the agent answer in.
+            if UserDefaults.standard.object(forKey: SettingsScreen.cardsKey) as? Bool == false {
+                options.ui = false
+            }
             session = try await Assistant.agents.chat(options)
         }
         let channel = try await session.chat()

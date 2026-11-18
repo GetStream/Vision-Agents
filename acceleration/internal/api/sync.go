@@ -26,6 +26,7 @@ type SyncAgentRequest struct {
 	BaseChange        *string                    `json:"base_change,omitempty" doc:"The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again."`
 	Instructions      *string                    `json:"instructions,omitempty"`
 	Guardrail         *string                    `json:"guardrail,omitempty" doc:"The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered."`
+	UiInstructions    *string                    `json:"ui_instructions,omitempty" doc:"What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none."`
 	Skills            *[]SkillRequest            `json:"skills,omitempty"`
 	Knowledge         *[]KnowledgeDocument       `json:"knowledge,omitempty"`
 	KnowledgeUrls     *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty" doc:"The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both."`
@@ -338,6 +339,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		prospective := config
 		prospective.Instructions = value(body.Instructions)
 		prospective.Guardrail = value(body.Guardrail)
+		prospective.UIInstructions = value(body.UiInstructions)
 		prospective.Skills = named
 		refusal, conflicting, err := s.syncConflict(ctx, customerID, existing, prospective, body)
 		if err != nil {
@@ -391,6 +393,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 
 	config.Instructions = value(body.Instructions)
 	config.Guardrail = value(body.Guardrail)
+	config.UIInstructions = value(body.UiInstructions)
 	config.Skills = named
 	config.KnowledgeNamespace = namespace
 	config.SyncHash = hash

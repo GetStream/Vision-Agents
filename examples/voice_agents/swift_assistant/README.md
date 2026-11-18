@@ -148,10 +148,14 @@ a change), and `go run ./configure` again, which binds both:
 
 The gear in the conversations list opens the settings, where Replies chooses how the agent
 answers: in Markdown, or with interactive UI in A2UI or OpenUI. The backend keeps the choice as
-what the agent is told (`GET` and `PUT /reply-format`), so the app has nothing to switch: its
-`AIUIHost` has a renderer for each format, and a reply shows whichever UI it carries. A
-conversation keeps the instructions it started with, so the next new one is the first to answer
-the new way, and earlier replies keep theirs.
+the agent's UI instructions (`GET` and `PUT /reply-format`), apart from `instructions.md`, so the
+app has nothing to switch: its `AIUIHost` has a renderer for each format, and a reply shows
+whichever UI it carries. A conversation keeps the instructions it started with, so the next new
+one is the first to answer the new way, and earlier replies keep theirs.
+
+Settings' Interactive UI switch is the phone's own: off, the app opens its new conversations with
+`SessionOptions.ui` false, and the agent answers them in Markdown and isn't sent the UI
+instructions, whatever the backend chose.
 
 With A2UI or OpenUI chosen, ask "Plan a weekend in Ohrid" and the reply is UI rather than text: a
 map of the places, the person's own calendar for those days, a tab per day with each place's photo
@@ -167,7 +171,7 @@ The map, the place cards and the calendar are the app's own views (`TripComponen
 described once in `app/SwiftAssistant/UIComponents.json`, and both formats place them. They
 load what they show on the phone: the photos from Wikipedia and the calendar from EventKit, which
 the agent never sees. The agent learns them with the format, from `a2ui/instructions.md` or
-`openui/instructions.md`, which the backend adds to what it is told, and which are generated
+`openui/instructions.md`, which the backend stores as the agent's UI instructions, and which are generated
 from the same file with the renderers' own code, from a clone of `stream-chat-swift` beside this
 repository on the branch the app takes:
 

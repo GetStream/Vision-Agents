@@ -3692,11 +3692,14 @@ type AgentConfig struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools        *AgentTools   `json:"tools,omitempty"`
-	Tts          *string       `json:"tts,omitempty"`
-	UpdatedAt    time.Time     `json:"updated_at"`
-	Video        *SessionVideo `json:"video,omitempty"`
-	VisibleTools *[]string     `json:"visible_tools,omitempty"`
+	Tools *AgentTools `json:"tools,omitempty"`
+	Tts   *string     `json:"tts,omitempty"`
+
+	// UiInstructions Absent when the agent is taught no UI.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	Video          *SessionVideo `json:"video,omitempty"`
+	VisibleTools   *[]string     `json:"visible_tools,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
@@ -3797,9 +3800,12 @@ type AgentConfigPatch struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools *AgentTools   `json:"tools,omitempty"`
-	Tts   *string       `json:"tts,omitempty"`
-	Video *SessionVideo `json:"video,omitempty"`
+	Tools *AgentTools `json:"tools,omitempty"`
+	Tts   *string     `json:"tts,omitempty"`
+
+	// UiInstructions What teaches the agent's model to answer with UI. An empty string removes them.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	Video          *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -3930,9 +3936,12 @@ type AgentConfigRequest struct {
 	Tags *map[string]string `json:"tags,omitempty"`
 
 	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools *AgentTools   `json:"tools,omitempty"`
-	Tts   *string       `json:"tts,omitempty"`
-	Video *SessionVideo `json:"video,omitempty"`
+	Tools *AgentTools `json:"tools,omitempty"`
+	Tts   *string     `json:"tts,omitempty"`
+
+	// UiInstructions What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	Video          *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -6174,6 +6183,9 @@ type CreateSessionRequest struct {
 
 	// Tts Omit it and the config decides, or en-low-latency when there is no config.
 	Tts *string `json:"tts,omitempty"`
+
+	// Ui Whether the agent may answer with UI in this session, as its config's ui_instructions teach it. Left out or true, the model is told them after the instructions; false leaves them out, for a client that shows no UI, and the agent answers in prose. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote.
+	Ui *bool `json:"ui,omitempty"`
 
 	// UserId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
 	UserId   *string       `json:"user_id,omitempty"`
@@ -10163,9 +10175,12 @@ type SyncAgentRequest struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools *AgentTools   `json:"tools,omitempty"`
-	Tts   *string       `json:"tts,omitempty"`
-	Video *SessionVideo `json:"video,omitempty"`
+	Tools *AgentTools `json:"tools,omitempty"`
+	Tts   *string     `json:"tts,omitempty"`
+
+	// UiInstructions What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	Video          *SessionVideo `json:"video,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`

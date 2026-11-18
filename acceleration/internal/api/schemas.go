@@ -295,6 +295,7 @@ type CreateSessionRequest struct {
 	ToolTimeoutMs        *int               `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long."`
 	Tools                *[]SessionTool     `json:"tools,omitempty"`
 	Tts                  *string            `json:"tts,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
+	Ui                   *bool              `json:"ui,omitempty" doc:"Whether the agent may answer with UI in this session, as its config's ui_instructions teach it. Left out or true, the model is told them after the instructions; false leaves them out, for a client that shows no UI, and the agent answers in prose. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote."`
 	UserId               *string            `json:"user_id,omitempty" doc:"The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id." default:"vision-agent"`
 	UserName             *string            `json:"user_name,omitempty" default:"Vision Agent"`
 	Video                *SessionVideo      `json:"video,omitempty"`
