@@ -188,7 +188,10 @@ func (s *ConfigSuite) TestALongestDelayOutsideItsBoundsIsRefused() {
 
 func (s *ConfigSuite) TestEveryLongestDelayInItsBoundsMakesACanceller() {
 	// Every count of matched filters from one to the 13 echodelay.Max takes.
-	for delay := echodelay.Min; delay <= echodelay.Max; delay += filterShift {
+	s.Require().Equal(13, filters(echodelay.Max))
+	for n := 1; n <= filters(echodelay.Max); n++ {
+		delay := min(echodelay.Min+time.Duration(n-1)*filterShift, echodelay.Max)
+		s.Require().Equal(n, filters(delay))
 		call, err := NewCall(Config{MaxDelay: delay})
 		s.Require().NoError(err)
 		line, err := call.Listen()
