@@ -21,6 +21,9 @@ A call, text or chat message the router rejects or cannot answer is logged with 
 ### The Go and JavaScript SDKs name themselves and their release
 
 Every Go SDK request sends `User-Agent: stream-agents-go/<version>` beside `X-Stream-Client: sdk`, with the new `stream.Version`. The JavaScript SDK now sends `X-Stream-Client: sdk`, so its calls are counted as the SDK's rather than the API's, and from Node also `User-Agent: stream-agents-js/<version>` (`VERSION`); a page sends `X-Stream-Client` alone (#2065).
+### Claude's thinking survives a round trip through the language-model socket
+
+An Anthropic model's signed thinking now reaches a socket client: a `reasoning` frame `{id, block}` as each block finishes, between the `delta`s of the text around it, for display, and the list to replay as `reasoning` on `complete` (not on a failed one). An assistant message in a `respond` frame may send that list back unchanged, and the Anthropic driver replays each block as `thinking` (with its signature) or `redacted_thinking` exactly where the model wrote it: after `after_tool_calls` of the turn's calls and, before the first, after `after_text` bytes of its text, splitting the text back into the blocks it came as. Claude may refuse a turn whose thinking was moved or whose prefix changed, or answer with the block's stale reasoning, so a position the turn does not have is refused, and `complete` leaves out every block a replay could not put back exactly: those after a call once text follows a call, those after a call dropped for arguments that do not parse, those after two texts in a row, and any after them. A model on a tool loop picks up its reasoning where it left off instead of thinking from scratch every round. Unsigned blocks are never sent, a call that takes no arguments now reports `{}`, other providers ignore the field, and a request without it is unchanged (#2069).
 
 ### A running session takes more of its caller's tools, and gives them back
 

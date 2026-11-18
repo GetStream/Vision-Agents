@@ -201,6 +201,60 @@ func (s *LLMSuite) TestAResponseWhoseStreamBrokeSettlesWithNoCalls() {
 	s.Empty(stream.Response().ToolCalls)
 }
 
+func (s *LLMSuite) TestAFailedResponseKeepsNoThinkingToReplay() {
+	thinksThenCalls := func(w *ResponseWriter) {
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-1"})
+		asksToLookUpAnOrder(w)
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-2", AfterToolCalls: 1})
+	}
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{thinksThenCalls}, err: errUnauthorized})
+
+	events := s.drain(stream)
+
+	s.Equal(StatusFailed, stream.Response().Status)
+	s.Empty(stream.Response().ReasoningBlocks, "a block placed after a dropped call has nowhere to go back to")
+	var reported []ReasoningBlock
+	for _, event := range events {
+		if done, ok := event.(ReasoningBlockDone); ok {
+			reported = append(reported, done.Block)
+		}
+	}
+	s.Equal([]ReasoningBlock{{Signature: "sig-1"}, {Signature: "sig-2", AfterToolCalls: 1}}, reported, "each block is reported as it finishes, in order")
+}
+
+// A call whose arguments do not parse is dropped from a response that otherwise stands, so
+// the blocks after it would be replayed after a different call: they are not kept.
+func (s *LLMSuite) TestThinkingAfterADroppedCallIsNotKept() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{func(w *ResponseWriter) {
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-0"})
+		w.FunctionCall(0, "call-1", "lookup_order", `{"order":"12"}`, "")
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-1", AfterToolCalls: 1})
+		w.FunctionCall(1, "call-2", "lookup_order", `{"order":`, "")
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-2", AfterToolCalls: 2})
+		w.FunctionCall(2, "call-3", "lookup_order", `{"order":"13"}`, "")
+		w.Incomplete(ReasonMaxOutputTokens)
+	}}})
+
+	s.drain(stream)
+
+	response := stream.Response()
+	s.Equal(StatusIncomplete, response.Status)
+	s.Len(response.ToolCalls, 2)
+	s.Equal([]ReasoningBlock{{Signature: "sig-0"}, {Signature: "sig-1", AfterToolCalls: 1}}, response.ReasoningBlocks)
+}
+
+func (s *LLMSuite) TestACompletedResponseKeepsItsThinkingInOrder() {
+	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{func(w *ResponseWriter) {
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-1"})
+		asksToLookUpAnOrder(w)
+		w.ReasoningBlock(ReasoningBlock{Signature: "sig-2", AfterToolCalls: 1})
+	}}})
+
+	s.drain(stream)
+
+	s.Equal([]ReasoningBlock{{Signature: "sig-1"}, {Signature: "sig-2", AfterToolCalls: 1}}, stream.Response().ReasoningBlocks)
+}
+
 func (s *LLMSuite) TestAResponseThatTimedOutIsEstimatedOnTheCallsItDropped() {
 	stream := NewStream(StreamOptions{ResponseID: "r1"}, &scripted{chunks: []chunk{asksToLookUpAnOrder,
 		func(w *ResponseWriter) { w.TimedOut() }}, err: context.DeadlineExceeded})

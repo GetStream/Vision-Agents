@@ -59,6 +59,11 @@ func (s *Script) ReasoningText(text string) {
 	s.write(func(w *llm.ResponseWriter) { w.ReasoningText(text) })
 }
 
+// ReasoningBlock finishes a block of thinking a provider has to be sent again.
+func (s *Script) ReasoningBlock(block llm.ReasoningBlock) {
+	s.write(func(w *llm.ResponseWriter) { w.ReasoningBlock(block) })
+}
+
 // ToolCalls asks for tools, whole, in the order given.
 func (s *Script) ToolCalls(calls ...llm.ToolCall) {
 	s.write(func(w *llm.ResponseWriter) {
