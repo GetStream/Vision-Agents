@@ -540,6 +540,26 @@ func (s *AnthropicSuite) TestAnUnsignedBlockDoesNotSplitTheText() {
 	]`, string(turn))
 }
 
+// Thinking sent back has to be an unbroken run, so a block that cannot be (no signature,
+// no redacted data) withholds every one after it.
+func (s *AnthropicSuite) TestThinkingAfterABlockThatCannotBeSentBackIsNotKept() {
+	s.answerWith(http.StatusOK, stream(
+		thinkingBlock(0, "", "sig-1"),
+		`{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}}`,
+		`{"type":"content_block_stop","index":1}`,
+		thinkingBlock(2, "", "sig-2"),
+		`{"type":"content_block_start","index":3,"content_block":{"type":"redacted_thinking","data":""}}`,
+		`{"type":"content_block_stop","index":3}`,
+		textBlock(4, "done"),
+		stop("end_turn", 9),
+	))
+
+	response, err := s.collect(s.provider(Options{}), toolRound(1))
+	s.Require().NoError(err)
+
+	s.Equal([]llm.ReasoningBlock{{Signature: "sig-1"}}, response.ReasoningBlocks)
+}
+
 func (s *AnthropicSuite) TestThinkingAfterTwoTextsInARowIsNotKept() {
 	s.answerWith(http.StatusOK, stream(textBlock(0, "one"), textBlock(1, "two"), thinkingBlock(2, "", "sig-1"), stop("end_turn", 9)))
 

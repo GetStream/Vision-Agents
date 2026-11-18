@@ -300,6 +300,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 				p.thinkingText.Reset()
 			}
 		case "redacted_thinking":
+			p.unreplayable = p.unreplayable || block.Data == ""
 			if !p.unreplayable {
 				placed := p.place()
 				placed.Redacted = block.Data
@@ -315,9 +316,15 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 			// A call that takes nothing streams no arguments; replayed, it needs an object.
 			w.FunctionCall(event.Index, "", "", "{}", "")
 		}
-		if p.thinking != nil && p.thinking.Signature != "" {
-			p.thinking.Text = p.thinkingText.String()
-			p.keep(w, *p.thinking)
+		// A block that cannot be sent back leaves a gap, and the thinking sent back has to
+		// be an unbroken run: none after it is kept.
+		if p.thinking != nil {
+			if p.thinking.Signature == "" {
+				p.unreplayable = true
+			} else {
+				p.thinking.Text = p.thinkingText.String()
+				p.keep(w, *p.thinking)
+			}
 		}
 		p.thinking = nil
 	case "content_block_delta":
