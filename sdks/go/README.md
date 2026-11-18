@@ -1,9 +1,9 @@
 # Vision Agents Go SDK
 
-The Go SDK for agents that run in Stream's [acceleration backend](https://github.com/GetStream/Vision-Agents/tree/accelerate/acceleration).
+The Go SDK for agents that run in Stream's [acceleration backend](https://github.com/GetStream/Vision-Agents/tree/main/acceleration).
 
-It is the Go counterpart of [plugins/stream](https://github.com/GetStream/Vision-Agents/tree/accelerate/plugins/stream), not of
-[sdks/python](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/python). The backend already runs the whole pipeline: it joins the
+It is the Go counterpart of [plugins/stream](https://github.com/GetStream/Vision-Agents/tree/main/plugins/stream), not of
+[sdks/python](https://github.com/GetStream/Vision-Agents/tree/main/sdks/python). The backend already runs the whole pipeline: it joins the
 call, transcribes, answers and speaks. What this does is create the session, hold the events
 socket, run your functions and configure everything.
 
@@ -741,9 +741,8 @@ Work a limit refuses is a `*stream.RouterError` of 402 `spend_limit_reached`, or
 ## Versioning
 
 Versions are tags of the form `sdks/go/vX.Y.Z`, which `go get` reads as `vX.Y.Z`. The SDK is
-developed on the repository's `accelerate` branch and released from `main`, which holds a copy
-of this directory taken from one `accelerate` commit. While the version is `0.x`, a minor
-version may change a signature; a patch only fixes. A version found broken after release is
+developed on the repository's `main` branch, and a version is a tag on a `main` commit. While
+the version is `0.x`, a minor version may change a signature; a patch only fixes. A version found broken after release is
 retracted in `go.mod` and followed by the next patch, never replaced.
 
 ## Generated types
@@ -761,10 +760,10 @@ wherever one exists.
 ## Regenerating the client
 
 `acceleration/generated.go` comes from
-[acceleration/api/openapi.yaml](https://github.com/GetStream/Vision-Agents/blob/accelerate/acceleration/api/openapi.yaml), which is the same file
+[acceleration/api/openapi.yaml](https://github.com/GetStream/Vision-Agents/blob/main/acceleration/api/openapi.yaml), which is the same file
 the Go server and the Python client come from. It is committed, so installing this module
 needs no code generation. Generating it needs the spec beside it, so it runs in a checkout of
-`accelerate`:
+this repository:
 
 ```bash
 go generate ./...
@@ -787,7 +786,7 @@ what they are given.
 
 `e2e_test.go` drives a running router instead of a stand-in for one, so it is behind a tag.
 Start Postgres, Redis and the router as
-[acceleration/README.md](https://github.com/GetStream/Vision-Agents/blob/accelerate/acceleration/README.md) describes, then:
+[acceleration/README.md](https://github.com/GetStream/Vision-Agents/blob/main/acceleration/README.md) describes, then:
 
 ```bash
 STREAM_ACCELERATION_URL=http://localhost:8080 \
