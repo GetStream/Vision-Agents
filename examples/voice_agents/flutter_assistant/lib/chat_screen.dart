@@ -12,6 +12,7 @@ import 'agent_chat.dart';
 import 'assistant.dart';
 import 'brand_theme.dart';
 import 'sign_in.dart';
+import 'smooth_size.dart';
 import 'voice_screen.dart';
 
 /// One conversation: the messages, the composer, and the way into voice mode.
@@ -123,12 +124,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       // A reply's text gives way to its UI as the UI arrives, rather than jumping. Only then:
       // a reply that is only text grows as it streams, which an animation would hold back.
-      assistantMessage: (context, props) => AnimatedSize(
-        duration: MediaQuery.disableAnimationsOf(context) || props.message.uiDocument == null
-            ? Duration.zero
-            : const Duration(milliseconds: 350),
+      assistantMessage: (context, props) => SmoothSize(
+        duration: const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
-        alignment: Alignment.topCenter,
+        animates: props.message.uiDocument != null,
         child: AIAssistantMessageView(
           text: props.text,
           isGenerating: props.isGenerating,

@@ -15,6 +15,7 @@ import 'brand_theme.dart';
 import 'captions.dart';
 import 'openui_renderer.dart';
 import 'permissions.dart';
+import 'smooth_size.dart';
 import 'trip_components.dart';
 
 /// Talking to Juno, full screen, in the conversation that was open.
@@ -451,10 +452,9 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                       ),
                       // The card comes up from below and grows as Juno writes it, which moves the
                       // glow above it: both ease into place. A newer card takes its place.
-                      AnimatedSize(
-                        duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 400),
+                      SmoothSize(
+                        duration: const Duration(milliseconds: 400),
                         curve: Curves.easeOutCubic,
-                        alignment: Alignment.topCenter,
                         child: AnimatedSwitcher(
                           duration: reduceMotion
                               ? Duration.zero
