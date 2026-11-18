@@ -573,9 +573,9 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 			}
 		}()
 	}
-	// next is where in the track the frame after the last one starts.
+	// next is where in the track the next frame starts, by the audio handed over so far:
+	// the reader times the first frame at zero.
 	var next time.Duration
-	started := false
 	for pcm, err := range reader.Frames() {
 		if err != nil {
 			e.logger.Debug("stopped hearing a participant", "participant", participant.UserID, "error", err)
@@ -592,10 +592,23 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 			// The reader fills in lost packets only up to a point, and none at all where the
 			// phone sent nothing for a while (Opus DTX), whose timestamps move on regardless.
 			// The agent's voice went on going out, so the line steps over what is missing.
-			if started && pcm.PTS-next >= echocancel.FrameDuration {
-				line.Missed(pcm.PTS - next)
+			// The timeline runs on what was handed over, not on each frame's own stamp:
+			// packets stamped a little late, or a concealed frame stamped a frame early, even
+			// out against the frames after them rather than each adding silence. Only a whole
+			// frame or more of missing time is stepped over, and only a jump of a second or
+			// more, past anything a line holds, starts the timeline again.
+			switch gap := pcm.PTS - next; {
+			case gap >= time.Second || gap <= -time.Second:
+				if gap > 0 {
+					line.Missed(gap)
+				}
+				next = pcm.PTS
+			case gap >= echocancel.FrameDuration:
+				missed := (gap + echocancel.FrameDuration/2).Truncate(echocancel.FrameDuration)
+				line.Missed(missed)
+				next += missed
 			}
-			next, started = pcm.PTS+pcm.Duration(), true
+			next += pcm.Duration()
 			// A call's 20 ms packets are whole frames and come back at once; anything else
 			// waits for the rest of its last frame.
 			if samples = line.Clean(samples); len(samples) == 0 {

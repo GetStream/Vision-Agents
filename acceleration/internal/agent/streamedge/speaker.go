@@ -110,9 +110,6 @@ type speaker struct {
 	voice   []int16
 	voiceAt int
 	toEcho  *webrtcaudio.StreamResampler
-	// voiceLead is how far the voice is behind the frames it goes with, the resampler's own
-	// delay, the same all through an utterance.
-	voiceLead int
 	// keeping is whether the voice of the utterance going out is kept. It is decided as an
 	// utterance starts, from whether the call has a line to cancel it from, or somebody who
 	// will have one: resampling costs
@@ -255,8 +252,7 @@ func (s *speaker) queueVoice(pcm audio.PcmData, starting bool) {
 			// The resampler holds back the end of what it is given until it has seen what
 			// follows. The voice starts that much late, all through the utterance, so a frame
 			// taken right after its speech was written never runs short and shifts what follows.
-			s.voiceLead = resamplerLead(pcm.SampleRate)
-			s.voice = append(s.voice[:0], make([]int16, s.voiceLead)...)
+			s.voice = append(s.voice[:0], make([]int16, resamplerLead(pcm.SampleRate))...)
 			s.voiceAt = 0
 		}
 	}
@@ -493,22 +489,6 @@ func (s *speaker) flush() {
 		return
 	}
 	s.enqueue(packets)
-	if s.keeping {
-		s.alignVoice()
-	}
-}
-
-// alignVoice pads the voice queued to the frames queued, once the encoder has been flushed and
-// holds nothing back: it padded the last frame out with silence, which the voice is short of.
-// The caller must hold the lock.
-func (s *speaker) alignVoice() {
-	want := len(s.frames)*echoFrameSamples + s.voiceLead
-	have := len(s.voice) - s.voiceAt
-	if have < want {
-		s.voice = append(s.voice, make([]int16, want-have)...)
-	} else {
-		s.voice = s.voice[:s.voiceAt+want]
-	}
 }
 
 // drop throws away speech that has been published but not heard yet, so barge-in stops the
