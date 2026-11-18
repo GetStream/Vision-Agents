@@ -21,6 +21,13 @@ A call, text or chat message the router rejects or cannot answer is logged with 
 ### The Go and JavaScript SDKs name themselves and their release
 
 Every Go SDK request sends `User-Agent: stream-agents-go/<version>` beside `X-Stream-Client: sdk`, with the new `stream.Version`. The JavaScript SDK now sends `X-Stream-Client: sdk`, so its calls are counted as the SDK's rather than the API's, and from Node also `User-Agent: stream-agents-js/<version>` (`VERSION`); a page sends `X-Stream-Client` alone (#2065).
+### The Go SDK reads a session's tokens, timeline and decisions
+
+`client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
+
+### The Go SDK compiles `ui.format: a2ui`
+
+`agents.LoadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the A2UI 1.0 prompt in a ```` ```ui:a2ui@1.0 ```` block with the catalog `getstream.io:app-catalog`, the one stream-chat-swift's renderer draws. The JavaScript SDK writes the same prompt, and both are held to one fixture (#2028).
 ### A session can turn an agent's generative UI off
 
 An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go SDK now syncs agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing this Go SDK: an older router drops `ui_instructions`, so the agent is taught no UI until the router is upgraded, when the next start syncs it again and the router writes it. A config saved without the field keeps the UI it has, and a sync of a folder without `ui:` removes it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui` (#2076).
@@ -631,6 +638,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### `agents.DefineSkills` takes the id of the agent config the skills belong to
+
+`agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
+
 ### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
 
 `ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
@@ -745,6 +756,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### The Go SDK's `Agent.Sync` works for an agent with skills
+
+`Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
 
 ### A customer's refused key no longer raises the operator's key_refused alert
 
