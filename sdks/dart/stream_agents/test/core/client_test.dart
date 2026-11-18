@@ -1513,6 +1513,7 @@ void main() {
 
       expect(router.last('GET $tasks').query, isEmpty);
       expect(page.items, isEmpty);
+      expect(page.hasMore, isFalse);
       expect(page.nextCursor, isNull);
     });
 
@@ -1586,6 +1587,16 @@ void main() {
         [for (final request in router.arrived) '${request.method} ${request.path}'],
         ['POST $tasks/t1/pause', 'POST $tasks/t1/resume', 'DELETE $tasks/t1'],
       );
+    });
+
+    test('ends a task\'s runs on the last page', () async {
+      router.answer('GET $tasks/t1/runs', Answer(200, pageJson([scheduledTaskRunJson('run-3')])));
+
+      final page = await agents.scheduledTasks.runs('t1', cursor: 'runs-2');
+
+      expect(page.items.single.id, 'run-3');
+      expect(page.hasMore, isFalse);
+      expect(page.nextCursor, isNull);
     });
 
     test('reads a task\'s runs a page at a time', () async {
