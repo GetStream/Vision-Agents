@@ -48,7 +48,7 @@ type counted struct {
 	code, org         string
 }
 
-func (s *ActivitySuite) counted(area, client string) counted {
+func (s *RouterSuite) counted(area, client string) counted {
 	var (
 		row       counted
 		code, org sql.NullString
@@ -64,7 +64,7 @@ FROM customer_activity WHERE app_id = ? AND area = ? AND client = ?`,
 }
 
 // countedOnce waits for one request under area and client to be written and returns its row.
-func (s *ActivitySuite) countedOnce(area, client string) counted {
+func (s *RouterSuite) countedOnce(area, client string) counted {
 	var row counted
 	s.Require().Eventually(func() bool {
 		row = s.counted(area, client)
@@ -223,4 +223,32 @@ func (s *ActivitySuite) TestARequestIsCountedWhenItArrived() {
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT first_at FROM customer_activity WHERE app_id = ?", s.customerID()).Scan(&first))
 	s.True(first.Before(began), "first_at %s, handler began %s", first, began)
+}
+
+// refusedSocket opens the session socket from the SDK, sends start and returns the error frame
+// it was refused with.
+func (s *ActivitySuite) refusedSocket(start map[string]any) map[string]any {
+	connection := s.serverClient.with(clientHeader, store.AuditSourceSDK).opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(start))
+	return s.await(connection, "error")
+}
+
+// Defect: a socket refused in a frame, after its 101, counted as answered.
+func (s *ActivitySuite) TestASocketWhoseFirstFrameIsNoStartIsCountedAsRefused() {
+	refusal := s.refusedSocket(map[string]any{"type": "hello"})
+	s.NotContains(refusal, "code", "the frame says what it always said")
+
+	row := s.countedOnce(activity.AreaConversations, store.AuditSourceSDK)
+	s.Equal(int64(1), row.refused)
+	s.Equal(invalidRequest("").Code, row.code)
+}
+
+// Defect: a socket refused for an agent config it named counted with no code, or the code of
+// some other failure than the one POST /v1/agents/sessions answers.
+func (s *ActivitySuite) TestASocketNamingAConfigNobodyHoldsIsCountedWithItsCode() {
+	s.refusedSocket(map[string]any{"type": "start", "session": map[string]any{"config_id": s.utils.uuid()}})
+
+	row := s.countedOnce(activity.AreaConversations, store.AuditSourceSDK)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeAgentConfigNotFound, row.code)
 }

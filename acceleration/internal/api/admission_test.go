@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -1002,4 +1003,21 @@ func (s *AdmissionSuite) finalFailure(err error) bool {
 	var failure *scheduling.Failure
 	s.Require().ErrorAs(err, &failure)
 	return failure.Final
+}
+
+// Defect: a socket session refused for money, in a frame after the 101, counted as answered, or
+// without the code it was refused with.
+func (s *AdmissionSuite) TestASocketSessionRefusedForASpentLimitIsCountedAsRefused() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.limitApp(usage.Daily, 10_000)
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "spends the limit"})
+
+	connection := s.serverClient.with(clientHeader, store.AuditSourceSDK).opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(frame{"type": "start",
+		"session": frame{"config_id": s.config("echo/local-model")}}))
+	s.Equal(codeSpendLimitReached, s.await(connection, "error")["code"])
+
+	row := s.countedOnce(activity.AreaConversations, store.AuditSourceSDK)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeSpendLimitReached, row.code)
 }
