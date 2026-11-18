@@ -638,32 +638,35 @@ func TestEveryRequestAndSocketNamesTheGoSDKAndItsRelease(t *testing.T) {
 	}))
 	defer router.Close()
 
-	backend := Backend{URL: router.URL, CustomerID: "acme"}
-	client, err := backend.Client()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.ListSkillsWithResponse(t.Context(), nil); err != nil {
-		t.Fatal(err)
-	}
-	credentials, err := backend.Credentials()
-	if err != nil {
-		t.Fatal(err)
-	}
-	socket := NewSocket(backend.SocketURL("/v1/dispatch"), credentials, nil, slog.New(slog.DiscardHandler))
-	if err := socket.Open(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	defer socket.Close()
-
-	for _, call := range []string{"request", "socket handshake"} {
-		header := <-seen
-		if got := header.Get("User-Agent"); got != want {
-			t.Errorf("the %s says User-Agent %q, want %q", call, got, want)
+	for name, backend := range map[string]Backend{
+		"a local router":    {URL: router.URL, CustomerID: "acme"},
+		"through the proxy": {URL: router.URL, Authenticate: true, APIKey: "ntv9", APISecret: "shh"},
+	} {
+		client, err := backend.Client()
+		if err != nil {
+			t.Fatal(err)
 		}
-		if got := header.Get(ClientHeader); got != ClientSDK {
-			t.Errorf("the %s says %s %q, want %q", call, ClientHeader, got, ClientSDK)
+		if _, err := client.ListSkillsWithResponse(t.Context(), nil); err != nil {
+			t.Fatal(err)
 		}
+		credentials, err := backend.Credentials()
+		if err != nil {
+			t.Fatal(err)
+		}
+		socket := NewSocket(backend.SocketURL("/v1/dispatch"), credentials, nil, slog.New(slog.DiscardHandler))
+		if err := socket.Open(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range []string{"request", "socket handshake"} {
+			header := <-seen
+			if got := header.Get("User-Agent"); got != want {
+				t.Errorf("%s: the %s says User-Agent %q, want %q", name, call, got, want)
+			}
+			if got := header.Get(ClientHeader); got != ClientSDK {
+				t.Errorf("%s: the %s says %s %q, want %q", name, call, ClientHeader, got, ClientSDK)
+			}
+		}
+		socket.Close()
 	}
 }
 
