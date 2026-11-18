@@ -710,6 +710,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The JavaScript SDK's channel stops the agent's reply from the default stop button
+
+The default stop button of stream-chat-react's composer, `StopAIGenerationButton`, calls the channel's `stopAIResponse()`, as React Native's composer does, which only sent `ai_indicator.stop`, an event the agent does not act on, so the reply went on and apps replaced the button with one calling `session.interrupt()`. On the channel `session.chat()` opens, `stopAIResponse()` now interrupts the session's reply first and still sends the event, so the default button works and the override can go. The channel gets Stream Chat's own back when the session is closed.
+
 ### A customer's refused key no longer raises the operator's key_refused alert
 
 `router_keypool_refused_attempts_total` has a label `owner`: `ours` for a key the router read from its environment, `customer` for a customer's own, such as the key of their own model (`custom/<name>`) or the one they keep for a vendor (BYOK). The `key_refused` alert counts only `ours`: a customer's broken key is theirs to fix. An instance's `api_key_env` is read the way every key variable is (comma separated keys, then `NAME_1`, `NAME_2`), so its keys are the router's own: their refusals still alert, and their rate limits are kept in `router_vendor_rate_limited_total` and `router_vendor_ratelimit_remaining` under that variable (AI-2950).

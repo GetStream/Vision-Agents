@@ -17,7 +17,7 @@ import {
   type ToolCallContext,
 } from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
-import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, heldIds, rewind, until, watch } from "./stream-chat.js";
+import { EVENT_PATH, QUERY_PATH, arrive, channelPage, chatClient, chatMessage, heldIds, rewind, until, watch } from "./stream-chat.js";
 
 describe("Socket", () => {
   let router: TestRouter;
@@ -1455,6 +1455,41 @@ describe("Session", () => {
     assert.deepEqual(await connection.next(), { type: "interrupt" });
 
     await session.close();
+  });
+
+  it("stops the reply from the stop button of the channel it opened, until it is closed", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    router.serve("POST", QUERY_PATH, channelPage([]));
+    router.serve("POST", EVENT_PATH, { status: 201, body: { event: { type: "ai_indicator.stop" }, duration: "1ms" } });
+    api.use({ chat: (await chatClient(router.url)) as never });
+    const [session, connection] = await opened();
+    const { channel } = await session.chat();
+    await watch(channel);
+    // What the default stop button of stream-chat-react's composer calls.
+    const stopButton = () => (channel as { stopAIResponse(): Promise<void> }).stopAIResponse();
+    const stopEvents = () =>
+      router.requestsTo("POST", EVENT_PATH).map((one) => (one.body as { event?: { type?: string } }).event?.type);
+
+    await stopButton();
+
+    assert.deepEqual(await connection.next(), { type: "interrupt" });
+    assert.deepEqual(stopEvents(), ["ai_indicator.stop"], "the views that follow the event still get it");
+
+    await session.close();
+    assert.deepEqual(await connection.next(), { type: "close" });
+    // A closed session's socket refuses an interrupt, so the button would reject if still attached.
+    await stopButton();
+    assert.deepEqual(stopEvents(), ["ai_indicator.stop", "ai_indicator.stop"]);
   });
 
   it("opens the channel on the chat client the app handed over, and leaves it connected", async () => {
