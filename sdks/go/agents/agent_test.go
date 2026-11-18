@@ -35,6 +35,8 @@ type backend struct {
 	updates []string
 	// refuseSkills, when set, is the reason POST /v1/agents/skills answers 400.
 	refuseSkills string
+	// refuseSkillEdits, when set, is the reason PUT /v1/agents/skills/{id} answers 400.
+	refuseSkillEdits string
 	// connections answers GET /v1/agents/connections. Nil answers an empty page.
 	connections       func(*http.Request) acceleration.ConnectionPage
 	connectionQueries []string
@@ -129,6 +131,10 @@ func newBackend(t *testing.T) *backend {
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
+		if router.refuseSkillEdits != "" {
+			reply(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: router.refuseSkillEdits}})
+			return
+		}
 		if !router.skillAllowed(w, request) {
 			return
 		}
@@ -574,7 +580,7 @@ func TestSyncSaysWhyTheRouterRefusedASkillEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	router.mu.Lock()
-	router.refuseSkills = "a skill may bring at most 64 files"
+	router.refuseSkillEdits = "a skill may bring at most 64 files"
 	router.mu.Unlock()
 	_, err := agent.Sync(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
