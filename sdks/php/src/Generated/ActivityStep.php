@@ -7,16 +7,19 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then
- * steady_use, which is conversations or model calls answered on three UTC days or more. A step
- * counts only answered requests: an area whose every request was refused was tried, not
- * reached.
+ * The furthest an organization got: none, dashboard_reads, agent_setup, workers,
+ * conversations, voice_video, phone_sms, then steady_use, which is conversations or model
+ * calls answered on three UTC days or more. A step counts only answered requests: an area
+ * whose every request was refused was tried, not reached.
  */
 enum ActivityStep: string
 {
     case None = 'none';
     case DashboardReads = 'dashboard_reads';
     case AgentSetup = 'agent_setup';
+    case Workers = 'workers';
     case Conversations = 'conversations';
+    case VoiceVideo = 'voice_video';
+    case PhoneSms = 'phone_sms';
     case SteadyUse = 'steady_use';
 }

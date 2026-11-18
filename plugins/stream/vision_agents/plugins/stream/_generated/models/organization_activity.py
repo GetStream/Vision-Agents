@@ -27,9 +27,10 @@ class OrganizationActivity:
     Attributes:
         areas (list[ActivityArea] | None): Every area and client the organization's apps made requests in, by area then
             client.
-        furthest_step (ActivityStep): The furthest an organization got: none, dashboard_reads, agent_setup,
-            conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step
-            counts only answered requests: an area whose every request was refused was tried, not reached.
+        furthest_step (ActivityStep): The furthest an organization got: none, dashboard_reads, agent_setup, workers,
+            conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three
+            UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not
+            reached.
         meters (list[ActivityMeter] | None): What the organization's apps' work came to, by modality, from the shards
             listed in shards.
         organization_id (str): The organization.

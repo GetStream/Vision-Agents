@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router posts a daily digest of Agents activity
+
+Each morning, after 00:05 UTC, the router posts yesterday's (UTC) Agents activity to the money notices' Slack channel (`ROUTER_LIMITS_SLACK_CHANNEL`). The digest lists the organizations whose first request was yesterday, with how far each got. It lists the organizations whose every request was refused, with the refusal code. It also gives the number of active organizations, with the day before for comparison. One router posts the digest once per day, whatever the number of routers and restarts. A new table, `activity_digests`, holds the per-day marker (an additive migration). The ladder of `furthest_step` on `GET /v1/ops/orgs/{org_id}/activity` now has `workers`, `voice_video` and `phone_sms` (#2075).
+
 ### The router counts hooks, forwards and socket refusals under the app
 
 A hook Stream, Telnyx or a channel's provider signed is counted in the activity record under its app and organization once its signature or token checks out: `hooks_in`, or `phone_sms` for phone and SMS. A forward to an event destination counts once under `webhooks_out`, refused with why when it is given up, and a `/v1/agents/socket` start refused in a frame counts as refused with its code rather than as answered (#2066).

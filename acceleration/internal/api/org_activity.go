@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -40,21 +39,22 @@ const (
 	activityStepNone           ActivityStep = "none"
 	activityStepDashboardReads ActivityStep = activity.AreaDashboardReads
 	activityStepAgentSetup     ActivityStep = activity.AreaAgentSetup
+	activityStepWorkers        ActivityStep = activity.AreaWorkers
 	activityStepConversations  ActivityStep = activity.AreaConversations
+	activityStepVoiceVideo     ActivityStep = activity.AreaVoiceVideo
+	activityStepPhoneSMS       ActivityStep = activity.AreaPhoneSMS
 	activityStepSteadyUse      ActivityStep = "steady_use"
 )
 
-// activitySteps are the steps an area reaches, the furthest last.
-var activitySteps = []ActivityStep{activityStepDashboardReads, activityStepAgentSetup, activityStepConversations}
-
 func (ActivityStep) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ActivityStep",
-		"The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then "+
-			"steady_use, which is conversations or model calls answered on three UTC days or more. A "+
-			"step counts only answered requests: an area whose every request was refused was tried, "+
-			"not reached.",
+		"The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, "+
+			"voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three "+
+			"UTC days or more. A step counts only answered requests: an area whose every request was refused "+
+			"was tried, not reached.",
 		string(activityStepNone), string(activityStepDashboardReads), string(activityStepAgentSetup),
-		string(activityStepConversations), string(activityStepSteadyUse))
+		string(activityStepWorkers), string(activityStepConversations), string(activityStepVoiceVideo),
+		string(activityStepPhoneSMS), string(activityStepSteadyUse))
 }
 
 // ActivityArea is what an organization's apps did in one area of the API from one client.
@@ -251,16 +251,10 @@ func furthestStep(areas []store.ActivityArea, days int) ActivityStep {
 	if days >= steadyDays {
 		return activityStepSteadyUse
 	}
-	furthest := -1
-	for _, area := range areas {
-		if area.Requests > area.Refused {
-			furthest = max(furthest, slices.Index(activitySteps, ActivityStep(area.Area)))
-		}
+	if step := activity.FurthestStep(areas); step != "" {
+		return ActivityStep(step)
 	}
-	if furthest < 0 {
-		return activityStepNone
-	}
-	return activitySteps[furthest]
+	return activityStepNone
 }
 
 // registerOrganizationActivity declares Stream staff's read of an organization's activity,

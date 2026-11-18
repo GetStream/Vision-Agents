@@ -354,7 +354,7 @@ pub struct ActivitySessions {
     ///How many of them have not ended.
     pub running: i64,
 }
-///The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+///The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
@@ -365,8 +365,14 @@ pub enum ActivityStep {
     DashboardReads,
     #[serde(rename = "agent_setup")]
     AgentSetup,
+    #[serde(rename = "workers")]
+    Workers,
     #[serde(rename = "conversations")]
     Conversations,
+    #[serde(rename = "voice_video")]
+    VoiceVideo,
+    #[serde(rename = "phone_sms")]
+    PhoneSms,
     #[serde(rename = "steady_use")]
     SteadyUse,
     /// A value this SDK's spec does not list, as the router sent it.
@@ -379,7 +385,10 @@ impl ::std::fmt::Display for ActivityStep {
             Self::None => f.write_str("none"),
             Self::DashboardReads => f.write_str("dashboard_reads"),
             Self::AgentSetup => f.write_str("agent_setup"),
+            Self::Workers => f.write_str("workers"),
             Self::Conversations => f.write_str("conversations"),
+            Self::VoiceVideo => f.write_str("voice_video"),
+            Self::PhoneSms => f.write_str("phone_sms"),
             Self::SteadyUse => f.write_str("steady_use"),
             Self::Unlisted(ref value) => f.write_str(value),
         }
@@ -392,7 +401,10 @@ impl ::std::str::FromStr for ActivityStep {
             "none" => Ok(Self::None),
             "dashboard_reads" => Ok(Self::DashboardReads),
             "agent_setup" => Ok(Self::AgentSetup),
+            "workers" => Ok(Self::Workers),
             "conversations" => Ok(Self::Conversations),
+            "voice_video" => Ok(Self::VoiceVideo),
+            "phone_sms" => Ok(Self::PhoneSms),
             "steady_use" => Ok(Self::SteadyUse),
             _ => Err("invalid value".into()),
         }

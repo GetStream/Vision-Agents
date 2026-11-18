@@ -103,7 +103,10 @@ const (
 	ActivityStepConversations  ActivityStep = "conversations"
 	ActivityStepDashboardReads ActivityStep = "dashboard_reads"
 	ActivityStepNone           ActivityStep = "none"
+	ActivityStepPhoneSms       ActivityStep = "phone_sms"
 	ActivityStepSteadyUse      ActivityStep = "steady_use"
+	ActivityStepVoiceVideo     ActivityStep = "voice_video"
+	ActivityStepWorkers        ActivityStep = "workers"
 )
 
 // Valid indicates whether the value is a known member of the ActivityStep enum.
@@ -117,7 +120,13 @@ func (e ActivityStep) Valid() bool {
 		return true
 	case ActivityStepNone:
 		return true
+	case ActivityStepPhoneSms:
+		return true
 	case ActivityStepSteadyUse:
+		return true
+	case ActivityStepVoiceVideo:
+		return true
+	case ActivityStepWorkers:
 		return true
 	default:
 		return false
@@ -3530,7 +3539,7 @@ type ActivitySessions struct {
 	Running int64 `json:"running"`
 }
 
-// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 type ActivityStep string
 
 // AddContactsRequest defines model for AddContactsRequest.
@@ -7708,7 +7717,7 @@ type OrganizationActivity struct {
 	// FirstSeen When the first request of any area arrived, absent when none did.
 	FirstSeen *time.Time `json:"first_seen,omitempty"`
 
-	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 	FurthestStep ActivityStep `json:"furthest_step"`
 
 	// LastSeen When the last request of any area arrived, absent when none did.

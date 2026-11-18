@@ -804,7 +804,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer stopSweeper()
 	}
 
-	// One router of the deployment checks every organization's spend for a jump each hour.
+	// One router of the deployment checks every organization's spend for a jump each hour, and posts
+	// the day before's activity digest each day.
 	if anomalies := costAnomalies(settings, pgStore, logger); anomalies != nil {
 		anomalies.Start()
 		defer anomalies.Close()

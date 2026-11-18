@@ -4784,10 +4784,10 @@ export type components = {
             readonly running: number;
         };
         /**
-         * @description The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+         * @description The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
          * @enum {string}
          */
-        readonly ActivityStep: "none" | "dashboard_reads" | "agent_setup" | "conversations" | "steady_use";
+        readonly ActivityStep: "none" | "dashboard_reads" | "agent_setup" | "workers" | "conversations" | "voice_video" | "phone_sms" | "steady_use";
         readonly AddContactsRequest: {
             /** @description Up to 1,000. */
             readonly contacts: readonly components["schemas"]["ContactInput"][];
