@@ -13,7 +13,7 @@ import {
 import described from "../../swift_assistant/app/SwiftAssistant/UIComponents.json";
 import { Assistant } from "./assistant";
 import bookingDescribed from "./bookingComponents.json";
-import type { ChatScreen } from "./chatScreen";
+import type { ChatScreen, ChatScreenSnapshot } from "./chatScreen";
 import { calendarDays } from "./reminders";
 import { isReservationOf, RESERVE_TABLE, reserveTable, type DiningTable, type Reservation } from "./reserveTable";
 import { useSelected } from "./store";
@@ -278,7 +278,8 @@ type SeatSelectorArguments = { tables: DiningTable[] };
  */
 function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArguments>) {
   const screen = useContext(ChatScreenContext);
-  const reservation = useSelected(screen ?? noScreen, (state) =>
+  const shown: CardState = screen ?? noScreen;
+  const reservation = useSelected(shown, (state) =>
     isReservationOf(state.reservation, args.tables) ? state.reservation : undefined,
   );
   const [selected, setSelected] = useState<string | undefined>(
@@ -286,16 +287,19 @@ function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArgument
   );
   const tables = useRef(args.tables);
   tables.current = args.tables;
+  // A conversation carried on shows its messages before its session is back, so a card in them
+  // brings its tool once the session is open.
+  const isOpen = useSelected(shown, (state) => state.session !== undefined);
   const isBooked = reservation !== undefined;
 
   // Brought once the tables are all in, which is when the tool can tell a free one.
   useEffect(() => {
-    if (!screen || isBooked || context.isStreaming) return;
+    if (!screen || !isOpen || isBooked || context.isStreaming) return;
     void screen.bring(
       RESERVE_TABLE,
       reserveTable(tables.current, Assistant.user.name, (made) => screen.reserved(made)),
     );
-  }, [screen, isBooked, context.isStreaming]);
+  }, [screen, isOpen, isBooked, context.isStreaming]);
 
   if (reservation) return <ReservationConfirmation reservation={reservation} />;
   return (
@@ -325,9 +329,15 @@ function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArgument
   );
 }
 
-/** A store holding no reservation, for a seat selector shown outside a conversation. */
-const noScreen = {
-  get: () => ({ reservation: undefined as Reservation | undefined }),
+/** What of the conversation a seat selector follows: its session and the booking made in it. */
+type CardState = {
+  get: () => Pick<ChatScreenSnapshot, "session" | "reservation">;
+  subscribe: (listener: () => void) => () => void;
+};
+
+/** No session or reservation, for a seat selector shown outside a conversation. */
+const noScreen: CardState = {
+  get: () => ({ session: undefined, reservation: undefined }),
   subscribe: () => () => undefined,
 };
 
