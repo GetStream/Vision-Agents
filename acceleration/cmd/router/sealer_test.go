@@ -293,6 +293,15 @@ func (s *ConnectorSealerSuite) TestARetiredNameSetEmptyIsNotAKey() {
 	s.Nil(sealer)
 }
 
+func (s *ConnectorSealerSuite) TestAnUnrelatedNameBeginningWithTheRetiredOneIsNotAKey() {
+	// A backup of the old key kept beside it in the environment is no keyring.
+	s.T().Setenv("ROUTER_AUTH_KEK_BACKUP", "first-key")
+
+	sealer, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	s.Nil(sealer)
+}
+
 func (s *ConnectorSealerSuite) TestAppTenancyBuildsTheSealerInProxyMode() {
 	// Every Stream app's keys are sealed under the keyring, whatever decides who calls.
 	s.settings.Stream.Tenancy = config.TenancyApp

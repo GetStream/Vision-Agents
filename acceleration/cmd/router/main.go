@@ -364,7 +364,7 @@ func keyringSet(settings config.Config) bool {
 	}
 	for _, variable := range os.Environ() {
 		name, key, _ := strings.Cut(variable, "=")
-		if strings.HasPrefix(name, authKEKEnvVar) && key != "" {
+		if (name == authKEKEnvVar || strings.HasPrefix(name, authKEKEnvVar+"_V")) && key != "" {
 			return true
 		}
 	}
