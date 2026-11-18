@@ -88,7 +88,8 @@ void main() {
       await chat.close();
     });
 
-    test('taking back a refused question keeps what a card being written has so far', () async {
+    test('a refused question leaves the card being written intact', () async {
+      // The person asks while a card streams, and the router refuses the question.
       router.answer(
         'POST /v1/agents/sessions/s1/responses',
         Answer(429, errorJson('rate_limited', 'rate_limited', 'slow down')),
