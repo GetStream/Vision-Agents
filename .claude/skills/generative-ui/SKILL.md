@@ -25,9 +25,21 @@ model tokens
 ## The agent.yaml `ui:` key
 
 `ui:` tells the model what it may draw. The SDK that loads the folder compiles it into a
-`## Interactive UI Generation` section appended to `instructions.md`, so it is synced as part of
-the instructions and the router sees only text. The output is deterministic, so the prompt
-prefix stays cacheable across turns.
+`## Interactive UI Generation` section and syncs it as the config's `ui_instructions`, apart from
+`instructions.md`, so the router sees only text. The output is deterministic, so the prompt
+prefix stays cacheable across turns. The prompt is mixed mode: the model answers in prose and
+adds a card only when it helps.
+
+The router tells the model `ui_instructions` after the instructions (`session.Spec.prompt`),
+unless the session was opened with `ui: false`, which a device may send. The router then omits
+`ui_instructions`, so an app that shows no UI leaves the catalog out of every turn and can expect
+prose; this does not prevent the model from producing UI blocks, which are still split off the
+reply. The session row keeps the choice (`agent_sessions.no_ui`), so a reopened or forked
+conversation is not told them either. Go writes
+`ui_instructions`; JavaScript still appends the section to `instructions`, where no session can
+turn it off. A renderer's own prompt pasted into `instructions.md` (`stream-chat-react`'s
+`openUIInstructions` is OpenUI's, 53 KB, and says the entire reply must be openui-lang) can't be
+turned off either and contradicts prose plus one block: use `ui:` instead.
 
 ```yaml
 # agents/concierge/agent.yaml
@@ -57,12 +69,13 @@ ui:
 Paths are relative to the agent directory and may not leave it (symlinks included); each file is
 capped at 512 KiB.
 
-Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`) and JavaScript (`sdks/js/src/ui-catalog.ts`,
+Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`, into `Folder.UIInstructions`) and JavaScript (`sdks/js/src/ui-catalog.ts`,
 from `loadFolder` in `folder.ts`). Python, .NET, Ruby, Rust and PHP don't read `ui:` yet (see the
 note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an unknown key
 (`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
 folder: `sdks/testdata/ui/concierge/` is compiled by a Go test and a JavaScript test, both held to
-`sdks/testdata/ui/concierge.instructions.txt`, which Go writes. An SDK that adds `ui:` checks itself
+`sdks/testdata/ui/concierge.instructions.txt`, which Go writes: what the model is told, the
+instructions and the UI joined by a blank line, as the router joins them. An SDK that adds `ui:` checks itself
 against the same pair. `a2ui` is compiled by Go (`sdks/go/agents/ui_a2ui.go`) and JavaScript
 (`sdks/js/src/ui-a2ui.ts`), both held to `sdks/testdata/ui/concierge-a2ui/` and
 `concierge-a2ui.instructions.txt`. JavaScript parses this YAML by hand; it still differs from yaml.v3 on

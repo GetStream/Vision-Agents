@@ -156,6 +156,11 @@ class CreateSessionRequest:
             the team the caller's token names, else the agent config's team tag. A token naming another team is refused with
             a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a
             403, since its team is the one its token was signed for.
+        ui (bool | Unset): Whether the model is told its config's ui_instructions in this session. Left out or true, it
+            is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter:
+            instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply.
+            Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the
+            agent's owner wrote.
     """
 
     agent: str | Unset = UNSET
@@ -201,6 +206,7 @@ class CreateSessionRequest:
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     team: str | Unset = UNSET
+    ui: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -329,6 +335,8 @@ class CreateSessionRequest:
 
         team = self.team
 
+        ui = self.ui
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -418,6 +426,8 @@ class CreateSessionRequest:
             field_dict["voice"] = voice
         if team is not UNSET:
             field_dict["team"] = team
+        if ui is not UNSET:
+            field_dict["ui"] = ui
 
         return field_dict
 
@@ -597,6 +607,8 @@ class CreateSessionRequest:
 
         team = d.pop("team", UNSET)
 
+        ui = d.pop("ui", UNSET)
+
         create_session_request = cls(
             agent=agent,
             agent_id=agent_id,
@@ -641,6 +653,7 @@ class CreateSessionRequest:
             video=video,
             voice=voice,
             team=team,
+            ui=ui,
         )
 
         create_session_request.additional_properties = d

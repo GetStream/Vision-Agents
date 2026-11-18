@@ -152,6 +152,9 @@ class SyncAgentRequest:
                 stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
             image (str | Unset): agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an
                 empty string removes it.
+            ui_instructions (str | Unset): What teaches the agent's model to answer with UI, which the SDK compiles from
+                agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out,
+                the agent is taught none.
     """
 
     hash_: str
@@ -196,6 +199,7 @@ class SyncAgentRequest:
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
     image: str | Unset = UNSET
+    ui_instructions: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -378,6 +382,8 @@ class SyncAgentRequest:
 
         image = self.image
 
+        ui_instructions = self.ui_instructions
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -466,6 +472,8 @@ class SyncAgentRequest:
             field_dict["agents"] = agents
         if image is not UNSET:
             field_dict["image"] = image
+        if ui_instructions is not UNSET:
+            field_dict["ui_instructions"] = ui_instructions
 
         return field_dict
 
@@ -763,6 +771,8 @@ class SyncAgentRequest:
 
         image = d.pop("image", UNSET)
 
+        ui_instructions = d.pop("ui_instructions", UNSET)
+
         sync_agent_request = cls(
             hash_=hash_,
             name=name,
@@ -806,6 +816,7 @@ class SyncAgentRequest:
             chat_channels=chat_channels,
             agents=agents,
             image=image,
+            ui_instructions=ui_instructions,
         )
 
         sync_agent_request.additional_properties = d

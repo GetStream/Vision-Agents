@@ -58,8 +58,12 @@ struct BackendError: LocalizedError {
 
 /// The app's settings: how the agent answers, and the brand its UI wears.
 struct SettingsScreen: View {
+    /// Where whether this device's new conversations may have UI is kept.
+    static let cardsKey = "cardsInNewConversations"
+
     @Environment(\.dismiss) private var dismiss
     @AppStorage(Brand.storageKey) private var brand = Brand.stream
+    @AppStorage(SettingsScreen.cardsKey) private var cards = true
     @State private var format: ReplyFormat?
     @State private var isChoosing = false
     @State private var failure: String?
@@ -94,6 +98,14 @@ struct SettingsScreen: View {
                                 .foregroundStyle(.red)
                         }
                     }
+                }
+                Section {
+                    Toggle("Interactive UI", isOn: $cards)
+                } footer: {
+                    Text("""
+                    Off leaves the UI instructions the replies above chose out of this device's \
+                    new conversations, so the agent is expected to answer in text.
+                    """)
                 }
                 Section {
                     ForEach(Brand.allCases) { choice in

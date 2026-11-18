@@ -33,6 +33,8 @@ type backend struct {
 	syncs   []acceleration.SyncAgentRequest
 	syncRaw [][]byte
 	updates []string
+	// ignoresUI stores a sync without its ui_instructions, as a router older than them does.
+	ignoresUI bool
 	// connections answers GET /v1/agents/connections. Nil answers an empty page.
 	connections       func(*http.Request) acceleration.ConnectionPage
 	connectionQueries []string
@@ -143,6 +145,9 @@ func newBackend(t *testing.T) *backend {
 			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
 			Subagent: request.Subagent, Llm: request.Llm, Tags: request.Tags,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+		if !router.ignoresUI {
+			stored.UiInstructions = request.UiInstructions
 		}
 		if request.Knowledge != nil || request.KnowledgeUrls != nil {
 			stored.KnowledgeNamespace = &request.Name
@@ -1029,6 +1034,85 @@ func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
 	defer router.mu.Unlock()
 	if len(router.syncs) != 2 {
 		t.Errorf("three syncs, one of them of an edited directory, sent %d requests", len(router.syncs))
+	}
+}
+
+func TestSyncSendsTheUIApartFromTheInstructions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
+	write(t, root, "instructions.md", "You are Juno.\n")
+	router := newBackend(t)
+
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 1 {
+		t.Fatalf("the sync sent %d requests", len(router.syncs))
+	}
+	sent := router.syncs[0]
+	if got := deref(sent.Instructions); got != "You are Juno." {
+		t.Errorf("the instructions went as %q", got)
+	}
+	if ui := deref(sent.UiInstructions); !strings.HasPrefix(ui, "## Interactive UI Generation") || !strings.Contains(ui, "CardHeader(") {
+		t.Errorf("the UI went as %q", ui)
+	}
+}
+
+func TestAChangedUIBlueprintIsSyncedAgain(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
+	write(t, root, "ui/blueprints.yaml", "- name: booking\n  when: booking a table\n  order: [CardHeader]\n")
+	router := newBackend(t)
+
+	for range 2 {
+		if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, root, "ui/blueprints.yaml", "- name: booking\n  when: booking a table for tonight\n  order: [CardHeader]\n")
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Fatalf("three syncs, one of them after the blueprint changed, sent %d requests", len(router.syncs))
+	}
+	if ui := deref(router.syncs[1].UiInstructions); !strings.Contains(ui, "booking a table for tonight") {
+		t.Errorf("the second sync sent the UI %q", ui)
+	}
+}
+
+// A router older than ui_instructions takes the sync and drops them, so the stamp that sync
+// left must not keep the UI from the router once it stores them.
+func TestAStampCoveringUITheStoredConfigLacksIsSyncedAgain(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
+	router := newBackend(t)
+	router.ignoresUI = true
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	router.ignoresUI = false
+	router.mu.Unlock()
+	stored, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if len(router.syncs) != 2 {
+		t.Fatalf("the unchanged directory was sent %d times, not again once the router kept no UI", len(router.syncs))
+	}
+	if ui := deref(stored.UiInstructions); !strings.Contains(ui, "CardHeader(") {
+		t.Errorf("the config came back with the UI %q", ui)
 	}
 }
 

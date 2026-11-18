@@ -623,6 +623,9 @@ components:
           $ref: '#/components/schemas/AgentTools'
         tts:
           type: string
+        ui_instructions:
+          description: Absent when the agent is taught no UI.
+          type: string
         updated_at:
           format: date-time
           type: string
@@ -769,6 +772,9 @@ components:
         tools:
           $ref: '#/components/schemas/AgentTools'
         tts:
+          type: string
+        ui_instructions:
+          description: What teaches the agent's model to answer with UI. An empty string removes them.
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'
@@ -919,6 +925,9 @@ components:
           $ref: '#/components/schemas/AgentTools'
           description: How the agent is offered its connector tools. Left out on an update, the stored settings stay.
         tts:
+          type: string
+        ui_instructions:
+          description: What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay.
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'
@@ -4420,6 +4429,9 @@ components:
         tts:
           description: Omit it and the config decides, or en-low-latency when there is no config.
           type: string
+        ui:
+          description: 'Whether the model is told its config''s ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent''s owner wrote.'
+          type: boolean
         user_id:
           default: vision-agent
           description: The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
@@ -10585,6 +10597,9 @@ components:
           $ref: '#/components/schemas/AgentTools'
           description: How connector tools are offered. A setting left out keeps what is stored.
         tts:
+          type: string
+        ui_instructions:
+          description: What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none.
           type: string
         video:
           $ref: '#/components/schemas/SessionVideo'

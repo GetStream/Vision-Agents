@@ -120,6 +120,7 @@ class AgentConfig:
         agents (list[ChildAgent] | Unset): The app's other text agents this one may hand work to, each as a tool. Absent
             when there are none.
         image (str | Unset):
+        ui_instructions (str | Unset): Absent when the agent is taught no UI.
     """
 
     created_at: datetime.datetime
@@ -164,6 +165,7 @@ class AgentConfig:
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
     image: str | Unset = UNSET
+    ui_instructions: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -311,6 +313,8 @@ class AgentConfig:
 
         image = self.image
 
+        ui_instructions = self.ui_instructions
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -395,6 +399,8 @@ class AgentConfig:
             field_dict["agents"] = agents
         if image is not UNSET:
             field_dict["image"] = image
+        if ui_instructions is not UNSET:
+            field_dict["ui_instructions"] = ui_instructions
 
         return field_dict
 
@@ -612,6 +618,8 @@ class AgentConfig:
 
         image = d.pop("image", UNSET)
 
+        ui_instructions = d.pop("ui_instructions", UNSET)
+
         agent_config = cls(
             created_at=created_at,
             id=id,
@@ -655,6 +663,7 @@ class AgentConfig:
             chat_channels=chat_channels,
             agents=agents,
             image=image,
+            ui_instructions=ui_instructions,
         )
 
         agent_config.additional_properties = d
