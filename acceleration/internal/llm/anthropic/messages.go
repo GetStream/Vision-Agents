@@ -99,13 +99,31 @@ func newMessages(options Options) (*LLM, error) {
 // model, measured or not, is told on the user's side, as it always was.
 var systemTurnModels = []string{"claude-opus-5-5", "claude-opus-5"}
 
-// efforts are the output_config efforts a model takes: low, medium and high, which Opus,
-// Sonnet and Haiku 5.5 each answered with a 200 on 2026-11-13.
-func efforts(model string) []string {
-	if strings.HasPrefix(model, "claude-") {
-		return []string{"low", "medium", "high"}
+// xhighModels and maxModels take the efforts above high, by the API's effort page
+// (platform.claude.com/docs/en/build-with-claude/effort): xhigh and max on the first, max
+// alone on the second. Any other Claude model gets low, medium and high.
+var (
+	xhighModels = []string{
+		"claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5",
+		"claude-opus-4-8", "claude-opus-4-7",
 	}
-	return nil
+	maxModels = []string{"claude-mythos-preview", "claude-opus-4-6", "claude-sonnet-4-6"}
+)
+
+// efforts are the output_config efforts a model takes.
+func efforts(model string) []string {
+	if !strings.HasPrefix(model, "claude-") {
+		return nil
+	}
+	family := datedModel.ReplaceAllString(model, "")
+	isFamily := func(prefix string) bool { return strings.HasPrefix(family, prefix) }
+	switch {
+	case slices.ContainsFunc(xhighModels, isFamily):
+		return []string{"low", "medium", "high", "xhigh", "max"}
+	case slices.ContainsFunc(maxModels, isFamily):
+		return []string{"low", "medium", "high", "max"}
+	}
+	return []string{"low", "medium", "high"}
 }
 
 // defaultEffort is the API's own default for a model that takes an effort.
