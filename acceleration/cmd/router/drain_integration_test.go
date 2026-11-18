@@ -54,6 +54,10 @@ func TestDrainSuite(t *testing.T) {
 	suite.Run(t, new(DrainSuite))
 }
 
+func (s *DrainSuite) SetupTest() {
+	clearKeySources(s.T())
+}
+
 func (s *DrainSuite) SetupSuite() {
 	dsn := os.Getenv(dsnEnvVar)
 	if dsn == "" {
@@ -140,7 +144,7 @@ func (s *DrainSuite) TestARouterDrainingAnInboundWriteTakesNoMoreMessages() {
 	settings.Addr = "127.0.0.1:0"
 	settings.Auth.Mode = string(auth.NoAuth)
 	// Connectors, for the channel bridge, seal under a keyring.
-	s.T().Setenv("ROUTER_DEV_KEK", "drain-key")
+	setDevKEK(s.T(), "drain-key")
 	settings.Connectors.Enabled = true
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
 	settings.Chat.InboundKeys = []string{base64.StdEncoding.EncodeToString(public)}
@@ -314,7 +318,7 @@ func (s *DrainSuite) TestADrainingRouterStopsSayingItTakesTrunkCallsOver() {
 	settings := config.Defaults()
 	settings.Postgres.DSN = s.dsn
 	settings.Auth.Mode = string(auth.NoAuth)
-	s.T().Setenv("ROUTER_DEV_KEK", "drain-key")
+	setDevKEK(s.T(), "drain-key")
 	settings.Redis.Addr = address
 	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
 	settings.Stream.AppID = 1

@@ -5,6 +5,7 @@ package main
 import (
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -61,4 +62,23 @@ func (s *KeysCLISuite) TestCreateRefusesTheKeySourcesTheRouterRefuses() {
 			s.EqualError(err, c.want)
 		})
 	}
+}
+
+// clearKeySources empties every key source the shell running the test holds: a router
+// refuses to start beside a retired plain key, and ROUTER_DEV_KEK beside a wrapped one.
+func clearKeySources(t *testing.T) {
+	t.Helper()
+	for _, variable := range os.Environ() {
+		if name, _, _ := strings.Cut(variable, "="); strings.HasPrefix(name, "ROUTER_AUTH_KEK") {
+			t.Setenv(name, "")
+		}
+	}
+	t.Setenv(devKEKEnvVar, "")
+}
+
+// setDevKEK sets ROUTER_DEV_KEK for the test and nothing else that holds a key.
+func setDevKEK(t *testing.T, key string) {
+	t.Helper()
+	clearKeySources(t)
+	t.Setenv(devKEKEnvVar, key)
 }
