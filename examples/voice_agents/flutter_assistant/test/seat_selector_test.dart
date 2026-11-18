@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show HttpOverrides;
 
@@ -5,7 +6,6 @@ import 'dart:io' show HttpOverrides;
 import 'package:flutter/material.dart';
 import 'package:flutter_assistant/agent_chat.dart';
 import 'package:flutter_assistant/brand_theme.dart';
-import 'package:flutter_assistant/openui_renderer.dart';
 import 'package:flutter_assistant/trip_components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
@@ -14,13 +14,27 @@ import 'support/fake_router.dart';
 import 'support/fake_sessions.dart';
 import 'support/ui_message.dart';
 
+const _tools = 'POST /v1/agents/sessions/s1/tools';
+const _withdraw = 'DELETE /v1/agents/sessions/s1/tools/reserve_table';
+const _asked = 'POST /v1/agents/sessions/s1/responses';
+
+/// A seat selector card of [tables], each `id zone seats available`.
+UIMessage _card(String id, List<(String, String, int, bool)> tables, {bool isStreaming = false}) {
+  final items = [
+    for (final (tableId, zone, seats, available) in tables)
+      '{id: "$tableId", zone: "$zone", seats: $seats, available: $available}',
+  ].join(', ');
+  return UIMessage(id, 'root = SeatSelector([$items])', isStreaming: isStreaming);
+}
+
 void main() {
   group('SeatSelectorComponent', () {
     late FakeSessions sessions;
+    late AgentChat chat;
 
     setUp(() async {
-      // The test binding answers every request with a 400; this test talks to a router on
-      // this machine.
+      // The test binding answers every request with a 400; these talk to a router on this
+      // machine.
       final overrides = HttpOverrides.current;
       HttpOverrides.global = null;
       addTearDown(() => HttpOverrides.global = overrides);
@@ -28,97 +42,264 @@ void main() {
     });
     tearDown(() => sessions.dispose());
 
-    /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
-    /// returns the result sent back.
-    Future<Map<String, Object?>> call(AgentChat chat, String tableId) async {
-      (await sessions.socket()).add(
-        jsonEncode({
-          'type': 'tool_call',
-          'id': 'c1',
-          'name': SeatSelectorComponent.reserveTableTool,
-          'arguments': jsonEncode({
-            'table_id': tableId,
-            'when': 'tonight at 8pm',
-            'summary': 'Harbor Window, for 4, tonight at 8pm',
-          }),
-        }),
-      );
-      final session = chat.session!;
-      await until(() => session.approvals.value.isNotEmpty);
-      session.decide('c1', allowed: true);
-      await until(() => sessions.said.any((m) => m.contains('"tool_result"')));
-      return jsonDecode(sessions.said.lastWhere((m) => m.contains('"tool_result"')))
-          as Map<String, Object?>;
-    }
-
-    testWidgets('offers every table of a card written in pieces', (tester) async {
-      final chat = AgentChat('s1', sessions: sessions);
+    /// Opens the conversation the cards are shown in.
+    Future<void> open(WidgetTester tester) async {
+      chat = AgentChat('s1', sessions: sessions);
       addTearDown(chat.dispose);
       addTearDown(() => tester.runAsync(chat.close));
       await tester.runAsync(() async {
         await TripComponents.load();
         await chat.open();
       });
-      final host = AIUIHost(
-        components: TripComponents.all,
-        renderers: [OpenUIRenderer()],
-        send: (_) async {},
-      );
-      addTearDown(host.dispose);
-      Future<void> show(UIMessage reply) async {
-        host.receive([reply]);
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: ThemeData(extensions: [StreamTheme.light()]),
-            home: Scaffold(
-              body: AgentChatScope(
-                chat: chat,
-                child: BrandThemeScope(
-                  child: AIUIView(host: host, document: reply.uiDocument, messageId: 'm1'),
+    }
+
+    /// Shows [replies] in the conversation, each with its card.
+    Future<void> show(WidgetTester tester, List<UIMessage> replies) async {
+      chat.ui.receive(replies);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: [StreamTheme.light()]),
+          home: Scaffold(
+            body: AgentChatScope(
+              chat: chat,
+              child: BrandThemeScope(
+                child: ListView(
+                  children: [
+                    for (final reply in replies)
+                      AIUIView(host: chat.ui, document: reply.uiDocument, messageId: reply.id),
+                  ],
                 ),
               ),
             ),
           ),
-        );
-        await tester.pump();
-      }
-
-      // The agent has written the first table, and is still writing.
-      await show(
-        UIMessage(
-          'm1',
-          'root = SeatSelector([{id: "T1", zone: "Cliff Terrace", seats: 2, available: true}])',
-          isStreaming: true,
         ),
       );
+      await tester.pump();
+    }
+
+    /// Pumps until [done], since a card's work runs as frames are pumped.
+    Future<void> settle(WidgetTester tester, bool Function() done, String failure) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!done()) {
+        if (DateTime.now().isAfter(deadline)) fail(failure);
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+    }
+
+    /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
+    /// returns the result sent back.
+    Future<Map<String, Object?>> call(
+      WidgetTester tester,
+      String tableId, {
+      String id = 'c1',
+      String? summary,
+    }) async {
+      bool answered(String m) => m.contains('"tool_result"') && m.contains('"$id"');
+      final result = await tester.runAsync(() async {
+        (await sessions.socket()).add(
+          jsonEncode({
+            'type': 'tool_call',
+            'id': id,
+            'name': SeatSelectorComponent.reserveTableTool,
+            'arguments': jsonEncode({
+              'table_id': tableId,
+              'when': 'tonight at 8pm',
+              'summary': summary ?? '$tableId, for 2, tonight at 8pm',
+            }),
+          }),
+        );
+        final session = chat.session!;
+        await until(() => session.approvals.value.any((request) => request.call.id == id));
+        session.decide(id, allowed: true);
+        await until(() => sessions.said.any(answered));
+        return jsonDecode(sessions.said.lastWhere(answered)) as Map<String, Object?>;
+      });
+      await tester.pump();
+      return result!;
+    }
+
+    /// Lets the HTTP client the cards' requests went out on drop its idle connection, which
+    /// it does after 15 seconds.
+    Future<void> finish(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 16));
+    }
+
+    bool brought() => sessions.routes.contains(_tools);
+
+    testWidgets('offers every table of a card written in pieces', (tester) async {
+      await open(tester);
+
+      // The agent has written the first table, and is still writing.
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true)], isStreaming: true),
+      ]);
       // A card still being written brings no tool: give a request time to arrive, and see none.
       for (var i = 0; i < 20; i++) {
         await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
         await tester.pump();
       }
-      expect(sessions.routes, isNot(contains('POST /v1/agents/sessions/s1/tools')));
-      await show(
-        UIMessage(
-          'm1',
-          'root = SeatSelector([{id: "T1", zone: "Cliff Terrace", seats: 2, available: true}, '
-              '{id: "T4", zone: "Harbor Window", seats: 4, available: true}])',
-        ),
+      expect(sessions.routes, isNot(contains(_tools)));
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+
+      final result = await call(tester, 'T4');
+
+      expect(result['output'], contains('Reserved table T4'));
+      expect(find.text('Table T4 reserved'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('books a table of a second card', (tester) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+        _card('m2', [('K3', 'Garden', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The cards never brought their tool.');
+
+      final result = await call(tester, 'K3');
+
+      expect(result['output'], contains('Reserved table K3'));
+      expect(find.text('Table K3 reserved'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('keeps the first card\'s booking when a second card is booked', (tester) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+        _card('m2', [('K3', 'Garden', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The cards never brought their tool.');
+
+      await call(tester, 'T4');
+      final second = await call(tester, 'K3', id: 'c2');
+
+      expect(second['output'], contains('Reserved table K3'));
+      expect(find.text('Table T4 reserved'), findsOneWidget);
+      expect(find.text('Table K3 reserved'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('books the card of one venue when another has tables of the same ids', (
+      tester,
+    ) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Terrace', 2, true)]),
+        _card('m2', [('T1', 'Garden', 2, true)]),
+      ]);
+      await settle(tester, brought, 'The cards never brought their tool.');
+
+      await call(tester, 'T1');
+
+      // The newer card is booked, and the other still offers its table.
+      expect(find.text('Table T1 reserved'), findsOneWidget);
+      expect(find.text('Garden · 2 people · tonight at 8pm'), findsOneWidget);
+      expect(find.textContaining('T1 · Terrace'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('books a table a finished card gained when it was written again', (tester) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Terrace', 2, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+      await show(tester, [
+        _card('m1', [('T1', 'Terrace', 2, false), ('T7', 'Garden', 4, true)]),
+      ]);
+      await tester.pump();
+
+      final result = await call(tester, 'T7');
+
+      expect(result['output'], contains('Reserved table T7'));
+      await finish(tester);
+    });
+
+    testWidgets('refuses a second booking of a booked card while its tool is still there', (
+      tester,
+    ) async {
+      await open(tester);
+      sessions.answer(_withdraw, 500);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+      await call(tester, 'T4');
+      await settle(
+        tester,
+        () => sessions.routes.contains(_withdraw),
+        'The tool was never taken back.',
       );
 
-      // The card asks for its tool from the widget tree, whose work runs as frames are pumped.
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (!sessions.routes.contains('POST /v1/agents/sessions/s1/tools')) {
-        if (DateTime.now().isAfter(deadline)) fail('The card never brought its tool.');
+      final second = await call(tester, 'T1', id: 'c2');
+
+      expect(second['error'], isNotEmpty);
+      expect(find.text('Table T4 reserved'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('asks about a table tapped while the card\'s tool is being added once it is', (
+      tester,
+    ) async {
+      await open(tester);
+      final added = Completer<void>();
+      sessions.holdRoute(_tools, added.future);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+
+      await tester.tap(find.textContaining('T4 · Harbor Window'));
+      for (var i = 0; i < 20; i++) {
         await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
         await tester.pump();
       }
-      final result = await tester.runAsync(() => call(chat, 'T4'));
+      expect(sessions.routes, isNot(contains(_asked)));
 
-      expect(result?['output'], contains('Reserved table T4'));
-      expect(chat.reservation.value?.tables, {'T1', 'T4'});
-      await tester.pumpWidget(const SizedBox());
-      // The HTTP client the card's request went out on lets its idle connection go after 15 s.
-      await tester.pump(const Duration(seconds: 16));
+      added.complete();
+      await settle(tester, () => sessions.routes.contains(_asked), 'The table was never asked.');
+      await finish(tester);
+    });
+
+    testWidgets('adds the card\'s tool again when a table is tapped after adding it failed', (
+      tester,
+    ) async {
+      await open(tester);
+      sessions.answer(_tools, 500);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+      sessions.answer(_tools, 204);
+
+      await tester.tap(find.textContaining('T4 · Harbor Window'));
+      await settle(
+        tester,
+        () => sessions.routes.where((route) => route == _tools).length == 2,
+        'The tool was not added again.',
+      );
+      await settle(tester, () => sessions.routes.contains(_asked), 'The table was never asked.');
+      await finish(tester);
+    });
+
+    testWidgets('refuses a booking whose summary does not name the table', (tester) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
+      ]);
+      await settle(tester, brought, 'The card never brought its tool.');
+
+      final result = await call(tester, 'T4', summary: 'Cliff Terrace, for 2, tonight at 8pm');
+
+      expect(result['error'], contains('T4'));
+      expect(find.text('Table T4 reserved'), findsNothing);
+      await finish(tester);
     });
   });
 }

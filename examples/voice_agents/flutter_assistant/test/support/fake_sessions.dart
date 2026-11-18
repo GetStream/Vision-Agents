@@ -44,6 +44,12 @@ class FakeSessions extends AgentSessions {
   /// What the sessions' sockets sent, oldest first.
   List<String> get said => _router.said;
 
+  /// Answers `METHOD /path` with [status] from now on.
+  void answer(String route, int status) => _router.answer(route, status);
+
+  /// Holds the answer to `METHOD /path` back until [until] completes.
+  void holdRoute(String route, Future<void> until) => _router.hold(route, until);
+
   /// How many questions the router was asked.
   int get asked => _router.arrived.where((route) => route.endsWith('/responses')).length;
 

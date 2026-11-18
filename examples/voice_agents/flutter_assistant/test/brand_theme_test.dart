@@ -54,6 +54,15 @@ void main() {
       },
     );
 
+    test('a brand that cannot be saved does not fail the app', () async {
+      SharedPreferencesAsyncPlatform.instance = _UnwritableStore();
+      await BrandProfile.load();
+
+      BrandProfile.active.value = BrandProfile.ember;
+      // The save's failure would surface here, as an error nobody handled.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+
     testWidgets('a card already shown takes on a newly chosen brand', (tester) async {
       final host = AIUIHost(
         components: TripComponents.all,
@@ -103,4 +112,13 @@ base class _UnreadableStore extends InMemorySharedPreferencesAsync {
     saved[key] = value;
     return true;
   }
+}
+
+/// A store that can't be written to, as when the phone's storage is full.
+base class _UnwritableStore extends InMemorySharedPreferencesAsync {
+  _UnwritableStore() : super.empty();
+
+  @override
+  Future<bool> setString(String key, String value, SharedPreferencesOptions options) =>
+      throw PlatformException(code: 'unwritable');
 }

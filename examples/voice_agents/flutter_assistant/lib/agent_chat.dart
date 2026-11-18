@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -8,6 +9,7 @@ import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 import 'package:stream_agents/stream_agents.dart';
 
 import 'assistant.dart';
+import 'device_tools.dart';
 import 'openui_renderer.dart';
 import 'photos.dart';
 import 'trip_components.dart';
@@ -101,9 +103,18 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick.
   final liveUI = LiveUI();
 
-  /// The table the seat selector's tool reserved in this conversation, or null.
-  ValueListenable<Reservation?> get reservation => _reservation;
-  final _reservation = ValueNotifier<Reservation?>(null);
+  /// The tables each seat selector in the conversation offers, oldest first, by the reply it
+  /// is in: the same card shown again is the same offer, and two venues' tables of the same ids
+  /// are two.
+  final _offers = <String, List<DiningTableItem>>{};
+
+  /// The bookings made from the seat selectors, by the offer each was made from.
+  ValueListenable<Map<String, Reservation>> get reservations => _reservations;
+  final _reservations = ValueNotifier<Map<String, Reservation>>(const {});
+
+  /// The tool a card brings while it is being added, which a question waits for, so the reply
+  /// it asks for can call it.
+  Future<void>? _adding;
 
   /// The tools the cards in the conversation brought to its session, by name, so a card shown
   /// again, such as after scrolling back to it, does not bring its tool twice.
@@ -384,6 +395,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     _checkNotStopped(stops, request);
     // Only now, so a new conversation whose first question was never asked is not listed.
     _usedSessionId.value = session.id;
+    await _adding;
     await session.responses.create(
       request.text,
       images: images,
@@ -425,6 +437,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     _failure.value = null;
     try {
       final session = await use();
+      await _adding;
       await session.responses.create(action.label, uiAction: action.toJson());
     } on Object catch (error) {
       if (_closed) return;
@@ -469,11 +482,16 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     }
   }
 
-  /// Gives the agent a tool a card in the conversation brings, the first time the card shows.
-  /// A card is shown in a reply, so the conversation has its session by then.
-  Future<void> bring(AgentTool tool) async {
+  /// Gives the agent a tool a card in the conversation brings, unless it has it already. A card
+  /// is shown in a reply, so the conversation has its session by then. One that could not be
+  /// added is added again the next time a card brings it.
+  Future<void> bring(AgentTool tool) {
     final session = _session;
-    if (session == null || _closed || !_brought.add(tool.name)) return;
+    if (session == null || _closed || !_brought.add(tool.name)) return _adding ?? Future.value();
+    return _adding = _add(session, tool);
+  }
+
+  Future<void> _add(AgentSession session, AgentTool tool) async {
     try {
       await session.addTools([tool]);
     } on Object catch (error) {
@@ -482,24 +500,61 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     }
   }
 
-  /// Takes back a tool a card brought, once the card has done what it was for.
+  /// Takes back a tool a card brought, once the cards have done what they were for. One that
+  /// could not be taken back is taken back the next time this is asked.
   Future<void> withdraw(String name) async {
     final session = _session;
-    if (session == null || _closed || !_brought.remove(name)) return;
+    if (session == null || _closed || !_brought.contains(name)) return;
     try {
       await session.removeTool(name);
+      _brought.remove(name);
     } on Object catch (error) {
       if (!_closed) _failure.value = '$error';
     }
   }
 
-  /// Keeps the table the seat selector's tool reserved, and takes the tool back: the card has
-  /// done what it was for. The tool's answer does not wait for that, since the router takes the
-  /// tool back only once the call that reserved it has finished.
-  void reserved(Reservation reservation) {
+  /// Offers [tables] from the seat selector of reply [offer], or its newer version, and gives
+  /// the agent the tool to book them while the offer is not booked.
+  void offer(String offer, List<DiningTableItem> tables) {
     if (_closed) return;
-    _reservation.value = reservation;
-    unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
+    _offers[offer] = tables;
+    if (_reservations.value.containsKey(offer)) return;
+    unawaited(bring(SeatSelectorComponent.reserveTable(reserve)));
+  }
+
+  /// Books table [tableId] for [when] from the newest offer that has it free and is not booked,
+  /// and takes the tool back once every offer is booked. The tool's answer does not wait for
+  /// that, since the router takes the tool back only once the call that booked has finished.
+  ///
+  /// Throws a [ToolFailure] naming the free tables when no offer has it.
+  Reservation reserve(String tableId, String when) {
+    if (_closed) throw const ToolFailure('The conversation has closed.');
+    final booked = _reservations.value;
+    for (final MapEntry(key: offer, value: tables) in _offers.entries.toList().reversed) {
+      if (booked.containsKey(offer)) continue;
+      final table = tables.where((t) => t.id == tableId && t.available).firstOrNull;
+      if (table == null) continue;
+      final reservation = (table: table, when: when, code: _confirmationCode(), offer: offer);
+      _reservations.value = {...booked, offer: reservation};
+      if (_offers.keys.every(_reservations.value.containsKey)) {
+        unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
+      }
+      return reservation;
+    }
+    final free = [
+      for (final MapEntry(key: offer, value: tables) in _offers.entries)
+        if (!booked.containsKey(offer))
+          for (final table in tables)
+            if (table.available) table.id,
+    ];
+    throw ToolFailure(
+      '$tableId is not a free table on a seat selector. The free ones are ${free.join(', ')}.',
+    );
+  }
+
+  static String _confirmationCode() {
+    final random = math.Random.secure();
+    return [for (var i = 0; i < 6; i++) '0123456789ABCDEF'[random.nextInt(16)]].join();
   }
 
   /// Loads the messages before the oldest one loaded.
@@ -557,7 +612,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// Releases what the chat holds, once [close] has completed.
   void dispose() {
     ui.dispose();
-    _reservation.dispose();
+    _reservations.dispose();
     _usedSessionId.dispose();
     _sessionFailure.dispose();
     _failure.dispose();

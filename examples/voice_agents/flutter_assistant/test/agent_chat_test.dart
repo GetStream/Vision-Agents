@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_assistant/agent_chat.dart';
+import 'package:flutter_assistant/device_tools.dart';
 import 'package:flutter_assistant/trip_components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
@@ -533,8 +534,14 @@ void main() {
         (id: 'T4', zone: 'Harbor Window', seats: 4, available: true),
       ];
 
-      AgentTool reserveTable(AgentChat chat) =>
-          SeatSelectorComponent.reserveTable(tables, chat.reserved);
+      const tools = 'POST /v1/agents/sessions/s1/tools';
+
+      /// Offers [tables] from reply m1, as its card does once it is written, and waits for the
+      /// tool to be added.
+      Future<void> offer(AgentChat chat) async {
+        chat.offer('m1', tables);
+        await until(() => sessions.routes.contains(tools));
+      }
 
       /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
       /// returns the result sent back.
@@ -548,7 +555,7 @@ void main() {
             'arguments': jsonEncode({
               'table_id': tableId,
               'when': 'tonight at 8pm',
-              'summary': 'Harbor Window, for 4, tonight at 8pm',
+              'summary': '$tableId, for 4, tonight at 8pm',
             }),
           }),
         );
@@ -563,27 +570,23 @@ void main() {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
 
-        await chat.bring(reserveTable(chat));
-        await chat.bring(reserveTable(chat));
+        await offer(chat);
+        chat.offer('m1', tables);
 
-        expect(
-          sessions.routes.where((r) => r == 'POST /v1/agents/sessions/s1/tools'),
-          hasLength(1),
-        );
+        expect(sessions.routes.where((r) => r == tools), hasLength(1));
       });
 
       test('reserves a free table, keeps the booking and takes its tool back', () async {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
-        await chat.bring(reserveTable(chat));
+        await offer(chat);
 
         final result = await call(chat, 'T4');
 
         expect(result['output'], contains('Reserved table T4'));
         expect(result['error'], isEmpty);
-        expect(chat.reservation.value?.table.id, 'T4');
-        expect(chat.reservation.value?.when, 'tonight at 8pm');
-        expect(chat.reservation.value?.tables, {'T1', 'T4'});
+        expect(chat.reservations.value['m1']?.table.id, 'T4');
+        expect(chat.reservations.value['m1']?.when, 'tonight at 8pm');
         await until(
           () => sessions.routes.contains('DELETE /v1/agents/sessions/s1/tools/reserve_table'),
         );
@@ -592,28 +595,24 @@ void main() {
       test('refuses a taken table, naming the free ones, and keeps its tool', () async {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
-        await chat.bring(reserveTable(chat));
+        await offer(chat);
 
         final result = await call(chat, 'T1');
 
         expect(result['error'], allOf(contains('T1 is not a free table'), contains('T4')));
-        expect(chat.reservation.value, isNull);
+        expect(chat.reservations.value, isEmpty);
         // The tool is still there to reserve a free table.
         expect((await call(chat, 'T4', id: 'c2'))['output'], contains('Reserved table T4'));
       });
 
-      // Setting the booking on the chat let go of would throw: its notifier is disposed.
-      test('a booking that arrives after the chat was let go of changes nothing', () async {
+      // Booking on the chat let go of would throw from its disposed notifier instead.
+      test('refuses a booking that arrives after the chat was let go of', () async {
         final chat = AgentChat('s1', sessions: sessions);
+        chat.offer('m1', tables);
         await chat.close();
         chat.dispose();
 
-        chat.reserved((
-          table: tables.last,
-          when: 'tonight at 8pm',
-          code: 'A1B2C3',
-          tables: {'T1', 'T4'},
-        ));
+        expect(() => chat.reserve('T4', 'tonight at 8pm'), throwsA(isA<ToolFailure>()));
       });
     });
 

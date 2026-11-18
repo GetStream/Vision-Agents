@@ -193,14 +193,15 @@ venue, an `AvailabilityGauge` of how full the first one is and a `SeatSelector` 
 also the app's own. Tapping a free table asks to reserve it.
 
 - **A card brings its own tool.** The agent cannot book a table until a seat selector is on the
-  screen: the card defines `reserve_table` (`SeatSelectorComponent.reserveTable`) and gives it to
-  the conversation's session the first time it shows, with `AgentSession.addTools`. Tapping a
-  free table then has the agent call it, which asks first ("Reserve this table?") and takes only
-  a free table from the card. Once you allow it the card turns into the booking: the table, the
-  time and a confirmation code, which it keeps if the agent shows the same tables again. The
-  card has done what it was for, so it takes the tool back with `AgentSession.removeTool`. The
-  router's `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists
-  `reserve_table` as `session` while the card's tool is given.
+  screen: once a card is written, it offers its tables to the conversation, which gives its
+  session `reserve_table` (`SeatSelectorComponent.reserveTable`) with `AgentSession.addTools`.
+  Tapping a free table has the agent call it, which asks first ("Reserve this table?", with the
+  table it names) and books only a free table a card on the screen offers. Once you allow it
+  that card turns into the booking: the table, the time and a confirmation code. Each card keeps
+  its own booking, so a conversation that showed two venues can book at both. Once every card
+  is booked the tool is taken back with `AgentSession.removeTool`. The router's
+  `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists `reserve_table`
+  as `session` while it is given.
 - **The UI streams in over the socket.** The router sends a reply's UI on the session's socket
   as the model writes it (`ui_delta`, then `ui_completed`), and writes it on the reply's message
   in Chat later, on a slower tick. `AgentChat` reads each turn's UI into the SDK's `LiveUI`, which

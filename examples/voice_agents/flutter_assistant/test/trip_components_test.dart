@@ -59,17 +59,12 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       expect(find.text('Select a table zone'), findsNWidgets(2));
       expect(find.textContaining('T4 · Harbor Window'), findsOneWidget);
 
-      chat.reserved((
-        table: (id: 'T4', zone: 'Harbor Window', seats: 4, available: true),
-        when: 'tonight at 8pm',
-        code: 'A1B2C3',
-        tables: {'T1', 'T4'},
-      ));
+      final reservation = chat.reserve('T4', 'tonight at 8pm');
       await tester.pumpAndSettle();
 
       expect(find.text('Table T4 reserved'), findsOneWidget);
       expect(find.text('Harbor Window · 4 people · tonight at 8pm'), findsOneWidget);
-      expect(find.text('Confirmation A1B2C3'), findsOneWidget);
+      expect(find.text('Confirmation ${reservation.code}'), findsOneWidget);
       // The booked card no longer offers its tables.
       expect(find.textContaining('T1 · Cliff Terrace'), findsNothing);
       expect(find.textContaining('T4 · Harbor Window'), findsNothing);

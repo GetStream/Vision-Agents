@@ -4,7 +4,7 @@ import 'dart:math' as math;
 
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show setEquals;
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -675,15 +675,17 @@ class _GaugePainter extends CustomPainter {
 typedef DiningTableItem = ({String id, String zone, int seats, bool available});
 
 /// A booking the seat selector's tool made, and the tables of the card it was made from.
-typedef Reservation = ({DiningTableItem table, String when, String code, Set<String> tables});
+/// A booking a seat selector's tool made, and the offer, the reply whose card it was made
+/// from.
+typedef Reservation = ({DiningTableItem table, String when, String code, String offer});
 
 /// A venue's tables, by zone and seats. Tapping a free one chooses it and asks to reserve it;
 /// a taken one can't be tapped.
 ///
 /// The card brings its own tool, `reserve_table`: the agent has no way to book a table until a
-/// card offering tables is on the screen, so the card gives the conversation's session the tool
-/// the first time it shows ([AgentSession.addTools]), and takes it back once a table is
-/// reserved ([AgentSession.removeTool]).
+/// card offering tables is on the screen, so the card offers its tables to the conversation
+/// ([AgentChat.offer]), which gives its session the tool ([AgentSession.addTools]) while an
+/// offer is not booked, and takes it back once every one is ([AgentSession.removeTool]).
 class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
   SeatSelectorComponent(this.definition);
 
@@ -693,11 +695,10 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
   /// What the tool the card brings is called.
   static const reserveTableTool = 'reserve_table';
 
-  /// Reserves one of the free [tables] a card offers, once the person says it may.
-  /// [onReserved] hears the reservation.
+  /// Reserves a free table the cards offer, once the person says it may, with [reserve], which
+  /// books the table for the time and throws a [ToolFailure] when it can't.
   static AgentTool reserveTable(
-    List<DiningTableItem> tables,
-    void Function(Reservation reservation) onReserved,
+    Reservation Function(String tableId, String when) reserve,
   ) => AgentTool(
     name: reserveTableTool,
     description:
@@ -708,8 +709,8 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
         'table_id': 'the id of the table, as the seat selector shows it, such as T4',
         'when': 'the day and time of the booking as they would read it, such as tomorrow at 8pm',
         'summary':
-            'the table, the party and the time as they would read it, such as Terrace, for 4, '
-            'tomorrow at 8pm',
+            'the table by its id, the party and the time as they would read it, such as T4 on '
+            'the Terrace, for 4, tomorrow at 8pm',
       },
       required: ['table_id', 'when', 'summary'],
     ),
@@ -724,30 +725,20 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
     run: (arguments) async {
       final id = '${arguments['table_id'] ?? ''}';
       final when = '${arguments['when'] ?? ''}';
-      final table = tables.where((t) => t.id == id && t.available).firstOrNull;
-      if (table == null) {
-        final free = tables.where((t) => t.available).map((t) => t.id).join(', ');
-        throw ToolFailure('$id is not a free table on the seat selector. The free ones are $free.');
-      }
+      final summary = '${arguments['summary'] ?? ''}';
       if (when.isEmpty) throw const ToolFailure('Say when the table is for.');
-      final reservation = (
-        table: table,
-        when: when,
-        code: _confirmationCode(),
-        tables: {for (final t in tables) t.id},
-      );
-      onReserved(reservation);
+      // What the person allows is the summary, so it has to name the table that is booked.
+      if (!summary.toLowerCase().contains(id.toLowerCase())) {
+        throw ToolFailure('Name table $id in the summary: the person reads it before allowing.');
+      }
+      final reservation = reserve(id, when);
+      final table = reservation.table;
       return 'Reserved table ${table.id} (${table.zone}, for ${table.seats}) for $when, under '
           '${Assistant.userName}. The confirmation code is ${reservation.code}. The seat '
           'selector on their screen now shows this booking, so confirm it in a sentence and do '
           'not show or patch the seat selector again.';
     },
   );
-
-  static String _confirmationCode() {
-    final random = math.Random.secure();
-    return [for (var i = 0; i < 6; i++) '0123456789ABCDEF'[random.nextInt(16)]].join();
-  }
 
   @override
   List<DiningTableItem> readArguments(AIUIArguments arguments) => [
@@ -764,6 +755,7 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
   Widget build(BuildContext context, List<DiningTableItem> tables, AIUIComponentContext ui) =>
       _SeatSelectorView(
         tables: tables,
+        offer: ui.messageId,
         isStreaming: ui.isStreaming,
         onSelect: (table) => ui.emit(
           'select_table',
@@ -776,11 +768,15 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
 class _SeatSelectorView extends StatefulWidget {
   const _SeatSelectorView({
     required this.tables,
+    required this.offer,
     required this.isStreaming,
     required this.onSelect,
   });
 
   final List<DiningTableItem> tables;
+
+  /// The reply the card is in, which names its offer of [tables].
+  final String offer;
 
   /// Whether the agent is still writing the card, whose tables may not all be in yet.
   final bool isStreaming;
@@ -798,14 +794,8 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
   /// Null where the card is shown outside one.
   AgentChat? _chat;
 
-  Set<String> get _ids => {for (final table in widget.tables) table.id};
-
-  /// The booking of one of these tables, which ends what the card is for. The agent can show
-  /// the same tables again after it, and they show the booking too.
-  Reservation? _reservationIn(AgentChat chat) => switch (chat.reservation.value) {
-    final reservation? when setEquals(reservation.tables, _ids) => reservation,
-    _ => null,
-  };
+  /// The booking made from the card, which ends what it is for.
+  Reservation? _reservationIn(AgentChat chat) => chat.reservations.value[widget.offer];
 
   @override
   void didChangeDependencies() {
@@ -813,21 +803,24 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
     final chat = AgentChatScope.maybeOf(context);
     if (chat == null || identical(chat, _chat)) return;
     _chat = chat;
-    _bringTool();
+    _offer();
   }
 
   @override
   void didUpdateWidget(_SeatSelectorView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.isStreaming && !widget.isStreaming) _bringTool();
+    // A card written again, such as with a table taken, offers its tables as they are now.
+    if (oldWidget.isStreaming != widget.isStreaming ||
+        !listEquals(oldWidget.tables, widget.tables)) {
+      _offer();
+    }
   }
 
-  /// Gives the conversation the card's tool once the card is written, so the tool offers all
-  /// of its tables, unless one of them is booked already.
-  void _bringTool() {
-    final chat = _chat;
-    if (chat == null || widget.isStreaming || _reservationIn(chat) != null) return;
-    unawaited(chat.bring(SeatSelectorComponent.reserveTable(widget.tables, chat.reserved)));
+  /// Offers the card's tables to the conversation once the card is written, so its tool books
+  /// any of them.
+  void _offer() {
+    if (widget.isStreaming) return;
+    _chat?.offer(widget.offer, widget.tables);
   }
 
   @override
@@ -845,7 +838,7 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
         child: chat == null
             ? _picker(context)
             : ValueListenableBuilder(
-                valueListenable: chat.reservation,
+                valueListenable: chat.reservations,
                 builder: (context, _, _) => switch (_reservationIn(chat)) {
                   final reservation? => _ReservationConfirmation(reservation: reservation),
                   null => _picker(context),
@@ -886,6 +879,8 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
                 onSelected: table.available
                     ? (_) {
                         setState(() => _selected = table.id);
+                        // Brings the tool again if adding it failed, which the question waits for.
+                        _offer();
                         widget.onSelect(table);
                       }
                     : null,

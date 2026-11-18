@@ -63,7 +63,13 @@ enum BrandProfile {
     } on PlatformException catch (error) {
       debugPrint('Reading the chosen brand failed: $error');
     }
-    active.addListener(() => preferences.setString(_storageKey, active.value.name));
+    active.addListener(() async {
+      try {
+        await preferences.setString(_storageKey, active.value.name);
+      } on PlatformException catch (error) {
+        debugPrint('Saving the chosen brand failed: $error');
+      }
+    });
   }
 }
 
