@@ -321,6 +321,18 @@ func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAnUnverifiedHookNamesNoApp(
 	}
 }
 
+// A forged hook after a verified one on the same router writes no line under the verified one's app.
+func (s *ChatInboundRefusalSuite) TestAForgedHookAfterASignedOneNamesNoApp() {
+	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret", deliveryApp))
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Regexp(namesTheDeliveryApp, line)
+
+	status, line = s.logLine(s.hook(phone.CallHookPath+"/"+strconv.Itoa(deliveryApp), "not-the-hook-secret", deliveryApp))
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.NotContains(line, "app_id")
+}
+
 // Until the deployment learns its own app, a hook signed with its secret is of no app it can name.
 func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAHookToADeploymentNotKnowingItsAppNamesNone() {
 	s.router = s.serve(0, s.current)
