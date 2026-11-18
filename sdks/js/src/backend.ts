@@ -690,6 +690,14 @@ export class Backend {
         "there is no WebSocket here; pass one as the webSocket option or run on Node 22 or newer",
       );
     }
+    // Node's own WebSocket takes headers as its second argument, so the router counts a
+    // socket as the SDK's. A browser's takes protocols there, and a socket passed in as the
+    // `webSocket` option is the app's to configure, so neither is given the object.
+    if (this.webSocketImpl === globalWebSocket() && runsOnNode()) {
+      return new (this.webSocketImpl as unknown as new (url: string, options: object) => WebSocketLike)(url, {
+        headers: clientHeaders(),
+      });
+    }
     return new this.webSocketImpl(url);
   }
 
@@ -927,6 +935,10 @@ function base64urlBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+function runsOnNode(): boolean {
+  return Boolean((globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node);
+}
+
 /**
  * What every request says this SDK is: the router counts a call that says `sdk` as the SDK's
  * rather than the API's, and logs the User-Agent with the release that made it.
@@ -936,8 +948,7 @@ function base64urlBytes(bytes: Uint8Array): string {
  * one would have its requests refused at the preflight.
  */
 function clientHeaders(): Record<string, string> {
-  const node = (globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node;
-  return node
+  return runsOnNode()
     ? { "X-Stream-Client": "sdk", "User-Agent": `stream-agents-js/${VERSION}` }
     : { "X-Stream-Client": "sdk" };
 }

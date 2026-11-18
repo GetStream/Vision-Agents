@@ -107,6 +107,19 @@ describe("Backend", () => {
     assert.equal(connection.headers["user-agent"], `stream-agents-js/${VERSION}`);
   });
 
+  it("names the SDK on the upgrade request of a socket opened from Node", async () => {
+    // Without it the router counts every socket open as the API's.
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "shh" });
+    const opening = router.socket();
+
+    const socket = backend.openSocket(router.url.replace("http", "ws") + "/v1/anything");
+    const connection = await opening;
+    socket.close();
+
+    assert.equal(connection.headers["x-stream-client"], "sdk");
+    assert.equal(connection.headers["user-agent"], `stream-agents-js/${VERSION}`);
+  });
+
   it("refuses a request from a backend nobody is billed for", async () => {
     const backend = new Backend({ url: "http://localhost:8080" });
 

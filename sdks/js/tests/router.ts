@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 
@@ -37,6 +37,8 @@ export interface Connection {
   socket: WebSocket;
   path: string;
   query: URLSearchParams;
+  /** The headers of the upgrade request. */
+  headers: IncomingHttpHeaders;
   /** Sends one JSON frame down to the SDK. */
   send: (frame: Record<string, unknown>) => void;
   /** Resolves with the next frame the SDK sends up. */
@@ -126,7 +128,7 @@ export class TestRouter {
         return;
       }
       this.sockets.handleUpgrade(request, socket, head, (raw) => {
-        const connection = connectionOf(raw, url);
+        const connection = connectionOf(raw, url, request.headers);
         const waiting = this.waiting.shift();
         if (waiting) {
           this.handed.push(connection);
@@ -205,7 +207,7 @@ export class TestRouter {
   }
 }
 
-function connectionOf(socket: WebSocket, url: URL): Connection {
+function connectionOf(socket: WebSocket, url: URL, headers: IncomingHttpHeaders): Connection {
   const arrived: Record<string, unknown>[] = [];
   const waiting: ((frame: Record<string, unknown>) => void)[] = [];
 
@@ -223,6 +225,7 @@ function connectionOf(socket: WebSocket, url: URL): Connection {
     socket,
     path: url.pathname,
     query: url.searchParams,
+    headers,
     send: (frame) => socket.send(JSON.stringify(frame)),
     next: () => {
       const frame = arrived.shift();
