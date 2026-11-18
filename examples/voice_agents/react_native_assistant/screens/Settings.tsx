@@ -17,16 +17,18 @@ const FORMATS: { description: string; format: ReplyFormat; title: string }[] = [
 type ChoiceProps = {
   chosen: boolean;
   description: string;
+  disabled?: boolean;
   onPress: () => void;
   title: string;
 };
 
-const Choice = ({ chosen, description, onPress, title }: ChoiceProps) => (
+const Choice = ({ chosen, description, disabled = false, onPress, title }: ChoiceProps) => (
   <Pressable
     accessibilityRole='button'
-    accessibilityState={{ selected: chosen }}
+    accessibilityState={{ disabled, selected: chosen }}
+    disabled={disabled}
     onPress={onPress}
-    style={({ pressed }) => [styles.choice, { opacity: pressed ? 0.6 : 1 }]}
+    style={({ pressed }) => [styles.choice, { opacity: disabled ? 0.4 : pressed ? 0.6 : 1 }]}
   >
     <View style={styles.choiceText}>
       <Text style={styles.choiceTitle}>{title}</Text>
@@ -42,29 +44,36 @@ const Choice = ({ chosen, description, onPress, title }: ChoiceProps) => (
  */
 export const Settings = () => {
   const { brand, setBrand } = useBrand();
+  // The format the backend has, once read or saved: a choice shows only what was confirmed.
   const [format, setFormat] = useState<ReplyFormat>();
   const [failure, setFailure] = useState<string>();
+  // While the first read or a save is on its way, the choices wait for it, so two answers can't
+  // land out of order.
+  const [busy, setBusy] = useState(true);
 
   useEffect(() => {
     let live = true;
-    replyFormat().then(
-      (current) => live && setFormat(current),
-      (cause: unknown) => live && setFailure(String((cause as Error)?.message ?? cause)),
-    );
+    replyFormat()
+      .then(
+        (current) => live && setFormat(current),
+        (cause: unknown) => live && setFailure(String((cause as Error)?.message ?? cause)),
+      )
+      .finally(() => live && setBusy(false));
     return () => {
       live = false;
     };
   }, []);
 
   const choose = async (chosen: ReplyFormat) => {
-    const before = format;
-    setFormat(chosen);
+    setBusy(true);
     setFailure(undefined);
     try {
       await setReplyFormat(chosen);
+      setFormat(chosen);
     } catch (cause) {
-      setFormat(before);
       setFailure(String((cause as Error)?.message ?? cause));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -75,11 +84,17 @@ export const Settings = () => {
         <Choice
           chosen={item.format === format}
           description={item.description}
+          disabled={busy}
           key={item.format}
           onPress={() => choose(item.format)}
           title={item.title}
         />
       ))}
+      {format === 'openui' ? (
+        <Text style={styles.footnote}>
+          Another app chose OpenUI, which this app shows as text. Pick one above to change it.
+        </Text>
+      ) : null}
       <Text style={styles.footnote}>From the next conversation on.</Text>
       {failure ? <Text style={styles.failure}>{failure}</Text> : null}
       <Text style={styles.heading}>Brand</Text>

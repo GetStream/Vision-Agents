@@ -75,8 +75,13 @@ export const MenuDrawer = ({ navigation }: DrawerContentComponentProps) => {
           <Plus size={24} stroke='#000000' />
         </Pressable>
       </View>
-      <FlatList data={sessions} keyExtractor={keyExtractor} renderItem={renderItem} />
-      <Settings />
+      {/* Under the conversations, so a short screen scrolls to it. */}
+      <FlatList
+        data={sessions}
+        keyExtractor={keyExtractor}
+        ListFooterComponent={Settings}
+        renderItem={renderItem}
+      />
     </SafeAreaView>
   );
 };

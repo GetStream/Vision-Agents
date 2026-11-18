@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
@@ -22,6 +22,12 @@ const definitionOf = (name: string): AIUIComponentDefinition => {
   if (!definition) throw new Error(`UIComponents.json has no ${name}`);
   return definition;
 };
+
+/**
+ * Whether the agent is answering, when a tap would only be refused: a reply's UI sends what the
+ * person does as their next message, which waits for the answer before it.
+ */
+export const AnsweringContext = createContext(false);
 
 type Summary = { extract?: string; thumbnail?: { source: string } };
 
@@ -137,10 +143,13 @@ const RestaurantCard = defineAIUIComponent<Restaurant>(
   definitionOf('restaurant_card'),
   ({ args, context }) => {
     const { brand } = useBrand();
+    const answering = useContext(AnsweringContext);
     return (
       <Pressable
         accessibilityHint='Asks for its menu and highlights'
         accessibilityRole='button'
+        accessibilityState={{ disabled: answering }}
+        disabled={answering}
         onPress={() =>
           context.emit('inspect_venue', `Show me the menu and highlights for ${args.name}`, {
             name: args.name,
@@ -206,9 +215,12 @@ const SeatSelector = defineAIUIComponent<{ tables: DiningTable[] }>(
   definitionOf('seat_selector'),
   ({ args, context }) => {
     const { brand } = useBrand();
-    const [selected, setSelected] = useState(
-      () => args.tables.find((table) => table.available)?.id,
-    );
+    const answering = useContext(AnsweringContext);
+    const [chosen, setChosen] = useState<string>();
+    // The person's table while it stays free, the first free one otherwise: an update can take
+    // the table they chose.
+    const available = args.tables.filter((table) => table.available);
+    const selected = (available.find((table) => table.id === chosen) ?? available[0])?.id;
     return (
       <View style={[styles.calendar, { borderRadius: brand.cornerRadius }]}>
         <Text style={styles.title}>Select a table zone</Text>
@@ -218,11 +230,11 @@ const SeatSelector = defineAIUIComponent<{ tables: DiningTable[] }>(
             return (
               <Pressable
                 accessibilityRole='button'
-                accessibilityState={{ disabled: !table.available, selected: isSelected }}
-                disabled={!table.available}
+                accessibilityState={{ disabled: answering || !table.available, selected: isSelected }}
+                disabled={answering || !table.available}
                 key={table.id}
                 onPress={() => {
-                  setSelected(table.id);
+                  setChosen(table.id);
                   context.emit(
                     'select_table',
                     `Reserve table ${table.id} (${table.zone} for ${table.seats})`,
