@@ -594,9 +594,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
-### Kotlin: `Conversation` is no longer a data class
+### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
 
-`Conversation` keeps the UI text a turn is writing private, so its constructor, `copy`, `componentN`, `equals` and `toString` are written by hand. Kotlin callers need no change. Java loses the no-argument constructor: pass the three arguments, `new Conversation(turns, state, failure)`, where it called `new Conversation()` (AND-1948, #2054).
+`Conversation` keeps the UI text a turn is writing private, so its constructor, `copy`, `componentN`, `equals` and `toString` are written by hand. Kotlin callers need no change. Java loses the no-argument constructor: pass the three arguments, `new Conversation(turns, state, failure)`, where it called `new Conversation()`. `Turn` takes a new last parameter, `ui`, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change (AND-1948, #2054).
 
 ### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
 
