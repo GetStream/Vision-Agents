@@ -58,8 +58,8 @@ jobs:
           uv run plugins/stream/generate.py
           changed=$(git status --porcelain -- plugins/stream/vision_agents/plugins/stream/_generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
-      # Run mypy. A cache key is written once and never updated, so each push to main or
-      # accelerate saves its own, and every other run starts from the newest one.
+      # Run mypy. A cache key is written once and never updated, so each push to main
+      # saves its own, and every other run starts from the newest one.
       - name: Restore mypy cache
         uses: actions/cache/restore@v5
         with:

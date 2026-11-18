@@ -750,7 +750,7 @@ type Attached struct {
 const NumberKey = "phone_number"
 
 // ErrNoSealer says this deployment has no keyring to seal or open a number's trunk password.
-var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: set ROUTER_AUTH_KEK")
+var ErrNoSealer = errors.New("phone: no key to seal a number's trunk password: set ROUTER_DEV_KEK (local), or ROUTER_AUTH_KEK_V1_WRAPPED with ROUTER_AUTH_KMS_KEY (hosted)")
 
 // Attach puts a number on the trunk it shares with the customer's other numbers of its
 // vendor, with a rule of its own, and tells the vendor to send calls there. This is what

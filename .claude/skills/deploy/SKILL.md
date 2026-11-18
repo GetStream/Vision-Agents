@@ -177,15 +177,15 @@ A release is a tagged build, published once, then deployed per shard:
 
 ## The key encryption key
 
-A hosted router can unwrap its key encryption key with Cloud KMS at startup in place of holding
-it in `ROUTER_AUTH_KEK`: the steps (IAM role, the `gcloud kms encrypt` line, the two variables)
-are in `acceleration/README.md`, «The key encryption key in Cloud KMS». Ship the build first,
-with the values unchanged, then switch the values and restart: in that one change set
-`ROUTER_AUTH_KMS_KEY` and `ROUTER_AUTH_KEK_V1_WRAPPED` and remove `ROUTER_AUTH_KEK` (and
-`ROUTER_AUTH_KEK_V1`) from the router's environment, because a router with both forms of a
-version refuses to start. Keep a copy of the plain key outside the deployment for rollback,
-and check that the pods start and open an existing connection. To roll back, restore
-`ROUTER_AUTH_KEK` from that copy and unset `ROUTER_AUTH_KMS_KEY` and `ROUTER_AUTH_KEK_V1_WRAPPED`.
+A hosted router unwraps its key encryption key with Cloud KMS at startup: `ROUTER_AUTH_KMS_KEY`
+and `ROUTER_AUTH_KEK_V<n>_WRAPPED`. The steps (IAM role, the `gcloud kms encrypt` line, the two
+variables) are in `acceleration/README.md`, «The key encryption key in Cloud KMS». The router
+refuses to start with a plain `ROUTER_AUTH_KEK` or `ROUTER_AUTH_KEK_V<n>` in its environment, and
+`ROUTER_DEV_KEK` (laptops and CI) beside a KMS setting. So a deployment that still holds a plain
+key switches its values on the build it runs (set the two variables, remove the plain ones,
+restart) before it takes a build that refuses them. Keep a copy of the plain key outside the
+deployment, and check that the pods start and open an existing connection. To roll back a new
+wrapped value, set `ROUTER_AUTH_KEK_V1_WRAPPED` back to the previous one and restart.
 
 ## Before and after
 

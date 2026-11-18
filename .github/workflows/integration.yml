@@ -1,7 +1,9 @@
 name: Integration (router)
-# The router's `-tags integration` suites that need Postgres, each package in its own job on its
-# own Postgres and Redis. CI (unit) runs `go test ./...` without the tag, so these ran only on
-# laptops. Not a required check. Vendor suites (tts, stt, llm, sts, search, imagegen, detection)
+# The router's `-tags integration` suites that need Postgres, in six jobs: each runs its group of
+# packages one at a time on its own Postgres and Redis. Groups, not a job per package, because each
+# job spends about 35 s on setup; the groups are balanced by test time on CI, so a new package goes
+# in the lightest one. CI (unit) runs `go test ./...` without the tag, so only this workflow runs
+# these suites on CI. Not a required check. Vendor suites (tts, stt, llm, sts, search, imagegen, detection)
 # need API keys, so they are not here. internal/campaign, internal/phone/outcome,
 # internal/searchrouter and internal/simulation are Postgres suites left out of the matrix too
 # (simulation also needs an OpenAI key). imagerouter and dlc are left out of the matrix: AI-2040.
@@ -10,7 +12,7 @@ name: Integration (router)
 # on a pull request, which is given no secrets.
 on:
   push:
-    branches: [ "main", "accelerate" ]
+    branches: [ "main" ]
     paths:
       - 'acceleration/**'
       - '!**/*.md'
@@ -35,7 +37,7 @@ permissions:
 
 jobs:
   integration:
-    name: integration (${{ matrix.package }})
+    name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
     # MEM0_API_KEY lives in this environment, which a pull request's code never enters.
     environment: ${{ github.event_name == 'push' && matrix.mem0 && 'integration' || '' }}
@@ -43,60 +45,39 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - cmd/router
-          - cmd/usage
-          - internal/agent
-          - internal/api
-          - internal/appconfig
-          - internal/channelbridge
-          - internal/channels
-          - internal/chatinbound
-          - internal/concurrency
-          - internal/connectors/core
-          - internal/connectors/credentialstores/pgsealed
-          - internal/connectors/resolver
-          - internal/decisionrouter
-          - internal/eventforward
-          - internal/harness
-          - internal/knowledge/urls
-          - internal/limitnotice
-          - internal/live
-          - internal/llmrouter
-          - internal/memory/mem0
-          - internal/metered
-          - internal/omnichannel
-          - internal/phone
-          - internal/phone/siptrunk
-          - internal/policy
-          - internal/quota
-          - internal/routing
-          - internal/sandbox/daytona
-          - internal/sandbox/egress
-          - internal/scheduling
-          - internal/session
-          - internal/store
-          - internal/streamapp
-          - internal/stsrouter
-          - internal/sttrouter
-          - internal/tts/voices
-          - internal/ttsrouter
-          - internal/usage
-          - internal/usage/ledger
-          - internal/usage/server
-          - internal/users
         # A test that fails on CI at the base is skipped in its job, so the rest of the package
         # still gates. `skip` is a `go test -skip` regex: `^Suite$/^Test$`, the suite named too.
+        # It applies to every package in the group.
         include:
+          - group: agent
+            packages: ./internal/agent
+          - group: store
+            packages: >-
+              ./internal/store ./internal/concurrency ./internal/connectors/core ./internal/usage
+              ./internal/live ./internal/users ./internal/streamapp
           # AI-2003, and claiming a guest does not move its memories yet. Both levels of a
           # skip are alternations, so it also names pairs that do not exist.
-          - package: internal/api
+          - group: api
+            packages: ./internal/api ./internal/memory/mem0 ./internal/phone/siptrunk ./internal/omnichannel
             skip: '^(TestConnectionProxyOffSuite|TestMemorySuite)$/^(TestTheConnectionEndpointsAnswerAsOnBase|TestAClaimedGuestsMemoriesMoveToTheUserWhoClaimedThem)$'
             mem0: true
-          - package: internal/memory/mem0
-            mem0: true
-          # AI-2037
-          - package: internal/connectors/resolver
+            ffmpeg: true
+          - group: router
+            packages: ./cmd/router ./internal/session ./cmd/usage
+          - group: routers
+            packages: >-
+              ./internal/routing ./internal/channels ./internal/sandbox/daytona ./internal/phone
+              ./internal/sttrouter ./internal/harness ./internal/ttsrouter
+          - group: rest
+            packages: >-
+              ./internal/channelbridge ./internal/tts/voices ./internal/llmrouter ./internal/policy
+              ./internal/stsrouter ./internal/sandbox/egress ./internal/knowledge/urls
+              ./internal/metered ./internal/quota ./internal/scheduling ./internal/limitnotice
+              ./internal/appconfig ./internal/decisionrouter ./internal/eventforward
+              ./internal/chatinbound ./internal/connectors/resolver
+              ./internal/connectors/credentialstores/pgsealed ./internal/usage/ledger
+              ./internal/usage/server
+            # AI-2037
             skip: '^TestResolverSuite$/^TestAConnectedConnectionResolvesToACredentialTheProviderTakes$'
     # Each service listens on a host port the runner picks: a fixed one is sometimes already
     # held on the runner, and the job then fails before its first test.
@@ -152,13 +133,15 @@ jobs:
       # internal/api sends a video to a response, whose frames are cut with ffmpeg, and fails
       # on CI without it.
       - name: Install ffmpeg
-        if: matrix.package == 'internal/api'
+        if: matrix.ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      - name: Test ${{ matrix.package }}
-        run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" ./${{ matrix.package }}
+      # -p 1 runs the group's packages one at a time: they share this job's Postgres and Redis.
+      - name: Test ${{ matrix.group }}
+        run: go test -tags integration -p 1 -count=1 -timeout 30m -skip "$SKIP" $PACKAGES
         env:
           GOEXPERIMENT: simd
+          PACKAGES: ${{ matrix.packages }}
           SKIP: ${{ matrix.skip }}
           MEM0_API_KEY: ${{ github.event_name == 'push' && matrix.mem0 && secrets.MEM0_API_KEY || '' }}
           RUN_MEM0_SUITE: ${{ github.event_name == 'push' && matrix.mem0 && secrets.MEM0_API_KEY != '' && '1' || '' }}

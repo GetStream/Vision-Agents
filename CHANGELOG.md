@@ -624,6 +624,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
+
+`ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
+
 ### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
 
 `Conversation` keeps the UI text a turn is writing private, so its constructor, `copy`, `componentN`, `equals` and `toString` are written by hand. Kotlin callers need no change. Java loses the no-argument constructor: pass the three arguments, `new Conversation(turns, state, failure)`, where it called `new Conversation()`. `Turn` takes a new last parameter, `ui`, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change (AND-1948, #2054).

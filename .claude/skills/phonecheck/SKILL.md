@@ -128,11 +128,11 @@ to its database (migrations, and the router's own background work).
 2. **Env names** (only the chosen vendors' matter):
 
    ```bash
-   bash -c 'set -a; . <env file>; set +a; for k in STREAM_API_KEY STREAM_API_SECRET ROUTER_POSTGRES_DSN ROUTER_AUTH_KEK TWILIO_PERSON_ACCOUNT_SID TWILIO_PERSON_AUTH_TOKEN TELNYX_PERSON_API_KEY TELNYX_PERSON_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_CONNECTION_ID TELNYX_PUBLIC_KEY; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done'
+   bash -c 'set -a; . <env file>; set +a; for k in STREAM_API_KEY STREAM_API_SECRET ROUTER_POSTGRES_DSN ROUTER_DEV_KEK TWILIO_PERSON_ACCOUNT_SID TWILIO_PERSON_AUTH_TOKEN TELNYX_PERSON_API_KEY TELNYX_PERSON_ACCOUNT_SID TELNYX_PERSON_CONNECTION_ID TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TELNYX_API_KEY TELNYX_CONNECTION_ID TELNYX_PUBLIC_KEY; do [ -n "${!k}" ] && echo "ok       $k" || echo "MISSING  $k"; done'
    ```
 
    Remote needs only the Stream keys and the person's. Local also needs `ROUTER_POSTGRES_DSN`
-   (the `call_sites` row), the router's vendor keys, and `ROUTER_AUTH_KEK` to attach a Telnyx
+   (the `call_sites` row), the router's vendor keys, and `ROUTER_DEV_KEK` to attach a Telnyx
    number. The `*_PERSON_*` account may be the router's (`TWILIO_PERSON_ACCOUNT_SID=$TWILIO_ACCOUNT_SID`
    in `.env`, after the router's lines). See README §3.
 3. **Local router.** Check nothing listens: `lsof -nP -iTCP:8080 -sTCP:LISTEN`; if something

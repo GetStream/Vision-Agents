@@ -3,7 +3,7 @@ name: CI (unit)
 # uncancellable copy of every job.
 on:
   push:
-    branches: [ "main", "accelerate" ]
+    branches: [ "main" ]
     paths-ignore:
       - '**/*.md'
       - '**/*.png'
