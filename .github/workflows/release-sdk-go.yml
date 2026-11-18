@@ -43,6 +43,7 @@ jobs:
             exit 1
           fi
           git merge-base --is-ancestor HEAD origin/main || { echo "$TAG is not on main"; exit 1; }
+          grep -q "Version = \"${TAG#sdks/go/v}\"" sdks/go/stream/backend.go || { echo "stream.Version is not ${TAG#sdks/go/v}"; exit 1; }
 
       - uses: actions/setup-go@v5
         with:

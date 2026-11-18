@@ -977,3 +977,6 @@ then on npmjs.com, under the package's settings, add GitHub Actions as a trusted
 `GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in
 `package.json` is not maintained: semantic-release writes the next one into the package it
 publishes and nothing is committed back.
+
+A version bump committed to `package.json` also sets `VERSION` in `src/backend.ts`, the release
+every request from Node names in its `User-Agent`; `npm test` fails while the two differ.
