@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"net/http"
 	"net/url"
 	"time"
@@ -255,4 +257,77 @@ func (s *TelnyxHookSuite) TestACallWhoseTrunkCannotBeRenderedIsCountedRefused() 
 	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
 	s.Equal(int64(1), row.refused)
 	s.Equal(internalError().Code, row.code)
+}
+
+// activityWritten waits until what the suite's activity record holds now is written: a row
+// recorded after it is written in the same write, one transaction, or a later one.
+func (s *RouterSuite) activityWritten() {
+	marker := "written-" + rand.Text()
+	s.activity.Record(activity.Request{AppID: s.customerID(), Area: marker, Client: store.AuditSourceAPI, At: time.Now()})
+	s.Require().Eventually(func() bool { return s.counted(marker, store.AuditSourceAPI).requests == 1 },
+		settleFor, 10*time.Millisecond, "the activity record was not written")
+}
+
+// hooksAfter delivers, and returns the app's hooks_in row before and after it.
+func (s *RouterSuite) hooksAfter(deliver func()) (before, after counted) {
+	s.activityWritten()
+	before = s.counted(activity.AreaHooksIn, store.AuditSourceAPI)
+	deliver()
+	s.activityWritten()
+	return before, s.counted(activity.AreaHooksIn, store.AuditSourceAPI)
+}
+
+// Defect: an event the app's MCP server signed with the subscription's secret left out of the
+// app's hooks, or one signed with another subscription's secret counted under the app.
+func (s *ConnectionEventsSuite) TestASignedMCPEventIsCountedAsTheAppsHookAndAForgedOneIsNot() {
+	connection := s.connection()
+	binding := s.binding(connection, issueCreated)
+	binding["events"] = append(binding["events"].([]map[string]any), map[string]any{"event": "issue.closed"})
+	s.subscribed(binding)
+	subs := s.atTheFake(connection)
+	s.Require().Len(subs, 2)
+
+	before, after := s.hooksAfter(func() {
+		s.Require().Equal(http.StatusUnauthorized, s.provider.DeliverEvent(subs[0].URL, subs[1].Secret, subs[0].ID,
+			"evt_"+s.utils.uuid(), subs[0].Name, map[string]any{}))
+		s.Require().Equal(http.StatusAccepted, s.provider.DeliverEvent(subs[0].URL, subs[0].Secret, subs[0].ID,
+			"evt_"+s.utils.uuid(), subs[0].Name, map[string]any{}))
+	})
+
+	s.Equal(before.requests+1, after.requests)
+	s.Equal(before.refused, after.refused)
+}
+
+// Defect: a signed delivery the router then turned down left out of the app's hooks, so the
+// digest shows none of the app's failing MCP events.
+func (s *ConnectionEventsSuite) TestASignedMCPEventTheRouterTurnsDownIsCountedRefused() {
+	connection := s.subscribed(s.binding(s.connection(), issueCreated))
+	sub := s.atTheFake(connection)[0]
+
+	before, after := s.hooksAfter(func() {
+		s.Require().Equal(http.StatusBadRequest, s.provider.DeliverEvent(sub.URL, sub.Secret, sub.ID,
+			"evt_"+s.utils.uuid(), "issue.closed", map[string]any{}))
+	})
+
+	s.Equal(before.requests+1, after.requests)
+	s.Equal(before.refused+1, after.refused)
+}
+
+// Defect: a report the registrar signed about an app's campaign left out of the app's phone
+// work, or one signed with another key counted.
+func (s *DLCSuite) TestASignedReportOnACampaignIsCountedAsItsAppsPhoneWork() {
+	_, campaign := s.pendingWithTheVendor()
+	_, stranger, err := ed25519.GenerateKey(rand.Reader)
+	s.Require().NoError(err)
+	s.activityWritten()
+	before := s.counted(activity.AreaPhoneSMS, store.AuditSourceAPI)
+
+	s.Require().Equal(http.StatusUnauthorized, s.report(`{"campaignId":"`+campaign+`"}`, stranger))
+	s.Require().Equal(http.StatusNoContent, s.report(`{"campaignId":"`+campaign+`"}`, s.signing))
+	s.activityWritten()
+
+	after := s.counted(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(before.requests+1, after.requests)
+	s.Equal(before.refused, after.refused)
+	s.Equal(int64(0), s.counted(activity.AreaHooksIn, store.AuditSourceAPI).requests, "a report is phone work")
 }
