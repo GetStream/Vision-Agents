@@ -611,7 +611,9 @@ func (s *Scheduler) finish(claim store.ClaimedScheduledTask, outcome store.Sched
 	log := s.logger.With("task", claim.Task.ID, "run", claim.Run.ID, "customer", claim.Task.CustomerID)
 	switch {
 	case err != nil:
-		// The run is left running, and whoever takes it up again settles and counts it.
+		// The run is left running, and whoever takes it up again settles and counts it. A
+		// run this claim failed itself, its workers lost, is not running: the next claim
+		// finds it settled by somebody else, and it is never counted.
 		log.Error("could not record a scheduled task run", "error", err)
 		return
 	case !applied:
