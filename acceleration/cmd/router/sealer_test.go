@@ -92,6 +92,24 @@ func (s *ConnectorSealerSuite) TestAKeyringNothingRequiresIsStillChecked() {
 	s.ErrorContains(err, "channels need ROUTER_AUTH_KEK_VERSION to be a positive integer")
 }
 
+func (s *ConnectorSealerSuite) TestAKMSKeyNothingRequiresIsStillChecked() {
+	s.startFakeCloudKMS()
+
+	_, err := newSecretSealer(s.T().Context(), s.settings)
+	s.ErrorContains(err, "channels need a key encryption keyring")
+}
+
+func (s *ConnectorSealerSuite) TestAnEmptyWrappedKeyBesideTheDevKEKHoldsNoKey() {
+	// An empty variable a chart or compose file passes through is not a wrapped key, so it
+	// neither refuses the dev key nor asks for a KMS key to unwrap it with.
+	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V2_WRAPPED", "")
+
+	sealer, err := newSecretSealer(s.T().Context(), s.settings)
+	s.Require().NoError(err)
+	s.requireOpensWhatTheBaseSealed(sealer)
+}
+
 func (s *ConnectorSealerSuite) TestProxyWithConnectorsOnRefusesToStartWithoutAKeyring() {
 	s.settings.Connectors.Enabled = true
 
@@ -203,10 +221,11 @@ func (s *ConnectorSealerSuite) TestMovingTheVersionBackKeepsNewerKeysLoaded() {
 }
 
 func (s *ConnectorSealerSuite) TestOnlyThePlainSpellingOfAVersionIsAKey() {
-	// _V01 never named a key, so it is neither read nor refused as a retired one.
+	// _V01 and _V0 never named a key, so they are neither read nor refused as retired ones.
 	s.settings.Connectors.Enabled = true
 	s.T().Setenv("ROUTER_DEV_KEK", "first-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_V01", "another-key")
+	s.T().Setenv("ROUTER_AUTH_KEK_V0", "another-key")
 	s.T().Setenv("ROUTER_AUTH_KEK_V01_WRAPPED", "another-key")
 
 	sealer, err := newSecretSealer(s.T().Context(), s.settings)
