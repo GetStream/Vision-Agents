@@ -21,18 +21,18 @@ from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
 from vision_agents.plugins.telnyx.example_helpers import (
     TelnyxClient,
     TelnyxConfig,
-    cleanup_telnyx_example_setup,
+    TelnyxExampleResources,
     media_stream_url,
     parse_verified_telnyx_webhook,
     preflight_outbound,
     prepare_telnyx_example_setup,
     require_env,
     require_telnyx_public_key,
+    telnyx_example_cleanup,
 )
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
@@ -127,6 +127,7 @@ async def run_with_server(
     from_number: str,
     host: str,
     port: int,
+    log_level: str = "info",
 ) -> None:
     global call_done
 
@@ -135,7 +136,9 @@ async def run_with_server(
     telnyx_call = call_registry.create(call_id, prepare=lambda: prepare_call(call_id))
     stream_url = media_stream_url(config.ngrok_url, call_id, telnyx_call.token)
 
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    )
     server_task = asyncio.create_task(server.serve())
     try:
         deadline = asyncio.get_running_loop().time() + 30.0
@@ -192,6 +195,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip Telnyx verified-number preflight for unrestricted accounts.",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        type=str.upper,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable asyncio debug mode.",
+    )
     return parser.parse_args()
 
 
@@ -199,22 +214,29 @@ def main() -> None:
     global telnyx_public_key
 
     args = parse_args()
+    logging.basicConfig(level=args.log_level)
+
     values = require_env(
         ["STREAM_API_KEY", "STREAM_API_SECRET", "GOOGLE_API_KEY", "TELNYX_API_KEY"]
     )
     telnyx_public_key = require_telnyx_public_key()
     client = TelnyxClient(values["TELNYX_API_KEY"])
-    setup = prepare_telnyx_example_setup(
-        client,
-        api_key=values["TELNYX_API_KEY"],
-        phone_number=args.from_number or os.environ.get("TELNYX_PHONE_NUMBER"),
-        ngrok_url=args.ngrok_url or os.environ.get("NGROK_URL"),
-        call_control_app_id=(
-            args.call_control_app_id or os.environ.get("TELNYX_CALL_CONTROL_APP_ID")
-        ),
-        setup_telnyx=args.setup_telnyx,
-    )
-    try:
+    telnyx_resources = TelnyxExampleResources()
+
+    # Cleans up on normal shutdown, Ctrl-C, and SIGTERM (`kill <pid>`). Entered
+    # before setup so resources created partway through it are cleaned up too.
+    with telnyx_example_cleanup(client, telnyx_resources):
+        setup = prepare_telnyx_example_setup(
+            client,
+            api_key=values["TELNYX_API_KEY"],
+            phone_number=args.from_number or os.environ.get("TELNYX_PHONE_NUMBER"),
+            ngrok_url=args.ngrok_url or os.environ.get("NGROK_URL"),
+            call_control_app_id=(
+                args.call_control_app_id or os.environ.get("TELNYX_CALL_CONTROL_APP_ID")
+            ),
+            setup_telnyx=args.setup_telnyx,
+            resources=telnyx_resources,
+        )
         preflight_outbound(
             client,
             config=setup.config,
@@ -229,10 +251,10 @@ def main() -> None:
                 from_number=setup.config.phone_number,
                 host=args.host,
                 port=args.port,
-            )
+                log_level=args.log_level.lower(),
+            ),
+            debug=args.debug,
         )
-    finally:
-        cleanup_telnyx_example_setup(client, setup)
 
 
 if __name__ == "__main__":
