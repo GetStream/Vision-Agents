@@ -52,8 +52,9 @@ final class TurnUI {
   /// finished.
   final String content;
 
-  /// Unmerged turn-local source accumulated before patch merging. While OpenUI streams, it is
-  /// what was written up to the last newline: a delta that ends no line changes nothing shown.
+  /// Unmerged turn-local source accumulated before patch merging. While OpenUI streams, it can
+  /// lag behind what was written: a delta that ends no line is kept, but leaves this as it was
+  /// until the next one that does.
   final String raw;
 
   bool get isStreaming => status == 'streaming';
