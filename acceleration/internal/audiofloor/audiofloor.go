@@ -295,13 +295,23 @@ type Ruling struct {
 	Cannot      bool   `json:"cannot,omitempty"`
 }
 
-// Answer is what the model made of a turn.
+// Answer is what the model made of a turn. Options is every option's probability in the
+// order the prompt offers them: respond, wait, clarify and ignore with the floor free, stop,
+// shorten, continue and ignore over the agent, then with tools cannot and each tool. A server
+// older than its options field leaves it empty.
 type Answer struct {
 	Answer            string   `json:"answer"`
 	AnswerProbability float64  `json:"answer_probability"`
 	PEOT              *float64 `json:"p_eot"`
 	DecideMs          float64  `json:"decide_ms"`
+	Options           []Option `json:"options"`
 	Ruling            *Ruling  `json:"ruling"`
+}
+
+// Option is one of the answers the model was offered, and its probability.
+type Option struct {
+	Name string  `json:"name"`
+	P    float64 `json:"p"`
 }
 
 const (
