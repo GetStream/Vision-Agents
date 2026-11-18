@@ -13,6 +13,7 @@ package echocancel
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -84,8 +85,14 @@ func aec3Config(cfg Config) (goaec3.Config, error) {
 // Check reports whether cfg is one a call can be cancelled with, by building a canceller with
 // it: AEC3 refuses some configs its own bounds allow.
 func Check(cfg Config) error {
-	_, err := NewCall(cfg)
-	return err
+	config, err := aec3Config(cfg)
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	if _, err := goaec3.New(config, SampleRate, 1, 1); err != nil {
+		return stack.Wrap(fmt.Errorf("echocancel: %w", err))
+	}
+	return nil
 }
 
 // Every series is one value per line, observed when it closes, so a bucket counts lines.
@@ -140,20 +147,25 @@ type Call struct {
 	// without the lock by whoever decides whether to keep voice.
 	listening, expected atomic.Int32
 
+	// recent is the last second of voice, kept while a participant is expected whose line has
+	// not opened: what the agent says to them before their audio arrives comes back as echo
+	// once it does, and their line starts with it. latest is where the next frame goes, and
+	// kept how many frames it holds. Guarded by mu.
+	recent [playedFrames][FrameSamples]int16
+	latest int
+	kept   int
+
 	// partial is the start of the next frame of voice. Only Played touches it.
 	partial  [FrameSamples]int16
 	buffered int
 }
 
-// NewCall returns a Call that cancels echo as cfg says. It builds one canceller to check the
-// config with, so a call that could not cancel any line is refused here.
+// NewCall returns a Call that cancels echo as cfg says. It builds no canceller: Check, which
+// the router runs on its settings at start, does that once.
 func NewCall(cfg Config) (*Call, error) {
 	config, err := aec3Config(cfg)
 	if err != nil {
 		return nil, stack.Wrap(err)
-	}
-	if _, err := goaec3.New(config, SampleRate, 1, 1); err != nil {
-		return nil, stack.Wrap(fmt.Errorf("echocancel: %w", err))
 	}
 	return &Call{config: config}, nil
 }
@@ -175,6 +187,11 @@ func (c *Call) Played(samples []int16) {
 		for _, line := range c.lines {
 			line.played(&c.partial)
 		}
+		if c.expected.Load() > 0 {
+			c.recent[c.latest] = c.partial
+			c.latest = (c.latest + 1) % playedFrames
+			c.kept = min(c.kept+1, playedFrames)
+		}
 		c.mu.Unlock()
 	}
 }
@@ -193,6 +210,9 @@ func (c *Call) Listen() (*Line, error) {
 		capture:   [][]float32{make([]float32, FrameSamples)},
 	}
 	c.mu.Lock()
+	for i := range c.kept {
+		line.played(&c.recent[(c.latest-c.kept+i+playedFrames)%playedFrames])
+	}
 	c.lines = append(c.lines, line)
 	c.listening.Add(1)
 	c.mu.Unlock()
@@ -201,8 +221,14 @@ func (c *Call) Listen() (*Line, error) {
 
 // Expect says a participant whose line will be cleaned arrived (1) or left (-1). Their line
 // opens only once their audio does, and the voice going out before then is still what their
-// echo will be of.
-func (c *Call) Expect(delta int) { c.expected.Add(int32(delta)) }
+// echo will be of: the last second of it is kept for the line.
+func (c *Call) Expect(delta int) {
+	if c.expected.Add(int32(delta)) <= 0 {
+		c.mu.Lock()
+		c.kept = 0
+		c.mu.Unlock()
+	}
+}
 
 // Wanted reports whether the voice is of use: a line is being cleaned or a participant whose
 // line will be is in the call.
@@ -224,6 +250,12 @@ type Line struct {
 	// voiced is whether any of the voice played was audible, and detached whether the line
 	// is no longer played any.
 	voiced, detached bool
+	// rendered is whether AEC3 has been handed audible voice, and measured whether it has
+	// cleaned the line since, without which it has estimated nothing of the echo.
+	rendered, measured bool
+	// ready is what was cleaned of the line before a gap, with the gap's start as silence,
+	// and is handed back ahead of what comes after it.
+	ready []int16
 
 	// taking is the voice taken from the queue, so its lock is not held through AEC3.
 	taking [playedFrames][FrameSamples]int16
@@ -288,6 +320,11 @@ func (l *Line) take() (int, bool) {
 // returned without delay or allocation; any other is returned in a new slice, starting with
 // what was held. Either way the result is the caller's.
 func (l *Line) Clean(samples []int16) []int16 {
+	if len(l.ready) > 0 {
+		ready := l.ready
+		l.ready = nil
+		return append(ready, l.Clean(samples)...)
+	}
 	if l.buffered == 0 && len(samples)%FrameSamples == 0 {
 		for at := 0; at < len(samples); at += FrameSamples {
 			l.cleanFrame(samples[at : at+FrameSamples])
@@ -313,14 +350,28 @@ func (l *Line) Clean(samples []int16) []int16 {
 func (l *Line) cleanFrame(frame []int16) {
 	n := l.takeFresh()
 	for i := range n {
-		toFloat(l.render[0], l.taking[i][:])
-		// Neither call fails: the frames are built here to the size the canceller was made for.
-		_ = l.canceller.AnalyzeRender(l.render)
+		l.analyze(&l.taking[i])
 	}
+	l.process(frame)
+	fromFloat(frame, l.capture[0])
+}
+
+// analyze hands AEC3 a frame of the agent's voice.
+func (l *Line) analyze(frame *[FrameSamples]int16) {
+	if !l.rendered {
+		l.rendered = slices.ContainsFunc(frame[:], func(sample int16) bool { return sample != 0 })
+	}
+	toFloat(l.render[0], frame[:])
+	// Neither call fails: the frames are built here to the size the canceller was made for.
+	_ = l.canceller.AnalyzeRender(l.render)
+}
+
+// process has AEC3 clean a frame of the line into capture.
+func (l *Line) process(frame []int16) {
 	toFloat(l.capture[0], frame)
 	_ = l.canceller.ProcessCapture(l.capture)
 	l.settled++
-	fromFloat(frame, l.capture[0])
+	l.measured = l.measured || l.rendered
 }
 
 // takeFresh takes the voice queued since the frame before, replacing the canceller first
@@ -341,6 +392,18 @@ func (l *Line) takeFresh() int {
 // cleaned as silence, which keeps the voice and the line lined up; a gap longer than the
 // voice a line holds replaces the canceller instead, as nothing lines up after it.
 func (l *Line) Missed(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	if l.buffered > 0 {
+		// The start of a frame held from before the gap is finished with the gap's first
+		// silence, so nothing from after it joins a frame from before it.
+		clear(l.pending[l.buffered:])
+		d -= time.Duration(FrameSamples-l.buffered) * time.Second / SampleRate
+		l.buffered = 0
+		l.cleanFrame(l.pending[:])
+		l.ready = append(l.ready, l.pending[:]...)
+	}
 	frames := int((d + FrameDuration/2) / FrameDuration)
 	if frames <= 0 {
 		return
@@ -358,12 +421,9 @@ func (l *Line) Missed(d time.Duration) {
 	fed := 0
 	for i := range frames {
 		for due := n - (frames - 1 - i); fed < due; fed++ {
-			toFloat(l.render[0], l.taking[fed][:])
-			_ = l.canceller.AnalyzeRender(l.render)
+			l.analyze(&l.taking[fed])
 		}
-		toFloat(l.capture[0], l.silence[:])
-		_ = l.canceller.ProcessCapture(l.capture)
-		l.settled++
+		l.process(l.silence[:])
 	}
 }
 
@@ -371,7 +431,7 @@ func (l *Line) Missed(d time.Duration) {
 func (l *Line) reset() {
 	canceller, err := goaec3.New(l.call.config, SampleRate, 1, 1)
 	if err != nil {
-		// NewCall built one with the same config.
+		// The router checked the config with Check at start.
 		return
 	}
 	if l.settled >= settledFrames || l.before == nil {
@@ -412,15 +472,16 @@ func (l *Line) Detach() {
 	l.detached = true
 	for i, line := range c.lines {
 		if line == l {
-			c.lines = append(c.lines[:i], c.lines[i+1:]...)
+			// Delete clears the slot left at the end, which would otherwise keep the line.
+			c.lines = slices.Delete(c.lines, i, i+1)
 			c.listening.Add(-1)
 			break
 		}
 	}
 }
 
-// Close stops cancelling the line, counts it and, if the agent's voice went out while it was
-// listened to, observes what AEC3 last estimated of its echo. It returns those estimates.
+// Close stops cancelling the line, counts it and, if AEC3 cleaned the line after it was handed
+// the agent's voice, observes what it last estimated of the echo. It returns those estimates.
 func (l *Line) Close() Metrics {
 	l.Detach()
 
@@ -437,7 +498,9 @@ func (l *Line) Close() Metrics {
 		return metrics
 	}
 	linesCancelled.WithLabelValues(strconv.FormatBool(voiced)).Inc()
-	if voiced {
+	// Only a canceller that was handed the agent's voice and then cleaned the line has
+	// estimated anything of the echo.
+	if l.measured {
 		lineERLE.Observe(metrics.ERLE)
 		lineERL.Observe(metrics.ERL)
 		lineDelay.Observe(metrics.Delay.Seconds())

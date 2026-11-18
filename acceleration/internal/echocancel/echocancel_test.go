@@ -2,10 +2,13 @@ package echocancel
 
 import (
 	"math/rand/v2"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
@@ -136,10 +139,12 @@ func (s *LineSuite) TestLinesCleanedAlongsideTheVoicePlayedAndLinesComingAndGoin
 			}
 		}
 	})
+	var churned error
 	wg.Go(func() {
 		for range 50 {
 			line, err := s.call.Listen()
 			if err != nil {
+				churned = err
 				return
 			}
 			line.Clean(speech(chunk, 11))
@@ -151,6 +156,7 @@ func (s *LineSuite) TestLinesCleanedAlongsideTheVoicePlayedAndLinesComingAndGoin
 	}
 	close(stop)
 	wg.Wait()
+	s.NoError(churned, "lines did not come and go")
 }
 
 // ConfigSuite is how far an echo is looked for.
@@ -181,7 +187,8 @@ func (s *ConfigSuite) TestALongestDelayOutsideItsBoundsIsRefused() {
 }
 
 func (s *ConfigSuite) TestEveryLongestDelayInItsBoundsMakesACanceller() {
-	for delay := echodelay.Min; delay <= echodelay.Max; delay += 50 * time.Millisecond {
+	// Every count of matched filters from one to the 13 echodelay.Max takes.
+	for delay := echodelay.Min; delay <= echodelay.Max; delay += filterShift {
 		call, err := NewCall(Config{MaxDelay: delay})
 		s.Require().NoError(err)
 		line, err := call.Listen()
@@ -216,5 +223,157 @@ func (s *LineSuite) TestALineClosedJustAfterItsCancellerWasReplacedReportsWhatTh
 	s.call.Played(make([]int16, chunk))
 	s.line.Clean(make([]int16, chunk))
 
+	s.NotEqual(found, s.line.Metrics(), "the canceller was not replaced")
 	s.Equal(found, s.line.Close())
+}
+
+// measured is how many lines have had their echo return loss enhancement observed.
+func measured() uint64 {
+	var metric dto.Metric
+	if err := lineERLE.Write(&metric); err != nil {
+		panic(err)
+	}
+	return metric.GetHistogram().GetSampleCount()
+}
+
+// lines is how many lines have been counted, by whether the agent's voice went out on them.
+func lines(voiced bool) float64 {
+	return testutil.ToFloat64(linesCancelled.WithLabelValues(strconv.FormatBool(voiced)))
+}
+
+func (s *LineSuite) TestALineTheAgentSpokeOnIsCountedAndMeasuredOnceHoweverOftenItCloses() {
+	counted, observed := lines(true), measured()
+	s.call.Played(speech(chunk, 20))
+	s.line.Clean(speech(chunk, 21))
+
+	s.line.Close()
+	s.line.Close()
+
+	s.Equal(1.0, lines(true)-counted)
+	s.Equal(uint64(1), measured()-observed)
+}
+
+func (s *LineSuite) TestALineTheAgentNeverSpokeOnIsCountedButNotMeasured() {
+	counted, observed := lines(false), measured()
+	s.call.Played(make([]int16, chunk))
+	s.line.Clean(speech(chunk, 22))
+
+	s.line.Close()
+
+	s.Equal(1.0, lines(false)-counted)
+	s.Equal(uint64(0), measured()-observed)
+}
+
+// AEC3 that was handed the agent's voice but never cleaned the line has estimated nothing.
+func (s *LineSuite) TestALineWhoseAudioNeverCameAfterTheAgentSpokeIsCountedButNotMeasured() {
+	counted, observed := lines(true), measured()
+	s.call.Played(speech(chunk, 23))
+
+	s.line.Close()
+
+	s.Equal(1.0, lines(true)-counted)
+	s.Equal(uint64(0), measured()-observed)
+}
+
+func (s *LineSuite) TestALineWhoseVoiceOverflowedGetsANewCanceller() {
+	resets := testutil.ToFloat64(cancellerResets)
+	for range playedFrames + 50 {
+		s.call.Played(speech(FrameSamples, 24))
+	}
+
+	s.line.Clean(speech(chunk, 25))
+
+	s.Equal(1.0, testutil.ToFloat64(cancellerResets)-resets)
+}
+
+func (s *LineSuite) TestAGapLongerThanTheVoiceHeldGetsANewCancellerWithoutCleaningItAsSilence() {
+	resets, frames := testutil.ToFloat64(cancellerResets), testutil.ToFloat64(gapFrames)
+	started := time.Now()
+
+	s.line.Missed(time.Minute)
+	s.line.Clean(speech(chunk, 26))
+
+	s.Less(time.Since(started), 500*time.Millisecond, "a minute of silence was cleaned frame by frame")
+	s.Equal(1.0, testutil.ToFloat64(cancellerResets)-resets)
+	s.Equal(0.0, testutil.ToFloat64(gapFrames)-frames)
+}
+
+func (s *LineSuite) TestTheSilenceAGapIsCleanedAsStaysSilence() {
+	for range 10 {
+		s.call.Played(speech(FrameSamples, 27))
+	}
+	s.line.Clean(speech(chunk, 28))
+
+	s.line.Missed(100 * time.Millisecond)
+
+	s.Equal([FrameSamples]int16{}, s.line.silence)
+}
+
+// The start of a frame held from before a gap is finished with silence, not with what comes
+// after the gap. With no voice played the line comes through as it is, a block late.
+func (s *LineSuite) TestAFrameHeldFromBeforeAGapIsNotFinishedWithWhatComesAfterIt() {
+	before, after := speech(FrameSamples/2, 29), speech(FrameSamples/2, 30)
+	s.Empty(s.line.Clean(append([]int16(nil), before...)))
+
+	s.line.Missed(30 * time.Millisecond)
+	out := s.line.Clean(append([]int16(nil), after...))
+
+	s.Require().Len(out, FrameSamples, "the frame from before the gap was not handed back")
+	want := append(append(make([]int16, aec3Lag), before...), make([]int16, FrameSamples)...)
+	s.Equal(want[:FrameSamples], out)
+}
+
+func (s *LineSuite) TestALineClosedLeavesNothingOfItHeldByTheCall() {
+	s.line.Close()
+
+	s.Zero(len(s.call.lines))
+	for _, held := range s.call.lines[:cap(s.call.lines)] {
+		s.Nil(held)
+	}
+}
+
+// What the agent says to a phone caller before their audio arrives comes back as echo once it
+// does: their line starts with the last second of it.
+func (s *LineSuite) TestALineThatOpensAfterItsCallerArrivedStartsWithTheVoiceSaidToThem() {
+	call, err := NewCall(Config{})
+	s.Require().NoError(err)
+	call.Expect(1)
+	for i := range playedFrames + 20 {
+		frame := make([]int16, FrameSamples)
+		frame[0] = int16(i + 1)
+		call.Played(frame)
+	}
+
+	line, err := call.Listen()
+	s.Require().NoError(err)
+	defer line.Close()
+
+	s.Require().Equal(playedFrames, s.taken(line))
+	s.Equal(int16(21), line.taking[0][0], "the oldest frame kept is not the first of the last second")
+	s.Equal(int16(playedFrames+20), line.taking[playedFrames-1][0])
+}
+
+func (s *LineSuite) TestNoVoiceIsKeptForALineNobodyIsExpectedOn() {
+	call, err := NewCall(Config{})
+	s.Require().NoError(err)
+	call.Expect(1)
+	call.Expect(-1)
+	call.Played(speech(chunk, 31))
+
+	line, err := call.Listen()
+	s.Require().NoError(err)
+	defer line.Close()
+
+	s.Zero(s.taken(line))
+}
+
+// The router checks the config once at start; a call builds no canceller until a line opens.
+func (s *LineSuite) TestACallBuildsNoCancellerUntilALineOpens() {
+	allocations := testing.AllocsPerRun(5, func() {
+		if _, err := NewCall(Config{}); err != nil {
+			panic(err)
+		}
+	})
+
+	s.Less(allocations, 10.0)
 }
