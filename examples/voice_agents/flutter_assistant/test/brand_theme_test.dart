@@ -1,5 +1,6 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_assistant/brand_theme.dart';
 import 'package:flutter_assistant/openui_renderer.dart';
 import 'package:flutter_assistant/trip_components.dart';
@@ -35,6 +36,24 @@ void main() {
       }
     });
 
+    test(
+      'load opens with the default brand when the saved one cannot be read, and keeps the next',
+      () async {
+        final store = _UnreadableStore();
+        SharedPreferencesAsyncPlatform.instance = store;
+
+        await BrandProfile.load();
+        expect(BrandProfile.active.value, BrandProfile.stream);
+
+        BrandProfile.active.value = BrandProfile.nordic;
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (store.saved['brand'] != 'nordic') {
+          if (DateTime.now().isAfter(deadline)) fail('The chosen brand was not kept.');
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      },
+    );
+
     testWidgets('a card already shown takes on a newly chosen brand', (tester) async {
       final host = AIUIHost(
         components: TripComponents.all,
@@ -66,4 +85,22 @@ root = RestaurantCard("Kaneo", "Macedonian Grill", 4.9, "\$\$\$")
       expect(badgeColor(), BrandProfile.ember.accent);
     });
   });
+}
+
+/// A store whose saved brand can't be read, as when the phone's storage fails, and which keeps
+/// what is written to it.
+base class _UnreadableStore extends InMemorySharedPreferencesAsync {
+  _UnreadableStore() : super.empty();
+
+  final saved = <String, String>{};
+
+  @override
+  Future<String?> getString(String key, SharedPreferencesOptions options) =>
+      throw PlatformException(code: 'unreadable');
+
+  @override
+  Future<bool> setString(String key, String value, SharedPreferencesOptions options) async {
+    saved[key] = value;
+    return true;
+  }
 }

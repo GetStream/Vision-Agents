@@ -1,5 +1,6 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 
@@ -52,10 +53,16 @@ enum BrandProfile {
 
   /// Reads the brand chosen at an earlier launch into [active], and keeps each one chosen from
   /// now on.
+  ///
+  /// A brand that can't be read leaves the default in place: the app opens all the same.
   static Future<void> load() async {
     final preferences = SharedPreferencesAsync();
-    final stored = await preferences.getString(_storageKey);
-    active.value = values.asNameMap()[stored] ?? active.value;
+    try {
+      final stored = await preferences.getString(_storageKey);
+      active.value = values.asNameMap()[stored] ?? active.value;
+    } on PlatformException catch (error) {
+      debugPrint('Reading the chosen brand failed: $error');
+    }
     active.addListener(() => preferences.setString(_storageKey, active.value.name));
   }
 }

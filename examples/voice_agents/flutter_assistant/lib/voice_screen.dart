@@ -462,10 +462,14 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                           transitionBuilder: (child, animation) => FadeTransition(
                             opacity: animation,
                             child: SlideTransition(
-                              position: Tween(
-                                begin: const Offset(0, 0.25),
-                                end: Offset.zero,
-                              ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+                              // A tween rather than a CurvedAnimation, which would add a listener
+                              // each time a card that is still being written rebuilds this.
+                              position: animation.drive(
+                                Tween(
+                                  begin: const Offset(0, 0.25),
+                                  end: Offset.zero,
+                                ).chain(CurveTween(curve: Curves.easeOut)),
+                              ),
                               child: child,
                             ),
                           ),

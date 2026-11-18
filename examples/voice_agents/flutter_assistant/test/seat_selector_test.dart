@@ -91,6 +91,12 @@ void main() {
           isStreaming: true,
         ),
       );
+      // A card still being written brings no tool: give a request time to arrive, and see none.
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+      expect(sessions.routes, isNot(contains('POST /v1/agents/sessions/s1/tools')));
       await show(
         UIMessage(
           'm1',

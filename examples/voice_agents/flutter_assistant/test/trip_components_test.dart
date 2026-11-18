@@ -57,6 +57,7 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       addTearDown(chat.dispose);
       await show(tester, chat, [UIMessage('m1', offered), UIMessage('m2', others)]);
       expect(find.text('Select a table zone'), findsNWidgets(2));
+      expect(find.textContaining('T4 · Harbor Window'), findsOneWidget);
 
       chat.reserved((
         table: (id: 'T4', zone: 'Harbor Window', seats: 4, available: true),
@@ -69,6 +70,9 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       expect(find.text('Table T4 reserved'), findsOneWidget);
       expect(find.text('Harbor Window · 4 people · tonight at 8pm'), findsOneWidget);
       expect(find.text('Confirmation A1B2C3'), findsOneWidget);
+      // The booked card no longer offers its tables.
+      expect(find.textContaining('T1 · Cliff Terrace'), findsNothing);
+      expect(find.textContaining('T4 · Harbor Window'), findsNothing);
       // The card of other tables still offers them.
       expect(find.text('Select a table zone'), findsOneWidget);
       expect(find.textContaining('T7 · Garden'), findsOneWidget);
