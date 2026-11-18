@@ -83,7 +83,8 @@ public class LiveUI {
             custom["generating"] == true && (custom["ai_ui"] as? Map<*, *>)?.get("status") != "complete"
 
         fun turnId(custom: Map<String, Any?>): String? =
-            (custom["turn_id"] as? String ?: runtime(custom)?.get("turn_id") as? String)?.takeIf { it.isNotEmpty() }
+            (custom["turn_id"] as? String)?.takeIf { it.isNotEmpty() }
+                ?: (runtime(custom)?.get("turn_id") as? String)?.takeIf { it.isNotEmpty() }
 
         fun runtime(custom: Map<String, Any?>): Map<*, *>? = custom["support_runtime"] as? Map<*, *>
     }

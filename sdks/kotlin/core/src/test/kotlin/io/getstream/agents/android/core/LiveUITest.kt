@@ -108,6 +108,22 @@ class LiveUITest {
     }
 
     @Test
+    fun `an empty turn id falls back to the runtime's`() {
+        live.observe(streaming())
+        val other = mapOf(
+            "ai_generated" to true,
+            "generating" to true,
+            "turn_id" to "",
+            "support_runtime" to mapOf("role" to "assistant", "turn_id" to "t2"),
+        )
+        val own = other + ("support_runtime" to mapOf("role" to "assistant", "turn_id" to "t1"))
+
+        // The latest UI is t1's, so a reply for t2 shows none of it.
+        assertTrue(live.overlayCustom(listOf("m2" to other)).isEmpty())
+        assertEquals(streamedUi, live.overlayCustom(listOf("m1" to own))["m1"]?.get("ai_ui"))
+    }
+
+    @Test
     fun `a UI with nothing finished leaves the reply its text`() {
         live.observe(
             Conversation().after("""{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card(["}"""),

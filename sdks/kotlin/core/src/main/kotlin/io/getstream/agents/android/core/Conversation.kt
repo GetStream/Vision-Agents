@@ -250,22 +250,25 @@ public class Conversation private constructor(
      * Shows [written], what the turn's UI block wrote, as the UI of agent turn [turnId], starting
      * the turn if the router sent UI for one we never saw begin. Of OpenUI, only the statements
      * [keep] says count; it is streaming while only the finished ones do, and sets no UI until
-     * one counts. A patch is merged onto the UI of the latest earlier turn in the same format;
-     * with none in this transcript, such as after a reload, it sets no UI, and Stream Chat's copy,
-     * which the router merged, is the one to show.
+     * one counts. A patch is merged onto the UI of the latest earlier turn in the same format,
+     * earlier than this one even when its UI comes late; with none in this transcript, such as
+     * after a reload, it sets no UI, and Stream Chat's copy, which the router merged, is the one
+     * to show.
      */
     private fun writeUi(turnId: String, written: UiWritten, keep: TurnUI.Keep, at: Instant): Conversation {
         val openUi = written.format == TurnUI.OPEN_UI
         var content = if (openUi) TurnUI.kept(written.text, keep) else written.text
         if (openUi && keep != TurnUI.Keep.All && content.isEmpty()) return this
+        val index = turns.indexOfLast { it.id == turnId && it.isAgent }
         if (written.mode == "patch" && openUi) {
-            val base = turns.lastOrNull {
+            // A turn we never saw begin starts after every one there is.
+            val earlier = if (index < 0) turns else turns.subList(0, index)
+            val base = earlier.lastOrNull {
                 it.isAgent && it.id != turnId && it.ui?.format == TurnUI.OPEN_UI && it.ui.content.isNotEmpty()
             }?.ui ?: return this
             content = TurnUI.merge(base.content, content)
         }
         val ui = TurnUI(written.format, written.version, keep == TurnUI.Keep.Finished, content)
-        val index = turns.indexOfLast { it.id == turnId && it.isAgent }
         if (index < 0) return copy(turns = turns + Turn(turnId, Turn.Speaker.Agent, "", at, ui))
         val updated = turns.toMutableList()
         updated[index] = updated[index].copy(ui = ui)

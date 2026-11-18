@@ -437,6 +437,25 @@ class ConversationTest {
     }
 
     @Test
+    fun `a late patch for an older turn merges onto the card before that turn`() {
+        // The router can send an older turn's UI after a newer turn has its own card.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Mira\")"}""",
+            """{"type":"ui_completed","turn_id":"t2","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertEquals(
+            "\$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")",
+            conversation.turns[1].ui?.content,
+        )
+        assertEquals("root = Card([hdr])\nhdr = CardHeader(\"Mira\")", conversation.turns[2].ui?.content)
+    }
+
+    @Test
     fun `a patch with no card before it sets no UI`() {
         // As after a reload: the card it changes is only in Stream Chat, which shows it merged.
         val conversation = Conversation().after(
