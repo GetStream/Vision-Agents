@@ -2109,7 +2109,8 @@ and the public key it came with as `api_key`, as the Stream platform's logs do (
 same app as `app_id`). A request nobody authenticated carries neither. A Stream hook (`PhoneHook`,
 `ChatHook`, `ReceiveChatDelivery`) names the app it was verified to come from as `app_id` once its
 signature checked out, and no `api_key`, since no key made it; one that did not check out names no
-app, whatever its path says.
+app, whatever its path says. A hook verified before the deployment knows its own app (a
+`PhoneHook` to the path naming none) names none either.
 
 The access line also carries these fields, named like the Stream platform's access logs. Each one
 is left out when the request has none:

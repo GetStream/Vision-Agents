@@ -252,6 +252,15 @@ func (s *ChatInboundRefusalSuite) TestARouterWithNoStreamAppServesNone() {
 // namesTheDeliveryApp is a line that names deliveryApp as its app.
 var namesTheDeliveryApp = regexp.MustCompile(`^[^\n]* app_id=` + strconv.Itoa(deliveryApp) + `(\s[^\n]*)?\n$`)
 
+// otherApp is the app a hook's body claims, which is not the one its signature was checked for.
+const otherApp = deliveryApp + 7
+
+// namesOnlyTheDeliveryApp asserts line names deliveryApp as its app and no key.
+func (s *ChatInboundRefusalSuite) namesOnlyTheDeliveryApp(line string, name ...any) {
+	s.Regexp(namesTheDeliveryApp, line, name...)
+	s.NotContains(line, "api_key", name...)
+}
+
 // A delivery names its app only once Stream's signature and the app it names are checked: the
 // access line and the lines logged on its way then carry it, without a key, which none was used.
 func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedDeliveryNameItsApp() {
@@ -260,29 +269,32 @@ func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedDeliveryNameItsApp() {
 	status, line := s.logLine(s.signed(body, s.current))
 
 	s.Equal(http.StatusOK, status)
-	s.Regexp(namesTheDeliveryApp, line)
-	s.NotContains(line, "api_key")
-	s.Regexp(namesTheDeliveryApp, s.loggedWith("ignoring a Stream Chat delivery"))
+	s.namesOnlyTheDeliveryApp(line)
+	s.namesOnlyTheDeliveryApp(s.loggedWith("ignoring a Stream Chat delivery"))
 }
 
 func (s *ChatInboundRefusalSuite) TestTheLineOfADeliveryThatCouldNotBeQueuedNamesItsApp() {
 	body := strings.Replace(s.message(deliveryApp), `, "source": "agent"`, "", 1)
 
-	status, _ := s.logLine(s.signed(body, s.current))
+	status, line := s.logLine(s.signed(body, s.current))
 
 	s.Equal(http.StatusServiceUnavailable, status)
-	s.Regexp(namesTheDeliveryApp, s.loggedWith("could not queue a Stream Chat delivery"))
+	s.namesOnlyTheDeliveryApp(line)
+	s.namesOnlyTheDeliveryApp(s.loggedWith("could not queue a Stream Chat delivery"))
 }
 
 func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAnUnverifiedDeliveryNamesNoApp() {
 	stranger := ed25519.NewKeyFromSeed([]byte("somebody-else-s-key-seed-32bytes"))
-	for name, request := range map[string]*http.Request{
-		"another key's signature":           s.signed(s.message(deliveryApp), stranger),
-		"an app this router does not serve": s.signed(s.message(deliveryApp+1), s.current),
+	for name, refused := range map[string]struct {
+		request *http.Request
+		status  int
+	}{
+		"another key's signature":           {s.signed(s.message(deliveryApp), stranger), http.StatusUnauthorized},
+		"an app this router does not serve": {s.signed(s.message(deliveryApp+1), s.current), http.StatusNotFound},
 	} {
-		status, line := s.logLine(request)
+		status, line := s.logLine(refused.request)
 
-		s.NotEqual(http.StatusOK, status, name)
+		s.Equal(refused.status, status, name)
 		s.NotContains(line, "app_id", name)
 	}
 }
@@ -295,12 +307,11 @@ func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedHookNameItsApp() {
 	} {
 		for _, named := range []string{path, path + "/" + strconv.Itoa(deliveryApp)} {
 			s.router = s.serve(deliveryApp, s.current)
-			status, line := s.logLine(s.hook(named, "hook-secret", deliveryApp))
+			status, line := s.logLine(s.hook(named, "hook-secret"))
 
 			s.Equal(http.StatusOK, status, named)
-			s.Regexp(namesTheDeliveryApp, line, named)
-			s.NotContains(line, "api_key", named)
-			s.Regexp(namesTheDeliveryApp, s.loggedWith(ignored), named)
+			s.namesOnlyTheDeliveryApp(line, named)
+			s.namesOnlyTheDeliveryApp(s.loggedWith(ignored), named)
 		}
 	}
 }
@@ -308,14 +319,17 @@ func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedHookNameItsApp() {
 // A forged hook writes no line under the app its path names.
 func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAnUnverifiedHookNamesNoApp() {
 	for _, path := range []string{phone.CallHookPath, chat.MessageHookPath} {
-		for name, request := range map[string]*http.Request{
-			"a bad signature":      s.hook(path+"/"+strconv.Itoa(deliveryApp), "not-the-hook-secret", deliveryApp),
-			"another app's path":   s.hook(path+"/"+strconv.Itoa(deliveryApp+1), "hook-secret", deliveryApp),
-			"an app id unreadable": s.hook(path+"/not-an-app", "hook-secret", deliveryApp),
+		for name, refused := range map[string]struct {
+			request *http.Request
+			status  int
+		}{
+			"a bad signature":      {s.hook(path+"/"+strconv.Itoa(deliveryApp), "not-the-hook-secret"), http.StatusUnauthorized},
+			"another app's path":   {s.hook(path+"/"+strconv.Itoa(deliveryApp+1), "hook-secret"), http.StatusNotFound},
+			"an app id unreadable": {s.hook(path+"/not-an-app", "hook-secret"), http.StatusNotFound},
 		} {
-			status, line := s.logLine(request)
+			status, line := s.logLine(refused.request)
 
-			s.NotEqual(http.StatusOK, status, path, name)
+			s.Equal(refused.status, status, path, name)
 			s.NotContains(line, "app_id", path, name)
 		}
 	}
@@ -323,11 +337,11 @@ func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAnUnverifiedHookNamesNoApp(
 
 // A forged hook after a verified one on the same router writes no line under the verified one's app.
 func (s *ChatInboundRefusalSuite) TestAForgedHookAfterASignedOneNamesNoApp() {
-	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret", deliveryApp))
+	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret"))
 	s.Require().Equal(http.StatusOK, status)
 	s.Require().Regexp(namesTheDeliveryApp, line)
 
-	status, line = s.logLine(s.hook(phone.CallHookPath+"/"+strconv.Itoa(deliveryApp), "not-the-hook-secret", deliveryApp))
+	status, line = s.logLine(s.hook(phone.CallHookPath, "not-the-hook-secret"))
 
 	s.Equal(http.StatusUnauthorized, status)
 	s.NotContains(line, "app_id")
@@ -337,15 +351,16 @@ func (s *ChatInboundRefusalSuite) TestAForgedHookAfterASignedOneNamesNoApp() {
 func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAHookToADeploymentNotKnowingItsAppNamesNone() {
 	s.router = s.serve(0, s.current)
 
-	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret", 0))
+	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret"))
 
 	s.Equal(http.StatusOK, status)
 	s.NotContains(line, "app_id")
 }
 
-// hook is an event Stream's hooks do not act on, for app, signed with secret and posted to path.
-func (s *ChatInboundRefusalSuite) hook(path, secret string, app int64) *http.Request {
-	body := `{"type": "reaction.new", "app_id": ` + strconv.FormatInt(app, 10) + `}`
+// hook is an event Stream's hooks do not act on, claiming otherApp, signed with secret and
+// posted to path.
+func (s *ChatInboundRefusalSuite) hook(path, secret string) *http.Request {
+	body := `{"type": "reaction.new", "app_id": ` + strconv.Itoa(otherApp) + `}`
 	request, err := http.NewRequest(http.MethodPost, s.router.URL+path, strings.NewReader(body))
 	s.Require().NoError(err)
 	request.Header.Set("Content-Type", "application/json")
@@ -358,18 +373,24 @@ func (s *ChatInboundRefusalSuite) logLine(request *http.Request) (int, string) {
 	id := rand.Text()
 	request.Header.Set(RequestIDHeader, id)
 	status := s.send(request)
+	// Eventually can return before its callback ends, which then must not read the next test's log.
+	logged := s.logged
 	var found string
 	s.Require().Eventually(func() bool {
-		found = s.loggedWith(`msg="served a request"`, " request_id="+id)
+		found = lineWith(logged, `msg="served a request"`, " request_id="+id)
 		return found != ""
-	}, 5*time.Second, 20*time.Millisecond, s.logged.String())
+	}, 5*time.Second, 20*time.Millisecond, logged.String())
 	return status, found
 }
 
 // loggedWith is the last line logged holding every part, or "" when none does.
 func (s *ChatInboundRefusalSuite) loggedWith(parts ...string) string {
+	return lineWith(s.logged, parts...)
+}
+
+func lineWith(logged *lockedLog, parts ...string) string {
 	var found string
-	for line := range strings.Lines(s.logged.String()) {
+	for line := range strings.Lines(logged.String()) {
 		holds := true
 		for _, part := range parts {
 			holds = holds && strings.Contains(line, part)

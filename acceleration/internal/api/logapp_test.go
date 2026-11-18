@@ -684,7 +684,7 @@ func (s *LogAppSuite) TestTheLinesAfterAHandlerVerifiedAHookNameItsApp() {
 			}
 			return false
 		}, 5*time.Second, 20*time.Millisecond, msg)
-		s.Contains(line, " app_id=1234567", msg)
+		s.Equal("1234567", s.field(line, "app_id"), msg)
 		s.NotContains(line, "api_key", msg)
 		var probe string
 		for l := range strings.Lines(s.logged.String()) {
@@ -692,7 +692,7 @@ func (s *LogAppSuite) TestTheLinesAfterAHandlerVerifiedAHookNameItsApp() {
 				probe = l
 			}
 		}
-		s.Contains(probe, " app_id=1234567", path)
+		s.Equal("1234567", s.field(probe, "app_id"), path)
 		s.NotContains(probe, "api_key", path)
 	}
 }
@@ -849,7 +849,7 @@ func (s *LogAppHookSuite) TestTheAccessLineOfAHookTheGatewayVouchedForNamesItsAp
 		status, line := s.hookLine(request)
 
 		s.Equal(http.StatusOK, status, hook)
-		s.Contains(line, " app_id="+s.customerID(), hook)
+		s.Equal(s.customerID(), s.field(line, "app_id"), hook)
 		s.NotContains(line, "api_key", hook)
 	}
 }
@@ -876,7 +876,8 @@ func (s *LogAppHookSuite) TestTheAccessLineOfTheDeploymentsHookNamesTheDeploymen
 	status, line := s.hookLine(s.hookTo(chat.MessageHookPath))
 
 	s.Equal(http.StatusOK, status)
-	s.Contains(line, " app_id="+strconv.Itoa(suiteStreamApp))
+	s.Equal(strconv.Itoa(suiteStreamApp), s.field(line, "app_id"))
+	s.NotContains(line, "api_key")
 }
 
 // hookTo is an event the hooks do not act on, posted to path and signed with the deployment's
