@@ -24,6 +24,12 @@ The combination of routing, persistence and memory makes it easy to switch the u
 Stay in control of how costs scale.
 Start with the frontier models and run your own when it makes sense.
 
+## Skill
+
+The skill enables you to build complex AI apps in hours:
+
+* Ask Claude/Cursor/Lovable to setup Stream, with getstream.io/SKILL.md
+
 ## Quickstart
 
 The heavy lifting is done in Go. But you can use the agents in any environment:
@@ -132,7 +138,6 @@ async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
     user = tool_call_context.user
     if not user.id:
         raise ValueError("unknown user")
-    await tool_call_context.update("Checking your open cases")
     # pretend this calls your CRM
     return await crm.open_cases(user.id)
 
