@@ -243,7 +243,7 @@ func (s *TelnyxHookSuite) TestACallWhoseTrunkPasswordCannotBeOpenedIsCountedRefu
 	status, _, body := s.deliver(s.call(s.e164), true)
 	s.Require().Equal(http.StatusOK, status)
 	s.Require().Contains(body, "<Hangup/>")
-	s.Require().True(s.loggedLine("could not find its trunk"))
+	s.Require().True(s.loggedLine("could not find its trunk", "customer="+s.customerID()))
 
 	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
 	s.Equal(int64(1), row.refused)

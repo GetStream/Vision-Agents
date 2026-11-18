@@ -566,6 +566,7 @@ func (s *OAuth2CodeSuite) TestARefreshTokenDyingBeforeTheNextRefreshIsWarnedAbou
 	renewed := s.accessCredentialDue(scheme, stored, resolved)
 	s.Contains(log.String(), "the refresh token expires before the next refresh")
 	s.Contains(log.String(), `"connection":"conn-1"`)
+	s.Contains(log.String(), `"customer":"`+s.ref.CustomerID+`"`, "the warning names the app that has to reconnect")
 	for _, secret := range []string{s.accessToken(renewed), s.refreshToken(renewed), s.refreshToken(stored), srv.ClientSecret} {
 		s.NotContains(log.String(), secret)
 	}

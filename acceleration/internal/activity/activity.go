@@ -69,6 +69,15 @@ func NoteCustomer(ctx context.Context, appID, area string) {
 	}
 }
 
+// NotedCustomer is the app NoteCustomer last noted on ctx, and "" when none was, so a handler
+// that refuses a hook after its app is known can name the app on its log line.
+func NotedCustomer(ctx context.Context) string {
+	if note, ok := ctx.Value(noteKey{}).(*Note); ok {
+		return note.AppID
+	}
+	return ""
+}
+
 // DefaultInterval is how often the sums are written. A row is then written at most once a
 // minute per app, area, client and day, which is the rate the activity record was asked to
 // keep to; a router that stops loses at most that much, and not even that when it stops
