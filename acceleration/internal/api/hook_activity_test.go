@@ -217,3 +217,42 @@ func (s *CallHooksSuite) TestACallToANumberWithAnAgentOnARouterWithNoSessionsIsC
 	s.Equal(int64(1), row.refused)
 	s.Equal(errNoSessions.Code, row.code)
 }
+
+// Defect: a call Telnyx signed that the router hangs up on for its own failure past finding the
+// number's app, a trunk password it cannot open, counted as answered.
+func (s *TelnyxHookSuite) TestACallWhoseTrunkPasswordCannotBeOpenedIsCountedRefused() {
+	ctx := context.Background()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: s.e164, Vendor: "telnyx", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), s.e164, store.NumberAttachment{
+		TrunkID: "trunk-" + s.utils.uuid(), CallType: "default",
+		BridgeURI: "sip:" + s.e164 + "@trunk.sip.example.test", BridgeUsername: "trunk-user",
+		// Bytes no key sealed, so no version of the suite's key opens them.
+		BridgePasswordSealed: []byte("not sealed by any key"), BridgePasswordKEKVersion: 1,
+	}))
+
+	status, _, body := s.deliver(s.call(s.e164), true)
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Contains(body, "<Hangup/>")
+	s.Require().True(s.loggedLine("could not find its trunk"))
+
+	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(internalError().Code, row.code)
+}
+
+// Defect: a call Telnyx signed that the router hangs up on because the number's stored trunk is
+// not one TeXML can dial, counted as answered.
+func (s *TelnyxHookSuite) TestACallWhoseTrunkCannotBeRenderedIsCountedRefused() {
+	s.attach(s.e164, "trunk.sip.example.test", "trunk-user", "trunk-password")
+
+	status, _, body := s.deliver(s.call(s.e164), true)
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Contains(body, "<Hangup/>")
+	s.Require().True(s.loggedLine("could not render its trunk"))
+
+	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(internalError().Code, row.code)
+}

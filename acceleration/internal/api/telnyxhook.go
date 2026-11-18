@@ -113,12 +113,15 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 			"attach the number again", "to", to)
 		return
 	}
+	// The router's own failure, which an API route answers 500: refused, once noted.
 	if err != nil {
+		noteRefusal(w, internalError().Code)
 		hangUp(w, logger, "hung up a telnyx call: could not find its trunk", "to", to, "error", err)
 		return
 	}
 	plan, err := phonetelnyx.RenderInbound(bridge)
 	if err != nil {
+		noteRefusal(w, internalError().Code)
 		hangUp(w, logger, "hung up a telnyx call: could not render its trunk", "to", to, "error", err)
 		return
 	}
