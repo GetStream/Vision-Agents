@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build-time setup for Cursor cloud agents. Must be idempotent and terminate.
-# Builds read this from main, but agents also run on branches such as accelerate,
+# Builds read this from main, but agents also run on other branches,
 # so it installs their toolchain too: Go, Postgres, Redis and uv.
 set -euo pipefail
 
