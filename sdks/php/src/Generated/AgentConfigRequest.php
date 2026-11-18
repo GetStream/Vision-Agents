@@ -92,6 +92,8 @@ final readonly class AgentConfigRequest
         public ?array $agents = null,
         // What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming...
         public ?string $image = null,
+        // What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui...
+        public ?string $uiInstructions = null,
     ) {
     }
 
@@ -141,6 +143,7 @@ final readonly class AgentConfigRequest
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
             agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
             image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
+            uiInstructions: array_key_exists('ui_instructions', $data) && $data['ui_instructions'] !== null ? Json::string($data, 'ui_instructions') : null,
         );
     }
 
@@ -269,6 +272,9 @@ final readonly class AgentConfigRequest
         }
         if ($this->image !== null) {
             $out['image'] = $this->image;
+        }
+        if ($this->uiInstructions !== null) {
+            $out['ui_instructions'] = $this->uiInstructions;
         }
         return $out;
     }

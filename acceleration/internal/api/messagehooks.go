@@ -206,6 +206,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = loggedHook(r, origin)
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {
@@ -232,7 +233,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 			s.routeArrivingMessage(r.Context(), origin, event)
 		}
 	} else {
-		s.logger.Debug("ignoring a message event", "type", eventType)
+		s.logger.DebugContext(r.Context(), "ignoring a message event", "type", eventType)
 	}
 	w.WriteHeader(http.StatusOK)
 }

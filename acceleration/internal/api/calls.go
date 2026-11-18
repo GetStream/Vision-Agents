@@ -719,6 +719,13 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 	if err != nil {
 		return nil, err
 	}
+	// The checks, like the transcript, are worth having but not worth failing over.
+	var checks []live.CallEvent
+	if s.live != nil {
+		if checks, err = s.live.CallFloorChecks(ctx, customerID, call.CallID, call.StartedAt, call.EndedAt); err != nil {
+			s.logger.Error("could not read the floor checks for a timeline", "call", call.ID, "error", err)
+		}
+	}
 
 	// The transcript is worth having but not worth failing over: the timings are the
 	// part of this view that only this service holds.
@@ -727,7 +734,7 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 		s.logger.Error("could not read the transcript for a timeline", "call", call.ID, "error", err)
 	}
 
-	return &getCallTimelineResponse{Body: timelineOf(turns, said, models)}, nil
+	return &getCallTimelineResponse{Body: timelineOf(turns, said, models, checks)}, nil
 }
 
 // timelineOf pairs each exchange with what the caller said and what the agent answered.
@@ -739,7 +746,7 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 // agent's lines from its start to the next turn's, and heard the caller's lines since the
 // previous turn's reply began, up to its own reply, or its start when it has none.
 // Everything heard before one answer is joined, since that answer is to all of it.
-func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request) []TimelineEntry {
+func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request, checks []live.CallEvent) []TimelineEntry {
 	modelCalls := make(map[string][]ModelCallTiming)
 	for _, request := range models {
 		if request.TurnID == "" {
@@ -760,6 +767,7 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 			ErrorMessage: optional(request.ErrorMessage),
 		})
 	}
+	floorChecks := floorChecksByTurn(turns, checks)
 	// A reply talked over is in the transcript as what it was going to say, which is not
 	// what the turn said.
 	said = slices.DeleteFunc(slices.Clone(said), func(line chatlog.Spoken) bool { return line.Interrupted })
@@ -788,6 +796,9 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 		if calls := modelCalls[turn.TurnID]; len(calls) > 0 {
 			entry.ModelCalls = &calls
 		}
+		if checks := floorChecks[turn.TurnID]; len(checks) > 0 {
+			entry.FloorChecks = &checks
+		}
 
 		var until time.Time
 		if index+1 < len(turns) {
@@ -804,6 +815,90 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 		timeline = append(timeline, entry)
 	}
 	return timeline
+}
+
+// floorChecksPerTurn is the most floor-control checks a timeline entry carries, the latest.
+const floorChecksPerTurn = 40
+
+// floorChecksByTurn joins a call's floor-control checks to the turns of the same call they are
+// about: the turn a check names, when it is one of them, and otherwise, for a check at a pause
+// with the floor free, the first that began after it, as one about words the flow controller
+// let go of leads to it. A check while the agent talked joins only the reply it names. A turn
+// keeps its latest floorChecksPerTurn, oldest first. turns are oldest first, and an agent's
+// turns may be of calls that overlap this one.
+func floorChecksByTurn(turns []live.Turn, checks []live.CallEvent) map[string][]FloorCheck {
+	byID := make(map[string][]live.Turn, len(turns))
+	for _, turn := range turns {
+		byID[turn.TurnID] = append(byID[turn.TurnID], turn)
+	}
+	byTurn := map[string][]FloorCheck{}
+	for _, check := range checks {
+		if check.FloorCheck == nil {
+			continue
+		}
+		ofCall := func(turn live.Turn) bool { return turn.CallID == "" || turn.CallID == check.CallID }
+		turn := ""
+		for _, named := range byID[check.TurnID] {
+			if check.TurnID != "" && ofCall(named) {
+				turn = named.TurnID
+				break
+			}
+		}
+		if turn == "" && check.FloorCheck.Kind == live.FloorCheckPause {
+			for _, next := range turns {
+				if ofCall(next) && !next.StartedAt.Before(check.At) {
+					turn = next.TurnID
+					break
+				}
+			}
+		}
+		if turn != "" {
+			byTurn[turn] = append(byTurn[turn], floorCheckOf(*check.FloorCheck))
+		}
+	}
+	for turn, joined := range byTurn {
+		slices.SortStableFunc(joined, func(a, b FloorCheck) int { return a.At.Compare(b.At) })
+		byTurn[turn] = joined[max(0, len(joined)-floorChecksPerTurn):]
+	}
+	return byTurn
+}
+
+// floorChecksOf renders floor-control checks for the wire.
+func floorChecksOf(checks []live.FloorCheck) []FloorCheck {
+	out := make([]FloorCheck, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, floorCheckOf(check))
+	}
+	return out
+}
+
+// floorCheckOf renders one floor-control check for the wire, as a timeline entry and a turn
+// frame say it.
+func floorCheckOf(check live.FloorCheck) FloorCheck {
+	rendered := FloorCheck{
+		At:       check.At,
+		Kind:     FloorCheckKind(check.Kind),
+		PausedMs: check.PausedMs,
+		Ruling: FloorRuling{
+			Disposition: check.Ruling.Disposition,
+			Floor:       check.Ruling.Floor,
+			Tool:        optional(check.Ruling.Tool),
+		},
+		Acted:     check.Acted,
+		LatencyMs: check.LatencyMs,
+		Point:     optional(check.Point),
+	}
+	if check.Ruling.Cannot {
+		rendered.Ruling.Cannot = &check.Ruling.Cannot
+	}
+	if len(check.Options) > 0 {
+		options := make([]FloorOption, 0, len(check.Options))
+		for _, option := range check.Options {
+			options = append(options, FloorOption{Option: option.Option, Probability: option.Probability})
+		}
+		rendered.Options = &options
+	}
+	return rendered
 }
 
 // spokenBy keeps the agent's lines, or everybody else's.
@@ -1391,6 +1486,57 @@ func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "DecisionKind", "What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.", "ask", "wait", "ignore", "answer", "queue", "interrupt", "shorten", "backchannel", "supersede", "compact", "delegate", "settle", "fail")
 }
 
+// FloorCheckKind What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
+type FloorCheckKind string
+
+// Defines values for FloorCheckKind.
+const (
+	FloorCheckKindOverAgent FloorCheckKind = "over_agent"
+	FloorCheckKindPause     FloorCheckKind = "pause"
+)
+
+// Valid indicates whether the value is a known member of the FloorCheckKind enum.
+func (e FloorCheckKind) Valid() bool {
+	switch e {
+	case FloorCheckKindOverAgent:
+		return true
+	case FloorCheckKindPause:
+		return true
+	default:
+		return false
+	}
+}
+
+func (FloorCheckKind) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "FloorCheckKind", "What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.", "pause", "over_agent")
+}
+
+// FloorCheck is the FloorCheck schema.
+type FloorCheck struct {
+	Acted     bool           `json:"acted" doc:"Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced."`
+	At        time.Time      `json:"at" doc:"When the check was asked."`
+	Kind      FloorCheckKind `json:"kind"`
+	LatencyMs float64        `json:"latency_ms" doc:"The round trip to the chorus-asr server."`
+	Options   *[]FloorOption `json:"options,omitempty" doc:"The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them."`
+	PausedMs  *float64       `json:"paused_ms,omitempty" doc:"How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent."`
+	Point     *string        `json:"point,omitempty" doc:"The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar."`
+	Ruling    FloorRuling    `json:"ruling"`
+}
+
+// FloorOption is the FloorOption schema.
+type FloorOption struct {
+	Option      string  `json:"option"`
+	Probability float64 `json:"probability"`
+}
+
+// FloorRuling What the model ruled the agent do once the turn has ended.
+type FloorRuling struct {
+	Cannot      *bool   `json:"cannot,omitempty" doc:"The caller wants something none of the agent's tools can do."`
+	Disposition string  `json:"disposition" doc:"respond, wait, clarify or ignore."`
+	Floor       string  `json:"floor" doc:"stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended."`
+	Tool        *string `json:"tool,omitempty" doc:"The tool the caller wants."`
+}
+
 // ModelCallTiming is the ModelCallTiming schema.
 type ModelCallTiming struct {
 	DurationMs   *float64  `json:"duration_ms,omitempty" doc:"Request to completed response or failed create."`
@@ -1414,6 +1560,7 @@ type TimelineEntry struct {
 	DecisionMs           *float64           `json:"decision_ms,omitempty" doc:"Stable turn to the main model request, including flow and queueing."`
 	FirstAudibleFrameMs  *float64           `json:"first_audible_frame_ms,omitempty" doc:"Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it." nullable:"true"`
 	FirstFrameQueuedMs   *float64           `json:"first_frame_queued_ms,omitempty" doc:"Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it." nullable:"true"`
+	FloorChecks          *[]FloorCheck      `json:"floor_checks,omitempty" doc:"The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control."`
 	Heard                *string            `json:"heard,omitempty" doc:"What the caller said, when it can be matched to this exchange."`
 	Interrupted          *bool              `json:"interrupted,omitempty" doc:"Whether the caller talked over the answer."`
 	LlmTtftMs            *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`

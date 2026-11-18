@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -130,4 +131,22 @@ func (s *LogHandlerSuite) TestALoggerThatAlreadyNamesTheKeyIsNotGivenASecondOne(
 
 	s.Equal(1, strings.Count(s.out.String(), "api_key="))
 	s.Contains(s.out.String(), "app_id=1732479")
+}
+
+// lockedLog is what the router logs, written from any goroutine and read by the test.
+type lockedLog struct {
+	mu      sync.Mutex
+	written bytes.Buffer
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.written.Write(p)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.written.String()
 }
