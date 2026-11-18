@@ -6,6 +6,8 @@
   `list`, `get`, `update`, `pause`, `resume` and `delete` them, and read their `runs`.
 - `session.interrupt(requestId: ...)` - abandons only the reply answering that request, the
   `request_id` its events carry. Without one it abandons the current reply, as before.
+- `session.say(text, interrupt: true)` - stops what the agent is saying first, rather than waiting
+  for it to finish, as in the Swift and Kotlin SDKs.
 - `session.addTools` and `session.removeTool` - give a running session more of the app's tools,
   and take them back.
 

@@ -215,8 +215,15 @@ final class AgentSession {
     });
   }
 
-  /// Speaks this without going through the model.
-  void say(String text) => _held().send(SayCommand(text));
+  /// Speaks this without going through the model. [interrupt] stops what the agent is saying
+  /// first, rather than waiting for it to finish.
+  void say(String text, {bool interrupt = false}) {
+    final socket = _held();
+    if (interrupt) {
+      socket.send(const InterruptCommand());
+    }
+    socket.send(SayCommand(text));
+  }
 
   /// Abandons the reply in flight.
   ///

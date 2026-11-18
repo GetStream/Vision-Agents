@@ -8,7 +8,7 @@
 
 ### The Dart SDK reads the user's scheduled tasks, and interrupts one reply
 
-`StreamAgents.scheduledTasks` lists, reads, changes, pauses, resumes and cancels the user's scheduled tasks and reads their runs, as Swift's and Kotlin's `ScheduledTasks` do; the wire's `in` is `inValue` in Dart. `session.interrupt(requestId: ...)` abandons only the reply answering that request, as Swift's `interrupt(requestID:)` and Kotlin's `interrupt(requestId)` do.
+`StreamAgents.scheduledTasks` lists, reads, changes, pauses, resumes and cancels the user's scheduled tasks and reads their runs, as Swift's and Kotlin's `ScheduledTasks` do; the wire's `in` is `inValue` in Dart. `session.interrupt(requestId: ...)` abandons only the reply answering that request, as Swift's `interrupt(requestID:)` and Kotlin's `interrupt(requestId)` do, and `session.say(text, interrupt: true)` stops what the agent is saying first, as Swift's `say(_:interrupt:)` and Kotlin's `say(text, interrupt)` do.
 
 ### The JavaScript SDK draws a streaming card a statement at a time
 

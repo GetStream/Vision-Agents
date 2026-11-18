@@ -303,6 +303,20 @@ void main() {
       await chat.close();
     });
 
+    test('says something after what is in flight, or stops that first', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat
+        ..say('One moment.')
+        ..say('Sorry, wrong order.', interrupt: true);
+
+      expect(await socket.next(), {'type': 'say', 'text': 'One moment.'});
+      expect(await socket.next(), {'type': 'interrupt'});
+      expect(await socket.next(), {'type': 'say', 'text': 'Sorry, wrong order.'});
+      await chat.close();
+    });
+
     test('a picture tool that asks first sends its pictures once allowed', () async {
       final chat = await agents.chat(
         SessionOptions(
