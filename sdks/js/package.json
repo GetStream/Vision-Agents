@@ -8,7 +8,7 @@
     "url": "git+https://github.com/GetStream/Vision-Agents.git",
     "directory": "sdks/js"
   },
-  "homepage": "https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/js",
+  "homepage": "https://github.com/GetStream/Vision-Agents/tree/main/sdks/js",
   "publishConfig": {
     "access": "public"
   },

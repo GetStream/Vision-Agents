@@ -378,10 +378,10 @@ to `https://stream-io-repo.com` from `release-kotlin-*` branches only. `version`
 - **A snapshot:** push a branch named `release-kotlin-X.Y.Z-SNAPSHOT` that sets
   `version=X.Y.Z-SNAPSHOT`. Each push publishes `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, which expires
   after 7 days. `X.Y.Z` must be newer than the last release.
-- **A release:** open a pull request to `accelerate` from `release-kotlin-X.Y.Z` that sets
+- **A release:** open a pull request to `main` from `release-kotlin-X.Y.Z` that sets
   `version=X.Y.Z`. It fails unless `X.Y.Z` is newer than the last release and not already
   published. Merging it publishes the release and tags the commit `sdk-kotlin-vX.Y.Z`.
 
-Other merges into `accelerate` publish nothing.
+Other merges into `main` publish nothing.
 
 There is no GitHub release: publishing one starts the Python release, `release.yml`.

@@ -3,7 +3,7 @@ name: CI (client SDKs)
 # uncancellable copy of every job.
 on:
   push:
-    branches: [ "main", "accelerate" ]
+    branches: [ "main" ]
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
@@ -39,7 +39,7 @@ permissions:
 # VISION_AGENTS_URL, which nothing here sets.
 jobs:
   # A pull request builds only the SDKs it touches, so a Dart change does not wait on the
-  # macOS runner. A push to main or accelerate builds them all.
+  # macOS runner. A push to main builds them all.
   changes:
     runs-on: ubuntu-latest
     outputs:

@@ -1,7 +1,7 @@
 name: Python compatibility check
 on:
   push:
-    branches: [ "main", "accelerate" ]
+    branches: [ "main" ]
     paths:
       - '**/pyproject.toml'
       - 'uv.lock'
