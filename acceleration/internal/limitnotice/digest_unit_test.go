@@ -154,3 +154,16 @@ func (s *DigestMessageSuite) TestAnOrganizationLinksItsStaffPage() {
 
 	s.Contains(message, "  • <https://staff.example.test/orgs/org-new|org-new>   reached: dashboard_reads   dashboard_reads (dashboard)\n")
 }
+
+// Defect: an organization that answered only areas that are no step of the ladder shown with a
+// leading "+" in front of them.
+func (s *DigestMessageSuite) TestAnOrganizationThatAnsweredOnlyNoStepAreaHasNoLeadingPlus() {
+	digest := DayDigest{Day: digestDay, Organizations: []OrganizationDay{
+		{ID: "org-dental", New: true, Areas: []store.ActivityArea{answered(activity.AreaModelAPI, "sdk", 2)}},
+	}}
+
+	message := digestMessage("prod", Links{}, digest)
+
+	s.Contains(message, "`org-dental`   reached: —   model_api (sdk)\n")
+	s.NotContains(message, "+ model_api")
+}

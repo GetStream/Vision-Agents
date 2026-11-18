@@ -115,10 +115,10 @@ func (o OrganizationDay) path() string {
 		}
 	}
 	path := strings.Join(steps, " → ")
-	if len(others) > 0 {
-		path = strings.TrimSpace(path + " + " + strings.Join(others, ", "))
+	if len(others) > 0 && len(steps) > 0 {
+		path += " + "
 	}
-	return path
+	return path + strings.Join(others, ", ")
 }
 
 // stepRank is where area is in activity.Steps, and past them for an area that is no step.
