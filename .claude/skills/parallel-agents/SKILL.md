@@ -60,6 +60,8 @@ a mistake that actually happened.
     on `origin/accelerate`.
   - A database that ran an earlier build of a PR can hold a version that a later merge lands below.
     Recreate that database.
+  - Run `uv run --no-sync dev.py check-migrations` before each merge. To fix a stale version, read
+    the `migration-order` skill (`.claude/skills/migration-order/SKILL.md`).
 - **Shared append files.** Every PR adds a note at the end of `.claude/skills/sdk/SKILL.md` and
   `CHANGELOG.md`, so any two open PRs conflict there. Keep both sides, the base's entries first.
 - **Conflict markers.** Before every `git rebase --continue`, run `git diff --check` and grep for

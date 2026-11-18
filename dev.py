@@ -7,6 +7,7 @@ Essential dev commands for testing, linting, and type checking
 import datetime
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -250,6 +251,86 @@ def check_python_versions(python_version: str):
     if failed:
         click.echo(f"\nFAILED ({len(failed)}): {', '.join(failed)}")
         sys.exit(1)
+
+
+MIGRATIONS_DIR = "acceleration/migrations/"
+MIGRATION_NAME = re.compile(r"^(\d{14})_.+\.sql$")
+MIGRATION_VERSION_FORMAT = "%Y%m%d%H%M%S"
+
+
+def _git(*args: str, cwd: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", *args], check=True, stdout=subprocess.PIPE, text=True, cwd=cwd
+    )
+    return result.stdout.splitlines()
+
+
+def _migration_versions(paths: list[str]) -> dict[str, str]:
+    """Map each migration path to its version, skipping files that are not migrations."""
+    versions = {}
+    for path in paths:
+        match = MIGRATION_NAME.match(Path(path).name)
+        if match:
+            versions[path] = match.group(1)
+    return versions
+
+
+@cli.command(name="check-migrations")
+@click.option(
+    "--base",
+    default="origin/accelerate",
+    show_default=True,
+    help="Branch the PR merges into. Run `git fetch origin` first: this fetches nothing.",
+)
+def check_migrations(base: str):
+    """Check that the branch's committed migrations sort after the newest one on base.
+
+    goose runs strictly: a database that applied base refuses a migration older
+    than its newest one ("found N missing migrations before current version").
+    """
+    root = Path(_git("rev-parse", "--show-toplevel", cwd=Path.cwd())[0])
+    added = _migration_versions(
+        _git(
+            "diff",
+            "--diff-filter=AR",
+            "--name-only",
+            f"{base}...HEAD",
+            "--",
+            MIGRATIONS_DIR,
+            cwd=root,
+        )
+    )
+    if not added:
+        click.echo(f"The branch adds no migrations since {base}.")
+        return
+
+    on_base = _migration_versions(
+        _git("ls-tree", "--name-only", base, MIGRATIONS_DIR, cwd=root)
+    )
+    newest = max(on_base.values())
+    seen = set(on_base.values())
+    problems = []
+    for path, version in sorted(added.items(), key=lambda item: item[1]):
+        if version <= newest:
+            problems.append((path, f"version {version} is not after {newest}"))
+        elif version in seen:
+            problems.append((path, f"version {version} is taken by another file"))
+        seen.add(version)
+
+    if not problems:
+        click.echo(
+            f"The branch's {len(added)} migration(s) follow {base} (newest there: {newest})."
+        )
+        return
+
+    slot = datetime.datetime.strptime(max(seen), MIGRATION_VERSION_FORMAT)
+    lines = [f"Newest migration on {base}: {newest}."]
+    for path, reason in problems:
+        slot += datetime.timedelta(hours=1)
+        name = Path(path).name
+        renamed = f"{slot.strftime(MIGRATION_VERSION_FORMAT)}{name[14:]}"
+        lines.append(f"{path}: {reason}. Rename it to {renamed}.")
+    raise click.ClickException("\n".join(lines))
 
 
 @cli.command()
