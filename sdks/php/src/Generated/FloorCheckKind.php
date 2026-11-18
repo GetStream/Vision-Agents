@@ -7,8 +7,9 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or
- * while they talked over the agent.
+ * What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller
+ * has finished; over_agent, while the agent was talking, whether the caller stops or shortens
+ * it, at a pause or while they talked on.
  */
 enum FloorCheckKind: string
 {

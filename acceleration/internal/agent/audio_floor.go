@@ -165,7 +165,8 @@ func floorCheckOf(c audiofloor.Checked) live.FloorCheck {
 	}
 	if c.OverAgent {
 		check.Kind = live.FloorCheckOverAgent
-	} else if c.Paused > 0 {
+	}
+	if c.Paused > 0 {
 		paused := durationMs(c.Paused)
 		check.PausedMs = &paused
 	}

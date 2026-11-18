@@ -721,7 +721,7 @@ func (s *Server) getCallTimeline(ctx context.Context, request *getCallTimelineRe
 	}
 	var checks []live.CallEvent
 	if s.live != nil {
-		if checks, err = s.live.CallFloorChecks(ctx, customerID, call.CallID); err != nil {
+		if checks, err = s.live.CallFloorChecks(ctx, customerID, call.CallID, call.StartedAt, call.EndedAt); err != nil {
 			return nil, err
 		}
 	}
@@ -1477,7 +1477,7 @@ func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "DecisionKind", "What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.", "ask", "wait", "ignore", "answer", "queue", "interrupt", "shorten", "backchannel", "supersede", "compact", "delegate", "settle", "fail")
 }
 
-// FloorCheckKind Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+// FloorCheckKind What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
 type FloorCheckKind string
 
 // Defines values for FloorCheckKind.
@@ -1499,7 +1499,7 @@ func (e FloorCheckKind) Valid() bool {
 }
 
 func (FloorCheckKind) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "FloorCheckKind", "Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.", "pause", "over_agent")
+	return namedEnum(registry, "FloorCheckKind", "What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.", "pause", "over_agent")
 }
 
 // FloorCheck is the FloorCheck schema.
@@ -1509,7 +1509,7 @@ type FloorCheck struct {
 	Kind      FloorCheckKind `json:"kind"`
 	LatencyMs float64        `json:"latency_ms" doc:"The round trip to the chorus-asr server."`
 	Options   *[]FloorOption `json:"options,omitempty" doc:"The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them."`
-	PausedMs  *float64       `json:"paused_ms,omitempty" doc:"How far into the pause the check was asked. Absent over the agent."`
+	PausedMs  *float64       `json:"paused_ms,omitempty" doc:"How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent."`
 	Point     *string        `json:"point,omitempty" doc:"The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar."`
 	Ruling    FloorRuling    `json:"ruling"`
 }

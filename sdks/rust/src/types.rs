@@ -6007,7 +6007,7 @@ pub struct FloorCheck {
     ///The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub options: ::std::option::Option<::std::vec::Vec<FloorOption>>,
-    ///How far into the pause the check was asked. Absent over the agent.
+    ///How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub paused_ms: ::std::option::Option<f64>,
     ///The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
@@ -6015,7 +6015,7 @@ pub struct FloorCheck {
     pub point: ::std::option::Option<::std::string::String>,
     pub ruling: FloorRuling,
 }
-///Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+///What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]

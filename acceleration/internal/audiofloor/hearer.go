@@ -79,8 +79,10 @@ type Checked struct {
 	// At is when the check was asked, and Latency the round trip to the server.
 	At      time.Time
 	Latency time.Duration
-	// OverAgent says it was asked while the caller talked over the agent, without a pause
-	// (Turn.Unfinished). Any other is a pause's, Paused into it.
+	// OverAgent says it was asked while the agent was talking, which is the question the
+	// model was asked: whether the caller stops or shortens it, rather than whether they have
+	// finished. Paused is how far into a pause it was asked, zero for one asked while the
+	// caller talked on.
 	OverAgent bool
 	Paused    time.Duration
 	Answer    Answer
@@ -165,9 +167,15 @@ func (h *Hearer) Check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(start).Seconds())
-		over := turnOf(turn).Unfinished
-		h.report(Checked{Participant: turn.ParticipantID, Turn: checkedTurn(turn, turn.ID), At: start, Latency: latency, OverAgent: over,
-			Paused: turn.Paused, Answer: check.Answer, Acted: check.Ended && (!over || takesFloor(check.Ruling)), Point: check.Ending.Name})
+		reported := Checked{Participant: turn.ParticipantID, Turn: checkedTurn(turn, turn.ID), At: start, Latency: latency,
+			OverAgent: turn.Speaking, Answer: check.Answer, Acted: check.Ended, Point: check.Ending.Name}
+		if turnOf(turn).Unfinished {
+			// Words still coming are at no pause, and only a stop or shorten of them is acted on.
+			reported.Acted = check.Ended && takesFloor(check.Ruling)
+		} else {
+			reported.Paused = turn.Paused
+		}
+		h.report(reported)
 	}
 	return check, err
 }

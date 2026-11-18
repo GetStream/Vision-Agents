@@ -26,14 +26,16 @@ class FloorCheck:
         acted (bool): Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent,
             its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
         at (datetime.datetime): When the check was asked.
-        kind (FloorCheckKind): Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or
-            while they talked over the agent.
+        kind (FloorCheckKind): What a chorus-asr floor-control check asked: pause, with the floor free, whether the
+            caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a
+            pause or while they talked on.
         latency_ms (float): The round trip to the chorus-asr server.
         ruling (FloorRuling):
         options (list[FloorOption] | Unset): The probability of each answer, in the order the model was offered them:
             respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and
             each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
-        paused_ms (float | Unset): How far into the pause the check was asked. Absent over the agent.
+        paused_ms (float | Unset): How far into the caller's pause the check was asked. Absent for a check asked while
+            they talked on over the agent.
         point (str | Unset): The end-of-turn point or preset the check was read by. Absent over the agent, where there
             is no bar.
     """

@@ -7450,7 +7450,7 @@ export type components = {
             readonly options?: readonly components["schemas"]["FloorOption"][];
             /**
              * Format: double
-             * @description How far into the pause the check was asked. Absent over the agent.
+             * @description How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
              */
             readonly paused_ms?: number;
             /** @description The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar. */
@@ -7458,7 +7458,7 @@ export type components = {
             readonly ruling: components["schemas"]["FloorRuling"];
         };
         /**
-         * @description Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+         * @description What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
          * @enum {string}
          */
         readonly FloorCheckKind: "pause" | "over_agent";

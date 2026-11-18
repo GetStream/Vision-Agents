@@ -7603,7 +7603,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<FloorOption>? Options { get; set; } = default!;
 
         /// <summary>
-        /// How far into the pause the check was asked. Absent over the agent.
+        /// How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("paused_ms")]
         public double? PausedMs { get; set; } = default!;

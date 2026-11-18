@@ -71,8 +71,8 @@ type Turn struct {
 	Interrupted    bool     `json:"interrupted,omitempty"`
 }
 
-// The kinds of FloorCheck: at a pause in the caller's speech, or while they talked over the
-// agent.
+// The kinds of FloorCheck: with the floor free, whether the caller has finished, or while the
+// agent was talking, whether they stop or shorten it, at a pause or while they talked on.
 const (
 	FloorCheckPause     = "pause"
 	FloorCheckOverAgent = "over_agent"
@@ -280,10 +280,10 @@ func floorChecksKey(customerID, callID string) string {
 	return "floor_checks:" + customerID + ":" + callID
 }
 
-// CallFloorChecks returns the chorus-asr floor checks kept for one call, oldest first, each
-// with the turn it was about when that was known as it was asked. Checks older than RecentFor
-// are gone.
-func (c *Client) CallFloorChecks(ctx context.Context, customerID, callID string) ([]CallEvent, error) {
+// CallFloorChecks returns the chorus-asr floor checks kept for one call between from and to,
+// oldest first, each with the turn it was about when that was known as it was asked. A nil to
+// reads up to now. Checks older than RecentFor are left out, as their turns are gone.
+func (c *Client) CallFloorChecks(ctx context.Context, customerID, callID string, from time.Time, to *time.Time) ([]CallEvent, error) {
 	if customerID == "" || callID == "" {
 		return nil, stack.Wrap(errors.New("live: a customer and a call id are required"))
 	}
@@ -292,15 +292,19 @@ func (c *Client) CallFloorChecks(ctx context.Context, customerID, callID string)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("live: floor checks: %w", err))
 	}
+	if forgotten := time.Now().Add(-RecentFor); from.Before(forgotten) {
+		from = forgotten
+	}
 	checks := make([]CallEvent, 0, len(members))
 	for _, member := range members {
 		var check CallEvent
 		if err := json.Unmarshal([]byte(member), &check); err != nil {
 			return nil, stack.Wrap(fmt.Errorf("live: decode floor check: %w", err))
 		}
-		if check.FloorCheck != nil {
-			checks = append(checks, check)
+		if check.FloorCheck == nil || check.At.Before(from) || (to != nil && check.At.After(*to)) {
+			continue
 		}
+		checks = append(checks, check)
 	}
 	slices.SortStableFunc(checks, func(a, b CallEvent) int { return a.At.Compare(b.At) })
 	return checks, nil

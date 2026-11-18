@@ -6619,7 +6619,7 @@ type FloorCheck struct {
 	// At When the check was asked.
 	At time.Time `json:"at"`
 
-	// Kind Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+	// Kind What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
 	Kind FloorCheckKind `json:"kind"`
 
 	// LatencyMs The round trip to the chorus-asr server.
@@ -6628,7 +6628,7 @@ type FloorCheck struct {
 	// Options The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
 	Options *[]FloorOption `json:"options,omitempty"`
 
-	// PausedMs How far into the pause the check was asked. Absent over the agent.
+	// PausedMs How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
 	PausedMs *float64 `json:"paused_ms,omitempty"`
 
 	// Point The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
@@ -6636,7 +6636,7 @@ type FloorCheck struct {
 	Ruling FloorRuling `json:"ruling"`
 }
 
-// FloorCheckKind Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+// FloorCheckKind What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
 type FloorCheckKind string
 
 // FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.

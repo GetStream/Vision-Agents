@@ -48,6 +48,11 @@ type decisionRecorder struct {
 	cancel       context.CancelFunc
 	drainTimeout time.Duration
 
+	// closing guards the queue against a send after Close: a floor check is reported from
+	// the transcriber's and the flow controller's goroutines, which may outlast the call, and
+	// a send on a closed channel panics even from a select with a default.
+	closing   sync.RWMutex
+	closed    bool
 	closeOnce sync.Once
 	dropped   atomic.Int64
 }
@@ -96,7 +101,17 @@ func (r *decisionRecorder) Record(decided Decided) {
 		Said:        decided.Text,
 		LatencyMs:   measured(decided.LatencyMs),
 	}
+	r.enqueue(row)
+}
 
+// enqueue queues a row, dropping it if the writer is too far behind, and letting it go if the
+// recorder has been closed.
+func (r *decisionRecorder) enqueue(row live.CallEvent) {
+	r.closing.RLock()
+	defer r.closing.RUnlock()
+	if r.closed {
+		return
+	}
 	select {
 	case r.queue <- row:
 	default:
@@ -117,18 +132,17 @@ func (r *decisionRecorder) RecordFloorCheck(turn string, check live.FloorCheck) 
 		TurnID:     turn,
 		FloorCheck: &check,
 	}
-	select {
-	case r.queue <- row:
-	default:
-		r.dropped.Add(1)
-	}
+	r.enqueue(row)
 }
 
 // Close drains the queue and stops the writer, giving the writes drainTimeout between
 // them. Judgements still unwritten then are dropped and counted with the rest.
 func (r *decisionRecorder) Close() {
 	r.closeOnce.Do(func() {
+		r.closing.Lock()
+		r.closed = true
 		close(r.queue)
+		r.closing.Unlock()
 		drainWithin(r.done, r.drainTimeout, r.cancel)
 		if dropped := r.dropped.Load(); dropped > 0 {
 			r.logger.Warn("dropped decisions because the writer fell behind", "count", dropped)

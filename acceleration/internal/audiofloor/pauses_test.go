@@ -895,6 +895,43 @@ func (s *PausesSuite) TestAStopAtAPauseOverTheAgentIsActedOnAtOnce() {
 	s.False(s.agent.rulings()[0].Speaking, "the turn was ended by a check with the floor free")
 }
 
+// A check at a pause while the agent talks is asked the question over the agent, whether the
+// caller stops or shortens it, and is reported as one, with how far into the pause it was and
+// the reply it was about.
+func (s *PausesSuite) TestAPauseCheckOverTheAgentIsReportedAsOneOverTheAgent() {
+	var mu sync.Mutex
+	var reported []Checked
+	s.agent.hearer.OnCheck(func(c Checked) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, c)
+	})
+	s.server.mu.Lock()
+	s.server.speakingDecision = stopping
+	s.server.words = "Stop."
+	s.server.mu.Unlock()
+	s.agent.mu.Lock()
+	s.agent.speaking, s.agent.reply = true, "turn-3"
+	s.agent.mu.Unlock()
+	s.say(280, true)
+	s.pausing(200)
+	s.Eventually(func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(reported) > 0
+	}, 5*time.Second, time.Millisecond)
+
+	mu.Lock()
+	checked := reported[0]
+	mu.Unlock()
+	s.True(checked.OverAgent, "asked whether the caller stops the agent")
+	s.InDelta(200, float64(checked.Paused.Milliseconds()), 40, "at the pause's first check")
+	s.Equal("turn-3", checked.Turn)
+	s.Equal(harness.Stop, harness.Floor(checked.Answer.Ruling.Floor))
+	s.True(checked.Acted, "its stop was handed to the agent")
+	s.Empty(checked.Point, "no bar over the agent")
+}
+
 // overEcho is a bare "no, no" said over the agent's forecast on a line that hears the agent
 // back, as the server writes a pause's words: the agent's own voice, then the caller's.
 const overEcho = "Tomorrow in Lisbon, it will be sunny. No, no."

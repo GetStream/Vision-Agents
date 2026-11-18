@@ -176,7 +176,7 @@ func (s *LiveSuite) TestACallsFloorChecksAreKeptApartFromItsDecisions() {
 	s.Require().Len(decisions, 1, "the judgements alone")
 	s.Nil(decisions[0].FloorCheck)
 
-	checks, err := s.client.CallFloorChecks(s.ctx, s.customer, "call-1")
+	checks, err := s.client.CallFloorChecks(s.ctx, s.customer, "call-1", now.Add(-time.Minute), nil)
 	s.Require().NoError(err)
 	s.Require().Len(checks, 2)
 	s.Empty(checks[0].TurnID, "oldest first")
@@ -184,4 +184,10 @@ func (s *LiveSuite) TestACallsFloorChecksAreKeptApartFromItsDecisions() {
 	s.Equal([]FloorOption{{Option: "respond", Probability: 0.91}, {Option: "wait", Probability: 0.09}}, checks[1].FloorCheck.Options)
 	s.Equal("get_weather", checks[1].FloorCheck.Ruling.Tool)
 	s.InDelta(300, *checks[1].FloorCheck.PausedMs, 0.001)
+
+	before := now.Add(-2500 * time.Millisecond)
+	checks, err = s.client.CallFloorChecks(s.ctx, s.customer, "call-1", now.Add(-time.Minute), &before)
+	s.Require().NoError(err)
+	s.Require().Len(checks, 1, "those up to the call's end")
+	s.Empty(checks[0].TurnID)
 }

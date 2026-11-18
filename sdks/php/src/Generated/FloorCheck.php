@@ -22,7 +22,7 @@ final readonly class FloorCheck
         // The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore...
         /** @var list<FloorOption>|null */
         public ?array $options = null,
-        // How far into the pause the check was asked. Absent over the agent.
+        // How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the...
         public ?float $pausedMs = null,
         // The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
         public ?string $point = null,

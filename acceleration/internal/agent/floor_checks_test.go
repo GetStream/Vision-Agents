@@ -31,8 +31,8 @@ const (
 		`"ruling":{"disposition":"respond","floor":"stop","cannot":true}}`
 )
 
-// checkServer answers a check over the agent (a turn unfinished) and a pause's as the server
-// does, or answer to both when it is set.
+// checkServer answers a check while the agent talks (the turn says it is speaking) and one
+// with the floor free as the server does, or answer to both when it is set.
 func checkServer(t *testing.T, answer string) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -45,7 +45,7 @@ func checkServer(t *testing.T, answer string) *httptest.Server {
 			switch {
 			case answer != "":
 				_, _ = w.Write([]byte(answer))
-			case bytes.Contains(body, []byte(`"unfinished":true`)):
+			case bytes.Contains(body, []byte(`"speaking":true`)):
 				_, _ = w.Write([]byte(overAgentAnswer))
 			default:
 				_, _ = w.Write([]byte(pauseAnswer))
@@ -128,6 +128,34 @@ func TestAPauseCheckAndACheckOverTheAgentAreKeptWithTheirTurn(t *testing.T) {
 
 	require.Equal(t, []live.FloorCheck{pause.check, over.check}, w.take("turn-1", began), "the turn carries both")
 	require.Nil(t, w.take("turn-1", began), "a turn's checks are carried once")
+}
+
+// Settled words put to the model while the agent talks are asked the question over the agent,
+// and kept as a check over it, at the pause they were put at, about the reply.
+func TestSettledWordsAskedAboutWhileTheAgentTalksAreACheckOverTheAgent(t *testing.T) {
+	w := watchedFloor(t, "")
+	_, err := w.acting().Hear(context.Background(), harness.FlowTurn{ID: "turn-2", ReplyID: "turn-1", ParticipantID: "alice",
+		Instructions: "i", Audio: someAudio, Speaking: true, Paused: 200 * time.Millisecond})
+	require.NoError(t, err)
+
+	kept := w.record()
+	require.Len(t, kept, 1)
+	require.Equal(t, "turn-1", kept[0].turn)
+	require.Equal(t, live.FloorCheckOverAgent, kept[0].check.Kind)
+	require.Equal(t, 200.0, *kept[0].check.PausedMs)
+	require.Equal(t, "stop", kept[0].check.Options[0].Option)
+}
+
+// A check reported after the call's record has closed, as one out when the call ends, is let
+// go of rather than taking the router down.
+func TestAFloorCheckAfterTheRecorderClosedIsLetGo(t *testing.T) {
+	r := buildDecisionRecorder(nil, routing.Owner{CustomerID: "c", AgentID: "a", CallID: "call-1"}, quietLogger())
+	r.send = func(context.Context, []live.CallEvent) error { return nil }
+	r.start().Close()
+	require.NotPanics(t, func() {
+		r.RecordFloorCheck("turn-1", live.FloorCheck{At: time.Now()})
+		r.Record(Decided{Kind: "wait"})
+	})
 }
 
 // A check over a reply after its turn was reported, the reply still playing out, is kept for
