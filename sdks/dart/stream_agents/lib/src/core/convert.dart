@@ -227,7 +227,7 @@ ScheduledTaskRun scheduledTaskRunOf(api.ScheduledTaskRun wire) => ScheduledTaskR
 );
 
 /// A change to a task as the router takes one. Its instructions are a backend's to change.
-api.UpdateScheduledTaskRequest scheduledTaskChangeOf({
+api.UpdateScheduledTaskRequest updateTaskRequestOf({
   String? title,
   ScheduledTaskSchedule? schedule,
   ScheduledTaskNext? next,

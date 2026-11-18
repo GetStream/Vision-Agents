@@ -52,7 +52,7 @@ final class ScheduledTasks {
   }) async => scheduledTaskOf(
     await _operations.updateScheduledTask(
       id: id,
-      body: scheduledTaskChangeOf(
+      body: updateTaskRequestOf(
         title: title,
         schedule: schedule,
         next: next,
