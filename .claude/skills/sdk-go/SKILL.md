@@ -112,14 +112,17 @@ is copied. While 0.x, a minor may break a signature; a patch only fixes.
 1. Land the change on `main` by a pull request, with the `CHANGELOG.md` entry. The `Go SDK`
    workflow (`.github/workflows/sdk-go.yml`) checks `sdks/go` alone on Go 1.25, as a consumer
    gets it.
-2. Run the smoke set with `E2E_REQUIRED=1`, as above, and keep its output.
+2. Check out the commit to tag (`git switch --detach <the main commit>`), run the smoke set
+   from `sdks/go` with `E2E_REQUIRED=1`, as above, and keep its output, so the result is the
+   tagged commit's.
 3. Tag the commit that holds the change by its SHA, not whatever `main` is by then. Never
    create a GitHub Release for it: `release.yml` publishes the Python packages on a release.
 
    ```bash
+   set -euo pipefail   # a failed check below stops before the tag
    git fetch origin
    SHA=<the main commit>
-   git merge-base --is-ancestor "$SHA" origin/main   # exits 0
+   git merge-base --is-ancestor "$SHA" origin/main   # exits 0, else the script stops
    git tag sdks/go/vX.Y.Z "$SHA"
    git push origin sdks/go/vX.Y.Z
    ```
