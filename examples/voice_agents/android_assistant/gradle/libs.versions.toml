@@ -9,6 +9,7 @@ okhttp = "5.5.0"
 # One version for every Stream Chat AI artifact.
 streamChatAi = "7.19.0"
 browser = "1.10.0"
+maplibre = "13.7.1"
 
 [libraries]
 stream-agents-android-core = { module = "io.getstream:stream-agents-android-core", version = "0.2.0" }
@@ -27,6 +28,7 @@ lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-com
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
 browser = { module = "androidx.browser:browser", version.ref = "browser" }
+maplibre = { module = "org.maplibre.gl:android-sdk-opengl", version.ref = "maplibre" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
