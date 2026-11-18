@@ -10,7 +10,7 @@
 const scope = "sdk-js";
 
 export default {
-  branches: ["accelerate"],
+  branches: ["main"],
   tagFormat: "sdk-js-v${version}",
   plugins: [
     [

@@ -41,7 +41,7 @@ Always keep the SDK to latest version of Golang
 `api/oapi-codegen.yaml`, which leaves out the `Staff` operations and the four socket
 operations: `stream` holds the three it uses by hand on `stream/socket.go`, and
 `openSocketSession` has no Go client yet. The output is committed; CI's `go` job regenerates
-it and fails on a diff. The spec is only on `accelerate`, so generation runs there.
+it and fails on a diff.
 
 Models public, operations not:
 
@@ -100,45 +100,33 @@ E2E_REQUIRED=1 go test -tags e2e -count=1 -v -run "$SMOKE" .
 ## README
 
 The README renders on pkg.go.dev too, where only links inside the module resolve: a link
-outside `sdks/go` is an absolute `https://github.com/GetStream/Vision-Agents/tree/accelerate/...`.
+outside `sdks/go` is an absolute `https://github.com/GetStream/Vision-Agents/tree/main/...`.
 Every identifier in a code block exists; the quickstart is the example file verbatim.
 
 ## Releasing
 
-`sdks/go` is developed on `accelerate` and released from `main`, the default branch, so
-`go get ...@latest`, `@main` and pkg.go.dev see it. `main` holds a copy of `sdks/go` from one
-`accelerate` commit and is never edited there. A version is a tag `sdks/go/vX.Y.Z` on the
-`main` merge commit. While 0.x, a minor may break a signature; a patch only fixes.
+`sdks/go` is developed and released on `main`, the default branch, so `go get ...@latest`,
+`@main` and pkg.go.dev see it. A version is a tag `sdks/go/vX.Y.Z` on a `main` commit; nothing
+is copied. While 0.x, a minor may break a signature; a patch only fixes.
 
-1. Land the change on `accelerate`, with the `CHANGELOG.md` entry.
+1. Land the change on `main` by a pull request, with the `CHANGELOG.md` entry. The `Go SDK`
+   workflow (`.github/workflows/sdk-go.yml`) checks `sdks/go` alone on Go 1.25, as a consumer
+   gets it.
 2. Run the smoke set with `E2E_REQUIRED=1`, as above, and keep its output.
-3. Copy onto a branch off `main`, and check the copy is exact:
-
-   ```bash
-   git fetch origin
-   git switch -c ai-xxxx-go-sdk-vX.Y.Z origin/main
-   SRC=$(git rev-parse origin/accelerate)
-   git rm -rq sdks/go                  # so a file deleted on accelerate goes too
-   git checkout "$SRC" -- sdks/go
-   git diff --stat "$SRC" -- sdks/go   # prints nothing
-   ```
-
-   Commit, and open a PR to `main` titled `[AI-xxxx] Go SDK vX.Y.Z`, with the source SHA and the
-   smoke run in the body. `main`'s `Go SDK` workflow (`.github/workflows/sdk-go.yml`) checks the
-   copy on Go 1.25 alone. `main` and `accelerate` share no history under `sdks/go`, so a merge
-   of `accelerate` into `main` conflicts there: take `accelerate`'s tree.
-4. Once it is merged, tag the merge commit by its SHA, not whatever `main` is by then. Never
+3. Tag the commit that holds the change by its SHA, not whatever `main` is by then. Never
    create a GitHub Release for it: `release.yml` publishes the Python packages on a release.
 
    ```bash
    git fetch origin
-   MERGED=$(gh pr view <n> --json mergeCommit -q .mergeCommit.oid)
-   git tag sdks/go/vX.Y.Z "$MERGED"
+   SHA=<the main commit>
+   git merge-base --is-ancestor "$SHA" origin/main   # exits 0
+   git tag sdks/go/vX.Y.Z "$SHA"
    git push origin sdks/go/vX.Y.Z
    ```
 
-5. `release-sdk-go.yml` runs on the tag: it checks the tagged copy and builds the quickstart in
-   an empty module through proxy.golang.org. By hand, with `GOPRIVATE` cleared:
+4. `release-sdk-go.yml` runs on the tag: it checks the tag is on `main`, checks the tagged copy
+   and builds the quickstart in an empty module through proxy.golang.org. By hand, with
+   `GOPRIVATE` cleared:
 
    ```bash
    GOPRIVATE= GONOSUMDB= GOFLAGS=-mod=mod GOPROXY=https://proxy.golang.org \
@@ -146,7 +134,7 @@ Every identifier in a code block exists; the quickstart is the example file verb
    ```
 
 A version found broken is never moved or deleted: the proxy and the checksum database keep it.
-Add `retract vX.Y.Z // why` to `sdks/go/go.mod` on `accelerate`, and release the next patch the
+Add `retract vX.Y.Z // why` to `sdks/go/go.mod` on `main`, and release the next patch the
 same way; `@latest` then skips the retracted one.
 
 ## Reject in review
@@ -155,4 +143,3 @@ same way; `@latest` then skips the retracted one.
 - A parameter of a generated client type, or a new accessor for the generated client.
 - A retry of an HTTP request without an owner, a bound and a named threat (AGENTS.md).
 - A stdlib or language feature newer than the `go` directive.
-- An edit to `sdks/go` on `main`.

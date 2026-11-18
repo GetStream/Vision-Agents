@@ -38,7 +38,7 @@ Stream's .NET packages are `getstream-net` (the current generated server SDK, na
 namespace stays **`GetStream.VisionAgents`**, with the generated DTOs under
 `GetStream.VisionAgents.Models`.
 
-Releases run by hand: Actions, "Release .NET SDK", "Use workflow from" `accelerate`, pick the
+Releases run by hand: Actions, "Release .NET SDK", "Use workflow from" `main`, pick the
 part to bump or type an exact version, and untick the dry run to publish. The workflow is
 `.github/workflows/release-sdk-dotnet.yml`; it pushes to NuGet through trusted publishing and
 tags `sdk-dotnet-v<version>`. Keep the file name: the nuget.org policy is bound to it. Do not rename to `StreamIO.*`; nothing
