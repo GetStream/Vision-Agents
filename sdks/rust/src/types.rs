@@ -5994,6 +5994,83 @@ pub struct FileSource {
     ///Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
     pub url: ::std::string::String,
 }
+///`FloorCheck`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct FloorCheck {
+    ///Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+    pub acted: bool,
+    ///The option the model found most likely.
+    pub answer: ::std::string::String,
+    ///The probability of answer.
+    pub answer_probability: f64,
+    ///When the check was asked.
+    pub at: ::std::string::String,
+    ///What the server took to decide, as it reported it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub decide_ms: ::std::option::Option<f64>,
+    pub kind: FloorCheckKind,
+    ///The round trip to the chorus-asr server.
+    pub latency_ms: f64,
+    ///Every option's probability, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an agent with tools, cannot and each tool. Absent from a server that does not report them.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<::std::vec::Vec<FloorOption>>,
+    ///The probability the caller has finished, one minus that of wait. Absent over the agent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub p_eot: ::std::option::Option<f64>,
+    ///How far into the pause the check was asked. Absent over the agent.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub paused_ms: ::std::option::Option<f64>,
+    ///The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub point: ::std::option::Option<::std::string::String>,
+    pub ruling: FloorRuling,
+}
+///Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum FloorCheckKind {
+    #[serde(rename = "pause")]
+    Pause,
+    #[serde(rename = "over_agent")]
+    OverAgent,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for FloorCheckKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pause => f.write_str("pause"),
+            Self::OverAgent => f.write_str("over_agent"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for FloorCheckKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pause" => Ok(Self::Pause),
+            "over_agent" => Ok(Self::OverAgent),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FloorCheckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FloorCheckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -6004,6 +6081,26 @@ pub struct FloorControl {
     ///The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub model: ::std::option::Option<::std::string::String>,
+}
+///`FloorOption`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct FloorOption {
+    pub option: ::std::string::String,
+    pub probability: f64,
+}
+///`FloorRuling`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct FloorRuling {
+    ///The caller wants something none of the agent's tools can do.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cannot: ::std::option::Option<bool>,
+    ///respond, wait, clarify or ignore.
+    pub disposition: ::std::string::String,
+    ///stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended.
+    pub floor: ::std::string::String,
+    ///The tool the caller wants.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool: ::std::option::Option<::std::string::String>,
 }
 ///Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -13321,6 +13418,9 @@ pub struct TimelineEntry {
     ///Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub first_frame_queued_ms: ::std::option::Option<f64>,
+    ///The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_checks: ::std::option::Option<::std::vec::Vec<FloorCheck>>,
     ///What the caller said, when it can be matched to this exchange.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub heard: ::std::option::Option<::std::string::String>,

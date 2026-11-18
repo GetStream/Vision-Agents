@@ -1,0 +1,184 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+from typing_extensions import Self
+
+from ..models.floor_check_kind import FloorCheckKind
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.floor_option import FloorOption
+    from ..models.floor_ruling import FloorRuling
+
+
+T = TypeVar("T", bound="FloorCheck")
+
+
+@_attrs_define
+class FloorCheck:
+    """
+    Attributes:
+        acted (bool): Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent,
+            its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+        answer (str): The option the model found most likely.
+        answer_probability (float): The probability of answer.
+        at (datetime.datetime): When the check was asked.
+        kind (FloorCheckKind): Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or
+            while they talked over the agent.
+        latency_ms (float): The round trip to the chorus-asr server.
+        ruling (FloorRuling):
+        decide_ms (float | Unset): What the server took to decide, as it reported it.
+        options (list[FloorOption] | Unset): Every option's probability, in the order the model was offered them:
+            respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an
+            agent with tools, cannot and each tool. Absent from a server that does not report them.
+        p_eot (float | Unset): The probability the caller has finished, one minus that of wait. Absent over the agent.
+        paused_ms (float | Unset): How far into the pause the check was asked. Absent over the agent.
+        point (str | Unset): The end-of-turn point or preset the check was read by. Absent over the agent, where there
+            is no bar.
+    """
+
+    acted: bool
+    answer: str
+    answer_probability: float
+    at: datetime.datetime
+    kind: FloorCheckKind
+    latency_ms: float
+    ruling: FloorRuling
+    decide_ms: float | Unset = UNSET
+    options: list[FloorOption] | Unset = UNSET
+    p_eot: float | Unset = UNSET
+    paused_ms: float | Unset = UNSET
+    point: str | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        acted = self.acted
+
+        answer = self.answer
+
+        answer_probability = self.answer_probability
+
+        at = self.at.isoformat()
+
+        kind = self.kind.value
+
+        latency_ms = self.latency_ms
+
+        ruling = self.ruling.to_dict()
+
+        decide_ms = self.decide_ms
+
+        options: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.options, Unset):
+            options = []
+            for options_item_data in self.options:
+                options_item = options_item_data.to_dict()
+                options.append(options_item)
+
+        p_eot = self.p_eot
+
+        paused_ms = self.paused_ms
+
+        point = self.point
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "acted": acted,
+                "answer": answer,
+                "answer_probability": answer_probability,
+                "at": at,
+                "kind": kind,
+                "latency_ms": latency_ms,
+                "ruling": ruling,
+            }
+        )
+        if decide_ms is not UNSET:
+            field_dict["decide_ms"] = decide_ms
+        if options is not UNSET:
+            field_dict["options"] = options
+        if p_eot is not UNSET:
+            field_dict["p_eot"] = p_eot
+        if paused_ms is not UNSET:
+            field_dict["paused_ms"] = paused_ms
+        if point is not UNSET:
+            field_dict["point"] = point
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.floor_option import FloorOption
+        from ..models.floor_ruling import FloorRuling
+
+        d = dict(src_dict)
+        acted = d.pop("acted")
+
+        answer = d.pop("answer")
+
+        answer_probability = d.pop("answer_probability")
+
+        at = datetime.datetime.fromisoformat(d.pop("at"))
+
+        kind = FloorCheckKind._decode(d.pop("kind"))
+
+        latency_ms = d.pop("latency_ms")
+
+        ruling = FloorRuling.from_dict(d.pop("ruling"))
+
+        decide_ms = d.pop("decide_ms", UNSET)
+
+        _options = d.pop("options", UNSET)
+        options: list[FloorOption] | Unset = UNSET
+        if _options is not UNSET:
+            options = []
+            for options_item_data in _options:
+                options_item = FloorOption.from_dict(options_item_data)
+
+                options.append(options_item)
+
+        p_eot = d.pop("p_eot", UNSET)
+
+        paused_ms = d.pop("paused_ms", UNSET)
+
+        point = d.pop("point", UNSET)
+
+        floor_check = cls(
+            acted=acted,
+            answer=answer,
+            answer_probability=answer_probability,
+            at=at,
+            kind=kind,
+            latency_ms=latency_ms,
+            ruling=ruling,
+            decide_ms=decide_ms,
+            options=options,
+            p_eot=p_eot,
+            paused_ms=paused_ms,
+            point=point,
+        )
+
+        floor_check.additional_properties = d
+        return floor_check
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

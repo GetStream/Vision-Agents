@@ -11,6 +11,7 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.floor_check import FloorCheck
     from ..models.model_call_timing import ModelCallTiming
 
 
@@ -49,6 +50,8 @@ class TimelineEntry:
         text_to_tts_ms (float | Unset): First text delta to the first TTS request.
         tts_to_audio_ms (float | Unset): First TTS request to the first audio chunk published to the edge.
         tts_ttfb_ms (float | None | Unset): The wait between sending the first sentence and the first audio.
+        floor_checks (list[FloorCheck] | Unset): The chorus-asr model's floor-control checks that led to this turn and
+            were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control.
     """
 
     started_at: datetime.datetime
@@ -71,6 +74,7 @@ class TimelineEntry:
     text_to_tts_ms: float | Unset = UNSET
     tts_to_audio_ms: float | Unset = UNSET
     tts_ttfb_ms: float | None | Unset = UNSET
+    floor_checks: list[FloorCheck] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +151,13 @@ class TimelineEntry:
         else:
             tts_ttfb_ms = self.tts_ttfb_ms
 
+        floor_checks: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.floor_checks, Unset):
+            floor_checks = []
+            for floor_checks_item_data in self.floor_checks:
+                floor_checks_item = floor_checks_item_data.to_dict()
+                floor_checks.append(floor_checks_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -191,11 +202,14 @@ class TimelineEntry:
             field_dict["tts_to_audio_ms"] = tts_to_audio_ms
         if tts_ttfb_ms is not UNSET:
             field_dict["tts_ttfb_ms"] = tts_ttfb_ms
+        if floor_checks is not UNSET:
+            field_dict["floor_checks"] = floor_checks
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.floor_check import FloorCheck
         from ..models.model_call_timing import ModelCallTiming
 
         d = dict(src_dict)
@@ -303,6 +317,15 @@ class TimelineEntry:
 
         tts_ttfb_ms = _parse_tts_ttfb_ms(d.pop("tts_ttfb_ms", UNSET))
 
+        _floor_checks = d.pop("floor_checks", UNSET)
+        floor_checks: list[FloorCheck] | Unset = UNSET
+        if _floor_checks is not UNSET:
+            floor_checks = []
+            for floor_checks_item_data in _floor_checks:
+                floor_checks_item = FloorCheck.from_dict(floor_checks_item_data)
+
+                floor_checks.append(floor_checks_item)
+
         timeline_entry = cls(
             started_at=started_at,
             turn_id=turn_id,
@@ -324,6 +347,7 @@ class TimelineEntry:
             text_to_tts_ms=text_to_tts_ms,
             tts_to_audio_ms=tts_to_audio_ms,
             tts_ttfb_ms=tts_ttfb_ms,
+            floor_checks=floor_checks,
         )
 
         timeline_entry.additional_properties = d

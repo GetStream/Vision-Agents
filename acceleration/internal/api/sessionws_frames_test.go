@@ -488,3 +488,73 @@ func TestAUIPatchAndVersionAreIncludedWhenPresent(t *testing.T) {
 	require.Equal(t, `{"content":"$party = 4","format":"openui","mode":"patch","turn_id":"turn-2","type":"ui_completed","version":"1.1"}`,
 		string(marshalled(t, completed, ok)))
 }
+
+// pauseFloorCheck and overAgentFloorCheck are chorus-asr checks as a turn's row keeps them:
+// one at a pause that ended the turn, with the tool the caller wants, and one over the agent,
+// which has no p_eot and no point.
+func pauseFloorCheck() live.FloorCheck {
+	paused, pEOT, decide := 600.0, 0.93, 41.5
+	return live.FloorCheck{
+		At: time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC), Kind: live.FloorCheckPause, PausedMs: &paused,
+		Answer: "respond", AnswerProbability: 0.91, PEOT: &pEOT, DecideMs: &decide,
+		Options: []live.FloorOption{{Option: "respond", Probability: 0.91}, {Option: "wait", Probability: 0.07},
+			{Option: "clarify", Probability: 0}, {Option: "ignore", Probability: 0.02}},
+		Ruling: live.FloorRuling{Disposition: "respond", Floor: "continue", Tool: "get_weather"},
+		Acted:  true, LatencyMs: 38.2, Point: "balanced",
+	}
+}
+
+func overAgentFloorCheck() live.FloorCheck {
+	return live.FloorCheck{
+		At: time.Date(2026, 1, 2, 10, 0, 2, 0, time.UTC), Kind: live.FloorCheckOverAgent,
+		Answer: "stop", AnswerProbability: 0.7,
+		Options: []live.FloorOption{{Option: "stop", Probability: 0.7}, {Option: "shorten", Probability: 0.2},
+			{Option: "continue", Probability: 0.1}, {Option: "ignore", Probability: 0}},
+		Ruling: live.FloorRuling{Disposition: "respond", Floor: "stop", Cannot: true},
+		Acted:  true, LatencyMs: 44,
+	}
+}
+
+func TestATimelineEntryCarriesItsFloorChecksWithEveryOptionsProbability(t *testing.T) {
+	turns := []live.Turn{
+		{TurnID: "turn-1", FloorChecks: []live.FloorCheck{pauseFloorCheck(), overAgentFloorCheck()}},
+		{TurnID: "turn-2"},
+	}
+
+	timeline := timelineOf(turns, nil, nil)
+
+	require.NotNil(t, timeline[0].FloorChecks)
+	raw, err := json.Marshal(*timeline[0].FloorChecks)
+	require.NoError(t, err)
+	require.JSONEq(t, `[
+		{"at":"2026-01-02T10:00:00Z","kind":"pause","paused_ms":600,"answer":"respond","answer_probability":0.91,
+		 "p_eot":0.93,"decide_ms":41.5,
+		 "options":[{"option":"respond","probability":0.91},{"option":"wait","probability":0.07},
+		            {"option":"clarify","probability":0},{"option":"ignore","probability":0.02}],
+		 "ruling":{"disposition":"respond","floor":"continue","tool":"get_weather"},
+		 "acted":true,"latency_ms":38.2,"point":"balanced"},
+		{"at":"2026-01-02T10:00:02Z","kind":"over_agent","answer":"stop","answer_probability":0.7,
+		 "options":[{"option":"stop","probability":0.7},{"option":"shorten","probability":0.2},
+		            {"option":"continue","probability":0.1},{"option":"ignore","probability":0}],
+		 "ruling":{"disposition":"respond","floor":"stop","cannot":true},
+		 "acted":true,"latency_ms":44}
+	]`, string(raw), "every option in the model's order, as the router got it, and nothing it did not get")
+
+	require.Nil(t, timeline[1].FloorChecks, "a turn without chorus-asr floor control has none")
+	raw, err = json.Marshal(timeline[1])
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "floor_checks")
+}
+
+func TestAFloorCheckFrameIsTheTimelinesEntryWithItsTurn(t *testing.T) {
+	sent, ok := frameOf(agent.FloorChecked{TurnID: "turn-1", Participant: "alice", Check: overAgentFloorCheck()})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	entry, err := json.Marshal(floorCheckOf(overAgentFloorCheck()))
+	require.NoError(t, err)
+	require.JSONEq(t, `"floor_check"`, string(mustField(t, raw, "type")))
+	require.JSONEq(t, `"turn-1"`, string(mustField(t, raw, "turn_id")))
+	require.JSONEq(t, string(entry), string(mustField(t, raw, "check")))
+}
