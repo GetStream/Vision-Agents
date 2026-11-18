@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.getstream.chat.android.ai.compose.conversation.AIMessage
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRole
 import io.getstream.chat.android.ai.compose.generativeui.AIUIDocument
+import io.getstream.chat.android.ai.compose.generativeui.AIUIFormat
 import io.getstream.chat.android.ai.compose.generativeui.AIUIHost
 import io.getstream.chat.android.ai.compose.generativeui.AIUIView
 import io.getstream.chat.android.ai.compose.parts.AIToolApproval
@@ -137,8 +138,8 @@ fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifie
             }
 
             val current = voice
-            // Everything between the header and the controls shares what room is left, so the
-            // controls stay on screen when the camera and a card are taller than it.
+            // The camera, the glow and a card share what room the header, an approval, an error and
+            // the controls leave, so those stay on screen when the camera and a card are taller.
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 val call by remember(current) { current?.call ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
                 val cameraOn by remember(current) { current?.isCameraEnabled ?: MutableStateFlow(false) }.collectAsStateWithLifecycle()
@@ -164,26 +165,25 @@ fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifie
                 card?.let {
                     ProvideOpenUITheme(brand.openUITheme()) { CallUI(viewModel.callUiHost, it) }
                 }
-
-                approvals.firstOrNull()?.let { request ->
-                    // Keyed by the call, so a second question starts with no answer sending.
-                    key(request.id) {
-                        ApprovalCard(request, session, Modifier.padding(horizontal = 16.dp))
-                    }
+            }
+            approvals.firstOrNull()?.let { request ->
+                // Keyed by the call, so a second question starts with no answer sending.
+                key(request.id) {
+                    ApprovalCard(request, session, Modifier.padding(horizontal = 16.dp))
                 }
-                val joining by remember(current) { current?.failure ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
-                val trouble by remember(current) { current?.session?.let(::trouble) ?: flowOf(null) }
-                    .collectAsStateWithLifecycle(null)
-                val reason = failure ?: joining?.message ?: trouble
-                reason?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    )
-                }
+            }
+            val joining by remember(current) { current?.failure ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
+            val trouble by remember(current) { current?.session?.let(::trouble) ?: flowOf(null) }
+                .collectAsStateWithLifecycle(null)
+            val reason = failure ?: joining?.message ?: trouble
+            reason?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                )
             }
             if (current != null) {
                 CallControls(
@@ -254,17 +254,25 @@ internal data class CallCard(val turn: Turn, val stored: AIUIDocument? = null) {
 
 /**
  * The newest of the agent's turns in [conversation] that is not one of [before] and has UI to
- * show: the UI its socket streamed, once a statement of it is finished, or what [stored] holds
- * for the turn in Stream Chat.
+ * show: the UI its socket streamed, once a statement of it is finished, or the card [stored]
+ * holds for the turn in Stream Chat.
  */
 internal fun callCard(conversation: Conversation, before: Set<String>, stored: (String) -> AIUIDocument?): CallCard? {
     for (turn in conversation.turns.asReversed()) {
         if (!turn.isAgent || turn.id in before) continue
         if (turn.ui?.content?.isNotEmpty() == true) return CallCard(turn)
-        stored(turn.id)?.let { return CallCard(turn, it) }
+        stored(turn.id)?.takeIf { it.isCard }?.let { return CallCard(turn, it) }
     }
     return null
 }
+
+/**
+ * Whether this is a whole card rather than a change to one: the router stores a patch as written
+ * when it had no card to merge it onto, and OpenUI without a `root` draws nothing.
+ */
+private val AIUIDocument.isCard: Boolean
+    get() = format != AIUIFormat.OpenUI ||
+        text.orEmpty().lineSequence().any { it.trimStart().startsWith("root") && it.substringAfter("root").trimStart().startsWith("=") }
 
 /** The turn a reply in Stream Chat belongs to, as the router writes it on the message. */
 private val AgentMessage.turnId: String?

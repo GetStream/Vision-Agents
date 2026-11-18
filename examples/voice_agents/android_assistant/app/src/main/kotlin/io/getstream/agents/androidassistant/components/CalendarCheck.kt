@@ -61,7 +61,7 @@ internal fun calendarCheck(definition: AIUIComponentDefinition) = AIUIComponent(
 private fun CalendarCheck(start: Date, end: Date) {
     val theme = OpenUITheme.current
     val context = LocalContext.current.applicationContext
-    var lookup by remember { mutableStateOf<CalendarLookup?>(null) }
+    var lookup by remember(start, end) { mutableStateOf<CalendarLookup?>(null) }
     LaunchedEffect(start, end) { lookup = CalendarDay.days(context, start, end) }
     val days = (lookup as? CalendarLookup.Days)?.days.orEmpty()
     val failure = when (lookup) {

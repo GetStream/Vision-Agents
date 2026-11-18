@@ -73,4 +73,17 @@ class CallCardTest {
         assertEquals("t2", card.turn.id)
         assertSame(stored, card.document)
     }
+
+    @Test
+    fun `a change Stream Chat stored with no card under it is no card`() {
+        // The router stores the patch as written when it had no card to merge it onto.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_completed","turn_id":"t2","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+        val patch = TurnUI("openui", isStreaming = false, content = "\$party = 4")
+        val stored = assertNotNull(AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to patch.customData)))
+
+        assertNull(callCard(conversation, emptySet()) { stored })
+    }
 }
