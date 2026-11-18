@@ -156,3 +156,64 @@ func (s *EventForwardingSuite) TestAProviderAppsEventIsCountedUnderItsCustomer()
 
 	s.Equal(int64(0), s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI).refused)
 }
+
+// Defect: a call Telnyx signed to a number of an app whose telephony is suspended, refused in a
+// 200 plan, counted as answered or with no code.
+func (s *TelnyxHookSuite) TestACallToASuspendedAppIsCountedRefused() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@example.test",
+	}))
+
+	status, _, body := s.deliver(s.call(s.e164), true)
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Contains(body, "<Reject")
+
+	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeTelephonySuspended, row.code)
+}
+
+// Defect: a call Stream signed to a number of an app whose telephony is suspended, refused and
+// ended but answered 200, counted as answered or with no code.
+func (s *CallHooksSuite) TestACallToASuspendedAppIsCountedRefused() {
+	s.hold("default", s.callID)
+	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@example.test",
+	}))
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	row := s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeTelephonySuspended, row.code)
+}
+
+// Defect: a call no worker could take, refused and ended but answered 200, counted as answered
+// or with no code.
+func (s *CallHooksSuite) TestACallNoWorkerCanTakeIsCountedRefused() {
+	s.hold("default", s.callID)
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	row := s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(unavailable("").Code, row.code)
+}
+
+// Defect: a call to a number with an agent on a router that runs no sessions, refused and
+// ended but answered 200, counted as answered or with no code.
+func (s *CallHooksSuite) TestACallToANumberWithAnAgentOnARouterWithNoSessionsIsCountedRefused() {
+	s.answerable()
+	s.hold("agent", s.callID)
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, s.config("echo/local-model")))
+	sessions := s.router.sessions
+	s.router.sessions = nil
+	defer func() { s.router.sessions = sessions }()
+
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
+
+	row := s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(errNoSessions.Code, row.code)
+}

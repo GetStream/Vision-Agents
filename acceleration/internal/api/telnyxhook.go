@@ -95,11 +95,15 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		hangUp(w, logger, "hung up a telnyx call to a number that is unknown, released or not attached", "to", to)
 		return
 	}
+	// A refusal past InboundBridge, which noted the number's app, is answered 200 as Telnyx
+	// wants it; its code is noted for the activity record, which would count it answered.
 	if errors.Is(err, phone.ErrSuspended) {
+		noteRefusal(w, codeTelephonySuspended)
 		reject(w, logger, "rejected a telnyx call to a number of an app whose telephony is suspended", "to", to)
 		return
 	}
 	if answer, refused := moneyError(err); refused {
+		noteRefusal(w, answer.Code)
 		reject(w, logger, "rejected a telnyx call to a number of an organization that may not pay for it",
 			"to", to, "code", answer.Code)
 		return

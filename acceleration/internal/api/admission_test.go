@@ -1021,3 +1021,38 @@ func (s *AdmissionSuite) TestASocketSessionRefusedForASpentLimitIsCountedAsRefus
 	s.Equal(int64(1), row.refused)
 	s.Equal(codeSpendLimitReached, row.code)
 }
+
+// Defect: a call Telnyx signed to a number of an organization that may not pay, rejected in a
+// 200 plan, counted as answered or without the code it was refused with.
+func (s *AdmissionSuite) TestATelnyxCallRefusedForMoneyIsCountedRefused() {
+	e164 := s.utils.number()
+	s.line.attach(e164, "sip:"+e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	status, _, body := s.line.deliver(s.line.call(e164), true)
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Contains(body, "<Reject")
+
+	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeInsufficientCredits, row.code)
+}
+
+// Defect: a call Stream signed to a number of an organization that may not pay, refused and
+// ended but answered 200, counted as answered or without the code it was refused with.
+func (s *AdmissionSuite) TestAStreamCallRefusedForMoneyIsCountedRefused() {
+	e164, callID := s.utils.number(), "phone-"+s.utils.uuid()
+	ctx := context.Background()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), e164,
+		store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: "default", CallID: callID}))
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCall("default:"+callID)))
+
+	row := s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeInsufficientCredits, row.code)
+}
