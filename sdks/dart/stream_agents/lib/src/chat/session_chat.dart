@@ -116,23 +116,24 @@ final class LiveUI {
   /// of the one before it.
   TurnUI? get latest => _latest;
 
-  /// Folds [conversation]'s turns in and reports whether what it overlays changed.
+  /// Folds [conversation]'s turns in and reports whether what it overlays changed: a delta that
+  /// finishes no OpenUI statement changes nothing shown.
   bool observe(Conversation conversation) {
     var changed = false;
     for (final turn in conversation.turns) {
       if (!turn.speaker.isAgent || turn.ui == null) continue;
       final next = turn.ui!;
-      if (_byTurn[turn.id] != next) {
-        _byTurn[turn.id] = next;
+      if (!_sameShown(_byTurn[turn.id], next)) {
         changed = true;
       }
+      _byTurn[turn.id] = next;
     }
     final newest = conversation.turns.lastOrNull;
     final latest = newest != null && newest.speaker.isAgent ? newest.ui : null;
-    if (latest != _latest) {
-      _latest = latest;
+    if (!_sameShown(latest, _latest)) {
       changed = true;
     }
+    _latest = latest;
     return changed;
   }
 
@@ -163,11 +164,21 @@ final class LiveUI {
 
   stream.Message _withUI(stream.Message message, TurnUI ui) {
     final cached = _cache[message];
-    if (cached != null && cached.ui == ui) return cached.overlaid;
+    if (cached != null && _sameShown(cached.ui, ui)) return cached.overlaid;
     final overlaid = message.copyWith(extraData: {...message.extraData, 'ai_ui': ui.toWireJson()});
     _cache[message] = (ui: ui, overlaid: overlaid);
     return overlaid;
   }
+
+  /// Whether [a] and [b] show the same, whatever more of the UI each has written.
+  static bool _sameShown(TurnUI? a, TurnUI? b) =>
+      identical(a, b) ||
+      (a != null &&
+          b != null &&
+          a.format == b.format &&
+          a.version == b.version &&
+          a.status == b.status &&
+          a.content == b.content);
 
   static int _findLatestGenerating(List<stream.Message> messages) {
     for (var i = messages.length - 1; i >= 0; i--) {
