@@ -867,7 +867,6 @@ func (a *Agent) finishTurn(turn Turn) {
 	}
 }
 
-
 // Join opens the model and voice sessions, then joins the call and starts listening.
 //
 // The order matters: the sessions come first so the agent can answer the moment someone
