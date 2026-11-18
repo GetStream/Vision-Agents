@@ -103,8 +103,8 @@ struct SettingsScreen: View {
                     Toggle("Interactive UI", isOn: $cards)
                 } footer: {
                     Text("""
-                    Off opens this device's new conversations without UI: the agent answers in \
-                    text and isn't sent how to write UI, whatever the replies above say.
+                    Off opens this device's new conversations without the UI instructions the \
+                    replies above chose, so the agent answers in text.
                     """)
                 }
                 Section {

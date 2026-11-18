@@ -7048,7 +7048,7 @@ export type components = {
             readonly tools?: readonly components["schemas"]["SessionTool"][];
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly tts?: string;
-            /** @description Whether the agent may answer with UI in this session, as its config's ui_instructions teach it. Left out or true, the model is told them after the instructions; false leaves them out, for a client that shows no UI, and the agent answers in prose. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote. */
+            /** @description Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote. */
             readonly ui?: boolean;
             /**
              * @description The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.

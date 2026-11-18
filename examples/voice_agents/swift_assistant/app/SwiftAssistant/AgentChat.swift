@@ -219,7 +219,7 @@ final class AgentChat: AIConversationTransport {
             options.llm = Assistant.chatModel
             options.tools = Assistant.tools
             options.returnURL = Assistant.returnURL
-            // Off opens the conversation without UI, whatever the backend has the agent answer in.
+            // Off leaves the UI instructions the backend chose out of this conversation.
             if UserDefaults.standard.object(forKey: SettingsScreen.cardsKey) as? Bool == false {
                 options.ui = false
             }

@@ -585,6 +585,9 @@ pub struct AgentConfig {
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
+    ///Absent when the agent is taught no UI.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ui_instructions: ::std::option::Option<::std::string::String>,
     pub updated_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
@@ -693,6 +696,9 @@ pub struct AgentConfigPatch {
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
+    ///What teaches the agent's model to answer with UI. An empty string removes them.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ui_instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
     ///Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
@@ -827,6 +833,9 @@ pub struct AgentConfigRequest {
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
+    ///What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ui_instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
     ///Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
@@ -4998,6 +5007,9 @@ pub struct CreateSessionRequest {
     ///Omit it and the config decides, or en-low-latency when there is no config.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
+    ///Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ui: ::std::option::Option<bool>,
     ///The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_id: ::std::option::Option<::std::string::String>,
@@ -13089,6 +13101,9 @@ pub struct SyncAgentRequest {
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tts: ::std::option::Option<::std::string::String>,
+    ///What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ui_instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub video: ::std::option::Option<SessionVideo>,
     ///The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.

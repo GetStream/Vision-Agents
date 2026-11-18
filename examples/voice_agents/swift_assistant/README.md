@@ -154,8 +154,8 @@ whichever UI it carries. A conversation keeps the instructions it started with, 
 one is the first to answer the new way, and earlier replies keep theirs.
 
 Settings' Interactive UI switch is the phone's own: off, the app opens its new conversations with
-`SessionOptions.ui` false, and the agent answers them in Markdown and isn't sent the UI
-instructions, whatever the backend chose.
+`SessionOptions.ui` false, so the model isn't sent the UI instructions the backend chose, and
+answers in Markdown, as `instructions.md` teaches no UI.
 
 With A2UI or OpenUI chosen, ask "Plan a weekend in Ohrid" and the reply is UI rather than text: a
 map of the places, the person's own calendar for those days, a tab per day with each place's photo

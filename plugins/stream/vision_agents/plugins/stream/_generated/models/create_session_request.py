@@ -156,10 +156,11 @@ class CreateSessionRequest:
             the team the caller's token names, else the agent config's team tag. A token naming another team is refused with
             a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a
             403, since its team is the one its token was signed for.
-        ui (bool | Unset): Whether the agent may answer with UI in this session, as its config's ui_instructions teach
-            it. Left out or true, the model is told them after the instructions; false leaves them out, for a client that
-            shows no UI, and the agent answers in prose. Reopening or forking the session keeps it. A device may send it,
-            since it only chooses whether to use what the agent's owner wrote.
+        ui (bool | Unset): Whether the model is told its config's ui_instructions in this session. Left out or true, it
+            is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter:
+            instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply.
+            Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the
+            agent's owner wrote.
     """
 
     agent: str | Unset = UNSET

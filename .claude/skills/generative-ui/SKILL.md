@@ -32,8 +32,10 @@ adds a card only when it helps.
 
 The router tells the model `ui_instructions` after the instructions (`session.Spec.prompt`),
 unless the session was opened with `ui: false`, which a device may send: an app that shows no UI
-gets prose from the same agent, without the catalog on every turn. The session row keeps it
-(`agent_sessions.no_ui`), so a reopened or forked conversation stays without UI. Go writes
+leaves the catalog out of every turn, and the agent answers in prose unless its instructions teach
+UI themselves. It is no filter: a UI block the model writes is still split off the reply. The
+session row keeps the choice (`agent_sessions.no_ui`), so a reopened or forked conversation is not
+told them either. Go writes
 `ui_instructions`; JavaScript still appends the section to `instructions`, where no session can
 turn it off. A renderer's own prompt pasted into `instructions.md` (`stream-chat-react`'s
 `openUIInstructions` is OpenUI's, 53 KB, and says the entire reply must be openui-lang) can't be

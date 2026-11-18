@@ -62,9 +62,10 @@ public struct SessionOptions: Sendable {
     /// carried on later goes back there too. Nil sends the sign-in back to the dashboard, which a
     /// phone cannot open.
     public var returnURL: URL?
-    /// Whether the agent may answer with UI in this session, as its config's UI instructions teach
-    /// it. False is for an app that shows no UI: the agent answers in prose, and is not told how
-    /// to write UI. Nil leaves it on. Reopening the session keeps it.
+    /// Whether the model is told its config's UI instructions in this session. False is for an
+    /// app that shows no UI: they are left out, so the agent answers in prose unless its own
+    /// instructions teach UI. It is no filter: a UI block the model still writes reaches the
+    /// reply. Nil leaves them in. Reopening the session keeps it.
     public var ui: Bool?
 
     public init(agent: String? = nil) {

@@ -111,17 +111,28 @@ func (s *ConfigsSuite) TestAnUpdateLeavingTheUIInstructionsOutKeepsThem() {
 	s.Equal("Draw a card.", s.uiInstructions(created.Id))
 }
 
-func (s *ConfigsSuite) TestAPatchSetsKeepsAndRemovesTheUIInstructions() {
+func (s *ConfigsSuite) TestAPatchSetsTheUIInstructions() {
 	created := s.createConfig(map[string]any{"name": "concierge"})
 
 	s.patch(created.Id, map[string]any{"ui_instructions": "Draw a card."})
-	s.Equal("Draw a card.", s.uiInstructions(created.Id), "a patch sets them")
+
+	s.Equal("Draw a card.", s.uiInstructions(created.Id))
+}
+
+func (s *ConfigsSuite) TestAPatchLeavingTheUIInstructionsOutKeepsThem() {
+	created := s.createConfig(map[string]any{"name": "concierge", "ui_instructions": "Draw a card."})
 
 	s.patch(created.Id, map[string]any{"instructions": "Be brief."})
-	s.Equal("Draw a card.", s.uiInstructions(created.Id), "a patch leaving them out keeps them")
+
+	s.Equal("Draw a card.", s.uiInstructions(created.Id))
+}
+
+func (s *ConfigsSuite) TestAPatchWithEmptyUIInstructionsRemovesThem() {
+	created := s.createConfig(map[string]any{"name": "concierge", "ui_instructions": "Draw a card."})
 
 	s.patch(created.Id, map[string]any{"ui_instructions": ""})
-	s.Empty(s.uiInstructions(created.Id), "an empty string removes them")
+
+	s.Empty(s.uiInstructions(created.Id))
 }
 
 // The directory is the whole of what the agent is told, so a sync of one whose agent.yaml no
@@ -129,14 +140,20 @@ func (s *ConfigsSuite) TestAPatchSetsKeepsAndRemovesTheUIInstructions() {
 func (s *SyncSuite) TestASyncStoresTheDirectorysUIInstructionsAndOneWithoutThemRemovesThem() {
 	synced := s.sync(map[string]any{"name": "concierge", "hash": "v1", "instructions": "Be brief.",
 		"ui_instructions": "Draw a card."})
-	s.Equal("Draw a card.", value(synced.Config.UiInstructions))
+	s.Equal("Draw a card.", value(s.storedConfig(synced.Config.Id).UiInstructions), "the first sync stores them")
 
 	s.sync(map[string]any{"name": "concierge", "hash": "v2", "instructions": "Be brief."})
 
-	var stored AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+synced.Config.Id, nil, &stored))
-	s.Nil(stored.UiInstructions)
+	stored := s.storedConfig(synced.Config.Id)
+	s.Nil(stored.UiInstructions, "a sync without them removes them")
 	s.Equal("Be brief.", value(stored.Instructions))
+}
+
+// storedConfig is the config as the router reads it back, not as a write answered.
+func (s *SyncSuite) storedConfig(id string) AgentConfig {
+	var stored AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &stored))
+	return stored
 }
 
 // uiInstructions are what the config is read back with, empty when it has none.

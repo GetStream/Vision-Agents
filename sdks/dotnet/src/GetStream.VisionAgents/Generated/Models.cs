@@ -894,6 +894,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("tts")]
         public string? Tts { get; set; } = default!;
 
+        /// <summary>
+        /// Absent when the agent is taught no UI.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_instructions")]
+        public string? UiInstructions { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("updated_at")]
         public System.DateTimeOffset UpdatedAt { get; set; } = default!;
 
@@ -1082,6 +1088,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("tts")]
         public string? Tts { get; set; } = default!;
+
+        /// <summary>
+        /// What teaches the agent's model to answer with UI. An empty string removes them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_instructions")]
+        public string? UiInstructions { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("video")]
         public SessionVideo? Video { get; set; } = default!;
@@ -1301,6 +1313,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("tts")]
         public string? Tts { get; set; } = default!;
+
+        /// <summary>
+        /// What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_instructions")]
+        public string? UiInstructions { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("video")]
         public SessionVideo? Video { get; set; } = default!;
@@ -6646,6 +6664,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tts")]
         public string? Tts { get; set; } = default!;
+
+        /// <summary>
+        /// Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui")]
+        public bool? Ui { get; set; } = default!;
 
         /// <summary>
         /// The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
@@ -15547,6 +15571,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("tts")]
         public string? Tts { get; set; } = default!;
+
+        /// <summary>
+        /// What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_instructions")]
+        public string? UiInstructions { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("video")]
         public SessionVideo? Video { get; set; } = default!;

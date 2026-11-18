@@ -86,6 +86,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param toolTimeoutMs How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
  * @param tools 
  * @param tts Omit it and the config decides, or en-low-latency when there is no config.
+ * @param ui Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote.
  * @param userId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
  * @param userName 
  * @param video 
@@ -241,6 +242,10 @@ internal data class CreateSessionRequest (
     /* Omit it and the config decides, or en-low-latency when there is no config. */
     @SerialName(value = "tts")
     val tts: kotlin.String? = null,
+
+    /* Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote. */
+    @SerialName(value = "ui")
+    val ui: kotlin.Boolean? = null,
 
     /* The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id. */
     @SerialName(value = "user_id")

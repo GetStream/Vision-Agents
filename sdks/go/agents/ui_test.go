@@ -235,7 +235,10 @@ func (s *FolderUISuite) TestTheA2UICatalogIsTheOneTheSwiftRendererWritesForTheSa
 	loaded, err := Load(dir)
 	s.Require().NoError(err)
 
-	s.Equal(a2uiCatalogLine(string(written)), a2uiCatalogLine(loaded.UIInstructions))
+	want, got := a2uiCatalogLine(string(written)), a2uiCatalogLine(loaded.UIInstructions)
+	s.Require().NotEmpty(want, "the renderer's prompt has a catalog line")
+	s.Require().NotEmpty(got, "the compiled prompt has a catalog line")
+	s.Equal(want, got)
 }
 
 func (s *FolderUISuite) TestPatchModeIsRefusedForA2UISinceOnlyOpenUIPatchesAreMerged() {

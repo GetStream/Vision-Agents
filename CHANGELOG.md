@@ -4,7 +4,7 @@
 
 ### A session can turn an agent's generative UI off
 
-An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, gets prose answers from the same agent, and the model is not sent the UI catalog on every turn. Reopening or forking the session keeps the choice. The Go SDK now syncs agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. A config saved without the field keeps the UI it has, and a sync of a folder without `ui:` removes it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui`.
+An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and gets prose from the same agent, as long as its instructions teach no UI themselves. Reopening or forking the session keeps the choice. The Go SDK now syncs agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. A config saved without the field keeps the UI it has, and a sync of a folder without `ui:` removes it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui` (#2076).
 
 ### A running session takes more of its caller's tools, and gives them back
 

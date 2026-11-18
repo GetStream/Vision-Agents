@@ -12,7 +12,7 @@
 // rewrites the agent's UI instructions: for a UI format what teaches the model to write it with
 // the app's components, a2ui/instructions.md or openui/instructions.md, and none for Markdown.
 // They are kept apart from instructions.md, so a conversation the app opens with ui false is
-// answered in Markdown whatever this chose.
+// not told them, and answers in Markdown since instructions.md teaches no UI.
 //
 // A demo has nobody signed in, so it acts for whichever user the phone names. A real one
 // would act for the user its own sign-in vouched for.
