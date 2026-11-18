@@ -1,7 +1,7 @@
 name: Go SDK
 
-# sdks/go here is a copy of sdks/go on accelerate, where the SDK is developed (see the
-# Versioning section of sdks/go/README.md). This checks the copy the way a consumer gets it:
+# sdks/go is released by a tag on main (see the Versioning section of sdks/go/README.md).
+# This checks it the way a consumer gets it:
 # alone, with no go.work, on the oldest Go its go directive allows. GOTOOLCHAIN=local keeps
 # 1.25 from switching to a newer toolchain, which would prove nothing about 1.25.
 on:

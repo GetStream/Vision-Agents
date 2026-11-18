@@ -148,7 +148,7 @@ customer would: `GET /v1/phone/numbers` lists them, `GET /v1/phone/numbers/avail
 `POST /v1/phone/numbers` find and buy one, `POST /v1/phone/numbers/{e164}/attach` attaches it
 for inbound, and `DELETE /v1/phone/numbers/{e164}` releases it. A local router in
 `auth.mode: noauth` takes the customer in `X-Customer-Id`. Attaching a Telnyx number needs
-`ROUTER_AUTH_KEK` on the router.
+a key encryption key on the router: `ROUTER_DEV_KEK` locally.
 
 From `acceleration/cmd/phonecheck`:
 

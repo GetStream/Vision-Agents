@@ -98,7 +98,7 @@ tells the agent to call a Gmail tool first, which asks for the sign-in.
 To try the sign-in again, delete the person's connection in the Volt dashboard, under Library ›
 Connectors › Connections, or with `DELETE /v1/agents/connections/{id}`.
 
-What it takes, once, besides the router's `ROUTER_CONNECTORS_ENABLED=true`, `ROUTER_AUTH_KEK`
+What it takes, once, besides the router's `ROUTER_CONNECTORS_ENABLED=true`, `ROUTER_DEV_KEK`
 and `ROUTER_PUBLIC_URL=http://localhost:8080` in the repo-root `.env` (restart the router after
 a change), and `go run ./configure` again, which binds both:
 

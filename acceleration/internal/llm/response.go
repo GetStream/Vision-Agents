@@ -41,6 +41,9 @@ type Response struct {
 	OutputText string
 	// ReasoningText is the whole of the model's thinking.
 	ReasoningText string
+	// ReasoningBlocks are the signed blocks of that thinking, in the order they came, for a
+	// provider that has to be sent them again (see Message.ReasoningBlocks).
+	ReasoningBlocks []ReasoningBlock
 	// ToolCalls are the assembled calls the model asked for, in the order it asked. A
 	// response may carry both these and text: a model told to keep the caller company
 	// while it acts will say something and call a tool in the same breath. A failed

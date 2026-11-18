@@ -7595,6 +7595,63 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class FloorCheck
+    {
+
+        /// <summary>
+        /// Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("acted")]
+        public bool Acted { get; set; } = default!;
+
+        /// <summary>
+        /// When the check was asked.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("at")]
+        public System.DateTimeOffset At { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("kind")]
+        public string Kind { get; set; } = default!;
+
+        /// <summary>
+        /// The round trip to the chorus-asr server.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("latency_ms")]
+        public double LatencyMs { get; set; } = default!;
+
+        /// <summary>
+        /// The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public System.Collections.Generic.List<FloorOption>? Options { get; set; } = default!;
+
+        /// <summary>
+        /// How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("paused_ms")]
+        public double? PausedMs { get; set; } = default!;
+
+        /// <summary>
+        /// The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("point")]
+        public string? Point { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("ruling")]
+        public FloorRuling Ruling { get; set; } = new FloorRuling();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
     /// </summary>
@@ -7613,6 +7670,66 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string? Model { get; set; } = default!;
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class FloorOption
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("option")]
+        public string Option { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("probability")]
+        public double Probability { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class FloorRuling
+    {
+
+        /// <summary>
+        /// The caller wants something none of the agent's tools can do.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cannot")]
+        public bool? Cannot { get; set; } = default!;
+
+        /// <summary>
+        /// respond, wait, clarify or ignore.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("disposition")]
+        public string Disposition { get; set; } = default!;
+
+        /// <summary>
+        /// stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor")]
+        public string Floor { get; set; } = default!;
+
+        /// <summary>
+        /// The tool the caller wants.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool")]
+        public string? Tool { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
 
     }
 
@@ -15904,6 +16021,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("first_frame_queued_ms")]
         public double? FirstFrameQueuedMs { get; set; } = default!;
+
+        /// <summary>
+        /// The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor_checks")]
+        public System.Collections.Generic.List<FloorCheck>? FloorChecks { get; set; } = default!;
 
         /// <summary>
         /// What the caller said, when it can be matched to this exchange.

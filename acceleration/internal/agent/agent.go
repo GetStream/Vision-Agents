@@ -802,10 +802,15 @@ func New(options Options) (*Agent, error) {
 		agent.turnStore = newTurnRecorder(options.Store, options.Live, owner, logger)
 	}
 	var record func(Decided)
+	// The model's checks on the floor are kept with the decisions, and carried by the turns
+	// they lead to either way.
+	var recordFloorCheck func(string, live.FloorCheck)
 	if options.Live != nil && options.CallID != "" && !options.Incognito {
 		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
+		recordFloorCheck = agent.decisionStore.RecordFloorCheck
 	}
+	agent.audioFloor.watch(recordFloorCheck)
 	if agent.audioFloor.asksOnPauses() {
 		// Acting on chorus-asr, its transcriber's final is the end the agent's end-of-turn
 		// point ruled, which is answered at once.
@@ -855,6 +860,7 @@ func (a *Agent) finishTurn(turn Turn) {
 	if started.kind == kindCaller && !started.scheduled {
 		observeTurnLatency(turn, started.pipeline)
 	}
+	turn.FloorChecks = a.audioFloor.take(turn.TurnID)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
@@ -2162,6 +2168,7 @@ func (a *Agent) ask(ready candidate) {
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
 	reply, unsaid := a.replyLocked(history)
 	heard, measured := a.replyHeardLocked(reply, time.Now())
+	replyID := a.speakingTurn
 	anotherVoice := a.anotherVoiceLocked(ready)
 	participant := ready.Participant.Name
 	if participant == "" {
@@ -2182,6 +2189,7 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
+		ReplyID:      replyID,
 		Heard:        heard,
 		Measured:     measured,
 		Unsaid:       unsaid,
@@ -2193,7 +2201,7 @@ func (a *Agent) ask(ready candidate) {
 		Paused:       time.Since(ready.RevisedAt),
 		FirstPause:   a.converse.firstPause(ready),
 	}
-	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, tools)
+	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, ready.Utterance, tools)
 	if a.speculate(current, ready, speaking, anotherVoice) {
 		return
 	}

@@ -7,20 +7,20 @@ name: Publish Kotlin SDK
 #   X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT, which expires after 7 days. X.Y.Z must be newer than the last
 #   release.
 # - A pull request from release-kotlin-X.Y.Z (version=X.Y.Z) fails unless X.Y.Z is newer than the
-#   last `sdk-kotlin-v*` tag and not already published. Merging it into accelerate publishes the
+#   last `sdk-kotlin-v*` tag and not already published. Merging it into main publishes the
 #   release, then tags the commit `sdk-kotlin-vX.Y.Z`.
-# - Any other push to accelerate publishes nothing, and other pull requests do not run the jobs.
+# - Any other push to main publishes nothing, and other pull requests do not run the jobs.
 #
 # There is no GitHub release: publishing one starts the Python release (release.yml), and the
 # repository's releases are the Python packages'.
 on:
   push:
-    branches: [ "accelerate", "release-kotlin-*-SNAPSHOT" ]
+    branches: [ "main", "release-kotlin-*-SNAPSHOT" ]
     paths:
       - 'sdks/kotlin/**'
       - '.github/workflows/publish-sdk-kotlin.yml'
   pull_request:
-    branches: [ "accelerate" ]
+    branches: [ "main" ]
     paths:
       - 'sdks/kotlin/**'
       - '.github/workflows/publish-sdk-kotlin.yml'
@@ -63,7 +63,7 @@ jobs:
             echo "::error file=sdks/kotlin/gradle.properties::$BRANCH publishes ${BASH_REMATCH[1]}, but version=$version"; exit 1
           fi
           last=$(git tag -l 'sdk-kotlin-v*' | sed 's/^sdk-kotlin-v//' | sort -V | tail -1)
-          if [ "$BRANCH" = accelerate ] && { [[ "$version" == *-SNAPSHOT ]] || [ "$version" = "$last" ]; }; then
+          if [ "$BRANCH" = main ] && { [[ "$version" == *-SNAPSHOT ]] || [ "$version" = "$last" ]; }; then
             # Not a release: snapshots are published from release-kotlin-X.Y.Z-SNAPSHOT only.
             echo "channel=none" >> "$GITHUB_OUTPUT"
             exit 0
