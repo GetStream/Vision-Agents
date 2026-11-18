@@ -12,7 +12,7 @@ While a reply's OpenUI streams, `TurnUI.content` now holds only its finished sta
 
 ### The Dart SDK draws a streaming card a statement at a time
 
-While a reply's OpenUI streams, `TurnUI.content` holds only its finished statements, so a card no longer reflows with every delta or shows a gauge reading 8 before 86; `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text and a call shows no empty card, and `LiveUI.observe` reports no change for a delta that finishes nothing. A streamed `openui-patch` merges only its finished statements. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed.
+While a reply's OpenUI streams, `TurnUI.content` holds only its finished statements, so a card no longer reflows with every delta or shows a gauge reading 8 before 86; `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text and a call shows no empty card, and `LiveUI.observe` reports no change for a delta that finishes nothing. A streamed `openui-patch` merges only its finished statements. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2061).
 
 ### The JavaScript SDK compiles `ui.format: a2ui`
 

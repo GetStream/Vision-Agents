@@ -314,6 +314,7 @@ void main() {
         ),
       );
       final unfinished = liveUI.observe(conversation);
+      final shownWhileUnfinished = liveUI.latest?.content;
       conversation = conversation.apply(
         event(
           '{"type":"ui_delta","turn_id":"t1","format":"openui",'
@@ -323,7 +324,12 @@ void main() {
       final finished = liveUI.observe(conversation);
 
       expect(unfinished, isFalse);
+      expect(shownWhileUnfinished, 'root = Card([hdr])\nhdr = CardHeader("Kaneo")');
       expect(finished, isTrue);
+      expect(
+        liveUI.latest?.content,
+        'root = Card([hdr])\nhdr = CardHeader("Kaneo")\ntip = Callout("info", "Book", "Terrace")',
+      );
     });
   });
 }
