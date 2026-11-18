@@ -729,6 +729,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 `Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
 
+### The JavaScript SDK keeps an edited question with stream-chat 10
+
+stream-chat 10 times a `channel.rewound` event's `rewind.created_at` in unix nanoseconds, and the SDK read only a string. Without the moment of the rewind, the re-read that follows the event dropped every message after the rewound one, so the question an edit had just written disappeared from the device that sent it, and a reply to an edited first question was never shown as answered. The rewind's time is now read as a message's is, from a string, a `Date` or nanoseconds (AI-3198, #2057).
+
 ### A customer's refused key no longer raises the operator's key_refused alert
 
 `router_keypool_refused_attempts_total` has a label `owner`: `ours` for a key the router read from its environment, `customer` for a customer's own, such as the key of their own model (`custom/<name>`) or the one they keep for a vendor (BYOK). The `key_refused` alert counts only `ours`: a customer's broken key is theirs to fix. An instance's `api_key_env` is read the way every key variable is (comma separated keys, then `NAME_1`, `NAME_2`), so its keys are the router's own: their refusals still alert, and their rate limits are kept in `router_vendor_rate_limited_total` and `router_vendor_ratelimit_remaining` under that variable (AI-2950).
