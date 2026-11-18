@@ -329,13 +329,31 @@ func (t *Transcriber) resumed() {
 // audio ended, which the next utterance begins after.
 func (t *Transcriber) endedOnCheck() (int64, bool) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if !t.pause.done {
+		t.mu.Unlock()
 		return 0, false
 	}
 	at := t.pause.endedAt
 	t.newUtteranceLocked()
+	t.mu.Unlock()
+	t.reportDroppedStops()
 	return at, true
+}
+
+// reportDroppedStops reports the checks of stops the utterance ending forgot before their
+// words came, as not acted on.
+func (t *Transcriber) reportDroppedStops() {
+	t.mu.Lock()
+	dropped, asker := t.droppedStops, t.asker
+	t.droppedStops = nil
+	t.mu.Unlock()
+	if asker == nil {
+		return
+	}
+	for _, checked := range dropped {
+		checked.Acted = false
+		asker.Hearer().report(checked)
+	}
 }
 
 func (t *Transcriber) newUtteranceLocked() {
@@ -343,6 +361,9 @@ func (t *Transcriber) newUtteranceLocked() {
 	t.pauses = 0
 	t.over = overChecks{}
 	clear(t.stopping)
+	for _, checked := range t.stoppingChecked {
+		t.droppedStops = append(t.droppedStops, checked)
+	}
 	clear(t.stoppingChecked)
 }
 
@@ -488,7 +509,7 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 	}
 	// The check is reported once it is known whether its ruling was handed to the agent, which
 	// waits for its words, about the reply it was asked over: a stop ends that reply.
-	reported := Checked{Participant: c.participant.ID, Turn: turn.ReplyID, At: c.asked, Latency: latency, OverAgent: true,
+	reported := Checked{Participant: c.participant.ID, Turn: turn.ReplyID, Source: t.id, At: c.asked, Latency: latency, OverAgent: true,
 		Answer: checked.Answer}
 	defer func() { asker.Hearer().report(reported) }()
 	var words Words
@@ -652,7 +673,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	// The check is reported where its ruling is applied, or let go of: acted on if it ended
 	// the turn, or its stop is handed to the agent now, and before its words can go out as the
 	// utterance's final, which the turn it leads to is put to the flow controller with.
-	reported := Checked{Participant: c.participant.ID, Turn: checkedTurn(turn, ""), Utterance: c.utterance, At: c.asked,
+	reported := Checked{Participant: c.participant.ID, Turn: checkedTurn(turn, ""), Source: t.id, Utterance: c.utterance, At: c.asked,
 		Latency: latency, OverAgent: turn.Speaking, Paused: c.paused, Answer: checked.Answer, Point: checked.Ending.Name}
 	report := func(acted bool) {
 		if err == nil {

@@ -47,9 +47,11 @@ type audioFloor struct {
 	record func(turn string, check live.FloorCheck)
 }
 
-// turnCheck is a check on the floor and the turn it is about, or the utterance it was of.
+// turnCheck is a check on the floor and the turn it is about, or the utterance it was of and
+// the transcriber that numbered it.
 type turnCheck struct {
 	turn      string
+	source    uint64
 	utterance int64
 	check     live.FloorCheck
 }
@@ -122,7 +124,10 @@ func (v *audioFloor) floorChecked(c audiofloor.Checked) {
 	check := floorCheckOf(c)
 	v.mu.Lock()
 	if c.Turn == "" && !c.OverAgent && c.Utterance != 0 {
-		v.held[c.Participant] = latestByAsked(append(v.held[c.Participant], turnCheck{utterance: c.Utterance, check: check}),
+		// A participant's next transcriber numbers its utterances afresh: what an earlier one
+		// held led to no turn of the new one's.
+		held := slices.DeleteFunc(v.held[c.Participant], func(h turnCheck) bool { return h.source != c.Source })
+		v.held[c.Participant] = latestByAsked(append(held, turnCheck{source: c.Source, utterance: c.Utterance, check: check}),
 			floorChecksKept)
 		v.mu.Unlock()
 		return
@@ -290,6 +295,29 @@ func (v *audioFloor) findRuled(said, participant string, speaking bool, turnID s
 	}
 }
 
+// claimWords has the checks chorus-asr's own transcriber held for the utterance whose words
+// turn is join it, whether or not a check's ruling is the turn's: an utterance that ran to its
+// limit ends with no ruling to reuse. A floor that rules beside another transcriber numbers its
+// utterances apart from that transcriber's words, which are claimed by their ruling alone
+// (findRuled). Words still coming over the agent are no turn.
+func (v *audioFloor) claimWords(participant string, utterance int64, turn *harness.FlowTurn) {
+	if utterance == 0 || turn.Unfinished {
+		return
+	}
+	v.mu.Lock()
+	var claimed []live.FloorCheck
+	if v.floors[participant] == nil {
+		claimed = v.claimLocked(participant, utterance, turn.ID)
+	}
+	record := v.record
+	v.mu.Unlock()
+	if record != nil {
+		for _, check := range claimed {
+			record(turn.ID, check)
+		}
+	}
+}
+
 // findRuledLocked finds the ruling for findRuled, and returns the checks of the utterance it
 // ruled on, which have joined the turn.
 func (v *audioFloor) findRuledLocked(said, participant string, speaking bool, turnID string) []live.FloorCheck {
@@ -405,13 +433,14 @@ func (v *audioFloor) forget(participant string) {
 // turn names the participant by ID, which the model's checks of them are counted by:
 // Participant is how the flow controller's prompt calls them, and two callers may be called
 // alike.
-func (v *audioFloor) listen(turn *harness.FlowTurn, participant, said string, tools []harness.Tool) {
+func (v *audioFloor) listen(turn *harness.FlowTurn, participant, said string, utterance int64, tools []harness.Tool) {
 	if v == nil {
 		return
 	}
 	turn.ParticipantID = participant
 	turn.Tools = customerTools(tools)
 	v.findRuled(said, participant, turn.Speaking, turn.ID)
+	v.claimWords(participant, utterance, turn)
 	if stream := v.stream(participant); stream != nil {
 		turn.Audio = stream.Last(audiofloor.Window)
 	}

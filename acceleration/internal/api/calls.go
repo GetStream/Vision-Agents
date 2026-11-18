@@ -827,6 +827,10 @@ const floorChecksPerTurn = 40
 // keeps its latest floorChecksPerTurn, oldest first. turns are oldest first, and an agent's
 // turns may be of calls that overlap this one.
 func floorChecksByTurn(turns []live.Turn, checks []live.CallEvent) map[string][]FloorCheck {
+	byID := make(map[string][]live.Turn, len(turns))
+	for _, turn := range turns {
+		byID[turn.TurnID] = append(byID[turn.TurnID], turn)
+	}
 	byTurn := map[string][]FloorCheck{}
 	for _, check := range checks {
 		if check.FloorCheck == nil {
@@ -834,8 +838,8 @@ func floorChecksByTurn(turns []live.Turn, checks []live.CallEvent) map[string][]
 		}
 		ofCall := func(turn live.Turn) bool { return turn.CallID == "" || turn.CallID == check.CallID }
 		turn := ""
-		for _, named := range turns {
-			if check.TurnID != "" && named.TurnID == check.TurnID && ofCall(named) {
+		for _, named := range byID[check.TurnID] {
+			if check.TurnID != "" && ofCall(named) {
 				turn = named.TurnID
 				break
 			}

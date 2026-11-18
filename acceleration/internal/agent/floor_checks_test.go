@@ -144,7 +144,7 @@ func TestAPauseCheckAndACheckOverTheAgentAreKeptWithTheirTurn(t *testing.T) {
 // but are no interruption of the reply: not acted on.
 func TestARulingToGoOnOverTheAgentIsNotActedOn(t *testing.T) {
 	w := watchedFloor(t, `{"answer":"continue","answer_probability":0.9,"options":[{"name":"stop","p":0.05},`+
-		`{"name":"shorten","p":0.03},{"name":"continue","p":0.9},{"name":"ignore","p":0.02}],"ruling":{"disposition":"ignore","floor":"continue"}}`)
+		`{"name":"shorten","p":0.03},{"name":"continue","p":0.9},{"name":"ignore","p":0.02}],"ruling":{"disposition":"respond","floor":"continue"}}`)
 	w.hear(t, harness.FlowTurn{ID: "turn-2", ReplyID: "turn-1", ParticipantID: "alice", Instructions: "i", Audio: someAudio,
 		Speaking: true, Paused: 200 * time.Millisecond}, true)
 	kept := w.record()
@@ -234,7 +234,7 @@ func TestATranscribersPauseChecksJoinOnlyTheirUtterancesTurn(t *testing.T) {
 	w.keep("alice", audiofloor.Ruled{Words: "Two tickets to Bilbao.", Utterance: 2,
 		Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}}})
 	turn := harness.FlowTurn{ID: "turn-2"}
-	w.listen(&turn, "alice", "Two tickets to Bilbao.", nil)
+	w.listen(&turn, "alice", "Two tickets to Bilbao.", 0, nil)
 
 	checks := w.take("turn-2")
 	require.Len(t, checks, 2, "utterance 2's, not the blank utterance 1's")
@@ -246,6 +246,42 @@ func TestATranscribersPauseChecksJoinOnlyTheirUtterancesTurn(t *testing.T) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	require.Empty(t, w.held["alice"], "the blank utterance's let go of")
+}
+
+// An utterance that ran to its limit ends with no ruling to reuse: its checks join the turn
+// its words are put as all the same, by the utterance the words were heard as. A floor that
+// rules beside another transcriber numbers its utterances apart from the words, and is claimed
+// by its ruling alone.
+func TestAPauseChecksUtteranceIsClaimedByTheTurnOfItsWords(t *testing.T) {
+	w := watchedFloor(t, "")
+	w.floorChecked(audiofloor.Checked{Participant: "alice", Source: 7, Utterance: 3, At: time.Now(), Paused: 300 * time.Millisecond})
+	turn := harness.FlowTurn{ID: "turn-3"}
+	w.listen(&turn, "alice", "a long dictation", 3, nil)
+	kept := w.record()
+	require.Len(t, kept, 1)
+	require.Equal(t, "turn-3", kept[0].turn)
+
+	w.floorChecked(audiofloor.Checked{Participant: "bob", Source: 8, Utterance: 1, At: time.Now()})
+	w.mu.Lock()
+	w.floors["bob"] = &audiofloor.Transcriber{}
+	w.mu.Unlock()
+	other := harness.FlowTurn{ID: "turn-b"}
+	w.listen(&other, "bob", "words another transcriber wrote", 1, nil)
+	require.Len(t, w.record(), 1, "bob's words are numbered by another transcriber")
+}
+
+// A participant's next transcriber numbers its utterances afresh: a check the one before it
+// held is not claimed by the new one's utterance of the same number.
+func TestAHeldCheckIsClaimedOnlyByItsOwnTranscribersUtterance(t *testing.T) {
+	w := watchedFloor(t, "")
+	at := time.Now()
+	w.floorChecked(audiofloor.Checked{Participant: "alice", Source: 1, Utterance: 1, At: at})
+	w.floorChecked(audiofloor.Checked{Participant: "alice", Source: 2, Utterance: 1, At: at.Add(time.Second), Paused: 200 * time.Millisecond})
+	turn := harness.FlowTurn{ID: "turn-1"}
+	w.listen(&turn, "alice", "hello", 1, nil)
+	kept := w.record()
+	require.Len(t, kept, 1, "the new transcriber's alone")
+	require.Equal(t, 200.0, *kept[0].check.PausedMs)
 }
 
 // A check reported late, asked before others that came first, still counts by when it was
@@ -322,12 +358,23 @@ func TestFloorChecksAreKeptFromManyGoroutinesAtOnce(t *testing.T) {
 				w.take(id)
 				w.floorChecked(audiofloor.Checked{Participant: "alice", Utterance: int64(j + 1), At: time.Now()})
 				turn := harness.FlowTurn{ID: id}
-				w.listen(&turn, "alice", "", nil)
+				w.listen(&turn, "alice", "", 0, nil)
 			}
 		})
 	}
 	wg.Wait()
-	require.Len(t, w.record(), 80)
+	kept := w.record()
+	require.Len(t, kept, 80)
+	byTurn := map[string]int{}
+	for _, r := range kept {
+		byTurn[r.turn]++
+	}
+	require.Equal(t, 40, byTurn["turn-0"], "the checks while the agent talked, about its reply")
+	for i := 1; i < 8; i += 2 {
+		for j := range 10 {
+			require.Equal(t, 1, byTurn[fmt.Sprint("turn-", i, "-", j)], "each pause its own turn's")
+		}
+	}
 }
 
 // The recorder keeps a check apart from the judgements, with the turn it is about, and never
@@ -338,19 +385,34 @@ func TestAFloorCheckIsRecordedForTheCallWithoutWaiting(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range 1100 {
-			r.RecordFloorCheck("turn-1", check)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				for range 200 {
+					r.RecordFloorCheck("turn-1", check)
+				}
+			})
 		}
+		wg.Wait()
 		r.Record(Decided{Kind: "wait"})
 	}()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		close(r.queue) // a send waiting on it panics, which fails the test rather than hanging it
+		// Drain the queue to let a producer that waits on it go, then fail.
+		for {
+			select {
+			case <-r.queue:
+				continue
+			case <-done:
+			case <-time.After(5 * time.Second):
+			}
+			break
+		}
 		t.Fatal("recording a floor check waited on a writer that has fallen behind")
 	}
-	require.Len(t, r.queue, 769, "768 floor checks, then the judgement in the room kept for judgements")
-	require.Equal(t, int64(1100-768), r.dropped.Load(), "dropped, not waited for")
+	require.Len(t, r.queue, 769, "768 floor checks however many report at once, then the judgement in the room kept for judgements")
+	require.Equal(t, int64(1600-768), r.dropped.Load(), "dropped, not waited for")
 	row := <-r.queue
 	require.Equal(t, "floor_check", row.Kind)
 	require.Equal(t, "turn-1", row.TurnID)

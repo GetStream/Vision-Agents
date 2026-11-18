@@ -273,7 +273,7 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	// The check is reported once its words say whether the turn ended on it, and before they
 	// go out as the utterance's final (finish), which the turn it leads to is put to the flow
 	// controller with; with nothing ended, as it returns.
-	reported := Checked{Participant: c.participant.ID, Utterance: c.utterance, At: c.asked, Latency: latency, Paused: c.paused,
+	reported := Checked{Participant: c.participant.ID, Source: t.id, Utterance: c.utterance, At: c.asked, Latency: latency, Paused: c.paused,
 		Answer: checked.Answer, Point: checked.Ending.Name}
 	pending := true
 	defer func() {

@@ -87,6 +87,9 @@ type Checked struct {
 	Participant string
 	Turn        string
 	Utterance   int64
+	// Source is the transcriber that asked, whose utterances it numbers: a participant's next
+	// transcriber numbers them afresh. Zero for the flow controller's own checks.
+	Source uint64
 	// At is when the check was asked, and Latency the round trip to the server.
 	At      time.Time
 	Latency time.Duration

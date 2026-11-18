@@ -68,7 +68,9 @@ func (f *flow) runHearer(asked *candidate) bool {
 		return true
 	}
 	ruling.CandidateID, ruling.TookMs, ruling.Ruler = asked.turn.ID, millis(time.Since(asked.askedAt)), Heard
-	f.emitter.Send(ruling)
+	// Taken, the ruling is the agent's to act on: the hearer is told before the agent can be,
+	// so that the turn the ruling ends carries the check it was made at.
 	applied(true)
+	f.emitter.Send(ruling)
 	return true
 }

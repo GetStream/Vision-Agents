@@ -56,6 +56,9 @@ type decisionRecorder struct {
 	// a send on a closed channel panics even from a select with a default.
 	closing   sync.RWMutex
 	closed    bool
+	// admitting makes a floor check's look at the queue and its send one step, so that two
+	// can never both take the last of floorCheckRoom.
+	admitting sync.Mutex
 	closeOnce sync.Once
 	dropped   atomic.Int64
 }
@@ -135,10 +138,9 @@ func (r *decisionRecorder) RecordFloorCheck(turn string, check live.FloorCheck) 
 		TurnID:     turn,
 		FloorCheck: &check,
 	}
-	r.closing.RLock()
-	full := len(r.queue) >= floorCheckRoom
-	r.closing.RUnlock()
-	if full {
+	r.admitting.Lock()
+	defer r.admitting.Unlock()
+	if len(r.queue) >= floorCheckRoom {
 		r.dropped.Add(1)
 		return
 	}

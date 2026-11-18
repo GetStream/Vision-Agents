@@ -937,6 +937,29 @@ func (s *PausesSuite) TestAPauseCheckOverTheAgentIsReportedAsOneOverTheAgent() {
 	s.Empty(checked.Point, "no bar over the agent")
 }
 
+// A stop waiting for its pause's words that the utterance ending forgets is reported all the
+// same, not acted on.
+func (s *PausesSuite) TestAStopForgottenAsItsUtteranceEndsIsReportedNotActedOn() {
+	var mu sync.Mutex
+	var reported []Checked
+	s.agent.hearer.OnCheck(func(c Checked) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, c)
+	})
+	s.transcriber.mu.Lock()
+	s.transcriber.stopping = map[int64]Ruled{1: {Utterance: 1}}
+	s.transcriber.stoppingChecked = map[int64]Checked{1: {Participant: "alice", OverAgent: true, Acted: true}}
+	s.transcriber.newUtteranceLocked()
+	s.transcriber.mu.Unlock()
+	s.transcriber.reportDroppedStops()
+	mu.Lock()
+	defer mu.Unlock()
+	s.Require().Len(reported, 1)
+	s.False(reported[0].Acted)
+	s.True(reported[0].OverAgent)
+}
+
 // overEcho is a bare "no, no" said over the agent's forecast on a line that hears the agent
 // back, as the server writes a pause's words: the agent's own voice, then the caller's.
 const overEcho = "Tomorrow in Lisbon, it will be sunny. No, no."
