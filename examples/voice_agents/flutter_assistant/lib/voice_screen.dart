@@ -449,8 +449,8 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                         builder: (context, shown, _) =>
                             CaptionView(caption: shown.caption, isVisible: shown.isVisible),
                       ),
-                      // The card grows as Juno writes it, which moves the glow above it: both
-                      // ease into place, and a new card comes up from below.
+                      // The card comes up from below and grows as Juno writes it, which moves the
+                      // glow above it: both ease into place. A newer card takes its place.
                       AnimatedSize(
                         duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 400),
                         curve: Curves.easeOutCubic,

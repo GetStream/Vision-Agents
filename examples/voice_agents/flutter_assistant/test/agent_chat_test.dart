@@ -602,6 +602,7 @@ void main() {
         expect((await call(chat, 'T4', id: 'c2'))['output'], contains('Reserved table T4'));
       });
 
+      // Setting the booking on the chat let go of would throw: its notifier is disposed.
       test('a booking that arrives after the chat was let go of changes nothing', () async {
         final chat = AgentChat('s1', sessions: sessions);
         await chat.close();
