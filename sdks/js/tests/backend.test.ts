@@ -78,6 +78,35 @@ describe("Backend", () => {
     });
   });
 
+  it("keeps User-Agent off a page even where a polyfilled process object exists", async () => {
+    // Bundlers such as webpack 4 leave a `process` with empty `versions` in a page; testing
+    // for the object alone would send the User-Agent the CORS lists refuse.
+    const page = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    const original = Object.getOwnPropertyDescriptor(globalThis, "process");
+    assert.ok(original);
+    Object.defineProperty(globalThis, "process", { value: { env: {}, versions: {} }, configurable: true });
+    try {
+      const headers = await page.headers(true);
+      assert.equal(headers["User-Agent"], undefined);
+      assert.equal(headers["X-Stream-Client"], "sdk");
+    } finally {
+      Object.defineProperty(globalThis, "process", original);
+    }
+  });
+
+  it("names the SDK on the upgrade request of a socket opened from Node", async () => {
+    // Without it the router counts every socket open as the API's.
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "shh" });
+    const opening = router.socket();
+
+    const socket = backend.openSocket(router.url.replace("http", "ws") + "/v1/anything");
+    const connection = await opening;
+    socket.close();
+
+    assert.equal(connection.headers["x-stream-client"], "sdk");
+    assert.equal(connection.headers["user-agent"], `stream-agents-js/${VERSION}`);
+  });
+
   it("refuses a request from a backend nobody is billed for", async () => {
     const backend = new Backend({ url: "http://localhost:8080" });
 
