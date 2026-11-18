@@ -97,6 +97,7 @@ func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.noteHook(r.Context(), origin)
 	if delivery.Type != getstream.EventTypeMessageNew {
 		s.logger.Debug("ignoring a Stream Chat delivery", "type", delivery.Type)
 		w.WriteHeader(http.StatusOK)

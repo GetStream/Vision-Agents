@@ -12,6 +12,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
@@ -95,6 +96,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.noteHook(r.Context(), origin)
 	// What the event starts here, an ended call's episode summaries, no key started.
 	r = r.WithContext(routing.WithAttribution(r.Context(), routing.Attribution{APIKey: routing.OriginHookVideo}))
 
@@ -193,6 +195,8 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
 	}
+	// In deployment mode the number is what says whose call it is.
+	activity.NoteCustomer(r.Context(), number.CustomerID, activity.AreaHooksIn)
 	// The caller is on the line from here, whether an agent answers or the call is refused
 	// and ended below, and the vendor bills every second of it. No key placed it, so its
 	// minutes are the app's, and priced by the country of the number rung. One leg per Stream

@@ -38,14 +38,15 @@ type activityKey struct {
 	appID, area, client, day string
 }
 
-// activityBatch is how many rows one statement writes. Each takes 11 parameters, and a
+// activityBatch is how many rows one statement writes. Each takes 12 parameters, and a
 // statement may carry at most 65535 (PostgreSQL's Bind message counts them in an Int16:
 // https://www.postgresql.org/docs/current/protocol-message-formats.html), so a thousand
 // leave room to spare.
 const activityBatch = 1000
 
 // RecordActivity adds deltas to the rows they name, making the ones that are not there yet.
-// Counts are added, the first and last times widen, and a refusal later than the one the
+// A delta naming no organization, such as a hook's or a forward's, which name only the app, is
+// the organization app_organizations holds for its app, when it holds one. Counts are added, the first and last times widen, and a refusal later than the one the
 // row holds replaces it. Deltas naming the same row are summed first: one statement cannot
 // update a row twice.
 func (s *Store) RecordActivity(ctx context.Context, deltas []ActivityDelta) error {
@@ -88,15 +89,16 @@ func (s *Store) RecordActivity(ctx context.Context, deltas []ActivityDelta) erro
 // writeActivity upserts the rows of keys in one statement.
 func writeActivity(ctx context.Context, tx bun.Tx, folded map[activityKey]*ActivityDelta, keys []activityKey) error {
 	rows := make([]string, 0, len(keys))
-	args := make([]any, 0, len(keys)*11)
+	args := make([]any, 0, len(keys)*12)
 	for _, key := range keys {
 		delta := folded[key]
 		var refusedAt *time.Time
 		if !delta.LastRefusalAt.IsZero() {
 			refusedAt = &delta.LastRefusalAt
 		}
-		rows = append(rows, "(?, ?, ?, ?, ?::date, ?, ?, NULLIF(?, ''), ?::timestamptz, ?, ?)")
-		args = append(args, delta.OrganizationID, key.appID, key.area, key.client, key.day,
+		rows = append(rows, "(COALESCE(NULLIF(?, ''), (SELECT organization_id FROM app_organizations WHERE app_id = ?), ''),"+
+			" ?, ?, ?, ?::date, ?, ?, NULLIF(?, ''), ?::timestamptz, ?, ?)")
+		args = append(args, delta.OrganizationID, key.appID, key.appID, key.area, key.client, key.day,
 			delta.Requests, delta.Refused, delta.LastRefusalCode, refusedAt, delta.FirstAt, delta.LastAt)
 	}
 	query := `

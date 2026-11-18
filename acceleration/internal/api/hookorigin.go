@@ -11,6 +11,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -129,6 +130,15 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	s.logger.Warn("rejected a "+what+" with a bad signature", "bytes", len(payload), "app", pathApp)
 	writeError(w, unauthenticated("that is not a "+what+" from Stream"))
 	return hookOrigin{}, false
+}
+
+// noteHook counts a hook Stream signed under the app it came from, once verifyHook or
+// chatInboundOrigin has checked it. A hook signed with the deployment's own secret in
+// deployment mode is no one customer's until what it names is read.
+func (s *Server) noteHook(ctx context.Context, origin hookOrigin) {
+	if customer, scoped := s.configOwnerOf(origin); scoped {
+		activity.NoteCustomer(ctx, customer, activity.AreaHooksIn)
+	}
 }
 
 // vouchedHook is a hook the proxy checked the signature of with its app's secret, which the

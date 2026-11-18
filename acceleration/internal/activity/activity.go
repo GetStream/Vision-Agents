@@ -1,7 +1,8 @@
 // Package activity counts the requests each app makes, by area of the API and by client, and
 // writes the sums to customer_activity (store.RecordActivity).
 //
-// Every authenticated request is one, so the counting is in memory and the writing is not on
+// Every authenticated request is one, and so is a hook checked as an app's (NoteCustomer) and a
+// forward to an app's own endpoint, so the counting is in memory and the writing is not on
 // the request path: a minute's requests for one app, area, client and day are one row's
 // update. Nothing here fails a request: counting it is not what the caller asked for.
 package activity
@@ -38,6 +39,35 @@ const (
 	AreaOther = "other"
 )
 
+// ClientRouter is the client work the router starts itself is counted under: a forward to a
+// customer's own endpoint. It is the API's, the client a caller that named none is counted
+// under, so no row says a client sent what nobody sent.
+const ClientRouter = store.AuditSourceAPI
+
+// Note is who a request no credential named was for: a hook a vendor or Stream signed carries
+// no customer, and the app it is for is known only once the handler has checked it.
+type Note struct {
+	AppID string
+	Area  string
+}
+
+type noteKey struct{}
+
+// WithNote returns ctx with room for NoteCustomer, and the note it fills.
+func WithNote(ctx context.Context) (context.Context, *Note) {
+	note := &Note{}
+	return context.WithValue(ctx, noteKey{}, note), note
+}
+
+// NoteCustomer says the request ctx serves is for appID, counted under area. Call it on the
+// request's goroutine, once the request is known to come from whom it says: an unchecked hook
+// would put rows under whatever app it names. Without WithNote it does nothing.
+func NoteCustomer(ctx context.Context, appID, area string) {
+	if note, ok := ctx.Value(noteKey{}).(*Note); ok {
+		note.AppID, note.Area = appID, area
+	}
+}
+
 // DefaultInterval is how often the sums are written. A row is then written at most once a
 // minute per app, area, client and day, which is the rate the activity record was asked to
 // keep to; a router that stops loses at most that much, and not even that when it stops
@@ -61,7 +91,8 @@ type Request struct {
 	// Client is one of the audit sources a client may name itself as (store.AuditSource).
 	Client string
 	At     time.Time
-	// Refused is an answer of 400 or more, and Code the error code it carried, if any.
+	// Refused is an answer of 400 or more, or a refusal said otherwise, such as in a socket's
+	// frame, and Code the error code it carried, if any.
 	Refused bool
 	Code    string
 }

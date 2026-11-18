@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
@@ -336,6 +337,8 @@ func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, body []byt
 		writeError(w, errUnsigned)
 		return
 	}
+	// A connector's own route is the operator's app's, whose events are no one customer's.
+	activity.NoteCustomer(r.Context(), app.CustomerID, activity.AreaHooksIn)
 	if event.Challenge != "" {
 		outcome = eventChallenge
 		writeChallenge(w, event.Challenge)
