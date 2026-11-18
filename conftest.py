@@ -127,6 +127,11 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
                 # Same calls land in the stdlib's importlib.metadata on Python 3.10+.
                 func.can_block_in("importlib/metadata/__init__.py", "mtime")
                 func.can_block_in("importlib/metadata/__init__.py", "version")
+                # google-genai 3.x uses httpx2/httpcore2 whose one-time init
+                # reads package metadata and creates an SSL context (both blocking).
+                func.can_block_in(
+                    "google/genai/_api_client.py", ("__init__", "_ensure_httpx_ssl_ctx")
+                )
 
             # Allow Python's standard logging which is inherently synchronous.
             if "io.TextIOWrapper.write" in bb.functions:
