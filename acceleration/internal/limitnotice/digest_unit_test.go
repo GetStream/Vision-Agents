@@ -114,6 +114,23 @@ func (s *DigestMessageSuite) TestALongListNamesTheFirstAndCountsTheRest() {
 	s.Equal(2, strings.Count(message, "\n  … and 2 more"), "once under each list")
 	s.NotContains(message, fmt.Sprintf("org-%02d", digestListMax))
 	s.Contains(message, "Active orgs: 17 ", "the count is of every organization, not the ones listed")
+	s.Equal(15, digestListMax, "two lists of 15 lines of up to 1,000 characters stay under Slack's 40,000")
+}
+
+// Defect: an organization's areas split over several entries, so it is listed, and counted,
+// once per area.
+func (s *DigestMessageSuite) TestRowsAreGroupedByOrganization() {
+	days := organizationDays([]store.OrganizationDayArea{
+		{OrganizationID: "org-a", FirstDay: true, ActivityArea: answered(activity.AreaAgentSetup, "cli", 1)},
+		{OrganizationID: "org-a", FirstDay: true, ActivityArea: answered(activity.AreaWorkers, "sdk", 2)},
+		{OrganizationID: "org-b", ActivityArea: answered(activity.AreaConversations, "api", 3)},
+		{OrganizationID: "org-b", ActivityArea: answered(activity.AreaVoiceVideo, "api", 4)},
+	})
+
+	s.Equal([]OrganizationDay{
+		{ID: "org-a", New: true, Areas: []store.ActivityArea{answered(activity.AreaAgentSetup, "cli", 1), answered(activity.AreaWorkers, "sdk", 2)}},
+		{ID: "org-b", Areas: []store.ActivityArea{answered(activity.AreaConversations, "api", 3), answered(activity.AreaVoiceVideo, "api", 4)}},
+	}, days)
 }
 
 // Defect: a message from staging or a laptop read as production's in the shared channel.

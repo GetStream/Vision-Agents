@@ -121,6 +121,7 @@ func (s *DigestSuite) TestAnOrganizationIsNewOnItsFirstDayAndTheCountIsOfOrganiz
 	s.active(seen, activity.AreaDashboardReads, 2, 1, 0)
 	s.active(quiet, activity.AreaDashboardReads, 2, 1, 0)
 	s.active(quiet, activity.AreaDashboardReads, 0, 1, 0)
+	s.active(organization(), activity.AreaAgentSetup, 2, 1, 0)
 	s.active("", activity.AreaHooksIn, 1, 5, 0)
 	s.active("", activity.AreaHooksIn, 2, 5, 0)
 
@@ -137,7 +138,7 @@ func (s *DigestSuite) TestAnOrganizationIsNewOnItsFirstDayAndTheCountIsOfOrganiz
 	s.Require().NoError(s.db.DB().NewRaw("SELECT count(DISTINCT organization_id) FROM customer_activity"+
 		" WHERE day = '2026-03-09' AND organization_id <> ''").Scan(s.ctx, &counted))
 	s.Equal(2, counted)
-	s.True(strings.HasSuffix(digest, "\nActive orgs: 2 (day before: 2)"), digest)
+	s.True(strings.HasSuffix(digest, "\nActive orgs: 2 (day before: 3)"), digest)
 }
 
 // Defect: an organization with one request answered flagged as stuck.
@@ -173,6 +174,9 @@ func (s *DigestSuite) TestTheDigestIsPostedOnceADayWhateverTheRouters() {
 	s.router().Start()
 	s.checked(s.reads.Load())
 	s.Len(s.digests(), 1, "nor does a router started later the same day")
+	s.aged()
+	s.checked(s.reads.Load())
+	s.Len(s.digests(), 1, "nor a check once its claim is old: it was posted")
 
 	next := today.AddDate(0, 0, 1)
 	s.clock.Store(&next)

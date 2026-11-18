@@ -66,10 +66,10 @@ func (o OrganizationDay) counts() (requests, refused int64) {
 	return requests, refused
 }
 
-// allRefused says the organization made requests and every one was refused.
+// allRefused says every request the organization's apps made was refused.
 func (o OrganizationDay) allRefused() bool {
 	requests, refused := o.counts()
-	return requests > 0 && refused == requests
+	return refused == requests
 }
 
 // refusalCode is the code that ended the most of the organization's refused requests, as far
@@ -78,9 +78,7 @@ func (o OrganizationDay) allRefused() bool {
 func (o OrganizationDay) refusalCode() string {
 	refusals := map[string]int64{}
 	for _, area := range o.Areas {
-		if area.Refused > 0 {
-			refusals[area.LastRefusalCode] += area.Refused
-		}
+		refusals[area.LastRefusalCode] += area.Refused
 	}
 	var code string
 	var most int64
