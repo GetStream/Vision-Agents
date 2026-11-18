@@ -30,9 +30,6 @@ services:
   router:
     build:
       context: ./acceleration
-      # goaec3 is a private module; see acceleration/README.md, Build prerequisites.
-      secrets:
-        - goaec3_token
     image: vision-agents-router
     # Provider credentials come from the repo-root .env; the two below are the
     # ones that differ inside the network and so are set here instead.
@@ -107,7 +104,3 @@ services:
 
 volumes:
   pgdata:
-
-secrets:
-  goaec3_token:
-    environment: GOAEC3_READ_TOKEN

@@ -77,18 +77,6 @@ passes through, on amd64 and arm64, and other platforms build the same code with
 The commands below assume `export GOEXPERIMENT=simd`. `cmd/say` needs `ffplay` at runtime
 (part of ffmpeg) to play audio, or `-out` to write a file instead.
 
-The echo canceller for phone callers, `github.com/GetStream/goaec3`, is a private
-GetStream module. Go fetches it with your own GitHub access, outside the public proxy:
-
-```sh
-go env -w GOPRIVATE=github.com/GetStream/goaec3
-gh auth setup-git   # or any git credential that can read GetStream/goaec3
-```
-
-`docker compose build` needs a read-only token for it in `GOAEC3_READ_TOKEN`, which
-compose passes to the build as a secret. CI reads the same token from the
-`GOAEC3_READ_TOKEN` repository secret.
-
 ## Configuration
 
 Everything that is not a provider credential is one YAML file, read by `internal/config`:
