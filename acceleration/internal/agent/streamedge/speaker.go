@@ -110,8 +110,12 @@ type speaker struct {
 	voice   []int16
 	voiceAt int
 	toEcho  *webrtcaudio.StreamResampler
+	// voiceLead is how far the voice is behind the frames it goes with, the resampler's own
+	// delay, the same all through an utterance.
+	voiceLead int
 	// keeping is whether the voice of the utterance going out is kept. It is decided as an
-	// utterance starts, from whether the call has a line to cancel it from: resampling costs
+	// utterance starts, from whether the call has a line to cancel it from, or somebody who
+	// will have one: resampling costs
 	// about twice what encoding does, which a call with nobody on a phone has no use for, and
 	// voice kept from partway through an utterance would no longer line up with its frames.
 	keeping bool
@@ -246,7 +250,15 @@ func (s *speaker) queueVoice(pcm audio.PcmData, starting bool) {
 		return
 	}
 	if starting {
-		s.keeping = s.echo.Listening()
+		s.keeping = s.echo.Wanted()
+		if s.keeping {
+			// The resampler holds back the end of what it is given until it has seen what
+			// follows. The voice starts that much late, all through the utterance, so a frame
+			// taken right after its speech was written never runs short and shifts what follows.
+			s.voiceLead = resamplerLead(pcm.SampleRate)
+			s.voice = append(s.voice[:0], make([]int16, s.voiceLead)...)
+			s.voiceAt = 0
+		}
 	}
 	if !s.keeping {
 		return
@@ -269,6 +281,29 @@ func (s *speaker) appendVoice(resampled []webrtcaudio.PCM) {
 	for _, pcm := range resampled {
 		s.voice = append(s.voice, pcm.ToInt16().Int16()...)
 	}
+}
+
+// resamplerLeads are how many 16 kHz samples a stream resampler holds back, by input rate.
+var resamplerLeads sync.Map
+
+// resamplerLead is how many 16 kHz samples a stream resampler from rate holds back, and one
+// more for its rounding, read off one that is given a second of silence.
+func resamplerLead(rate int) int {
+	if lead, ok := resamplerLeads.Load(rate); ok {
+		return lead.(int)
+	}
+	probe := webrtcaudio.NewStreamResampler(webrtcaudio.FormatS16, echocancel.SampleRate, 1, 0)
+	out, err := probe.Write(webrtcaudio.FromInt16(make([]int16, rate), rate, 1))
+	if err != nil {
+		return 0
+	}
+	produced := 0
+	for _, pcm := range out {
+		produced += pcm.Len()
+	}
+	lead := max(0, echocancel.SampleRate-produced) + 1
+	resamplerLeads.Store(rate, lead)
+	return lead
 }
 
 // takeVoice moves the voice of the frame the track is taking into sent, silence for what the
@@ -448,15 +483,31 @@ func (s *speaker) flush() {
 	s.unflushed = false
 
 	packets, err := s.encoder.Flush()
+	if s.keeping {
+		if tail, err := s.toEcho.Flush(); err == nil {
+			s.appendVoice(tail)
+		}
+	}
 	if err != nil {
 		s.logger.Debug("could not flush the end of an utterance", "error", err)
 		return
 	}
 	s.enqueue(packets)
 	if s.keeping {
-		if tail, err := s.toEcho.Flush(); err == nil {
-			s.appendVoice(tail)
-		}
+		s.alignVoice()
+	}
+}
+
+// alignVoice pads the voice queued to the frames queued, once the encoder has been flushed and
+// holds nothing back: it padded the last frame out with silence, which the voice is short of.
+// The caller must hold the lock.
+func (s *speaker) alignVoice() {
+	want := len(s.frames)*echoFrameSamples + s.voiceLead
+	have := len(s.voice) - s.voiceAt
+	if have < want {
+		s.voice = append(s.voice, make([]int16, want-have)...)
+	} else {
+		s.voice = s.voice[:s.voiceAt+want]
 	}
 }
 

@@ -2158,6 +2158,10 @@ func buildSessions(
 		logger.Warn("not serving sessions, which need an llm router configured")
 		return nil, nil
 	}
+	edges, err := edgeFor(stream, settings.Phone)
+	if err != nil {
+		return nil, err
+	}
 
 	// Without a mem0 key a session starts every call knowing nothing but its
 	// instructions, which is the behaviour before memory existed.
@@ -2195,7 +2199,7 @@ func buildSessions(
 		Live:               liveClient,
 		Writer:             usageWriter,
 		Logger:             logger,
-		Edge:               edgeFor(stream, settings.Phone),
+		Edge:               edges,
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,

@@ -160,6 +160,9 @@ func New(options Options) (*Edge, error) {
 
 	var echo *echocancel.Call
 	if options.EchoCancellation != nil {
+		if options.EchoCancellation.From == nil {
+			return nil, stack.Wrap(errors.New("streamedge: echo cancellation needs to say whose audio it is from"))
+		}
 		var err error
 		if echo, err = echocancel.NewCall(options.EchoCancellation.Config); err != nil {
 			return nil, err
@@ -553,12 +556,26 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 	defer e.quality.stopped(stream)
 	line := e.echoLine(participant)
 	if line != nil {
+		done := make(chan struct{})
 		defer func() {
+			close(done)
 			metrics := line.Close()
-			e.logger.Debug("stopped cancelling echo", "participant", participant.UserID,
+			e.logger.Info("stopped cancelling echo", "participant", participant.UserID,
 				"erl_db", metrics.ERL, "erle_db", metrics.ERLE, "echo_delay", metrics.Delay)
 		}()
+		// The reader is only let go of once its next frame arrives, which a track replaced
+		// by another may never send: the line stops taking the agent's voice at once.
+		go func() {
+			select {
+			case <-stop:
+				line.Detach()
+			case <-done:
+			}
+		}()
 	}
+	// next is where in the track the frame after the last one starts.
+	var next time.Duration
+	started := false
 	for pcm, err := range reader.Frames() {
 		if err != nil {
 			e.logger.Debug("stopped hearing a participant", "participant", participant.UserID, "error", err)
@@ -572,6 +589,13 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 		}
 		samples := pcm.ToInt16().Int16()
 		if line != nil {
+			// The reader fills in lost packets only up to a point, and none at all where the
+			// phone sent nothing for a while (Opus DTX), whose timestamps move on regardless.
+			// The agent's voice went on going out, so the line steps over what is missing.
+			if started && pcm.PTS-next >= echocancel.FrameDuration {
+				line.Missed(pcm.PTS - next)
+			}
+			next, started = pcm.PTS+pcm.Duration(), true
 			// A call's 20 ms packets are whole frames and come back at once; anything else
 			// waits for the rest of its last frame.
 			if samples = line.Clean(samples); len(samples) == 0 {
@@ -587,6 +611,12 @@ func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, partici
 			},
 		})
 	}
+}
+
+// EchoCancelled reports whether the agent's voice is taken out of the audio of the participant
+// with userID.
+func (e *Edge) EchoCancelled(userID string) bool {
+	return e.echo != nil && e.options.EchoCancellation.From(userID)
 }
 
 // echoLine starts cancelling the agent's voice out of participant's audio, when it comes
@@ -701,6 +731,15 @@ func (e *Edge) report(participant *sfu_models.Participant, joined bool) {
 		e.present[participant.GetSessionId()] = participant.GetName()
 	} else if !joined {
 		delete(e.present, participant.GetSessionId())
+	}
+	// Whoever will be cleaned of the agent's voice is told to the canceller as they arrive,
+	// before their audio does: what the agent says to them meanwhile comes back as echo too.
+	if joined != present && e.EchoCancelled(participant.GetUserId()) {
+		if joined {
+			e.echo.Expect(1)
+		} else {
+			e.echo.Expect(-1)
+		}
 	}
 	e.mu.Unlock()
 	if left || (joined && known) {
