@@ -301,6 +301,7 @@ void main() {
       expect(await socket.next(), {'type': 'interrupt'});
       expect(await socket.next(), {'type': 'interrupt', 'request_id': 'm1'});
       await chat.close();
+      expect(await socket.next(), {'type': 'close'});
     });
 
     test('says something after what is in flight, or stops that first', () async {
@@ -315,6 +316,7 @@ void main() {
       expect(await socket.next(), {'type': 'interrupt'});
       expect(await socket.next(), {'type': 'say', 'text': 'Sorry, wrong order.'});
       await chat.close();
+      expect(await socket.next(), {'type': 'close'});
     });
 
     test('a picture tool that asks first sends its pictures once allowed', () async {

@@ -40,8 +40,8 @@ final class ScheduledTasks {
   /// [schedule] replaces the whole schedule, but for a timezone it leaves out. [next] moves only
   /// the next occurrence: a snooze, or a skip when it lands past the one after. Either lands 15
   /// minutes from now at the soonest, unless it is no earlier than the current next occurrence.
-  /// An empty [deliverTo] is the conversation alone, and [quietHours] with both ends empty clears
-  /// the hold.
+  /// An empty [deliverTo] is the conversation alone, but for a task made in a thread, whose
+  /// delivery cannot change; [quietHours] with both ends empty clears the hold.
   Future<ScheduledTask> update(
     String id, {
     String? title,
@@ -76,7 +76,8 @@ final class ScheduledTasks {
   /// Cancels a task: it and its runs are gone.
   Future<void> delete(String id) => _operations.deleteScheduledTask(id: id);
 
-  /// One page of the times a task came due, newest first. Snoozes and pauses write none. Pass
+  /// One page of the times a task came due, newest first. Snoozes and pauses write none, but
+  /// resuming a one-shot that came due while paused records that time as missed. Pass
   /// the page's [ListPage.nextCursor] as [cursor] for the next one.
   Future<ListPage<ScheduledTaskRun>> runs(String id, {int? limit, String? cursor}) async {
     final page = await _operations.listScheduledTaskRuns(

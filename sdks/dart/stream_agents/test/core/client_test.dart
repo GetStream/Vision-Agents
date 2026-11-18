@@ -1611,6 +1611,7 @@ void main() {
       final page = await agents.scheduledTasks.runs('t1', limit: 2, cursor: 'runs-1');
 
       expect(router.last('GET $tasks/t1/runs').query, {'limit': '2', 'cursor': 'runs-1'});
+      expect(page.hasMore, isTrue);
       expect(
         page.items.first,
         ScheduledTaskRun(

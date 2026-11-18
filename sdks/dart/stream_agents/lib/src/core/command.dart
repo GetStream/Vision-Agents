@@ -26,7 +26,8 @@ final class SayCommand extends Command {
 final class InterruptCommand extends Command {
   const InterruptCommand({this.requestId = ''});
 
-  /// The `request_id` a reply's events carry. Empty abandons whichever reply is current.
+  /// The `request_id` of the request the reply answers, as `command_accepted` and its tool calls
+  /// carry it. Empty abandons whichever reply is current.
   final String requestId;
 
   @override

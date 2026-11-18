@@ -227,8 +227,8 @@ final class AgentSession {
 
   /// Abandons the reply in flight.
   ///
-  /// With [requestId], the `request_id` a reply's events carry, only the reply answering that
-  /// request is abandoned, and the router reports it stopped with `command_stopped`. An id the
+  /// With [requestId], the `request_id` of the request a reply answers, as `command_accepted` and
+  /// its tool calls carry it, only that reply is abandoned, and the router reports it stopped with `command_stopped`. An id the
   /// router does not know comes back as an `error` event.
   void interrupt({String requestId = ''}) => _held().send(InterruptCommand(requestId: requestId));
 

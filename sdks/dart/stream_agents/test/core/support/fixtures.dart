@@ -94,4 +94,5 @@ Map<String, Object?> scheduledTaskRunJson(String id) => {
   'attempts': 1,
   'started_at': '2026-11-18T08:00:01Z',
   'finished_at': '2026-11-18T08:00:04Z',
+  'error': null,
 };
