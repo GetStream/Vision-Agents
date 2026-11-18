@@ -1238,9 +1238,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 			LLM:      streams.LLM,
 			// Speech is what an audio simulation needs and a text one does not, so it is
 			// passed where it exists rather than required.
-			TTS:    streams.TTS,
-			STT:    streams.STT,
-			Logger: logger,
+			TTS:      streams.TTS,
+			STT:      streams.STT,
+			Activity: activityRecord,
+			Logger:   logger,
 		})
 		if err != nil {
 			return err
@@ -1624,6 +1625,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	var scheduler *scheduling.Scheduler
 	if pgStore != nil && sessions != nil {
 		scheduler = scheduling.NewScheduler(pgStore, server.DeliverScheduledTask, logger)
+		scheduler.SetActivity(activityRecord)
 		// Before Start: a session the first delivery opens takes the kick then.
 		server.SetSchedulerKick(scheduler.Kick)
 		scheduler.Start(ctx)
@@ -1638,6 +1640,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			Dialer:      campaign.NewPhoneDialer(telephony, sessions, pgStore, logger),
 			Transcripts: server,
 			Classifier:  campaign.NewClassifier(streams.LLM),
+			Activity:    activityRecord,
 			Logger:      logger,
 		})
 		if err != nil {

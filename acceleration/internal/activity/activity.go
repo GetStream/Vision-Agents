@@ -1,10 +1,11 @@
 // Package activity counts the requests each app makes, by area of the API and by client, and
 // writes the sums to customer_activity (store.RecordActivity).
 //
-// Every authenticated request is one, and so is a hook checked as an app's (NoteCustomer) and a
-// forward to an app's own endpoint, so the counting is in memory and the writing is not on
-// the request path: a minute's requests for one app, area, client and day are one row's
-// update. Nothing here fails a request: counting it is not what the caller asked for.
+// Every authenticated request is one, and so is a hook checked as an app's (NoteCustomer), and
+// the work the router does for an app on its own: a forward to its endpoint, a scheduled task's
+// occurrence, a campaign's dial and a simulation run. So the counting is in memory and the
+// writing is not on the request path: a minute's requests for one app, area, client and day are
+// one row's update. Nothing here fails a request: counting it is not what the caller asked for.
 package activity
 
 import (
@@ -39,9 +40,9 @@ const (
 	AreaOther = "other"
 )
 
-// ClientRouter is the client work the router starts itself is counted under: a forward to a
-// customer's own endpoint. It is the API's, the client a caller that named none is counted
-// under, so no row says a client sent what nobody sent.
+// ClientRouter is the client work the router starts itself is counted under, such as a forward to
+// a customer's own endpoint or a scheduled task's occurrence. It is the API's, the client a
+// caller that named none is counted under, so no row says a client sent what nobody sent.
 const ClientRouter = store.AuditSourceAPI
 
 // Note is who a request no credential named was for: a hook a vendor or Stream signed carries
@@ -189,9 +190,10 @@ func (r *Recorder) Close() {
 	})
 }
 
-// Record counts one request. A request naming no app is nobody's and is not counted.
+// Record counts one request. A request naming no app is nobody's and is not counted, and a nil
+// Recorder, a router with no database, counts nothing.
 func (r *Recorder) Record(request Request) {
-	if request.AppID == "" {
+	if r == nil || request.AppID == "" {
 		return
 	}
 	at := request.At.UTC()

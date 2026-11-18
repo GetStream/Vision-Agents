@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -217,7 +218,8 @@ func (s *Service) Review(ctx context.Context, id, decision, notes, reviewer stri
 }
 
 // Hook takes a vendor's report on a brand or a campaign, verified, and moves whichever use
-// cases it is about.
+// cases it is about. A report on a campaign is counted as its use case's app's phone work. One on
+// a brand is not: the hook reads no app for it, and has every waiting use case registered.
 func (s *Service) Hook(ctx context.Context, header http.Header, body []byte) error {
 	if s.registrar == nil {
 		return fmt.Errorf("%w: no registrar is configured", ErrRefused)
@@ -234,6 +236,7 @@ func (s *Service) Hook(ctx context.Context, header http.Header, body []byte) err
 		if err != nil {
 			return err
 		}
+		activity.NoteCustomer(ctx, useCase.CustomerID, activity.AreaPhoneSMS)
 		return s.refresh(ctx, useCase, body)
 	}
 	if brandID != "" {
