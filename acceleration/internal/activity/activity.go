@@ -41,8 +41,8 @@ const (
 )
 
 // ClientRouter is the client work the router starts itself is counted under, such as a forward to
-// a customer's own endpoint or a scheduled task's occurrence. It is the API's, the client a caller that named none is counted
-// under, so no row says a client sent what nobody sent.
+// a customer's own endpoint or a scheduled task's occurrence. It is the API's, the client a
+// caller that named none is counted under, so no row says a client sent what nobody sent.
 const ClientRouter = store.AuditSourceAPI
 
 // Note is who a request no credential named was for: a hook a vendor or Stream signed carries
