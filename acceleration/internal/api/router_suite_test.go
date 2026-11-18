@@ -304,10 +304,11 @@ type RouterSuite struct {
 	// The stubs standing in for providers, for a test to read back what the router asked
 	// them for. model answers questions, vision is the one that can see, knowledge keeps the
 	// passages written to it. holding answers once a test lets it, for a summary that has to
-	// still be in the writing.
+	// still be in the writing. thinker signs its thinking, as Claude does.
 	model     *scriptedLLM
 	vision    *scriptedLLM
 	holding   *scriptedLLM
+	thinker   *scriptedLLM
 	knowledge *knowledgeBase
 	// knowledgeBucket is where an uploaded knowledge file waits to be read.
 	knowledgeBucket *blob.Bucket
@@ -1187,6 +1188,12 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	reasoning.Register("recites", func(routing.Spec) (llmrouter.Provider, error) { return &scriptedLLM{recites: true}, nil })
 	s.holding = &scriptedLLM{reply: "Held."}
 	reasoning.Register("holding", func(routing.Spec) (llmrouter.Provider, error) { return s.holding, nil })
+	s.thinker = &scriptedLLM{reply: "Looking.", calls: []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: "{}"}}, thinks: []llm.ReasoningBlock{
+		{Text: "plan", Signature: "sig-1"},
+		{Signature: "sig-2", AfterText: len("Looking.")},
+		{Redacted: "enc-1", AfterToolCalls: 1},
+	}}
+	reasoning.Register("thinking", func(routing.Spec) (llmrouter.Provider, error) { return s.thinker, nil })
 	reasoning.Register("noted", func(routing.Spec) (llmrouter.Provider, error) {
 		opened := &scriptedLLM{reply: "Noted."}
 		s.notedMu.Lock()

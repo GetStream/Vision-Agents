@@ -92,6 +92,20 @@ func (s *SpecSuite) TestThePromptIsWhatTheAgentWasToldWithoutTheClock() {
 	s.Equal(agent.NavigatingInstructions+"\n\nBe brief.\n\nKeep links whole.", spec.prompt())
 }
 
+func (s *SpecSuite) TestAConfigsUIIsToldAfterItsInstructions() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Instructions: "Be brief.", UIInstructions: "Draw a card."})
+	spec.ServerInstructions = "Keep links whole."
+
+	s.Equal("Be brief.\n\nDraw a card.\n\nKeep links whole.", spec.prompt())
+}
+
+func (s *SpecSuite) TestASessionWithoutUIIsNotToldTheConfigsUI() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Instructions: "Be brief.", UIInstructions: "Draw a card."})
+	spec.NoUI = true
+
+	s.Equal("Be brief.", spec.prompt())
+}
+
 func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
 	bindings := []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
 		Connection: store.ConnectionBinding{Type: selectionSession}}}

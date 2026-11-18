@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -33,6 +36,8 @@ type ChatInboundRefusalSuite struct {
 	suite.Suite
 	current, previous ed25519.PrivateKey
 	router            *httptest.Server
+	// logged is what the router serve made last logs, at debug.
+	logged *lockedLog
 }
 
 func TestChatInboundRefusalSuite(t *testing.T) {
@@ -244,9 +249,163 @@ func (s *ChatInboundRefusalSuite) TestARouterWithNoStreamAppServesNone() {
 	s.Equal(http.StatusNotFound, s.send(s.signed(s.message(deliveryApp), s.current)))
 }
 
+// namesTheDeliveryApp is a line that names deliveryApp as its app.
+var namesTheDeliveryApp = regexp.MustCompile(`^[^\n]* app_id=` + strconv.Itoa(deliveryApp) + `(\s[^\n]*)?\n$`)
+
+// otherApp is the app a hook's body claims, which is not the one its signature was checked for.
+const otherApp = deliveryApp + 7
+
+// namesOnlyTheDeliveryApp asserts line names deliveryApp as its app and no key.
+func (s *ChatInboundRefusalSuite) namesOnlyTheDeliveryApp(line string, name ...any) {
+	s.Regexp(namesTheDeliveryApp, line, name...)
+	s.NotContains(line, "api_key", name...)
+}
+
+// A delivery names its app only once Stream's signature and the app it names are checked: the
+// access line and the lines logged on its way then carry it, without a key, which none was used.
+func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedDeliveryNameItsApp() {
+	body := `{"type": "reaction.new", "app_id": ` + strconv.Itoa(deliveryApp) + `, "channel_type": "agent", "channel_id": "chat-1"}`
+
+	status, line := s.logLine(s.signed(body, s.current))
+
+	s.Equal(http.StatusOK, status)
+	s.namesOnlyTheDeliveryApp(line)
+	s.namesOnlyTheDeliveryApp(s.loggedWith("ignoring a Stream Chat delivery"))
+}
+
+func (s *ChatInboundRefusalSuite) TestTheLineOfADeliveryThatCouldNotBeQueuedNamesItsApp() {
+	body := strings.Replace(s.message(deliveryApp), `, "source": "agent"`, "", 1)
+
+	status, line := s.logLine(s.signed(body, s.current))
+
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.namesOnlyTheDeliveryApp(line)
+	s.namesOnlyTheDeliveryApp(s.loggedWith("could not queue a Stream Chat delivery"))
+}
+
+func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAnUnverifiedDeliveryNamesNoApp() {
+	stranger := ed25519.NewKeyFromSeed([]byte("somebody-else-s-key-seed-32bytes"))
+	for name, refused := range map[string]struct {
+		request *http.Request
+		status  int
+	}{
+		"another key's signature":           {s.signed(s.message(deliveryApp), stranger), http.StatusUnauthorized},
+		"an app this router does not serve": {s.signed(s.message(deliveryApp+1), s.current), http.StatusNotFound},
+	} {
+		status, line := s.logLine(refused.request)
+
+		s.Equal(refused.status, status, name)
+		s.NotContains(line, "app_id", name)
+	}
+}
+
+// The hooks name the app the deployment's secret is its own, the one their path names.
+func (s *ChatInboundRefusalSuite) TestTheLinesOfASignedHookNameItsApp() {
+	for path, ignored := range map[string]string{
+		phone.CallHookPath:   "ignoring a call event",
+		chat.MessageHookPath: "ignoring a message event",
+	} {
+		for _, named := range []string{path, path + "/" + strconv.Itoa(deliveryApp)} {
+			s.router = s.serve(deliveryApp, s.current)
+			status, line := s.logLine(s.hook(named, "hook-secret"))
+
+			s.Equal(http.StatusOK, status, named)
+			s.namesOnlyTheDeliveryApp(line, named)
+			s.namesOnlyTheDeliveryApp(s.loggedWith(ignored), named)
+		}
+	}
+}
+
+// A forged hook writes no line under the app its path names.
+func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAnUnverifiedHookNamesNoApp() {
+	for _, path := range []string{phone.CallHookPath, chat.MessageHookPath} {
+		for name, refused := range map[string]struct {
+			request *http.Request
+			status  int
+		}{
+			"a bad signature":      {s.hook(path+"/"+strconv.Itoa(deliveryApp), "not-the-hook-secret"), http.StatusUnauthorized},
+			"another app's path":   {s.hook(path+"/"+strconv.Itoa(deliveryApp+1), "hook-secret"), http.StatusNotFound},
+			"an app id unreadable": {s.hook(path+"/not-an-app", "hook-secret"), http.StatusNotFound},
+		} {
+			status, line := s.logLine(refused.request)
+
+			s.Equal(refused.status, status, path, name)
+			s.NotContains(line, "app_id", path, name)
+		}
+	}
+}
+
+// A forged hook after a verified one on the same router writes no line under the verified one's app.
+func (s *ChatInboundRefusalSuite) TestAForgedHookAfterASignedOneNamesNoApp() {
+	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret"))
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Regexp(namesTheDeliveryApp, line)
+
+	status, line = s.logLine(s.hook(phone.CallHookPath, "not-the-hook-secret"))
+
+	s.Equal(http.StatusUnauthorized, status)
+	s.NotContains(line, "app_id")
+}
+
+// Until the deployment learns its own app, a hook signed with its secret is of no app it can name.
+func (s *ChatInboundRefusalSuite) TestTheAccessLineOfAHookToADeploymentNotKnowingItsAppNamesNone() {
+	s.router = s.serve(0, s.current)
+
+	status, line := s.logLine(s.hook(phone.CallHookPath, "hook-secret"))
+
+	s.Equal(http.StatusOK, status)
+	s.NotContains(line, "app_id")
+}
+
+// hook is an event Stream's hooks do not act on, claiming otherApp, signed with secret and
+// posted to path.
+func (s *ChatInboundRefusalSuite) hook(path, secret string) *http.Request {
+	body := `{"type": "reaction.new", "app_id": ` + strconv.Itoa(otherApp) + `}`
+	request, err := http.NewRequest(http.MethodPost, s.router.URL+path, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(signatureHeader, streamSignature([]byte(body), secret))
+	return request
+}
+
+// logLine sends request and is its status and its access line.
+func (s *ChatInboundRefusalSuite) logLine(request *http.Request) (int, string) {
+	id := rand.Text()
+	request.Header.Set(RequestIDHeader, id)
+	status := s.send(request)
+	// Eventually can return before its callback ends, which then must not read the next test's log.
+	logged := s.logged
+	var found string
+	s.Require().Eventually(func() bool {
+		found = lineWith(logged, `msg="served a request"`, " request_id="+id)
+		return found != ""
+	}, 5*time.Second, 20*time.Millisecond, logged.String())
+	return status, found
+}
+
+// loggedWith is the last line logged holding every part, or "" when none does.
+func (s *ChatInboundRefusalSuite) loggedWith(parts ...string) string {
+	return lineWith(s.logged, parts...)
+}
+
+func lineWith(logged *lockedLog, parts ...string) string {
+	var found string
+	for line := range strings.Lines(logged.String()) {
+		holds := true
+		for _, part := range parts {
+			holds = holds && strings.Contains(line, part)
+		}
+		if holds {
+			found = line
+		}
+	}
+	return found
+}
+
 // serve is a router in deployment mode whose own app is app, zero for one it has yet to
 // learn, taking deliveries signed with keys.
 func (s *ChatInboundRefusalSuite) serve(app int64, keys ...ed25519.PrivateKey) *httptest.Server {
+	s.logged = &lockedLog{}
 	var held []ed25519.PublicKey
 	for _, key := range keys {
 		held = append(held, public(key))
@@ -259,7 +418,7 @@ func (s *ChatInboundRefusalSuite) serve(app int64, keys ...ed25519.PrivateKey) *
 		Stream:          streamapp.NewClients(deployment, streamapp.ClientsOptions{}),
 		HookSecret:      "hook-secret",
 		ChatInboundKeys: held,
-		Logger:          slog.New(slog.DiscardHandler),
+		Logger:          slog.New(NewLogHandler(slog.NewTextHandler(s.logged, &slog.HandlerOptions{Level: slog.LevelDebug}))),
 	})
 	s.Require().NoError(err)
 	router := httptest.NewServer(server.Handler())

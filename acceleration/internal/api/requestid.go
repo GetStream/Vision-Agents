@@ -63,11 +63,13 @@ func validRequestID(id string) bool {
 
 // requestFailure is the error behind a request's answer, left for withRequestLog to report:
 // the answer itself is deliberately vaguer than the error. It also holds the name of the
-// operation that served the request (nameOperation).
+// operation that served the request (nameOperation) and the app of a hook it verified
+// (loggedHook).
 type requestFailure struct {
 	err       error
 	trace     string
 	operation string
+	app       string
 }
 
 type requestFailureContextKey struct{}

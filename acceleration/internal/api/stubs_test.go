@@ -152,6 +152,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "stuck", Model: "stuck-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "recites", Model: "recites-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "holding", Model: "holding-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "thinking", Model: "thinking-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
 			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
@@ -221,6 +222,8 @@ type scriptedLLM struct {
 	// refusesQuoting, when set, has a request quoting it refused as the prompt injection
 	// screen refuses one, after a word of the reply had streamed.
 	refusesQuoting string
+	// thinks is the signed thinking the first turn writes, each block where it says it stood.
+	thinks []llm.ReasoningBlock
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -269,8 +272,10 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	}
 	held, refuses := s.held, s.refuses
 	var calls []llm.ToolCall
+	var thinks []llm.ReasoningBlock
 	if first {
 		calls = append([]llm.ToolCall(nil), s.calls...)
+		thinks = s.thinks
 	}
 	s.mu.Unlock()
 
@@ -302,12 +307,25 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		script.Fail(fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection), "llm")
 		return script.Stream(), nil
 	}
-	script.OutputText(reply)
+	written := 0
+	for _, block := range thinks {
+		if block.AfterToolCalls == 0 {
+			script.OutputText(reply[written:block.AfterText])
+			written = block.AfterText
+			script.ReasoningBlock(block)
+		}
+	}
+	script.OutputText(reply[written:])
 	if s.usage != (llm.Usage{}) {
 		script.Usage(s.usage)
 	}
 	if len(calls) > 0 {
 		script.ToolCalls(calls...)
+	}
+	for _, block := range thinks {
+		if block.AfterToolCalls > 0 {
+			script.ReasoningBlock(block)
+		}
 	}
 	script.Done()
 	return script.Stream(), nil

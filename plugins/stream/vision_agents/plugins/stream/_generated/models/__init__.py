@@ -271,7 +271,11 @@ from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
 from .error_type import ErrorType
 from .file_source import FileSource
+from .floor_check import FloorCheck
+from .floor_check_kind import FloorCheckKind
 from .floor_control import FloorControl
+from .floor_option import FloorOption
+from .floor_ruling import FloorRuling
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
@@ -923,7 +927,11 @@ __all__ = (
     "ErrorResponse",
     "ErrorType",
     "FileSource",
+    "FloorCheck",
+    "FloorCheckKind",
     "FloorControl",
+    "FloorOption",
+    "FloorRuling",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
     "GeneratedImage",

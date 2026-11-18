@@ -43,6 +43,17 @@ type ReasoningTextDelta struct {
 
 func (ReasoningTextDelta) isLLMEvent() {}
 
+// ReasoningBlockDone is a block of thinking finished with what its provider needs to be sent
+// it again (see ReasoningBlock). It comes between the deltas of the text before and after it,
+// in the order the model wrote them. ResponseCompleted carries them all again, except from a
+// failed response.
+type ReasoningBlockDone struct {
+	ResponseID string
+	Block      ReasoningBlock
+}
+
+func (ReasoningBlockDone) isLLMEvent() {}
+
 // FunctionCallArgumentsDelta is a piece of a call the model is asking for. Index identifies
 // which call within the response the piece belongs to, since a model may ask for several at
 // once and providers interleave their fragments.

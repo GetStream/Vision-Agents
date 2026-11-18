@@ -427,6 +427,7 @@ func (t *Transcriber) retake(participant stt.Participant) {
 	t.unruled = 0
 	out := time.Since(t.asideSince)
 	t.mu.Unlock()
+	t.reportDroppedStops()
 	t.words.restart(t.utterance + 1)
 	t.answered.Store(false)
 	t.stepped.Store(false)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -62,6 +63,90 @@ type Hearer struct {
 	said       atomic.Value
 	// inARow counts each participant's checks in a row that reached their bar.
 	inARow runs
+	// watcher is told of every check the Hearer reads, its own and its transcriber's
+	// (OnCheck), nil when nobody watches. answered are its own checks, by candidate, until the
+	// flow controller says whether it acted on their rulings (Applied).
+	watcher  atomic.Pointer[func(Checked)]
+	mu       sync.Mutex
+	answered map[string]Checked
+}
+
+// maxAnswered bounds the Hearer's checks waiting to hear whether they were acted on: the flow
+// controller says so of each as soon as the check returns.
+const maxAnswered = 64
+
+// Checked is one check as it went, for whoever watches a call (OnCheck): what the model was
+// asked, every option's probability, and what the router made of it.
+type Checked struct {
+	// Participant is whose words were asked about, by ID. Turn is the turn the check is
+	// about, as it was when asked: the reply the agent was saying (FlowTurn.ReplyID), the
+	// flow controller's own turn when it asked with the floor free (Check), and otherwise
+	// empty. Utterance is the transcriber's utterance a check of its own was of, whose turn
+	// it leads to once the utterance's words are put to the flow controller, and none if they
+	// never are.
+	Participant string
+	Turn        string
+	Utterance   int64
+	// Source is the transcriber that asked, whose utterances it numbers: a participant's next
+	// transcriber numbers them afresh. Zero for the flow controller's own checks.
+	Source uint64
+	// At is when the check was asked, and Latency the round trip to the server.
+	At      time.Time
+	Latency time.Duration
+	// OverAgent says it was asked while the agent was talking, which is the question the
+	// model was asked: whether the caller stops or shortens it, rather than whether they have
+	// finished. Paused is how far into a pause it was asked, zero for one asked while the
+	// caller talked on.
+	OverAgent bool
+	Paused    time.Duration
+	Answer    Answer
+	// Acted says the router acted on the check's ruling: with the floor free, the turn ended
+	// on it; while the agent talked, its stop or shorten was handed to the agent, which may
+	// still keep talking over its own echo or a murmur, or the turn ended on it. A ruling to go
+	// on, or one the router let go of, as for words since replaced, was not acted on.
+	Acted bool
+	// Point is the agent's end-of-turn point the check was read by (Ending.Name), empty over
+	// the agent, where there is no bar.
+	Point string
+}
+
+// OnCheck has watch told of every check the Hearer reads from now on, on the goroutine that
+// made it, which may be the flow controller's: watch must return at once, never waiting on
+// anything. Nil stops it.
+func (h *Hearer) OnCheck(watch func(Checked)) {
+	if watch == nil {
+		h.watcher.Store(nil)
+		return
+	}
+	h.watcher.Store(&watch)
+}
+
+// report tells the watcher, if any, of a check.
+func (h *Hearer) report(checked Checked) {
+	if watch := h.watcher.Load(); watch != nil {
+		(*watch)(checked)
+	}
+}
+
+// checkedTurn is the turn a check of turn is about: the reply the agent was saying, and
+// otherwise free, the turn the floor was free for.
+func checkedTurn(turn harness.FlowTurn, free string) string {
+	if turn.Speaking {
+		return turn.ReplyID
+	}
+	return free
+}
+
+// actedOn says a check's ruling was acted on, once applied: with the floor free, the turn
+// ended on it; while the agent talked, a stop or shorten of it, which a ruling to go on, though
+// it ends the caller's utterance, is not.
+func actedOn(speaking, applied bool, ruling harness.Decided) bool {
+	return applied && (!speaking || takesFloor(ruling))
+}
+
+// takesFloor says a ruling over the agent stops or shortens it.
+func takesFloor(r harness.Decided) bool {
+	return r.Disposition != harness.Ignore && (r.Floor == harness.Stop || r.Floor == harness.Shorten)
 }
 
 // NewHearer returns a Hearer asking client, ending a turn with the floor free by endOfTurn,
@@ -100,24 +185,56 @@ func (h *Hearer) HearDeadline(turn harness.FlowTurn) time.Duration {
 // or the pause the cap, and otherwise the ruling is to wait for the policy's interval.
 func (h *Hearer) Check(ctx context.Context, turn harness.FlowTurn) (Check, error) {
 	start := time.Now()
-	check, err := h.check(ctx, turn)
+	check, latency, err := h.check(ctx, turn)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(start).Seconds())
+		reported := Checked{Participant: turn.ParticipantID, Turn: checkedTurn(turn, turn.ID), At: start, Latency: latency,
+			OverAgent: turn.Speaking, Answer: check.Answer, Acted: actedOn(turn.Speaking, check.Ended, check.Ruling),
+			Point: check.Ending.Name}
+		if !turnOf(turn).Unfinished {
+			// Words still coming are at no pause.
+			reported.Paused = turn.Paused
+		}
+		// Reported once the flow controller says whether it acted on the ruling.
+		h.mu.Lock()
+		if h.answered == nil || len(h.answered) >= maxAnswered {
+			h.answered = map[string]Checked{}
+		}
+		h.answered[turn.ID] = reported
+		h.mu.Unlock()
 	}
 	return check, err
 }
 
-func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error) {
+// Applied reports the check that ruled on candidate, acted on only if the flow controller
+// acted on its ruling (harness.Applier).
+func (h *Hearer) Applied(candidate string, applied bool) {
+	h.mu.Lock()
+	reported, ok := h.answered[candidate]
+	delete(h.answered, candidate)
+	h.mu.Unlock()
+	if ok {
+		reported.Acted = reported.Acted && applied
+		h.report(reported)
+	}
+}
+
+// check asks the model about turn and reads its answer, and says how long the server took
+// to answer.
+func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, time.Duration, error) {
 	policy, err := h.client.Policy(ctx)
 	if err != nil {
-		return Check{}, err
+		return Check{}, 0, err
 	}
+	sent := time.Now()
 	answer, err := h.client.Decide(ctx, Agent{Instructions: turn.Instructions, Tools: turn.Tools}, turnOf(turn), turn.Audio)
+	latency := time.Since(sent)
 	if err != nil {
-		return Check{}, err
+		return Check{}, latency, err
 	}
-	return h.rule(policy, turn, answer)
+	check, err := h.rule(policy, turn, answer)
+	return check, latency, err
 }
 
 // rule reads the model's answer about turn by policy and the agent's choice of a point: the

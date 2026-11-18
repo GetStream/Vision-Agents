@@ -224,6 +224,12 @@ type Spec struct {
 	// ReviewInstructions is what the call is judged by once it ends, from the agent's config.
 	// Empty is the default scoring guide.
 	ReviewInstructions string
+	// UIInstructions teach the model to answer with UI, from the agent's config. They follow
+	// Instructions in the prompt unless NoUI.
+	UIInstructions string
+	// NoUI leaves UIInstructions out: the session was opened with ui false, for a caller
+	// that shows no UI.
+	NoUI bool
 	// Navigating tells an agent that placed this call how to get past whatever answers.
 	Navigating bool
 
@@ -435,6 +441,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		VaryGreeting:       config.GreetingMode == store.GreetingVariation,
 		Guardrail:          config.Guardrail,
 		ReviewInstructions: config.ReviewInstructions,
+		UIInstructions:     config.UIInstructions,
 		SkillNames:         config.Skills,
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
@@ -866,6 +873,9 @@ func (s Spec) prompt() string {
 	}
 	if s.Instructions != "" {
 		parts = append(parts, s.Instructions)
+	}
+	if s.UIInstructions != "" && !s.NoUI {
+		parts = append(parts, s.UIInstructions)
 	}
 	if s.ServerInstructions != "" {
 		parts = append(parts, s.ServerInstructions)

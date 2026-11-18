@@ -97,6 +97,8 @@ final readonly class CreateSessionRequest
         public ?string $voice = null,
         // The team the session's work is counted under, its team spend limits included, as team:<name> is among a tok...
         public ?string $team = null,
+        // Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them a...
+        public ?bool $ui = null,
     ) {
     }
 
@@ -149,6 +151,7 @@ final readonly class CreateSessionRequest
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
             team: array_key_exists('team', $data) && $data['team'] !== null ? Json::string($data, 'team') : null,
+            ui: array_key_exists('ui', $data) && $data['ui'] !== null ? Json::bool($data, 'ui') : null,
         );
     }
 
@@ -288,6 +291,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->team !== null) {
             $out['team'] = $this->team;
+        }
+        if ($this->ui !== null) {
+            $out['ui'] = $this->ui;
         }
         return $out;
     }

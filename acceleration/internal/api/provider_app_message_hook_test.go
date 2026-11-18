@@ -3,13 +3,11 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -449,22 +447,4 @@ func (s *ProviderAppMessageHookOffSuite) TestTheProviderAppPutsAnswerAsBeforeAnd
 	s.Empty(s.chat.EventHooks(s.apiKey))
 	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
 	s.ErrorIs(err, store.ErrNoConnectorOAuthClient)
-}
-
-// lockedLog is what the router logs, written from any goroutine and read by the test.
-type lockedLog struct {
-	mu      sync.Mutex
-	written bytes.Buffer
-}
-
-func (l *lockedLog) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.written.Write(p)
-}
-
-func (l *lockedLog) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.written.String()
 }
