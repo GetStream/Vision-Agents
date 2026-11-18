@@ -380,6 +380,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   Future<void> send(AIConversationRequest<AgentMessage> request) async {
     _checkNotClosed();
     _failure.value = null;
+    // A question of their own is not about the tables they tapped before it.
+    _chosen.clear();
     final stops = _stops;
     final session = await open();
     _checkNotStopped(stops, request);
@@ -526,7 +528,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   }
 
   /// The offer the person last tapped each table on, by the table's id, which a booking of that
-  /// table comes from when more than one offer has it.
+  /// table comes from when more than one offer has it, until they next ask something.
   final _chosen = <String, String>{};
 
   /// Notes that the person tapped table [tableId] on the seat selector of reply [offer].
@@ -563,7 +565,6 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       if (table == null) continue;
       final reservation = (table: table, when: when, code: _confirmationCode(), offer: offer);
       _reservations.value = {...booked, offer: reservation};
-      _chosen.remove(tableId);
       if (_offers.keys.every(_reservations.value.containsKey)) {
         unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
       }

@@ -647,6 +647,49 @@ void main() {
         expect((await call(chat, 'K3', id: 'c2'))['output'], contains('Reserved table K3'));
       });
 
+      const terrace = <DiningTableItem>[(id: 'T1', zone: 'Terrace', seats: 2, available: true)];
+      const garden = <DiningTableItem>[(id: 'T1', zone: 'Garden', seats: 2, available: true)];
+
+      test('a second booking of a tapped table in the same reply is refused', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden)
+          ..choose('m1', 'T1');
+        await until(() => sessions.routes.contains(tools));
+
+        await call(chat, 'T1');
+        final second = await call(chat, 'T1', id: 'c2');
+
+        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
+        expect(second['error'], isNotEmpty);
+        expect(chat.reservations.value['m2'], isNull);
+      });
+
+      test('a typed question is not held to a table tapped before it', () async {
+        final composer = ChatComposerController();
+        addTearDown(composer.dispose);
+        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+        await chat.open();
+        final conversation = conversationOf(chat, composer: composer);
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden)
+          ..choose('m1', 'T1')
+          // Terrace's T1 is taken after the tap.
+          ..offer('m1', [(id: 'T1', zone: 'Terrace', seats: 2, available: false)]);
+        await until(() => sessions.routes.contains(tools));
+        expect((await call(chat, 'T1'))['error'], isNotEmpty);
+
+        conversation.send('Book T1 at the Garden instead');
+        await until(() => sessions.asked == 1);
+        final result = await call(chat, 'T1', id: 'c2');
+
+        expect(result['output'], contains('Reserved table T1'));
+        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
+      });
+
       test('reserves a free table, keeps the booking and takes its tool back', () async {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
