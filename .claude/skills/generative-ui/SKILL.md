@@ -136,9 +136,8 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
   `AgentChat.swift`, which publishes each change inside an animation). Swift's, JavaScript's and
   Dart's `TurnUI.content` also hold back the OpenUI statement no newline has ended yet while it
   streams, so a card grows a part at a time rather than reflowing with every delta, and `LiveUI`
-  leaves a reply its text until one statement is finished. JavaScript and Dart set no `Turn.ui`
-  until then, and settle a turn that ends with no `ui_completed` on `responded` or `interrupted`
-  (Swift doesn't yet). The rules, which keep a card from jumping:
+  leaves a reply its text until one statement is finished. The rules, which keep a card from
+  jumping:
   - A reply that names its turn (`support_runtime.turn_id`) shows only that turn's UI.
   - Before its turn id is in Chat, the newest generating reply shows `latest()`: the newest
     turn's UI, only when that turn is the agent's. The person's question (`said`) and a new
