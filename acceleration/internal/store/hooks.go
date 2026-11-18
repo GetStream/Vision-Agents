@@ -56,7 +56,7 @@ var ErrAmbiguousHook = errors.New("store: more than one customer holds what that
 // in one app. A routing rule names the call its callers are put in, which is what an
 // arriving call is recognised by; a number attached before its call was stored is found by
 // the name the call is given after it. A call's id is only unique within its app, so each
-// lookup is made there.
+// lookup is made there. A call no number reaches matches ErrNoNumber.
 func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType, callID string) (PhoneNumber, error) {
 	if callID == "" {
 		return PhoneNumber{}, errors.New("store: a call id is required")
@@ -73,7 +73,7 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 	if len(held) == 0 {
 		e164, named := strings.CutPrefix(callID, "phone-")
 		if !named {
-			return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+			return PhoneNumber{}, numberNotHeld{fmt.Sprintf("store: no number reaches call %s:%s", callType, callID)}
 		}
 		if err := s.db.NewSelect().Model(&held).
 			Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").
@@ -83,7 +83,7 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 	}
 	switch customers(held, func(n PhoneNumber) string { return n.CustomerID }) {
 	case 0:
-		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+		return PhoneNumber{}, numberNotHeld{fmt.Sprintf("store: no number reaches call %s:%s", callType, callID)}
 	case 1:
 		return held[0], nil
 	}

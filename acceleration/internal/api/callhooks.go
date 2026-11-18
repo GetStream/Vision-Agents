@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
@@ -192,7 +193,13 @@ func (s *Server) dispatchArrivingCall(w http.ResponseWriter, r *http.Request, or
 		err = streamapp.ErrReadOnly
 	}
 	if err != nil {
-		s.logger.Debug("no number reaches an arriving call",
+		// A call that names no number and that no number reaches is most often a video call,
+		// which every call in the app is: only a call to a number is a customer's caller stuck.
+		level := slog.LevelWarn
+		if !fresh && errors.Is(err, store.ErrNoNumber) {
+			level = slog.LevelDebug
+		}
+		s.logger.Log(r.Context(), level, "no number reaches an arriving call",
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
 	}
