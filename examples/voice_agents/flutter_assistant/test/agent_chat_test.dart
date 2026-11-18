@@ -571,9 +571,80 @@ void main() {
         await chat.open();
 
         await offer(chat);
-        chat.offer('m1', tables);
+        // A second card bringing the tool waits for what that does, so a second request
+        // would have reached the router by the time it returns.
+        await chat.bring(SeatSelectorComponent.reserveTable(chat.reserve));
 
         expect(sessions.routes.where((r) => r == tools), hasLength(1));
+      });
+
+      test(
+        'a question stopped while a card\'s tool is being added is not asked, and goes back',
+        () async {
+          final added = Completer<void>();
+          sessions.holdRoute(tools, added.future);
+          final composer = ChatComposerController();
+          addTearDown(composer.dispose);
+          final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+          await chat.open();
+          final conversation = conversationOf(chat, composer: composer);
+          chat.offer('m1', tables);
+          await until(() => sessions.routes.contains(tools));
+
+          conversation.send('Book T4');
+          await pumpEventQueue();
+          conversation.stop();
+          added.complete();
+          await until(() => conversation.pendingMessage == null);
+
+          expect(sessions.asked, 0);
+          expect(composer.text, 'Book T4');
+        },
+      );
+
+      test('a card\'s action waiting for its tool is not sent once the chat has closed', () async {
+        final added = Completer<void>();
+        sessions.holdRoute(tools, added.future);
+        final chat = AgentChat('s1', sessions: sessions);
+        await chat.open();
+        chat.offer('m1', tables);
+        await until(() => sessions.routes.contains(tools));
+
+        final sent = chat.ui.send(
+          AIUIAction(
+            messageId: 'm1',
+            format: AIUIFormat.openUI,
+            name: 'select_table',
+            label: 'Reserve table T4',
+            payload: const {'id': 'T4'},
+          ),
+        );
+        await pumpEventQueue();
+        final closed = chat.close();
+        added.complete();
+        await sent;
+        await closed;
+        chat.dispose();
+
+        expect(sessions.asked, 0);
+      });
+
+      test('a card shown while the tool is being taken back gets it again', () async {
+        final taken = Completer<void>();
+        sessions.holdRoute('DELETE /v1/agents/sessions/s1/tools/reserve_table', taken.future);
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        await offer(chat);
+        await call(chat, 'T4');
+        await until(
+          () => sessions.routes.contains('DELETE /v1/agents/sessions/s1/tools/reserve_table'),
+        );
+
+        chat.offer('m2', [(id: 'K3', zone: 'Garden', seats: 4, available: true)]);
+        taken.complete();
+        await until(() => sessions.routes.where((r) => r == tools).length == 2);
+
+        expect((await call(chat, 'K3', id: 'c2'))['output'], contains('Reserved table K3'));
       });
 
       test('reserves a free table, keeps the booking and takes its tool back', () async {

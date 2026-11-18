@@ -204,6 +204,25 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('books the card a table was tapped on when another offers the same id', (
+      tester,
+    ) async {
+      await open(tester);
+      await show(tester, [
+        _card('m1', [('T1', 'Terrace', 2, true)]),
+        _card('m2', [('T1', 'Garden', 2, true)]),
+      ]);
+      await settle(tester, brought, 'The cards never brought their tool.');
+
+      await tester.tap(find.textContaining('T1 · Terrace'));
+      await settle(tester, () => sessions.routes.contains(_asked), 'The table was never asked.');
+      await call(tester, 'T1');
+
+      expect(find.text('Terrace · 2 people · tonight at 8pm'), findsOneWidget);
+      expect(find.textContaining('T1 · Garden'), findsOneWidget);
+      await finish(tester);
+    });
+
     testWidgets('books a table a finished card gained when it was written again', (tester) async {
       await open(tester);
       await show(tester, [
@@ -215,6 +234,10 @@ void main() {
       ]);
       await tester.pump();
 
+      // The table taken since is refused, and no card is booked by it.
+      final taken = await call(tester, 'T1', id: 'c0');
+      expect(taken['error'], contains('T1 is not a free table'));
+      expect(find.text('Table T1 reserved'), findsNothing);
       final result = await call(tester, 'T7');
 
       expect(result['output'], contains('Reserved table T7'));
@@ -276,6 +299,7 @@ void main() {
         _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
       ]);
       await settle(tester, brought, 'The card never brought its tool.');
+      await settle(tester, () => chat.failure.value != null, 'Adding the tool never failed.');
       sessions.answer(_tools, 204);
 
       await tester.tap(find.textContaining('T4 · Harbor Window'));

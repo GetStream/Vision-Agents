@@ -879,6 +879,7 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
                 onSelected: table.available
                     ? (_) {
                         setState(() => _selected = table.id);
+                        _chat?.choose(widget.offer, table.id);
                         // Brings the tool again if adding it failed, which the question waits for.
                         _offer();
                         widget.onSelect(table);

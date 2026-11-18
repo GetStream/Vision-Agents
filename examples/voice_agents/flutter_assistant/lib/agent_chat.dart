@@ -392,10 +392,11 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       _failure.value = '$failure';
       throw const AIConversationCancelledException();
     }
+    // A card's tool still being added is waited for, so the reply can call it.
+    await _adding;
     _checkNotStopped(stops, request);
     // Only now, so a new conversation whose first question was never asked is not listed.
     _usedSessionId.value = session.id;
-    await _adding;
     await session.responses.create(
       request.text,
       images: images,
@@ -438,6 +439,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     try {
       final session = await use();
       await _adding;
+      if (_closed) return;
       await session.responses.create(action.label, uiAction: action.toJson());
     } on Object catch (error) {
       if (_closed) return;
@@ -501,17 +503,34 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   }
 
   /// Takes back a tool a card brought, once the cards have done what they were for. One that
-  /// could not be taken back is taken back the next time this is asked.
-  Future<void> withdraw(String name) async {
+  /// could not be taken back is taken back the next time this is asked. A question, and a card
+  /// shown meanwhile, wait for it.
+  Future<void> withdraw(String name) {
     final session = _session;
-    if (session == null || _closed || !_brought.contains(name)) return;
+    if (session == null || _closed || !_brought.contains(name)) return Future.value();
+    return _adding = _withdraw(session, name);
+  }
+
+  Future<void> _withdraw(AgentSession session, String name) async {
     try {
       await session.removeTool(name);
       _brought.remove(name);
     } on Object catch (error) {
       if (!_closed) _failure.value = '$error';
+      return;
+    }
+    // A card shown while the tool was taken back still offers tables to book.
+    if (_offers.keys.any((offer) => !_reservations.value.containsKey(offer))) {
+      await bring(SeatSelectorComponent.reserveTable(reserve));
     }
   }
+
+  /// The offer the person last tapped each table on, by the table's id, which a booking of that
+  /// table comes from when more than one offer has it.
+  final _chosen = <String, String>{};
+
+  /// Notes that the person tapped table [tableId] on the seat selector of reply [offer].
+  void choose(String offer, String tableId) => _chosen[tableId] = offer;
 
   /// Offers [tables] from the seat selector of reply [offer], or its newer version, and gives
   /// the agent the tool to book them while the offer is not booked.
@@ -530,7 +549,14 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   Reservation reserve(String tableId, String when) {
     if (_closed) throw const ToolFailure('The conversation has closed.');
     final booked = _reservations.value;
-    for (final MapEntry(key: offer, value: tables) in _offers.entries.toList().reversed) {
+    final newestFirst = _offers.entries.toList().reversed;
+    final chosen = _chosen[tableId];
+    // The offer the table was tapped on comes first.
+    final candidates = [
+      if (chosen != null && _offers[chosen] != null) MapEntry(chosen, _offers[chosen]!),
+      ...newestFirst,
+    ];
+    for (final MapEntry(key: offer, value: tables) in candidates) {
       if (booked.containsKey(offer)) continue;
       final table = tables.where((t) => t.id == tableId && t.available).firstOrNull;
       if (table == null) continue;

@@ -55,12 +55,27 @@ void main() {
     );
 
     test('a brand that cannot be saved does not fail the app', () async {
-      SharedPreferencesAsyncPlatform.instance = _UnwritableStore();
+      final store = _UnwritableStore();
+      SharedPreferencesAsyncPlatform.instance = store;
       await BrandProfile.load();
 
       BrandProfile.active.value = BrandProfile.ember;
-      // The save's failure would surface here, as an error nobody handled.
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // The save was tried, and its failure would surface as an error nobody handled.
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (store.tried['brand'] != 'ember') {
+        if (DateTime.now().isAfter(deadline)) fail('The chosen brand was never saved.');
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      await pumpEventQueue();
+    });
+
+    test('load opens with the default brand when the saved one is of another type', () async {
+      SharedPreferencesAsyncPlatform.instance = _MistypedStore();
+
+      await BrandProfile.load();
+
+      expect(BrandProfile.active.value, BrandProfile.stream);
     });
 
     testWidgets('a card already shown takes on a newly chosen brand', (tester) async {
@@ -118,7 +133,17 @@ base class _UnreadableStore extends InMemorySharedPreferencesAsync {
 base class _UnwritableStore extends InMemorySharedPreferencesAsync {
   _UnwritableStore() : super.empty();
 
+  /// What was tried to be saved.
+  final tried = <String, String>{};
+
   @override
-  Future<bool> setString(String key, String value, SharedPreferencesOptions options) =>
-      throw PlatformException(code: 'unwritable');
+  Future<bool> setString(String key, String value, SharedPreferencesOptions options) {
+    tried[key] = value;
+    throw PlatformException(code: 'unwritable');
+  }
+}
+
+/// A store whose `brand` was saved as a number, as by an older build.
+base class _MistypedStore extends InMemorySharedPreferencesAsync {
+  _MistypedStore() : super.withData({'brand': 3});
 }

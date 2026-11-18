@@ -62,6 +62,9 @@ enum BrandProfile {
       active.value = values.asNameMap()[stored] ?? active.value;
     } on PlatformException catch (error) {
       debugPrint('Reading the chosen brand failed: $error');
+    } on TypeError catch (error) {
+      // Saved by an older build as something other than a name.
+      debugPrint('The saved brand was not a name: $error');
     }
     active.addListener(() async {
       try {
