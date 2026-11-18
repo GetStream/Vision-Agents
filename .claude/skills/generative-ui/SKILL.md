@@ -31,11 +31,11 @@ prefix stays cacheable across turns. The prompt is mixed mode: the model answers
 adds a card only when it helps.
 
 The router tells the model `ui_instructions` after the instructions (`session.Spec.prompt`),
-unless the session was opened with `ui: false`, which a device may send: an app that shows no UI
-leaves the catalog out of every turn, and the agent answers in prose unless its instructions teach
-UI themselves. It is no filter: a UI block the model writes is still split off the reply. The
-session row keeps the choice (`agent_sessions.no_ui`), so a reopened or forked conversation is not
-told them either. Go and JavaScript write
+unless the session was opened with `ui: false`, which a device may send. The router then omits
+`ui_instructions`, so an app that shows no UI leaves the catalog out of every turn and can expect
+prose; this does not prevent the model from producing UI blocks, which are still split off the
+reply. The session row keeps the choice (`agent_sessions.no_ui`), so a reopened or forked
+conversation is not told them either. Go and JavaScript write
 `ui_instructions`. A renderer's own prompt pasted into `instructions.md` (`stream-chat-react`'s
 `openUIInstructions` is OpenUI's, 53 KB, and says the entire reply must be openui-lang) can't be
 turned off either and contradicts prose plus one block: use `ui:` instead.
