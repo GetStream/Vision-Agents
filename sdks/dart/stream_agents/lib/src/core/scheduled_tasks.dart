@@ -12,7 +12,8 @@ final class ScheduledTasks {
 
   final api.Operations _operations;
 
-  /// One page of this user's tasks, soonest first.
+  /// One page of this user's tasks, newest first, the ones their backend made included. Pass
+  /// the page's [ListPage.nextCursor] as [ScheduledTaskQuery.cursor] for the next one.
   Future<ListPage<ScheduledTask>> list([
     ScheduledTaskQuery query = const ScheduledTaskQuery(),
   ]) async {
@@ -39,6 +40,8 @@ final class ScheduledTasks {
   /// [schedule] replaces the whole schedule, but for a timezone it leaves out. [next] moves only
   /// the next occurrence: a snooze, or a skip when it lands past the one after. Either lands 15
   /// minutes from now at the soonest, unless it is no earlier than the current next occurrence.
+  /// An empty [deliverTo] is the conversation alone, and [quietHours] with both ends empty clears
+  /// the hold.
   Future<ScheduledTask> update(
     String id, {
     String? title,
@@ -59,7 +62,8 @@ final class ScheduledTasks {
     ),
   );
 
-  /// Stops a task coming due until it is resumed.
+  /// Holds a task: nothing comes due while it is paused, and what it slept through is never
+  /// replayed.
   Future<ScheduledTask> pause(String id) async =>
       scheduledTaskOf(await _operations.pauseScheduledTask(id: id));
 

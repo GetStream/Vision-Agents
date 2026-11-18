@@ -1400,7 +1400,7 @@ void main() {
     const tasks = '/v1/agents/scheduled-tasks';
 
     test('reads a task as the router writes it', () async {
-      router.answer('GET $tasks/t1', Answer(200, scheduledTaskJson()));
+      router.answer('GET $tasks/t1', Answer(200, scheduledTaskJson(createdBy: 'api')));
 
       final task = await agents.scheduledTasks.get('t1');
 
@@ -1421,12 +1421,35 @@ void main() {
       expect(task.state, ScheduledTaskState.active);
       expect(task.nextRunAt, DateTime.utc(2026, 11, 19, 8));
       expect(task.upcoming, [DateTime.utc(2026, 11, 19, 8), DateTime.utc(2026, 11, 20, 8)]);
-      expect(task.lastRunAt, isNull);
-      expect(task.createdBy, ScheduledTaskCreatedBy.agent);
+      expect(task.lastRunAt, DateTime.utc(2026, 11, 18, 8, 0, 4));
+      expect(task.consecutiveFailures, 2);
+      expect(task.createdBy, ScheduledTaskCreatedBy.api);
       expect(task.sessionId, 's1');
       expect(task.configId, 'c1');
       expect(task.custom, {'plant': 'fern'});
       expect(task.createdAt, DateTime.utc(2026, 11, 18, 10, 15, 30, 123, 456));
+      expect(task.updatedAt, DateTime.utc(2026, 11, 18, 11));
+    });
+
+    test('reads a task that has not run and will not run again', () async {
+      router.answer(
+        'GET $tasks/t1',
+        Answer(200, {
+          ...scheduledTaskJson(state: 'completed', lastRunAt: null),
+          'next_run_at': null,
+          'upcoming': <String>[],
+          'quiet_hours': null,
+        }),
+      );
+
+      final task = await agents.scheduledTasks.get('t1');
+
+      expect(task.state, ScheduledTaskState.completed);
+      expect(task.lastRunAt, isNull);
+      expect(task.nextRunAt, isNull);
+      expect(task.upcoming, isEmpty);
+      expect(task.quietHours, isNull);
+      expect(task.createdBy, ScheduledTaskCreatedBy.agent);
     });
 
     test('reads a state or a maker it has never heard of as unknown', () async {
@@ -1515,6 +1538,21 @@ void main() {
         'next': {'in': 'PT15M'},
         'deliver_to': ['sms'],
         'quiet_hours': {'start': '23:00', 'end': '06:30'},
+      });
+    });
+
+    test('sends an empty delivery list and empty quiet hours, which reset them', () async {
+      router.answer('PATCH $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      await agents.scheduledTasks.update(
+        't1',
+        deliverTo: const [],
+        quietHours: const ScheduledTaskQuietHours(start: '', end: ''),
+      );
+
+      expect(router.last('PATCH $tasks/t1').json, {
+        'deliver_to': <String>[],
+        'quiet_hours': {'start': '', 'end': ''},
       });
     });
 

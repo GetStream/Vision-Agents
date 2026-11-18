@@ -1,4 +1,3 @@
-import 'scheduled_tasks.dart';
 import 'tools.dart';
 
 /// Whether the agent is still in the conversation.
@@ -728,7 +727,7 @@ enum ScheduledTaskState {
   completed,
 
   /// A one-shot whose occurrence failed, or a repeat paused after five failed occurrences in a
-  /// row, a run that failed with `already_called` not counting. [ScheduledTasks.resume] clears
+  /// row, a run that failed with `already_called` not counting. `ScheduledTasks.resume` clears
   /// it.
   failed,
 

@@ -50,11 +50,12 @@ Map<String, Object?> pageJson(List<Object?> items, {String? nextCursor}) => {
 };
 
 /// A scheduled task as the router writes one: occurrences in the task zone's offset, the rest
-/// in UTC, and no run yet.
+/// in UTC.
 Map<String, Object?> scheduledTaskJson({
   String id = 't1',
   String state = 'active',
   String createdBy = 'agent',
+  String? lastRunAt = '2026-11-18T08:00:04Z',
 }) => {
   'id': id,
   'user_id': 'ada',
@@ -73,12 +74,12 @@ Map<String, Object?> scheduledTaskJson({
   'state': state,
   'next_run_at': '2026-11-19T09:00:00+01:00',
   'upcoming': ['2026-11-19T09:00:00+01:00', '2026-11-20T09:00:00+01:00'],
-  'last_run_at': null,
-  'consecutive_failures': 0,
+  'last_run_at': lastRunAt,
+  'consecutive_failures': 2,
   'created_by': createdBy,
   'custom': {'plant': 'fern'},
   'created_at': '2026-11-18T10:15:30.123456789Z',
-  'updated_at': '2026-11-18T10:15:30Z',
+  'updated_at': '2026-11-18T11:00:00Z',
 };
 
 /// One run of a scheduled task, delivered.

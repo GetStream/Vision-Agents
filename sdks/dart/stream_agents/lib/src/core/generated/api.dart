@@ -305,7 +305,10 @@ final class AddSessionToolsRequest {
   final List<SessionTool>? tools;
 
   Map<String, Object?> toJson() => {
-    if (tools case final value?) 'tools': [for (final item in value) item.toJson()],
+    'tools': switch (tools) {
+      null => null,
+      final value => [for (final item in value) item.toJson()],
+    },
   };
 }
 
@@ -1524,8 +1527,8 @@ final class ScheduledTask {
     'deliver_to': deliverTo,
     'id': id,
     'instructions': instructions,
-    'last_run_at': ?lastRunAt,
-    'next_run_at': ?nextRunAt,
+    'last_run_at': lastRunAt,
+    'next_run_at': nextRunAt,
     if (quietHours case final value?) 'quiet_hours': value.toJson(),
     'schedule': schedule.toJson(),
     'session_id': sessionId,
@@ -1662,12 +1665,18 @@ final class ScheduledTaskRun {
   Map<String, Object?> toJson() => {
     'attempts': attempts,
     'delivered_to': deliveredTo,
-    'error': ?error,
-    if (finishedAt case final value?) 'finished_at': value.toUtc().toIso8601String(),
+    'error': error,
+    'finished_at': switch (finishedAt) {
+      null => null,
+      final value => value.toUtc().toIso8601String(),
+    },
     'id': id,
     'scheduled_for': scheduledFor,
     'session_id': sessionId,
-    if (startedAt case final value?) 'started_at': value.toUtc().toIso8601String(),
+    'started_at': switch (startedAt) {
+      null => null,
+      final value => value.toUtc().toIso8601String(),
+    },
     'state': state,
     'task_id': taskId,
     'trigger': trigger,
