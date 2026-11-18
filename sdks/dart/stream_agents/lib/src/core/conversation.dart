@@ -202,6 +202,15 @@ final class Conversation {
     ],
   );
 
+  /// The conversation without the turn [id], such as a question the router refused. A card the
+  /// agent is still writing keeps what it has written so far.
+  Conversation withoutTurn(String id) => _with(
+    turns: [
+      for (final turn in turns)
+        if (turn.id != id) turn,
+    ],
+  );
+
   /// The conversation with this state instead.
   Conversation withState(ConversationState state) =>
       state == this.state ? this : _with(state: state);

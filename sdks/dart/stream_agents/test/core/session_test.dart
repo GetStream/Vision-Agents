@@ -88,6 +88,31 @@ void main() {
       await chat.close();
     });
 
+    test('taking back a refused question keeps what a card being written has so far', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(429, errorJson('rate_limited', 'rate_limited', 'slow down')),
+      );
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      socket
+        ..send('{"type":"responding","turn_id":"t1"}')
+        ..send(
+          '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+          r'"delta":"root = Card([hdr])\nhdr = CardHea"}',
+        );
+      await until(() => chat.turns.lastOrNull?.ui != null);
+
+      await expectLater(chat.responses.create('And tomorrow?'), throwsA(isA<RouterException>()));
+      socket.send(
+        r'{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"der(\"Kaneo\")\n"}',
+      );
+
+      await until(() => chat.turns.last.ui?.content.contains('Kaneo') ?? false);
+      expect(chat.turns.last.ui?.content, 'root = Card([hdr])\nhdr = CardHeader("Kaneo")');
+      await chat.close();
+    });
+
     test('names each question with a fresh request id, one that shows an image too', () async {
       router.answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
       final chat = await agents.chat();
