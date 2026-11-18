@@ -733,6 +733,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 stream-chat 10 times a `channel.rewound` event's `rewind.created_at` in unix nanoseconds, and the SDK read only a string. Without the moment of the rewind, the re-read that follows the event dropped every message after the rewound one, so the question an edit had just written disappeared from the device that sent it, and a reply to an edited first question was never shown as answered. The rewind's time is now read as a message's is, from a string, a `Date` or nanoseconds (AI-3198, #2057).
 
+### The JavaScript SDK edits a question while another version of its reply is shown
+
+With a reply's earlier version shown (‹ 1/2 ›), editing the question above it was refused with a 409 and nothing changed. The router reads a reply's other versions back without the question they share, so the question was the channel's own while the reply that answers it on screen, which an edit goes through, was the version's, not the conversation's. `agentChatTransport` now brings that version back first, as asking anything on it already does, and the edit goes through (AI-3198, #2084).
+
 ### A customer's refused key no longer raises the operator's key_refused alert
 
 `router_keypool_refused_attempts_total` has a label `owner`: `ours` for a key the router read from its environment, `customer` for a customer's own, such as the key of their own model (`custom/<name>`) or the one they keep for a vendor (BYOK). The `key_refused` alert counts only `ours`: a customer's broken key is theirs to fix. An instance's `api_key_env` is read the way every key variable is (comma separated keys, then `NAME_1`, `NAME_2`), so its keys are the router's own: their refusals still alert, and their rate limits are kept in `router_vendor_rate_limited_total` and `router_vendor_ratelimit_remaining` under that variable (AI-2950).
