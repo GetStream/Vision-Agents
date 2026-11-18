@@ -12,6 +12,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
@@ -95,6 +96,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.noteHook(r.Context(), origin)
 	// What the event starts here, an ended call's episode summaries, no key started.
 	r = r.WithContext(routing.WithAttribution(r.Context(), routing.Attribution{APIKey: routing.OriginHookVideo}))
 
@@ -111,7 +113,7 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, invalidRequest("could not read that call event"))
 			return
 		}
-		s.dispatchArrivingCall(r, origin, event, payload)
+		s.dispatchArrivingCall(w, r, origin, event, payload)
 
 	case getstream.EventTypeCallSessionEnded:
 		var event callEvent
@@ -145,8 +147,9 @@ func (s *Server) receiveCallEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// dispatchArrivingCall works out whose call it is and hands it to one of their workers.
-func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event callEvent, payload []byte) {
+// dispatchArrivingCall works out whose call it is and hands it to one of their workers. A call
+// it refuses is still answered 200, so the refusal's code is noted on w for the activity record.
+func (s *Server) dispatchArrivingCall(w http.ResponseWriter, r *http.Request, origin hookOrigin, event callEvent, payload []byte) {
 	callType, callID, split := strings.Cut(event.CallCid, ":")
 	if !split {
 		s.logger.Debug("a call event named no call", "cid", event.CallCid)
@@ -193,6 +196,8 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 			"call", event.CallCid, "stream_app", origin.app, "error", err)
 		return
 	}
+	// In deployment mode the number is what says whose call it is.
+	activity.NoteCustomer(r.Context(), number.CustomerID, activity.AreaHooksIn)
 	// The caller is on the line from here, whether an agent answers or the call is refused
 	// and ended below, and the vendor bills every second of it. No key placed it, so its
 	// minutes are the app's, and priced by the country of the number rung. One leg per Stream
@@ -215,6 +220,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
 	// costs money.
 	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
+		noteRefusal(w, codeTelephonySuspended)
 		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to a suspended app",
 			"call", event.CallCid, "customer", number.CustomerID, "error", err)
 		return
@@ -223,6 +229,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// so an organization that may not pay has nobody answer.
 	if err := s.gate.Admit(r.Context(), number.CustomerID); err != nil {
 		answer, _ := moneyError(err)
+		noteRefusal(w, answer.Code)
 		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to an organization that may not pay for it",
 			"call", event.CallCid, "customer", number.CustomerID, "code", answer.Code)
 		return
@@ -236,6 +243,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// it on this node.
 	if number.ConfigID != "" {
 		if s.sessions == nil {
+			noteRefusal(w, errNoSessions.Code)
 			s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to a number with an agent on a router that runs no sessions",
 				"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
 			return
@@ -271,6 +279,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "session_id", event.SessionID, "customer", number.CustomerID,
 			"number", number.E164, "error", err)
+		noteRefusal(w, unavailable("").Code)
 		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call no worker could take",
 			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
 		return

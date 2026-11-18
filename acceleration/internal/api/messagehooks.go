@@ -206,6 +206,7 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.noteHook(r.Context(), origin)
 
 	eventType := getstream.GetEventType(payload)
 	if eventType == "" {

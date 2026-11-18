@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -115,21 +116,30 @@ func areaOf(method, pattern string) string {
 // open past midnight is the day it opened. The client is what the caller named itself as in
 // X-Stream-Client, whoever the caller is: unlike the audit log's actor, it changes nothing but
 // which row is counted, and an unknown name is the API's.
-func (s *Server) recordActivity(routes *chi.Mux, r *http.Request, answered *loggedResponse, arrived time.Time) {
+//
+// A request no credential named, a hook, is the app and area its handler noted once it checked
+// the hook (activity.NoteCustomer), and is not counted at all when it noted none. A hook a peer
+// handed here is counted by the node it arrived at, which checked and noted it first.
+func (s *Server) recordActivity(routes *chi.Mux, r *http.Request, answered *loggedResponse, note *activity.Note, arrived time.Time) {
 	if s.activity == nil {
 		return
 	}
 	// A request nobody authenticated names no customer, and the record counts none of those.
 	customer, _ := CustomerFrom(r.Context())
+	area := areaOf(r.Method, routeLabel(routes, r))
+	if customer == "" && !node.Forwarded(r.Context()) {
+		customer, area = note.AppID, note.Area
+	}
 	status := answered.status()
 	s.activity.Record(activity.Request{
 		OrganizationID: OrganizationFrom(r.Context()),
 		AppID:          customer,
-		Area:           areaOf(r.Method, routeLabel(routes, r)),
+		Area:           area,
 		Client:         store.AuditSource(strings.ToLower(strings.TrimSpace(r.Header.Get(clientHeader)))),
 		At:             arrived,
-		Refused:        status >= http.StatusBadRequest,
-		Code:           answered.refusal,
+		// A socket refuses in a frame, after a 101: the code it noted says it was refused.
+		Refused: status >= http.StatusBadRequest || answered.refusal != "",
+		Code:    answered.refusal,
 	})
 }
 

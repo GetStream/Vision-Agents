@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -147,6 +148,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	if err := provider.Verify(line, header, body, time.Now()); err != nil {
 		return Answer{Status: http.StatusUnauthorized, Body: failure(err.Error())}
 	}
+	activity.NoteCustomer(ctx, account.CustomerID, activity.AreaPhoneSMS)
 
 	delivered, err := provider.Parse(body)
 	if err != nil {

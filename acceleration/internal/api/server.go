@@ -1016,7 +1016,8 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		started := time.Now()
 		recorder := &loggedResponse{ResponseWriter: w}
 		failure := &requestFailure{}
-		r = r.WithContext(context.WithValue(r.Context(), requestFailureContextKey{}, failure))
+		ctx, note := activity.WithNote(context.WithValue(r.Context(), requestFailureContextKey{}, failure))
+		r = r.WithContext(ctx)
 		defer func() {
 			recovered := recover()
 			if recovered == nil {
@@ -1036,7 +1037,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			panic(recovered)
 		}()
 		next.ServeHTTP(recorder, r)
-		s.recordActivity(routes, r, recorder, started)
+		s.recordActivity(routes, r, recorder, note, started)
 		if answeredHealthy(routes, r, recorder.status(), failure) {
 			return
 		}

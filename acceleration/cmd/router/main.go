@@ -1469,7 +1469,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// up, and so closed after it.
 	var forwarder *eventforward.Forwarder
 	if connectorSecrets != nil && pgStore != nil {
-		forwarder, err = eventforward.New(eventforward.Options{Store: pgStore, Secrets: connectorSecrets, Logger: logger})
+		// The activity record closes after it, so a forward it ends while it drains is counted.
+		forwarder, err = eventforward.New(eventforward.Options{
+			Store: pgStore, Secrets: connectorSecrets, Activity: activityRecord, Logger: logger,
+		})
 		if err != nil {
 			return err
 		}
