@@ -873,9 +873,16 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
           children: [
             for (final table in widget.tables)
               ChoiceChip(
-                label: Text('${table.id} · ${table.zone} (${table.seats}p)'),
+                label: Text(
+                  '${table.id} · ${table.zone} (${table.seats}p)',
+                  // A taken table is struck through, as iOS shows it.
+                  style: table.available
+                      ? null
+                      : const TextStyle(decoration: TextDecoration.lineThrough),
+                ),
                 selected: _selected == table.id,
                 selectedColor: brand.accent.withValues(alpha: 0.16),
+                side: _selected == table.id ? BorderSide(color: brand.accent) : null,
                 onSelected: table.available
                     ? (_) {
                         setState(() => _selected = table.id);

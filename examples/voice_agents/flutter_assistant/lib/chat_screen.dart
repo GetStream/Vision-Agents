@@ -121,9 +121,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // Core has no waveform glyph.
         icon: const Icon(Icons.graphic_eq),
       ),
-      // A reply's text gives way to its UI as the UI arrives, rather than jumping.
+      // A reply's text gives way to its UI as the UI arrives, rather than jumping. Only then:
+      // a reply that is only text grows as it streams, which an animation would hold back.
       assistantMessage: (context, props) => AnimatedSize(
-        duration: MediaQuery.disableAnimationsOf(context)
+        duration: MediaQuery.disableAnimationsOf(context) || props.message.uiDocument == null
             ? Duration.zero
             : const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
@@ -233,11 +234,7 @@ class _ChatScreenState extends State<ChatScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        // The route is not under this screen, so the cards on the call are given the chat too.
-        builder: (context) => AgentChatScope(
-          chat: _chat,
-          child: VoiceScreen(session: session),
-        ),
+        builder: (context) => VoiceScreen(session: session),
       ),
     );
   }

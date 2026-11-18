@@ -60,6 +60,8 @@ class SettingsSheet extends StatefulWidget {
     showDragHandle: true,
     // As tall as the replies and the brands need, which is more than half the screen.
     isScrollControlled: true,
+    // Clear of the status bar once it is that tall.
+    useSafeArea: true,
     builder: (context) => const SettingsSheet(),
   );
 
@@ -139,8 +141,10 @@ class _SettingsSheetState extends State<SettingsSheet> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 _failure ??
-                    'New conversations answer in this format. OpenUI and A2UI replies show '
-                        'interactive maps, restaurant cards, gauges, and forms.',
+                    'Markdown answers in text. A2UI and OpenUI answer plans and bookings with '
+                        "interactive UI, made of the app's own views: maps, restaurant cards, "
+                        'gauges and forms. New conversations answer this way, and earlier replies '
+                        'keep theirs.',
                 style: text.captionDefault.copyWith(
                   color: _failure == null ? colors.textSecondary : colors.accentError,
                 ),
@@ -149,10 +153,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
             const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Text(
-                'Brand Design Tokens',
-                style: text.headingSm.copyWith(color: colors.textPrimary),
-              ),
+              child: Text('Brand', style: text.headingSm.copyWith(color: colors.textPrimary)),
             ),
             ValueListenableBuilder<BrandProfile>(
               valueListenable: BrandProfile.active,
@@ -161,6 +162,15 @@ class _SettingsSheetState extends State<SettingsSheet> {
                 children: [
                   for (final profile in BrandProfile.values)
                     StreamListTile(
+                      leading: SizedBox.square(
+                        dimension: 28,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: profile.accent,
+                            borderRadius: BorderRadius.circular(profile.cornerRadius / 2),
+                          ),
+                        ),
+                      ),
                       title: Text(profile.title),
                       subtitle: Text(profile.subtitle),
                       trailing: profile == active ? Icon(Icons.check, color: profile.accent) : null,
@@ -169,7 +179,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                "The accent and corners the agent's UI wears, in every conversation, straight away.",
+                style: text.captionDefault.copyWith(color: colors.textSecondary),
+              ),
+            ),
           ],
         ),
       ),

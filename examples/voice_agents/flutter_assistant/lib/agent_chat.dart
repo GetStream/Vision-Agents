@@ -497,6 +497,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// done what it was for. The tool's answer does not wait for that, since the router takes the
   /// tool back only once the call that reserved it has finished.
   void reserved(Reservation reservation) {
+    if (_closed) return;
     _reservation.value = reservation;
     unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
   }

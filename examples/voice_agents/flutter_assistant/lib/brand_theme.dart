@@ -8,19 +8,19 @@ import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 enum BrandProfile {
   stream(
     title: 'Stream Default',
-    subtitle: 'Electric blue accent · 16px rounded cards',
+    subtitle: 'Electric blue accent · 16pt rounded cards',
     accent: Color(0xFF005FFF),
     cornerRadius: 16,
   ),
   ember(
     title: 'Ember Hospitality',
-    subtitle: 'Warm terracotta accent · 10px compact cards',
+    subtitle: 'Warm terracotta accent · 10pt compact cards',
     accent: Color(0xFFD95D24),
     cornerRadius: 10,
   ),
   nordic(
     title: 'Nordic Mobility',
-    subtitle: 'Crisp teal accent · 6px architectural edges',
+    subtitle: 'Crisp teal accent · 6pt architectural edges',
     accent: Color(0xFF0F766E),
     cornerRadius: 6,
   );

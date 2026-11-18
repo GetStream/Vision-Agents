@@ -469,12 +469,15 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                               child: child,
                             ),
                           ),
+                          // Keyed by whether there is a card, not by its turn: the host keeps the
+                          // UI of the turn it was last given only, so an outgoing card would lose
+                          // its UI while it fades. A newer card takes the place of the last one.
                           child: switch (_latestVoiceTurnWithUI(voice)) {
                             final Turn turn => Padding(
-                              key: ValueKey(turn.id),
+                              key: const ValueKey('card'),
                               padding: const EdgeInsets.only(top: 16),
                               child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxHeight: 280),
+                                constraints: const BoxConstraints(maxHeight: 300),
                                 child: SingleChildScrollView(
                                   padding: const EdgeInsets.symmetric(horizontal: 16),
                                   child: BrandThemeScope(

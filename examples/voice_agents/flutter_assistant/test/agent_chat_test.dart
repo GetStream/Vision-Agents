@@ -538,11 +538,12 @@ void main() {
 
       /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
       /// returns the result sent back.
-      Future<Map<String, Object?>> call(AgentChat chat, String tableId) async {
+      Future<Map<String, Object?>> call(AgentChat chat, String tableId, {String id = 'c1'}) async {
+        bool answered(String m) => m.contains('"tool_result"') && m.contains('"$id"');
         (await sessions.socket()).add(
           jsonEncode({
             'type': 'tool_call',
-            'id': 'c1',
+            'id': id,
             'name': SeatSelectorComponent.reserveTableTool,
             'arguments': jsonEncode({
               'table_id': tableId,
@@ -552,11 +553,10 @@ void main() {
           }),
         );
         final session = chat.session!;
-        await until(() => session.approvals.value.isNotEmpty);
-        session.decide('c1', allowed: true);
-        await until(() => sessions.said.any((m) => m.contains('"tool_result"')));
-        return jsonDecode(sessions.said.lastWhere((m) => m.contains('"tool_result"')))
-            as Map<String, Object?>;
+        await until(() => session.approvals.value.any((request) => request.call.id == id));
+        session.decide(id, allowed: true);
+        await until(() => sessions.said.any(answered));
+        return jsonDecode(sessions.said.lastWhere(answered)) as Map<String, Object?>;
       }
 
       test('brings its tool to the session once, however often it shows', () async {
@@ -598,7 +598,21 @@ void main() {
 
         expect(result['error'], allOf(contains('T1 is not a free table'), contains('T4')));
         expect(chat.reservation.value, isNull);
-        expect(sessions.routes.where((r) => r.startsWith('DELETE')), isEmpty);
+        // The tool is still there to reserve a free table.
+        expect((await call(chat, 'T4', id: 'c2'))['output'], contains('Reserved table T4'));
+      });
+
+      test('a booking that arrives after the chat was let go of changes nothing', () async {
+        final chat = AgentChat('s1', sessions: sessions);
+        await chat.close();
+        chat.dispose();
+
+        chat.reserved((
+          table: tables.last,
+          when: 'tonight at 8pm',
+          code: 'A1B2C3',
+          tables: {'T1', 'T4'},
+        ));
       });
     });
 

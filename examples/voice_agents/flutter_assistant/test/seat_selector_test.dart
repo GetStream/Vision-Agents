@@ -21,7 +21,9 @@ void main() {
     setUp(() async {
       // The test binding answers every request with a 400; this test talks to a router on
       // this machine.
+      final overrides = HttpOverrides.current;
       HttpOverrides.global = null;
+      addTearDown(() => HttpOverrides.global = overrides);
       sessions = await FakeSessions.onRouter();
     });
     tearDown(() => sessions.dispose());
@@ -98,11 +100,9 @@ void main() {
       );
 
       // The card asks for its tool from the widget tree, whose work runs as frames are pumped.
-      for (
-        var i = 0;
-        i < 500 && !sessions.routes.contains('POST /v1/agents/sessions/s1/tools');
-        i++
-      ) {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!sessions.routes.contains('POST /v1/agents/sessions/s1/tools')) {
+        if (DateTime.now().isAfter(deadline)) fail('The card never brought its tool.');
         await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
         await tester.pump();
       }
