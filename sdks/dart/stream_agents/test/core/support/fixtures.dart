@@ -48,3 +48,49 @@ Map<String, Object?> pageJson(List<Object?> items, {String? nextCursor}) => {
   'has_more': nextCursor != null,
   'next_cursor': ?nextCursor,
 };
+
+/// A scheduled task as the router writes one: occurrences in the task zone's offset, the rest
+/// in UTC, and no run yet.
+Map<String, Object?> scheduledTaskJson({
+  String id = 't1',
+  String state = 'active',
+  String createdBy = 'agent',
+}) => {
+  'id': id,
+  'user_id': 'ada',
+  'config_id': 'c1',
+  'session_id': 's1',
+  'title': 'Water the plants',
+  'instructions': 'Remind Ada to water the plants.',
+  'schedule': {
+    'at': '2026-11-19T09:00:00',
+    'repeat': 'FREQ=DAILY',
+    'timezone': 'Europe/Amsterdam',
+    'description': 'Every day at 09:00',
+  },
+  'deliver_to': ['conversation', 'sms'],
+  'quiet_hours': {'start': '22:00', 'end': '07:00'},
+  'state': state,
+  'next_run_at': '2026-11-19T09:00:00+01:00',
+  'upcoming': ['2026-11-19T09:00:00+01:00', '2026-11-20T09:00:00+01:00'],
+  'last_run_at': null,
+  'consecutive_failures': 0,
+  'created_by': createdBy,
+  'custom': {'plant': 'fern'},
+  'created_at': '2026-11-18T10:15:30.123456789Z',
+  'updated_at': '2026-11-18T10:15:30Z',
+};
+
+/// One run of a scheduled task, delivered.
+Map<String, Object?> scheduledTaskRunJson(String id) => {
+  'id': id,
+  'task_id': 't1',
+  'scheduled_for': '2026-11-18T09:00:00+01:00',
+  'trigger': 'schedule',
+  'state': 'delivered',
+  'delivered_to': 'conversation',
+  'session_id': 's1',
+  'attempts': 1,
+  'started_at': '2026-11-18T08:00:01Z',
+  'finished_at': '2026-11-18T08:00:04Z',
+};

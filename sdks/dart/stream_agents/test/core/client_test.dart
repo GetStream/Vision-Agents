@@ -1395,4 +1395,205 @@ void main() {
       expect(router.last('POST /v1/search').json, {'query': 'anything'});
     });
   });
+
+  group('ScheduledTasks', () {
+    const tasks = '/v1/agents/scheduled-tasks';
+
+    test('reads a task as the router writes it', () async {
+      router.answer('GET $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      final task = await agents.scheduledTasks.get('t1');
+
+      expect(task.id, 't1');
+      expect(task.title, 'Water the plants');
+      expect(task.instructions, 'Remind Ada to water the plants.');
+      expect(
+        task.schedule,
+        const ScheduledTaskSchedule(
+          at: '2026-11-19T09:00:00',
+          repeat: 'FREQ=DAILY',
+          timezone: 'Europe/Amsterdam',
+          description: 'Every day at 09:00',
+        ),
+      );
+      expect(task.deliverTo, ['conversation', 'sms']);
+      expect(task.quietHours, const ScheduledTaskQuietHours(start: '22:00', end: '07:00'));
+      expect(task.state, ScheduledTaskState.active);
+      expect(task.nextRunAt, DateTime.utc(2026, 11, 19, 8));
+      expect(task.upcoming, [DateTime.utc(2026, 11, 19, 8), DateTime.utc(2026, 11, 20, 8)]);
+      expect(task.lastRunAt, isNull);
+      expect(task.createdBy, ScheduledTaskCreatedBy.agent);
+      expect(task.sessionId, 's1');
+      expect(task.configId, 'c1');
+      expect(task.custom, {'plant': 'fern'});
+      expect(task.createdAt, DateTime.utc(2026, 11, 18, 10, 15, 30, 123, 456));
+    });
+
+    test('reads a state or a maker it has never heard of as unknown', () async {
+      router.answer(
+        'GET $tasks/t1',
+        Answer(200, scheduledTaskJson(state: 'snoozed', createdBy: 'workflow')),
+      );
+
+      final task = await agents.scheduledTasks.get('t1');
+
+      expect(task.state, ScheduledTaskState.unknown);
+      expect(task.createdBy, ScheduledTaskCreatedBy.unknown);
+    });
+
+    test('refuses an occurrence that is not a timestamp, naming it', () async {
+      router.answer(
+        'GET $tasks/t1',
+        Answer(200, {...scheduledTaskJson(), 'next_run_at': 'tomorrow'}),
+      );
+
+      await expectLater(
+        agents.scheduledTasks.get('t1'),
+        throwsA(
+          isA<UnreadableException>().having((error) => error.what, 'what', contains('next_run_at')),
+        ),
+      );
+    });
+
+    test('lists with the filters asked for, and pages on with the cursor', () async {
+      router.answer(
+        'GET $tasks',
+        Answer(200, pageJson([scheduledTaskJson()], nextCursor: 'next-1')),
+      );
+
+      final page = await agents.scheduledTasks.list(
+        const ScheduledTaskQuery(
+          state: ScheduledTaskState.paused,
+          configId: 'c1',
+          sessionId: 's1',
+          limit: 10,
+          cursor: 'start',
+        ),
+      );
+
+      expect(router.last('GET $tasks').query, {
+        'state': 'paused',
+        'config_id': 'c1',
+        'session_id': 's1',
+        'limit': '10',
+        'cursor': 'start',
+      });
+      expect(page.items.single.id, 't1');
+      expect(page.hasMore, isTrue);
+      expect(page.nextCursor, 'next-1');
+    });
+
+    test('lists with no filters as none', () async {
+      router.answer('GET $tasks', Answer(200, pageJson([])));
+
+      final page = await agents.scheduledTasks.list();
+
+      expect(router.last('GET $tasks').query, isEmpty);
+      expect(page.items, isEmpty);
+      expect(page.nextCursor, isNull);
+    });
+
+    test('changes only what was given, and never the instructions', () async {
+      router.answer('PATCH $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      await agents.scheduledTasks.update(
+        't1',
+        title: 'Water the ferns',
+        schedule: const ScheduledTaskSchedule(
+          inValue: 'P1D',
+          repeat: 'FREQ=WEEKLY;BYDAY=MO',
+          description: 'not sent',
+        ),
+        next: const ScheduledTaskNext.inValue('PT15M'),
+        deliverTo: const ['sms'],
+        quietHours: const ScheduledTaskQuietHours(start: '23:00', end: '06:30'),
+      );
+
+      expect(router.last('PATCH $tasks/t1').json, {
+        'title': 'Water the ferns',
+        'schedule': {'in': 'P1D', 'repeat': 'FREQ=WEEKLY;BYDAY=MO'},
+        'next': {'in': 'PT15M'},
+        'deliver_to': ['sms'],
+        'quiet_hours': {'start': '23:00', 'end': '06:30'},
+      });
+    });
+
+    test('moves the next occurrence to a time on the user\'s clock', () async {
+      router.answer('PATCH $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      final task = await agents.scheduledTasks.update(
+        't1',
+        next: const ScheduledTaskNext.at('2026-11-19T18:00:00'),
+      );
+
+      expect(router.last('PATCH $tasks/t1').json, {
+        'next': {'at': '2026-11-19T18:00:00'},
+      });
+      expect(task.id, 't1');
+    });
+
+    test('pauses, resumes and cancels a task by its id', () async {
+      router
+        ..answer('POST $tasks/t1/pause', Answer(200, scheduledTaskJson(state: 'paused')))
+        ..answer('POST $tasks/t1/resume', Answer(200, scheduledTaskJson()))
+        ..answer('DELETE $tasks/t1', const Answer(204));
+
+      final paused = await agents.scheduledTasks.pause('t1');
+      final resumed = await agents.scheduledTasks.resume('t1');
+      await agents.scheduledTasks.delete('t1');
+
+      expect(paused.state, ScheduledTaskState.paused);
+      expect(resumed.state, ScheduledTaskState.active);
+      expect(
+        [for (final request in router.arrived) '${request.method} ${request.path}'],
+        ['POST $tasks/t1/pause', 'POST $tasks/t1/resume', 'DELETE $tasks/t1'],
+      );
+    });
+
+    test('reads a task\'s runs a page at a time', () async {
+      router.answer(
+        'GET $tasks/t1/runs',
+        Answer(
+          200,
+          pageJson([
+            scheduledTaskRunJson('run-1'),
+            {
+              ...scheduledTaskRunJson('run-2'),
+              'trigger': 'replay',
+              'state': 'missed',
+              'error': 'task_paused',
+              'delivered_to': '',
+              'started_at': null,
+              'finished_at': null,
+            },
+          ], nextCursor: 'runs-2'),
+        ),
+      );
+
+      final page = await agents.scheduledTasks.runs('t1', limit: 2, cursor: 'runs-1');
+
+      expect(router.last('GET $tasks/t1/runs').query, {'limit': '2', 'cursor': 'runs-1'});
+      expect(
+        page.items.first,
+        ScheduledTaskRun(
+          id: 'run-1',
+          taskId: 't1',
+          scheduledFor: DateTime.utc(2026, 11, 18, 8),
+          trigger: ScheduledTaskRunTrigger.schedule,
+          state: ScheduledTaskRunState.delivered,
+          deliveredTo: 'conversation',
+          sessionId: 's1',
+          attempts: 1,
+          startedAt: DateTime.utc(2026, 11, 18, 8, 0, 1),
+          finishedAt: DateTime.utc(2026, 11, 18, 8, 0, 4),
+        ),
+      );
+      final missed = page.items.last;
+      expect(missed.trigger, ScheduledTaskRunTrigger.unknown);
+      expect(missed.state, ScheduledTaskRunState.missed);
+      expect(missed.error, 'task_paused');
+      expect(missed.startedAt, isNull);
+      expect(page.nextCursor, 'runs-2');
+    });
+  });
 }
