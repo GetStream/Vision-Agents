@@ -48,7 +48,7 @@ func (s *ForwarderSuite) forwardedOnce(forwarder *Forwarder, record *activity.Re
 	var row forwardsCounted
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, `
 SELECT requests, refused, last_refusal_code, organization_id FROM customer_activity
-WHERE app_id = ? AND area = ? AND client = ?`, customer, activity.AreaWebhooksOut, activity.ClientRouter).
+WHERE app_id = ? AND area = ? AND client = ?`, customer, activity.AreaWebhooksOut, store.AuditSourceAPI).
 		Scan(&row.requests, &row.refused, &row.code, &row.organization))
 	return row
 }

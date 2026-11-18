@@ -3474,15 +3474,15 @@ func (s *ScheduledTasksSuite) TestARunByHandThatLandsIsCountedDelivered() {
 	config := s.agentWithScheduling(nil)
 	created := s.createTask(s.data.createUser(), taskRequest(config))
 	s.activityWritten()
-	before := s.counted(activity.AreaScheduling, activity.ClientRouter)
+	before := s.counted(activity.AreaScheduling, store.AuditSourceAPI)
 
 	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
 
 	// The request that set it going, and the run.
 	s.Require().Eventually(func() bool {
-		return s.counted(activity.AreaScheduling, activity.ClientRouter).requests == before.requests+2
+		return s.counted(activity.AreaScheduling, store.AuditSourceAPI).requests == before.requests+2
 	}, settleFor, 10*time.Millisecond, "the run by hand was not counted")
-	s.Equal(before.refused, s.counted(activity.AreaScheduling, activity.ClientRouter).refused)
+	s.Equal(before.refused, s.counted(activity.AreaScheduling, store.AuditSourceAPI).refused)
 }
 
 // Defect: a run by hand that failed counted only as the request that set it going, so the
@@ -3493,14 +3493,14 @@ func (s *ScheduledTasksSuite) TestARunByHandThatFailsIsCountedRefusedUnderItsRea
 	opened := s.openScheduling(user, config, nil)
 	created := s.taskOn(user, config, opened.Id, []string{"phone"})
 	s.activityWritten()
-	before := s.counted(activity.AreaScheduling, activity.ClientRouter)
+	before := s.counted(activity.AreaScheduling, store.AuditSourceAPI)
 
 	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/scheduled-tasks/"+created.Id+"/run", nil, nil))
 
 	s.Require().Eventually(func() bool {
-		return s.counted(activity.AreaScheduling, activity.ClientRouter).refused == before.refused+1
+		return s.counted(activity.AreaScheduling, store.AuditSourceAPI).refused == before.refused+1
 	}, settleFor, 10*time.Millisecond, "the failed run by hand was not counted refused")
-	after := s.counted(activity.AreaScheduling, activity.ClientRouter)
+	after := s.counted(activity.AreaScheduling, store.AuditSourceAPI)
 	// The request that set it going, and the run.
 	s.Equal(before.requests+2, after.requests)
 	s.Equal(scheduling.ReasonNoNumber, after.code)

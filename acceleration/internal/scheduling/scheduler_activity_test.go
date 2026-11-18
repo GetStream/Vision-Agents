@@ -46,7 +46,7 @@ func (s *SchedulerSuite) counted(task store.ScheduledTask) occurrencesCounted {
 	err := s.db.DB().QueryRowContext(s.ctx, `
 SELECT COALESCE(sum(requests), 0), COALESCE(sum(refused), 0), max(last_refusal_code)
 FROM customer_activity WHERE app_id = ? AND area = ? AND client = ?`,
-		task.CustomerID, activity.AreaScheduling, activity.ClientRouter).Scan(&row.requests, &row.refused, &code)
+		task.CustomerID, activity.AreaScheduling, store.AuditSourceAPI).Scan(&row.requests, &row.refused, &code)
 	s.Require().NoError(err)
 	row.code = code.String
 	return row

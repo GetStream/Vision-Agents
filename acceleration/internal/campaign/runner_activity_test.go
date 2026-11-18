@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // dialsCounted is the campaign's app's phone_sms row in the activity record.
@@ -48,7 +49,7 @@ func (s *RunnerSuite) counted() dialsCounted {
 	err := s.store.DB().QueryRowContext(s.ctx, `
 SELECT COALESCE(sum(requests), 0), COALESCE(sum(refused), 0), max(last_refusal_code)
 FROM customer_activity WHERE app_id = ? AND area = ? AND client = ?`,
-		s.customerID, activity.AreaPhoneSMS, activity.ClientRouter).Scan(&row.requests, &row.refused, &code)
+		s.customerID, activity.AreaPhoneSMS, store.AuditSourceAPI).Scan(&row.requests, &row.refused, &code)
 	s.Require().NoError(err)
 	row.code = code.String
 	return row
