@@ -247,6 +247,7 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	ctx, cancel := context.WithTimeout(t.ctx, deadline)
 	defer cancel()
 	var said <-chan Words
+	var latency time.Duration
 	checked, err := func() (Check, error) {
 		policy, err := t.client.Policy(ctx)
 		if err != nil {
@@ -254,7 +255,10 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		}
 		agent := Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}
 		var answer Answer
-		if answer, said, err = t.decideWords(ctx, agent, turnOf(turn), turn.Audio); err != nil {
+		sent := time.Now()
+		answer, said, err = t.decideWords(ctx, agent, turnOf(turn), turn.Audio)
+		latency = time.Since(sent)
+		if err != nil {
 			return Check{}, err
 		}
 		return asker.Hearer().ruleStill(policy, answer)
@@ -266,6 +270,10 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		return
 	}
 	checkSeconds.Observe(time.Since(c.asked).Seconds())
+	// The check is reported once its words say whether the turn ended on it.
+	reported := Checked{Participant: c.participant.ID, At: c.asked, Latency: latency, Paused: c.paused, Answer: checked.Answer,
+		Point: checked.Ending.Name}
+	defer func() { asker.Hearer().report(reported) }()
 	var words Words
 	select {
 	case words = <-said:
@@ -316,6 +324,7 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	}
 	t.mu.Unlock()
 	t.logHeld(c, checked, held, why, nil)
+	reported.Acted = ends
 	if ends {
 		stillEnds.Inc()
 		t.finish(epoch)

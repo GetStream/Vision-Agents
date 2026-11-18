@@ -793,6 +793,7 @@ func New(options Options) (*Agent, error) {
 		cadence:          settling,
 		duplex:           listening,
 	}
+	agent.audioFloor.watch(agent.onTurn, emitter.Send)
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
 	// still measured and still reports itself, it is just not kept. Neither is kept for an
@@ -855,10 +856,18 @@ func (a *Agent) finishTurn(turn Turn) {
 	if started.kind == kindCaller && !started.scheduled {
 		observeTurnLatency(turn, started.pipeline)
 	}
+	turn.FloorChecks = a.audioFloor.take(turn.TurnID)
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
 	}
+}
+
+// onTurn is the turn the agent is on, which a check over it is about.
+func (a *Agent) onTurn() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.speakingTurn
 }
 
 // Join opens the model and voice sessions, then joins the call and starts listening.

@@ -64,6 +64,49 @@ type Turn struct {
 	// Set on a turn that was not interrupted, it means the agent cut itself off.
 	AudioDroppedMs *float64 `json:"audio_dropped_ms,omitempty"`
 	Interrupted    bool     `json:"interrupted,omitempty"`
+	// FloorChecks are the chorus-asr model's checks on the floor that led to the turn and
+	// were made over its reply, the latest of them, oldest first.
+	FloorChecks []FloorCheck `json:"floor_checks,omitempty"`
+}
+
+// The kinds of FloorCheck: at a pause in the caller's speech, or while they talked over the
+// agent.
+const (
+	FloorCheckPause     = "pause"
+	FloorCheckOverAgent = "over_agent"
+)
+
+// FloorCheck is one check the chorus-asr model made on the floor: what it was asked, every
+// answer's probability, and what the router made of it. A value the model did not give is
+// absent.
+type FloorCheck struct {
+	At                time.Time     `json:"at"`
+	Kind              string        `json:"kind"`
+	PausedMs          *float64      `json:"paused_ms,omitempty"`
+	Answer            string        `json:"answer"`
+	AnswerProbability float64       `json:"answer_probability"`
+	PEOT              *float64      `json:"p_eot,omitempty"`
+	DecideMs          *float64      `json:"decide_ms,omitempty"`
+	Options           []FloorOption `json:"options,omitempty"`
+	Ruling            FloorRuling   `json:"ruling"`
+	Acted             bool          `json:"acted"`
+	LatencyMs         float64       `json:"latency_ms"`
+	Point             string        `json:"point,omitempty"`
+}
+
+// FloorOption is one answer the model was offered, and its probability.
+type FloorOption struct {
+	Option      string  `json:"option"`
+	Probability float64 `json:"probability"`
+}
+
+// FloorRuling is what the model ruled the agent do once the turn has ended: Tool is the tool
+// the caller wants, and Cannot that none of the agent's can do it.
+type FloorRuling struct {
+	Disposition string `json:"disposition"`
+	Floor       string `json:"floor"`
+	Tool        string `json:"tool,omitempty"`
+	Cannot      bool   `json:"cannot,omitempty"`
 }
 
 // CallEvent is one judgement the conversation made about how to handle a call: why the

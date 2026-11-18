@@ -1330,6 +1330,24 @@ func (e ErrorType) Valid() bool {
 	}
 }
 
+// Defines values for FloorCheckKind.
+const (
+	OverAgent FloorCheckKind = "over_agent"
+	Pause     FloorCheckKind = "pause"
+)
+
+// Valid indicates whether the value is a known member of the FloorCheckKind enum.
+func (e FloorCheckKind) Valid() bool {
+	switch e {
+	case OverAgent:
+		return true
+	case Pause:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GeneratedImageMediaType.
 const (
 	Imagejpeg GeneratedImageMediaType = "image/jpeg"
@@ -6593,6 +6611,46 @@ type FileSource struct {
 	Url string `json:"url"`
 }
 
+// FloorCheck defines model for FloorCheck.
+type FloorCheck struct {
+	// Acted Whether the router acted on the ruling: at a pause, the turn ended on this check; over the agent, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur.
+	Acted bool `json:"acted"`
+
+	// Answer The option the model found most likely.
+	Answer string `json:"answer"`
+
+	// AnswerProbability The probability of answer.
+	AnswerProbability float64 `json:"answer_probability"`
+
+	// At When the check was asked.
+	At time.Time `json:"at"`
+
+	// DecideMs What the server took to decide, as it reported it.
+	DecideMs *float64 `json:"decide_ms,omitempty"`
+
+	// Kind Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+	Kind FloorCheckKind `json:"kind"`
+
+	// LatencyMs The round trip to the chorus-asr server.
+	LatencyMs float64 `json:"latency_ms"`
+
+	// Options Every option's probability, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then, for an agent with tools, cannot and each tool. Absent from a server that does not report them.
+	Options *[]FloorOption `json:"options,omitempty"`
+
+	// PEot The probability the caller has finished, one minus that of wait. Absent over the agent.
+	PEot *float64 `json:"p_eot,omitempty"`
+
+	// PausedMs How far into the pause the check was asked. Absent over the agent.
+	PausedMs *float64 `json:"paused_ms,omitempty"`
+
+	// Point The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
+	Point  *string     `json:"point,omitempty"`
+	Ruling FloorRuling `json:"ruling"`
+}
+
+// FloorCheckKind Where a chorus-asr floor-control check was asked: at a pause in the caller's speech, or while they talked over the agent.
+type FloorCheckKind string
+
 // FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 type FloorControl struct {
 	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
@@ -6604,6 +6662,27 @@ type FloorControl struct {
 	//
 	// Example: stream/chorus-asr
 	Model *string `json:"model,omitempty"`
+}
+
+// FloorOption defines model for FloorOption.
+type FloorOption struct {
+	Option      string  `json:"option"`
+	Probability float64 `json:"probability"`
+}
+
+// FloorRuling defines model for FloorRuling.
+type FloorRuling struct {
+	// Cannot The caller wants something none of the agent's tools can do.
+	Cannot *bool `json:"cannot,omitempty"`
+
+	// Disposition respond, wait, clarify or ignore.
+	Disposition string `json:"disposition"`
+
+	// Floor stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended.
+	Floor string `json:"floor"`
+
+	// Tool The tool the caller wants.
+	Tool *string `json:"tool,omitempty"`
 }
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
@@ -10316,6 +10395,9 @@ type TimelineEntry struct {
 
 	// FirstFrameQueuedMs Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
 	FirstFrameQueuedMs *float64 `json:"first_frame_queued_ms,omitempty"`
+
+	// FloorChecks The chorus-asr model's floor-control checks that led to this turn and were made over its reply, oldest first: the latest 40. Absent for an agent without chorus-asr floor control.
+	FloorChecks *[]FloorCheck `json:"floor_checks,omitempty"`
 
 	// Heard What the caller said, when it can be matched to this exchange.
 	Heard *string `json:"heard,omitempty"`

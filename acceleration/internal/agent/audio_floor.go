@@ -10,6 +10,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -37,7 +38,24 @@ type audioFloor struct {
 	// flow controller asks about its words, and settled the candidates they were found for.
 	checked []ruledWords
 	settled map[string]harness.Decided
+	// held are each participant's checks still waiting for the turn they lead to (listen),
+	// and joined each turn's checks waiting for its row (take), its turns oldest first.
+	held   map[string][]live.FloorCheck
+	joined map[string][]live.FloorCheck
+	turns  []string
+	// speaking says the turn the agent is on, and send reports a check as it joins its turn
+	// (watch). Nil, nobody watches.
+	speaking func() string
+	send     func(Event)
 }
+
+// floorChecksKept is the most checks a turn's row keeps, the latest: over the agent the model
+// is asked every 300 ms, and a long reply talked over would be a row of hundreds.
+const floorChecksKept = 40
+
+// floorCheckTurns bounds the turns whose checks wait for their row: a turn that is never
+// measured, as one superseded, would otherwise keep its checks until the call ended.
+const floorCheckTurns = 64
 
 // ruledWords is a ruling a pause check made, on a participant's words.
 type ruledWords struct {
@@ -63,7 +81,134 @@ func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, endOfTurn au
 		streams: map[string]*audiofloor.Stream{},
 		floors:  map[string]*audiofloor.Transcriber{},
 		settled: map[string]harness.Decided{},
+		held:    map[string][]live.FloorCheck{},
+		joined:  map[string][]live.FloorCheck{},
 	}
+}
+
+// watch has every check the model makes on the floor reported (FloorChecked) as it joins
+// its turn, and kept for the turn's row (take): one over the agent joins the turn it was
+// talking over, speaking's, and a pause's the participant's turn its words are put to the
+// flow controller as (listen).
+func (v *audioFloor) watch(speaking func() string, send func(Event)) {
+	if v == nil {
+		return
+	}
+	v.mu.Lock()
+	v.speaking, v.send = speaking, send
+	v.mu.Unlock()
+	v.hearer.OnCheck(v.floorChecked)
+}
+
+// floorChecked keeps a check, and reports it if its turn is known.
+func (v *audioFloor) floorChecked(c audiofloor.Checked) {
+	v.mu.Lock()
+	speaking, send := v.speaking, v.send
+	v.mu.Unlock()
+	turn := c.Turn
+	if c.OverAgent {
+		// The flow controller's own checks over the agent are of words still coming, under an
+		// ID of their own: the turn they are about is the reply.
+		turn = speaking()
+	}
+	check := floorCheckOf(c)
+	v.mu.Lock()
+	if turn == "" {
+		v.held[c.Participant] = latestChecks(append(v.held[c.Participant], check))
+		v.mu.Unlock()
+		return
+	}
+	v.joinLocked(turn, check)
+	v.mu.Unlock()
+	send(FloorChecked{TurnID: turn, Participant: c.Participant, Check: check})
+}
+
+// claim joins the checks held for participant to their turn, and reports them.
+func (v *audioFloor) claim(participant, turn string) {
+	v.mu.Lock()
+	held, send := v.held[participant], v.send
+	delete(v.held, participant)
+	for _, check := range held {
+		v.joinLocked(turn, check)
+	}
+	v.mu.Unlock()
+	for _, check := range held {
+		send(FloorChecked{TurnID: turn, Participant: participant, Check: check})
+	}
+}
+
+func (v *audioFloor) joinLocked(turn string, check live.FloorCheck) {
+	checks, ok := v.joined[turn]
+	if !ok {
+		if len(v.turns) >= floorCheckTurns {
+			delete(v.joined, v.turns[0])
+			v.turns = slices.Delete(v.turns, 0, 1)
+		}
+		v.turns = append(v.turns, turn)
+	}
+	v.joined[turn] = latestChecks(append(checks, check))
+}
+
+// take lets go of a turn's checks, and returns them oldest first: a check over the agent is
+// reported once its words are in, after checks asked since.
+func (v *audioFloor) take(turn string) []live.FloorCheck {
+	if v == nil {
+		return nil
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	checks, ok := v.joined[turn]
+	if !ok {
+		return nil
+	}
+	delete(v.joined, turn)
+	v.turns = slices.DeleteFunc(v.turns, func(id string) bool { return id == turn })
+	slices.SortStableFunc(checks, func(a, b live.FloorCheck) int { return a.At.Compare(b.At) })
+	return checks
+}
+
+// latestChecks keeps the latest floorChecksKept of checks.
+func latestChecks(checks []live.FloorCheck) []live.FloorCheck {
+	if len(checks) <= floorChecksKept {
+		return checks
+	}
+	return slices.Clone(checks[len(checks)-floorChecksKept:])
+}
+
+// durationMs is d in milliseconds, to the microsecond.
+func durationMs(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+
+// floorCheckOf is a check as a turn's row keeps it.
+func floorCheckOf(c audiofloor.Checked) live.FloorCheck {
+	check := live.FloorCheck{
+		At:                c.At.UTC(),
+		Kind:              live.FloorCheckPause,
+		Answer:            c.Answer.Answer,
+		AnswerProbability: c.Answer.AnswerProbability,
+		Acted:             c.Acted,
+		LatencyMs:         durationMs(c.Latency),
+		Point:             c.Point,
+	}
+	if c.OverAgent {
+		check.Kind = live.FloorCheckOverAgent
+	} else if c.Paused > 0 {
+		paused := durationMs(c.Paused)
+		check.PausedMs = &paused
+	}
+	if p := c.Answer.PEOT; p != nil {
+		pEOT := *p
+		check.PEOT = &pEOT
+	}
+	if d := c.Answer.DecideMs; d > 0 {
+		check.DecideMs = &d
+	}
+	for _, option := range c.Answer.Options {
+		check.Options = append(check.Options, live.FloorOption{Option: option.Name, Probability: option.P})
+	}
+	if r := c.Answer.Ruling; r != nil {
+		check.Ruling = live.FloorRuling{Disposition: r.Disposition, Floor: r.Floor, Tool: r.Tool, Cannot: r.Cannot}
+	}
+	return check
 }
 
 // acting is the flow controller's Hearer, or nil when the model is off. It rules on the words
@@ -216,6 +361,7 @@ func (v *audioFloor) forget(participant string) {
 	defer v.mu.Unlock()
 	delete(v.streams, participant)
 	delete(v.floors, participant)
+	delete(v.held, participant)
 	v.checked = slices.DeleteFunc(v.checked, func(r ruledWords) bool { return r.participant == participant })
 }
 
@@ -232,6 +378,11 @@ func (v *audioFloor) listen(turn *harness.FlowTurn, participant, said string, to
 	turn.ParticipantID = participant
 	turn.Tools = customerTools(tools)
 	v.findRuled(said, participant, turn.Speaking, turn.ID)
+	if !turn.Unfinished {
+		// Words still coming over the agent are asked about under an ID of their own; the
+		// checks that led to the turn are its words' once they are settled.
+		v.claim(participant, turn.ID)
+	}
 	if stream := v.stream(participant); stream != nil {
 		turn.Audio = stream.Last(audiofloor.Window)
 	}

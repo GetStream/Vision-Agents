@@ -787,6 +787,9 @@ func frameOf(event session.Event) (frame, bool) {
 			"interrupted":              typed.Interrupted,
 		}, true
 
+	case agent.FloorChecked:
+		return frame{"type": "floor_check", "turn_id": typed.TurnID, "check": floorCheckOf(typed.Check)}, true
+
 	case agent.ModelCall:
 		called := frame{
 			"type": "model_call", "operation_id": typed.OperationID,
