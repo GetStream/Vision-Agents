@@ -5,6 +5,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.getstream.agents.androidassistant.components.TripComponents
 import io.getstream.chat.android.ai.a2ui.generativeui.A2UIRenderer
 import io.getstream.chat.android.ai.compose.conversation.AIAgentError
 import io.getstream.chat.android.ai.compose.conversation.AIConversationState
@@ -116,17 +117,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** The tools the agent may call, which run on this phone. */
     private val tools = DeviceTools(application).all
 
+    /** The phone's own views the agent can place in its UI, in the chat and on a call. */
+    private val components = TripComponents.load(application)
+
     private val format = MutableStateFlow(ReplyFormat.stored(application))
 
     /** How the agent writes its replies, which picks the renderer for their generated UI. */
     val replyFormat: StateFlow<ReplyFormat> = format.asStateFlow()
+
+    private val brands = MutableStateFlow(Brand.stored(application))
+
+    /** The brand the agent's UI wears, in the chat and on a call. */
+    val brand: StateFlow<Brand> = brands.asStateFlow()
 
     /**
      * Renders the generated UI of replies, in either format, and sends back what the person does
      * in it. One for the screen's life, whatever the reply format, so earlier replies keep their UI
      * and its state when the format changes, Markdown included.
      */
-    val uiHost: AIUIHost = AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer())) { action -> answer(action) }
+    val uiHost: AIUIHost = newUiHost()
+
+    /**
+     * Shows the UI of what is said on the call, apart from the chat's, whose replies it would
+     * otherwise take for the whole conversation.
+     */
+    val callUiHost: AIUIHost = newUiHost()
 
     init {
         // The backend's agent decides the format; follow it when it can say.
@@ -148,6 +163,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         format.value = chosen
         ReplyFormat.store(getApplication(), chosen)
     }
+
+    /** Has the agent's UI wear [chosen], in every conversation, straight away. */
+    fun chooseBrand(chosen: Brand) {
+        brands.value = chosen
+        Brand.store(getApplication(), chosen)
+    }
+
+    /** A host for the agent's UI, in either format, whose actions ask in this conversation. */
+    private fun newUiHost(): AIUIHost =
+        AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer()), components = components) { action -> answer(action) }
 
     /** Sends what the person did in a reply's generated UI. */
     private fun answer(action: AIUIAction) {

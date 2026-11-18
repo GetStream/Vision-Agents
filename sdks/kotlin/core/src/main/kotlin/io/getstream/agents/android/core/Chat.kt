@@ -134,3 +134,10 @@ public fun LiveReasoning.read(message: Message) {
     add(text, offset.toInt(), message.id, id)
 }
 
+/**
+ * The custom data of each agent reply in [messages], oldest first, that shows the socket's UI,
+ * by message id: its own `extraData`, with `ai_ui` replaced. A message missing from it shows its
+ * own.
+ */
+public fun LiveUI.overlay(messages: List<Message>): Map<String, Map<String, Any?>> =
+    overlayCustom(messages.map { it.id to it.extraData })

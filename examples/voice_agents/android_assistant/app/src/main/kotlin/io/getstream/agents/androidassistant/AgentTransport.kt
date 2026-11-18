@@ -25,8 +25,10 @@ import io.getstream.agents.android.core.AgentEvent
 import io.getstream.agents.android.core.AgentSession
 import io.getstream.agents.android.core.Conversation
 import io.getstream.agents.android.core.LiveReasoning
+import io.getstream.agents.android.core.LiveUI
 import io.getstream.agents.android.core.channelState
 import io.getstream.agents.android.core.chat
+import io.getstream.agents.android.core.overlay
 import io.getstream.agents.android.core.read
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -74,6 +76,13 @@ class AgentTransport(
     /** Each reply's thinking in full, from its live updates. A stored step only keeps its opening. */
     private val reasoning = LiveReasoning()
 
+    /**
+     * Each reply's UI as the session's socket streams it, which shows before the reply's message
+     * in the channel catches up.
+     */
+    private val liveUi = LiveUI()
+    private val streamed = MutableStateFlow(0)
+
     /** The conversation's session, once it is open. */
     val session: StateFlow<AgentSession?> = opened.map { it?.session }.stateIn(scope, SharingStarted.Eagerly, null)
 
@@ -97,13 +106,20 @@ class AgentTransport(
 
     override fun connect(feed: AIConversationFeed<AgentMessage>) {
         val channel = opened.filterNotNull().flatMapLatest { it.channel }
-        // The channel's messages, oldest first, each reply with the whole of its thinking. A new
-        // list each time more thinking arrives, so the conversation redraws it.
+        // The channel's messages, oldest first, each reply with the whole of its thinking and,
+        // while it is written, the UI the socket streamed for it. A new list each time more
+        // thinking or UI arrives, so the conversation redraws it.
         scope.launch {
             val messages = channel.flatMapLatest { it?.messages ?: flowOf(emptyList()) }
                 .map { messages -> messages.filter { it.deletedAt == null } }
-            combine(messages, thinking) { messages, version -> messages.map { AgentMessage(it, reasoning, version) } }
-                .collect { if (feed.isConnected) feed.update(messages = it) }
+            combine(messages, thinking, streamed) { messages, version, _ ->
+                val live = liveUi.overlay(messages)
+                messages.map { AgentMessage(it, reasoning, version, live[it.id]) }
+            }.collect { if (feed.isConnected) feed.update(messages = it) }
+        }
+        scope.launch {
+            opened.filterNotNull().flatMapLatest { it.session.conversation }
+                .collect { conversation -> if (liveUi.observe(conversation)) streamed.update { it + 1 } }
         }
         scope.launch {
             channel.flatMapLatest { it?.endOfOlderMessages?.map { end -> !end } ?: flowOf(false) }
@@ -206,16 +222,22 @@ val Message.isAgentReply: Boolean get() = extraData["ai_generated"] == true
  * A message of the conversation as Stream's AI components show it.
  *
  * [version] is how much live thinking had arrived when it was made, so a reply whose thinking
- * grew is a different message and redraws.
+ * grew is a different message and redraws. [live] is the message's custom data with the UI the
+ * socket streamed for it, while it is written.
  */
-data class AgentMessage(val message: Message, private val reasoning: LiveReasoning, private val version: Int) : AIMessage {
+data class AgentMessage(
+    val message: Message,
+    private val reasoning: LiveReasoning,
+    private val version: Int,
+    private val live: Map<String, Any?>? = null,
+) : AIMessage {
     override val id: String = message.id
     override val role: AIMessageRole = if (message.isAgentReply) AIMessageRole.Assistant else AIMessageRole.User
     override val text: String = message.text
     override val isGenerating: Boolean = message.extraData["generating"] == true
 
     // The reply's generated UI, `custom.ai_ui`, which Stream Chat lifts into extraData.
-    override val uiDocument: AIUIDocument? = AIUIDocument.from(message.extraData)
+    override val uiDocument: AIUIDocument? = AIUIDocument.from(live ?: message.extraData)
 
     // Read on every update while a reply streams, so decoded once, when the message is made.
     // Stream lifts `name` out of an attachment's fields, and a tool call's step needs it back.
