@@ -323,15 +323,13 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("hands a function the call it runs for, and sends how it is going", async () => {
+  it("hands a function the call it runs for", async () => {
     let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
       run: (_input, toolCallContext) => {
         seen = toolCallContext;
-        toolCallContext.update("checking three airlines");
-        toolCallContext.say("Still looking, one moment.");
         return "found two";
       },
     });
@@ -348,18 +346,6 @@ describe("Session", () => {
       approved: true,
     });
 
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "checking three airlines",
-      verbatim: false,
-    });
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "Still looking, one moment.",
-      verbatim: true,
-    });
     assert.equal((await connection.next())["output"], "found two");
     assert.equal(seen?.id, "call_1");
     assert.equal(seen?.sessionId, "sess_1", "the session the call came over");

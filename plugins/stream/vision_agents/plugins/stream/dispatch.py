@@ -27,6 +27,7 @@ from ._tool_line import (
 )
 from ._generated.models import ImageSource
 from .responses import RouterError, _create_response
+from .client import Client
 from .sessions import _tools
 
 if TYPE_CHECKING:
@@ -49,7 +50,10 @@ AgentFactory = Callable[[], Union[Agent, Awaitable[Agent]]]
 
 @dataclass
 class _Hosting:
-    """One set of functions this worker runs for every session under an agent id."""
+    """One set of functions this worker runs for every session under an agent id.
+
+    An empty agent id is every agent of the app.
+    """
 
     agent_id: str
     functions: FunctionRegistry
@@ -200,35 +204,44 @@ class Dispatch:
 
         return register
 
-    def host(self, agent: "client.Agent", tool_timeout: float = 0.0) -> None:
-        """Run an agent's functions for every session opened under it, whoever opened it.
+    def host(
+        self, target: Union["client.Agent", Client], tool_timeout: float = 0.0
+    ) -> None:
+        """Run functions for every session that is offered them, whoever opened it.
 
         A session's own functions run in the process that opened it, which is no use to a
         conversation opened from a browser. Hosting is the other direction: the router offers
-        these functions to each session naming the agent and sends every call to a worker
-        hosting them. Call before `run`.
+        these functions to sessions and sends every call to a worker hosting them. Call
+        before `run`.
+
+        Hosting a client runs its `tools` for every agent of the app; an agent is offered
+        one only where a tool group of its agent.yaml names it. Hosting an agent runs its
+        own functions for its sessions alone.
 
         Example:
             ```python
-            agent = stream.Client().agent("stream-support")
+            client = stream.Client()
 
 
-            @agent.register(description="Read the SDK's source")
+            @client.tools.register(description="Read the SDK's source")
             async def investigate_sdk(sdk: str) -> str:
                 return await read_source(sdk)
 
 
-            dispatch.host(agent, tool_timeout=60)
+            dispatch.host(client, tool_timeout=60)
             ```
 
         Args:
-            agent: The agent whose sessions are offered its functions, hosted under its
-                name.
+            target: The client whose tools every agent may be offered, or the agent whose
+                sessions are offered its functions, hosted under its name.
             tool_timeout: How long the router waits for one tool call to be answered, in
                 seconds, before telling the model it failed. Not how long the worker runs.
                 Zero takes the router's default of 30 seconds.
         """
-        self._hosted.append(_Hosting(agent.name, agent.functions, tool_timeout))
+        if isinstance(target, Client):
+            self._hosted.append(_Hosting("", target.tools, tool_timeout))
+        else:
+            self._hosted.append(_Hosting(target.name, target.functions, tool_timeout))
 
     async def get_or_create_agent(
         self, message: InboundMessage, create_agent: AgentFactory
@@ -428,7 +441,8 @@ class Dispatch:
                 cancel(call_id, self._holds, self._hosted_calls.get(key))
             elif kind == "hosting":
                 logger.info(
-                    "the router sends the tools of %s here", frame.get("agent_id", "")
+                    "the router sends the tools of %s here",
+                    frame.get("agent_id") or "every agent",
                 )
             elif kind == "hosting_refused":
                 # Not worth reconnecting: a worker whose tools were refused is one nobody
@@ -452,6 +466,7 @@ class Dispatch:
                 {
                     "type": "host_tools",
                     "agent_id": offer.agent_id,
+                    "every_agent": not offer.agent_id,
                     "tools": [tool.to_dict() for tool in _tools(offer.functions)],
                     "timeout_ms": int(offer.tool_timeout * 1000),
                 }

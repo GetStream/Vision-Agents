@@ -59,22 +59,17 @@ class TestToolCall < Minitest::Test
   def test_a_call_without_a_socket_does_nothing
     tool_call_context = VA::ToolCallContext.new
 
-    assert_nil tool_call_context.update("checking")
-    assert_nil tool_call_context.say("One moment.")
     assert_nil tool_call_context.disallow_interruptions
     refute tool_call_context.cancelled?
   end
 
-  def test_a_call_reports_how_it_is_going_and_a_call_stopped_first_is_not_held
+  def test_a_call_stopped_first_is_not_held
     sent = []
     tool_call_context = VA::ToolCallContext.new(id: "t1", send: ->(frame) { sent << frame })
 
-    tool_call_context.update("checking")
-    tool_call_context.say("One moment.")
     tool_call_context.cancel!
 
-    assert_equal [{ type: "tool_update", tool_call_id: "t1", text: "checking", verbatim: false },
-                  { type: "tool_update", tool_call_id: "t1", text: "One moment.", verbatim: true }], sent
+    assert_empty sent
     assert_raises(VA::CallNotHeldError) { tool_call_context.disallow_interruptions }
   end
 end

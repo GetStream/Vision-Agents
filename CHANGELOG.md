@@ -2,6 +2,14 @@
 
 ## Features
 
+### A tool is registered once for the app, and each agent's agent.yaml enables it
+
+Python's `stream.Client` has `tools`, a function registry for the whole app, and `Dispatch.host(client)` runs it for every agent: a session is offered one of those tools only when a tool group of its agent's `agent.yaml` names it, and a tool of the same name an agent hosts itself wins. A worker asks for this with `every_agent: true` on its `host_tools` frame; one naming neither an agent nor `every_agent` is still refused, so a forgotten agent id never offers tools to every agent.
+
+### Tool stats show how to load each tool, per agent
+
+`GET /v1/stats/agents` takes `agent`, an agent config id, and answers how many sessions took a turn and how many turns they took. Each tool now also has the sessions that called it and their share, the turns a session took before its first call, how it was loaded, and what its definition costs every turn, in full and as a summary: the numbers that decide between `full`, `summary` and `deferred`. A call's token cost and its tool's definition size now survive tool output retention, which used to shrink a redacted call's tokens to its tool name. Calls recorded before this have no definition size.
+
 ### A running session takes more of its caller's tools, and gives them back
 
 `POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A change waits for the turn in progress and every tool call in flight, so a call is only checked, and asks its approval, against the tools it was made with. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the caller already has, or the agent offers from elsewhere, is a 409 (to change a tool, remove it, then add it again), and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown (#2044). Go has `Pipeline.AddTools` and `RemoveTool`, and now every other SDK has the same pair on its session: JavaScript `addTools`/`removeTool`, Python `add_tools`/`remove_tool`, .NET `AddToolsAsync`/`RemoveToolAsync`, Ruby and Rust `add_tools`/`remove_tool`, PHP, Kotlin and Dart `addTools`/`removeTool`. A removal whose answer is lost is settled by the next change of that name, as a lost add is, rather than leaving the old function to run under a new declaration, and the SDK's own HTTP client never resends either request (a client the app supplies, with retries of its own, is outside that). Only a 4xx answer counts as a refusal: a 5xx, such as a gateway timing out after the router applied the change, leaves the name unsettled too. A fork of a running session is watched with the tools the session has now, added ones and unsettled names included, as the router offers them to it (#2050).
@@ -589,6 +597,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 `GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
 
 ## Breaking Changes
+
+### A tool call no longer has update or say
+
+A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Say` (and `tools.Line` has only `Hold`), JavaScript `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), Python `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), .NET `UpdateAsync`/`SayAsync`, Ruby `update`/`say`, Rust `update`/`say` and PHP `update()`/`say()`. A session's own `say` stays. A tool says nothing while it runs: the agent tells a waiting caller the work is still going, and a tool's `display_title` is what its call shows. The router still takes `tool_update` from an older SDK, so a released app keeps working.
 
 ### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
 

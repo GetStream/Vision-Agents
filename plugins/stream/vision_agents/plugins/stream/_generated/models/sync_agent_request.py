@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
-    from ..models.agent_tools import AgentTools
     from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
         SyncAgentRequestPluginsItemType1,
     )
     from ..models.sync_agent_request_tags import SyncAgentRequestTags
+    from ..models.tool_group import ToolGroup
 
 
 T = TypeVar("T", bound="SyncAgentRequest")
@@ -136,8 +136,9 @@ class SyncAgentRequest:
             stt (str | Unset):
             subagent (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
             tags (SyncAgentRequestTags | Unset):
-            tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
-                is kept.
+            tools (list[ToolGroup] | Unset): agent.yaml's tools: the functions an SDK provides that the agent may offer, in
+                named groups, as AgentConfigRequest's tools names them, with the same rules. Sent, they replace the stored
+                groups whole, an empty list removing them. Left out, the stored ones stay.
             tts (str | Unset):
             video (SessionVideo | Unset):
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
@@ -189,7 +190,7 @@ class SyncAgentRequest:
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
-    tools: AgentTools | Unset = UNSET
+    tools: list[ToolGroup] | Unset = UNSET
     tts: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
@@ -350,9 +351,12 @@ class SyncAgentRequest:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
-        tools: dict[str, Any] | Unset = UNSET
+        tools: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tools, Unset):
-            tools = self.tools.to_dict()
+            tools = []
+            for tools_item_data in self.tools:
+                tools_item = tools_item_data.to_dict()
+                tools.append(tools_item)
 
         tts = self.tts
 
@@ -477,7 +481,6 @@ class SyncAgentRequest:
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
-        from ..models.agent_tools import AgentTools
         from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
@@ -499,6 +502,7 @@ class SyncAgentRequest:
             SyncAgentRequestPluginsItemType1,
         )
         from ..models.sync_agent_request_tags import SyncAgentRequestTags
+        from ..models.tool_group import ToolGroup
 
         d = dict(src_dict)
         hash_ = d.pop("hash")
@@ -726,11 +730,13 @@ class SyncAgentRequest:
             tags = SyncAgentRequestTags.from_dict(_tags)
 
         _tools = d.pop("tools", UNSET)
-        tools: AgentTools | Unset
-        if isinstance(_tools, Unset):
-            tools = UNSET
-        else:
-            tools = AgentTools.from_dict(_tools)
+        tools: list[ToolGroup] | Unset = UNSET
+        if _tools is not UNSET:
+            tools = []
+            for tools_item_data in _tools:
+                tools_item = ToolGroup.from_dict(tools_item_data)
+
+                tools.append(tools_item)
 
         tts = d.pop("tts", UNSET)
 

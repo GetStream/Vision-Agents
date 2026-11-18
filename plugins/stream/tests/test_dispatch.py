@@ -1141,10 +1141,42 @@ class TestDispatch:
         declared = await router.told_of_type("host_tools")
 
         assert declared["agent_id"] == "stream-support"
+        assert declared["every_agent"] is False
         assert declared["timeout_ms"] == 60000
         assert [tool["name"] for tool in declared["tools"]] == ["investigate_sdk"]
         assert declared["tools"][0]["description"] == "Read SDK source"
         assert "sdk" in declared["tools"][0]["parameters"]["properties"]
+
+    async def test_a_clients_tools_are_hosted_for_every_agent(self, router: Router):
+        client = stream.Client(url=router.url, customer_id="acme")
+
+        @client.tools.register(description="Look up the weather")
+        async def weather_lookup(location: str) -> str:
+            return f"sunny in {location}"
+
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+        worker.host(client)
+        running = asyncio.create_task(worker.run())
+        try:
+            declared = await router.told_of_type("host_tools")
+            assert declared["every_agent"] is True
+            assert declared["agent_id"] == ""
+            assert [tool["name"] for tool in declared["tools"]] == ["weather_lookup"]
+
+            await router.hand_over(
+                {
+                    "type": "tool_call",
+                    "id": "call-1",
+                    "session_id": "s",
+                    "name": "weather_lookup",
+                    "arguments": '{"location": "Amsterdam"}',
+                }
+            )
+            answered = await router.told_of_type("tool_result")
+            assert answered["output"] == "sunny in Amsterdam"
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
 
     async def test_a_hosted_function_is_answered_over_the_dispatch_socket(
         self, router: Router, hosting: stream.Dispatch
@@ -1269,16 +1301,13 @@ class TestDispatch:
             frame for frame in router.received if frame["type"] == "tool_result"
         ]
 
-    async def test_a_hosted_function_reads_its_call_and_says_how_it_is_going(
-        self, router: Router
-    ):
+    async def test_a_hosted_function_reads_its_call(self, router: Router):
         agent = stream.Client(url=router.url, customer_id="acme").agent("support")
         seen: list[stream.ToolCallContext] = []
 
         @agent.register(description="Investigate")
         async def investigate(tool_call_context: stream.ToolCallContext) -> str:
             seen.append(tool_call_context)
-            await tool_call_context.update("reading the logs")
             return "found it"
 
         worker = stream.Dispatch(url=router.url, customer_id="acme")
@@ -1295,18 +1324,11 @@ class TestDispatch:
                     "user": {"id": "sam"},
                 }
             )
-            update = await router.told_of_type("tool_update")
             result = await router.told_of_type("tool_result")
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
 
-        assert update == {
-            "type": "tool_update",
-            "tool_call_id": "call-1",
-            "text": "reading the logs",
-            "verbatim": False,
-        }
         assert result["output"] == "found it"
         assert (seen[0].id, seen[0].session_id, seen[0].turn_id) == (
             "call-1",

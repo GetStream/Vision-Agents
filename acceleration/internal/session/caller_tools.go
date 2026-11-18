@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -29,6 +30,9 @@ var ErrNoCallerTool = errors.New("session: the session's caller has no tool by t
 // in progress and every call in flight to finish (agent.SetTools), and the model is offered
 // them from the next turn.
 func (s *Session) AddTools(ctx context.Context, tools []harness.Tool) error {
+	if ungrouped := s.loading.ungrouped(tools); len(ungrouped) > 0 {
+		return stack.Wrap(fmt.Errorf("%w: %s", ErrToolNotConfigured, strings.Join(ungrouped, ", ")))
+	}
 	return s.changeTools(ctx, func(declared []harness.Tool) ([]harness.Tool, error) {
 		next := slices.Clone(declared)
 		for _, tool := range tools {
@@ -83,7 +87,7 @@ func (s *Session) changeTools(ctx context.Context, change func([]harness.Tool) (
 			return stack.Wrap(fmt.Errorf("%w: %s", ErrToolTaken, tool.Name))
 		}
 	}
-	if err := s.current().SetTools(ctx, harness.Tools{Tools: s.offering(next)}, func() {
+	if err := s.current().SetTools(ctx, s.offering(next), func() {
 		s.labelMu.Lock()
 		s.spec.Tools = next
 		if s.addedTools == nil {
@@ -120,9 +124,9 @@ func (s *Session) callerTool(name string) (declared, added bool) {
 }
 
 // offering is everything the session offers with declared as the caller's tools, which go
-// first as they did when it opened.
-func (s *Session) offering(declared []harness.Tool) []harness.Tool {
-	return slices.Concat(declared, s.otherTools)
+// first as they did when it opened, each loaded as its group or connector binding says.
+func (s *Session) offering(declared []harness.Tool) harness.Tools {
+	return s.loading.arrange(slices.Concat(declared, s.otherTools))
 }
 
 // toolPolicy is next with the caller's tools that asked to be cancelled by an interruption,

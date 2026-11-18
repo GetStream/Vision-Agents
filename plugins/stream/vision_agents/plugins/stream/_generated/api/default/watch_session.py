@@ -120,11 +120,12 @@ def sync_detailed(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
-    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
-    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
-    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_started`, `tool_updated`,
+    `tool_ran`, `tool_call.started`, `tool_call.progress`, `tool_call.finished`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms,
+    message_start and message_end, the utterance being heard when it was cut, how many milliseconds of
+    it had been, and where all it had been sent is in the reply's message, when any of it had),
+    `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
     and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
@@ -174,6 +175,11 @@ def sync_detailed(
     tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
     one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
     task_settled.
+    `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
+    state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
+    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
+    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
+    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -332,11 +338,12 @@ def sync(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
-    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
-    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
-    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_started`, `tool_updated`,
+    `tool_ran`, `tool_call.started`, `tool_call.progress`, `tool_call.finished`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms,
+    message_start and message_end, the utterance being heard when it was cut, how many milliseconds of
+    it had been, and where all it had been sent is in the reply's message, when any of it had),
+    `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
     and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
@@ -386,6 +393,11 @@ def sync(
     tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
     one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
     task_settled.
+    `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
+    state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
+    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
+    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
+    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -539,11 +551,12 @@ async def asyncio_detailed(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
-    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
-    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
-    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_started`, `tool_updated`,
+    `tool_ran`, `tool_call.started`, `tool_call.progress`, `tool_call.finished`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms,
+    message_start and message_end, the utterance being heard when it was cut, how many milliseconds of
+    it had been, and where all it had been sent is in the reply's message, when any of it had),
+    `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
     and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
@@ -593,6 +606,11 @@ async def asyncio_detailed(
     tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
     one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
     task_settled.
+    `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
+    state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
+    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
+    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
+    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -749,11 +767,12 @@ async def asyncio(
     message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`,
     `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name,
     mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply),
-    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`,
-    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id,
-    heard_ms, message_start and message_end, the utterance being heard when it was cut, how many
-    milliseconds of it had been, and where all it had been sent is in the reply's message, when any of
-    it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+    `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_started`, `tool_updated`,
+    `tool_ran`, `tool_call.started`, `tool_call.progress`, `tool_call.finished`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms,
+    message_start and message_end, the utterance being heard when it was cut, how many milliseconds of
+    it had been, and where all it had been sent is in the reply's message, when any of it had),
+    `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
     An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`,
     and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
     message_start and message_end are offsets in Unicode code points into the text of the Chat message
@@ -803,6 +822,11 @@ async def asyncio(
     tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets
     one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on
     task_settled.
+    `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
+    state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
+    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
+    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
+    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without

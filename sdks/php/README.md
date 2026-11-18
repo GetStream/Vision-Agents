@@ -235,7 +235,6 @@ $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
     'properties' => ['flight_id' => ['type' => 'string']],
 ], function (ToolCallContext $toolCallContext, array $args): string {
-    $toolCallContext->update('checking seats');
     $toolCallContext->disallowInterruptions();
     return $bookings->book($args['flight_id'], user: $toolCallContext->user->id, key: $toolCallContext->id);
 }, timeout: 20, approval: 'Book flight {flight_id}?');
@@ -254,9 +253,7 @@ $agent->tools->register('book_flight', 'Book a flight for the caller', [
 
 `$toolCallContext->id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `sessionId`, `turnId`, `user` and `conversation`
-say where it came from. `update($text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say($text)` has it say `$text` as written,
-which a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going
+say where it came from. `disallowInterruptions()` keeps the call going
 from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when
 the router had already cancelled it. A PHP fiber cannot be stopped from outside, so a call that
 was cancelled or ran out of time keeps running with `$toolCallContext->cancelled()` true, and

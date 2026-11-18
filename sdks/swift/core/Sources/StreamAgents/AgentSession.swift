@@ -28,6 +28,10 @@ public final class AgentSession: ObservableObject {
     /// first. A conversation kept in Stream Chat also shows each on its reply's step.
     @Published public private(set) var approvals: [ToolApprovalRequest] = []
 
+    /// Every tool call of the session by its id, as it was last reported: running, waiting for
+    /// a person's approval, or how it ended, whichever process runs it. Finished calls stay.
+    @Published public private(set) var toolCalls: [String: ToolCallState] = [:]
+
     /// What the router holds this session by, which is what addresses it and its socket.
     public var id: String { session.id }
 
@@ -59,6 +63,9 @@ public final class AgentSession: ObservableObject {
     /// Whoever is reading `events()`, each with a stream of their own, or nil once the session
     /// has stopped and there is nothing more to read.
     private var subscribers: [UUID: AsyncStream<AgentEvent>.Continuation]? = [:]
+    /// What `on(_:perform:)` registered, locked rather than main-actor isolated so a
+    /// cancellable released anywhere takes its handler away at once.
+    private let handlers = AllocatedUnfairLock<[UUID: (kind: AgentEvent.Kind, handle: @MainActor (AgentEvent) -> Void)]>([:])
     /// The frames this device's camera showed lately, while it is on a call with it on, which
     /// answer the router's `get_video_frames`.
     var cameraFrames: CameraFrames?
@@ -123,6 +130,14 @@ public final class AgentSession: ObservableObject {
             subscribers?[UUID()] = continuation
         }
         return stream
+    }
+
+    /// Calls `handler` with every event of `kind`, such as `.toolCallFinished`, until the
+    /// returned value is cancelled or released. It needs no loop over `events()`.
+    public func on(_ kind: AgentEvent.Kind, perform handler: @escaping @MainActor (AgentEvent) -> Void) -> AnyCancellable {
+        let id = UUID()
+        handlers.withLock { $0[id] = (kind, handler) }
+        return AnyCancellable { [handlers] in handlers.withLock { $0[id] = nil } }
     }
 
     /// Speaks this without going through the model. `interrupt` stops what the agent is saying
@@ -354,6 +369,14 @@ public final class AgentSession: ObservableObject {
 
     private func apply(_ event: AgentEvent) {
         conversation.apply(event)
+        if let state = event.toolCallState {
+            toolCalls[state.id] = state
+        }
+        if let kind = event.kind {
+            for handler in handlers.withLock({ $0.values.filter { $0.kind == kind }.map(\.handle) }) {
+                handler(event)
+            }
+        }
         for (id, continuation) in subscribers ?? [:] {
             switch continuation.yield(event) {
             case .enqueued:
@@ -379,11 +402,12 @@ public final class AgentSession: ObservableObject {
     private func answer(_ call: AgentEvent.ToolCall) {
         // Session events are broadcast to observers as well as tool owners. A Python
         // video worker may own this request; an observer must not resolve it first.
+        guard call.run else { return }
         if call.name == CameraFrames.toolName, let cameraFrames {
             return show(cameraFrames, for: call)
         }
         guard let tool = tools[call.name] else { return }
-        if let approval = tool.approval {
+        if let approval = tool.approval, !call.approved {
             approvals.append(ToolApprovalRequest(call: call, approval: approval, tool: tool))
         } else {
             run(call, with: tool)

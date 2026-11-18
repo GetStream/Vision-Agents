@@ -130,6 +130,9 @@ class Client:
         self.teams = Teams(self.backend, self.spend_limits)
         self.account = OrganizationAccount(self.backend)
         self.usage = Usage(self.backend)
+        # Registered once for every agent, run by `Dispatch.host(client)`, and offered only
+        # to an agent whose agent.yaml names them in a tool group.
+        self.tools = FunctionRegistry()
 
     @property
     def server_side(self) -> bool:
@@ -345,7 +348,6 @@ class Agent:
             @agent.register(needs_approval="Book flight {flight_id}?")
             async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
                 "Book a flight for the caller"
-                await tool_call_context.update("checking seats")
                 await tool_call_context.disallow_interruptions()
                 return await bookings.book(flight_id, key=tool_call_context.id)
 

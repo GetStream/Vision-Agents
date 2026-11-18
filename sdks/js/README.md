@@ -353,7 +353,6 @@ agent.tools.register<{ flight_id: string }>({
   approval: { title: "Book flight {flight_id}?" },
   timeoutMs: 20_000,
   run: async ({ flight_id }, toolCallContext) => {
-    toolCallContext.update("checking seats");
     await toolCallContext.disallowInterruptions();
     return bookings.book(flight_id, { user: toolCallContext.user.id, key: toolCallContext.id });
   },

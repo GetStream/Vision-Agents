@@ -2087,11 +2087,22 @@ func (s *Server) getAgentStats(ctx context.Context, request *getAgentStatsReques
 		return nil, invalidRequest("statistics are not available: no database configured")
 	}
 
+	configID := value(request.Agent.ptr())
+	if configID != "" {
+		if _, err := s.configs.AgentConfig(ctx, customerID, configID); err != nil {
+			return nil, errUnknownConfig
+		}
+	}
+
 	peak, err := s.store.CustomerConcurrencyPeak(ctx, customerID, request.From, request.To)
 	if err != nil {
 		return nil, err
 	}
-	overall, tools, err := s.store.CustomerToolUsage(ctx, customerID, request.From, request.To)
+	turns, err := s.store.CustomerTurns(ctx, customerID, configID, request.From, request.To)
+	if err != nil {
+		return nil, err
+	}
+	overall, tools, err := s.store.CustomerToolUsage(ctx, customerID, configID, request.From, request.To)
 	if err != nil {
 		return nil, err
 	}
@@ -2099,24 +2110,41 @@ func (s *Server) getAgentStats(ctx context.Context, request *getAgentStatsReques
 	stats := AgentStats{
 		PeakConcurrentSessions: peak.Sessions,
 		PeakAt:                 peak.At,
-		ToolCalls:              toolStatsOf(overall),
+		Sessions:               turns.Sessions,
+		AvgTurns:               share(turns.Turns, turns.Sessions),
+		ToolCalls:              toolStatsOf(overall, turns.Sessions),
 		Tools:                  make([]ToolStats, 0, len(tools)),
 	}
 	for _, tool := range tools {
-		stats.Tools = append(stats.Tools, toolStatsOf(tool))
+		stats.Tools = append(stats.Tools, toolStatsOf(tool, turns.Sessions))
 	}
 	return &getAgentStatsResponse{Body: stats}, nil
 }
 
-func toolStatsOf(usage store.ToolUsage) ToolStats {
+func toolStatsOf(usage store.ToolUsage, sessions int64) ToolStats {
 	return ToolStats{
-		Tool:      usage.Tool,
-		Calls:     usage.Calls,
-		Failed:    usage.Failed,
-		AvgTokens: usage.AvgTokens,
-		AvgMs:     usage.AvgMs,
-		P99Ms:     usage.P99Ms,
+		Tool:              usage.Tool,
+		Calls:             usage.Calls,
+		Failed:            usage.Failed,
+		Sessions:          usage.Sessions,
+		SessionShare:      share(usage.Sessions, sessions),
+		AvgTurnsBeforeUse: usage.AvgTurnsBeforeUse,
+		AvgTokens:         usage.AvgTokens,
+		AvgMs:             usage.AvgMs,
+		P99Ms:             usage.P99Ms,
+		Loading:           usage.Loading,
+		DefinitionTokens:  usage.DefinitionTokens,
+		SummaryTokens:     usage.SummaryTokens,
 	}
+}
+
+// share is part over whole, nil when whole is none.
+func share(part, whole int64) *float64 {
+	if whole == 0 {
+		return nil
+	}
+	ratio := float64(part) / float64(whole)
+	return &ratio
 }
 
 // runRollup aggregates every customer's request rows into a rollup table. It is a
@@ -2409,13 +2437,16 @@ func (s *Server) registerServer(api huma.API) {
 		Path:        "/v1/stats/agents",
 		Summary:     "How the calling customer's agents ran, across all of them",
 		Description: "The most agents that were running at once, and which tools they called: how often, " +
-			"how much each call put in front of the model and how long it took.\n" +
+			"in how many sessions and after how many turns, how much each call put in front of the model, " +
+			"what the tool's definition costs every turn that carries it and how long a call took.\n" +
+			"With agent, the sessions, turns and tools are that agent config's alone; the peak is still " +
+			"every agent's.\n" +
 			"One figure for the whole window rather than a row per bucket, because neither a peak nor " +
 			"a percentile can be summed out of smaller ones.",
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The window's figures"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.getAgentStats)
 	huma.Register(api, huma.Operation{
 		OperationID: "runRollup",
@@ -2551,8 +2582,9 @@ type getActivityResponse struct {
 }
 
 type getAgentStatsRequest struct {
-	From time.Time `query:"from" doc:"Start of the window, inclusive." required:"true"`
-	To   time.Time `query:"to" doc:"End of the window, exclusive." required:"true"`
+	From  time.Time             `query:"from" doc:"Start of the window, inclusive." required:"true"`
+	To    time.Time             `query:"to" doc:"End of the window, exclusive." required:"true"`
+	Agent optionalParam[string] `query:"agent" doc:"The id of an agent config: only its sessions are counted. Omitted is every agent."`
 }
 
 type getAgentStatsResponse struct {
@@ -2563,18 +2595,26 @@ type getAgentStatsResponse struct {
 type AgentStats struct {
 	PeakConcurrentSessions int64       `json:"peak_concurrent_sessions" doc:"The most sessions open at the same time, each one an agent running. A session still open counts up to now."`
 	PeakAt                 *time.Time  `json:"peak_at" nullable:"true" doc:"When that peak was first reached. Null when no session was open in the window."`
+	Sessions               int64       `json:"sessions" doc:"Sessions that took a turn in the window: what a tool's session_share is out of."`
+	AvgTurns               *float64    `json:"avg_turns" nullable:"true" doc:"Turns a session took in the window, on average. A turn is a reply to the person, not a rewound one or a delegated task's. Null when no session took one."`
 	ToolCalls              ToolStats   `json:"tool_calls" doc:"Every tool call in the window, as one. Its tool is empty."`
 	Tools                  []ToolStats `json:"tools" nullable:"false" doc:"One row per tool, most called first."`
 }
 
 // ToolStats is how often a tool ran and what it cost.
 type ToolStats struct {
-	Tool      string   `json:"tool"`
-	Calls     int64    `json:"calls"`
-	Failed    int64    `json:"failed" doc:"Calls that ended in an error."`
-	AvgTokens float64  `json:"avg_tokens" doc:"What a call put in front of the model, its arguments and its result, estimated at four characters a token."`
-	AvgMs     *float64 `json:"avg_ms" nullable:"true" doc:"From the call starting to its result. Null when none was timed."`
-	P99Ms     *float64 `json:"p99_ms" nullable:"true"`
+	Tool              string   `json:"tool"`
+	Calls             int64    `json:"calls"`
+	Failed            int64    `json:"failed" doc:"Calls that ended in an error."`
+	Sessions          int64    `json:"sessions" doc:"Sessions that called it at least once."`
+	SessionShare      *float64 `json:"session_share" nullable:"true" minimum:"0" doc:"Sessions that called it, out of the window's sessions, from 0 to 1. Null when no session took a turn."`
+	AvgTurnsBeforeUse *float64 `json:"avg_turns_before_use" nullable:"true" doc:"Turns a session took before its first call, on average: 0 is a call on the first turn. Null on the row over every tool."`
+	AvgTokens         float64  `json:"avg_tokens" doc:"What a call put in front of the model, its arguments and its result, estimated at four characters a token."`
+	AvgMs             *float64 `json:"avg_ms" nullable:"true" doc:"From the call starting to its result. Null when none was timed."`
+	P99Ms             *float64 `json:"p99_ms" nullable:"true"`
+	Loading           string   `json:"loading" doc:"How the latest call had the tool offered: full, summary or deferred. Empty when no call recorded it, as calls made before it was recorded and built-in tools."`
+	DefinitionTokens  *int64   `json:"definition_tokens" nullable:"true" doc:"What the tool's whole definition, its name, description and schema, costs every turn that carries it, estimated at four characters a token. Null when no call recorded it."`
+	SummaryTokens     *int64   `json:"summary_tokens" nullable:"true" doc:"What its definition costs offered as a summary. Null unless its loading is summary."`
 }
 
 type runRollupRequest struct {

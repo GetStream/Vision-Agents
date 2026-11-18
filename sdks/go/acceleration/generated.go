@@ -3022,6 +3022,75 @@ func (e ToolApprovalCommandType) Valid() bool {
 	}
 }
 
+// Defines values for ToolCallFrameType.
+const (
+	ToolCallFinished ToolCallFrameType = "tool_call.finished"
+	ToolCallProgress ToolCallFrameType = "tool_call.progress"
+	ToolCallStarted  ToolCallFrameType = "tool_call.started"
+)
+
+// Valid indicates whether the value is a known member of the ToolCallFrameType enum.
+func (e ToolCallFrameType) Valid() bool {
+	switch e {
+	case ToolCallFinished:
+		return true
+	case ToolCallProgress:
+		return true
+	case ToolCallStarted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolCallStatus.
+const (
+	ToolCallStatusCancelled  ToolCallStatus = "cancelled"
+	ToolCallStatusFailed     ToolCallStatus = "failed"
+	ToolCallStatusInProgress ToolCallStatus = "in_progress"
+	ToolCallStatusSuccess    ToolCallStatus = "success"
+	ToolCallStatusWaiting    ToolCallStatus = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the ToolCallStatus enum.
+func (e ToolCallStatus) Valid() bool {
+	switch e {
+	case ToolCallStatusCancelled:
+		return true
+	case ToolCallStatusFailed:
+		return true
+	case ToolCallStatusInProgress:
+		return true
+	case ToolCallStatusSuccess:
+		return true
+	case ToolCallStatusWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolLoading.
+const (
+	ToolLoadingDeferred ToolLoading = "deferred"
+	ToolLoadingFull     ToolLoading = "full"
+	ToolLoadingSummary  ToolLoading = "summary"
+)
+
+// Valid indicates whether the value is a known member of the ToolLoading enum.
+func (e ToolLoading) Valid() bool {
+	switch e {
+	case ToolLoadingDeferred:
+		return true
+	case ToolLoadingFull:
+		return true
+	case ToolLoadingSummary:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ToolResultCommandType.
 const (
 	ToolResultCommandTypeToolResult ToolResultCommandType = "tool_result"
@@ -3691,8 +3760,8 @@ type AgentConfig struct {
 	SyncHash *string            `json:"sync_hash,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools        *AgentTools   `json:"tools,omitempty"`
+	// Tools The functions an SDK provides that the agent may offer, in named groups. Empty when there are none, and then the agent offers no function.
+	Tools        *[]ToolGroup  `json:"tools,omitempty"`
 	Tts          *string       `json:"tts,omitempty"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 	Video        *SessionVideo `json:"video,omitempty"`
@@ -3796,8 +3865,8 @@ type AgentConfigPatch struct {
 	Subagent *string            `json:"subagent,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools *AgentTools   `json:"tools,omitempty"`
+	// Tools Replaces the tool groups whole; an empty list removes them all.
+	Tools *[]ToolGroup  `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
 
@@ -3929,8 +3998,8 @@ type AgentConfigRequest struct {
 	// Tags Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
 	Tags *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools *AgentTools   `json:"tools,omitempty"`
+	// Tools The functions an SDK provides that the agent may offer, in named groups, each with how it is loaded. A function an SDK registers, declares on a session or hosts in a worker is offered only when a group names it: a session declaring one that none names is refused (400 tool_not_configured), and a worker's is left out. The router's own tools, connector tools and other agents are not named here. Omitted or null on an update, the groups stored stay; an empty list removes them all. The mapping this field once was, with progressive and output_retention, is refused: loading summary and output_retention on a group or a connector binding replaced them.
+	Tools *[]ToolGroup  `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
 
@@ -3963,8 +4032,16 @@ type AgentConnectorBinding struct {
 	// Events MCP events the binding's fixed connection is subscribed to, each opening a text conversation from the config when it arrives. Subscribed when the connection is next validated. Only a fixed binding may declare events: a session binding's connection is picked when a session opens, and an event arrives with no session open.
 	Events *[]ConnectorBindingEvent `json:"events,omitempty"`
 
+	// Loading How a tool is offered to the model. full sends its whole description and input schema from the start. summary sends the first line of its description and its arguments without their descriptions, and the first call returns the full description and schema instead of running it: one more model turn for each tool a conversation uses, for less context on every turn. deferred offers nothing until the model needs it: an agent with a deferred tool is offered search_tool, which finds deferred tools by what they do, and load_tool, which returns their full descriptions and offers them from the model's next step on.
+	Loading *ToolLoading `json:"loading,omitempty"`
+
 	// Name The alias, unique within the config: a lowercase letter, then up to 62 lowercase letters, digits, - or _, never __ and not ending in _. The model is offered each tool as <name>__<tool>, split back at the first __, so a __ inside the alias or a _ at its end would split it in the wrong place.
 	Name string `json:"name"`
+
+	// OutputRetention How long the agent's sessions keep what the binding's tools were given and gave back on the turns they record, as a tool group's output_retention. Omitted or empty, it is kept as long as the session.
+	//
+	// Example: 30d
+	OutputRetention *string `json:"output_retention,omitempty"`
 
 	// Policy How a binding's tool calls behave around speech and interruptions. Every field is optional, and a field left out keeps today's behaviour.
 	Policy *ConnectorBindingPolicy `json:"policy,omitempty"`
@@ -4128,26 +4205,21 @@ type AgentScheduling struct {
 
 // AgentStats defines model for AgentStats.
 type AgentStats struct {
+	// AvgTurns Turns a session took in the window, on average. A turn is a reply to the person, not a rewound one or a delegated task's. Null when no session took one.
+	AvgTurns *float64 `json:"avg_turns"`
+
 	// PeakAt When that peak was first reached. Null when no session was open in the window.
 	PeakAt *time.Time `json:"peak_at"`
 
 	// PeakConcurrentSessions The most sessions open at the same time, each one an agent running. A session still open counts up to now.
-	PeakConcurrentSessions int64     `json:"peak_concurrent_sessions"`
-	ToolCalls              ToolStats `json:"tool_calls"`
+	PeakConcurrentSessions int64 `json:"peak_concurrent_sessions"`
+
+	// Sessions Sessions that took a turn in the window: what a tool's session_share is out of.
+	Sessions  int64     `json:"sessions"`
+	ToolCalls ToolStats `json:"tool_calls"`
 
 	// Tools One row per tool, most called first.
 	Tools []ToolStats `json:"tools"`
-}
-
-// AgentTools How an agent is offered its tools, and how long what they were given and gave back is kept.
-type AgentTools struct {
-	// OutputRetention How long this agent's sessions keep what any of its tools were given and gave back on the turns they record: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out on a create, or empty, it is kept as long as the session; left out on an update, the stored setting stays, and an empty string removes it. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it, and the shortest applies. It applies to tool calls recorded after it is set.
-	//
-	// Example: 30d
-	OutputRetention *string `json:"output_retention,omitempty"`
-
-	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
-	Progressive *bool `json:"progressive,omitempty"`
 }
 
 // AgentUser defines model for AgentUser.
@@ -6560,7 +6632,7 @@ type EqualsOrIn1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -7649,6 +7721,9 @@ type OfferedTool struct {
 	// Description What the model is told the tool does.
 	Description string `json:"description"`
 
+	// Loading How a tool is offered to the model. full sends its whole description and input schema from the start. summary sends the first line of its description and its arguments without their descriptions, and the first call returns the full description and schema instead of running it: one more model turn for each tool a conversation uses, for less context on every turn. deferred offers nothing until the model needs it: an agent with a deferred tool is offered search_tool, which finds deferred tools by what they do, and load_tool, which returns their full descriptions and offers them from the model's next step on.
+	Loading *ToolLoading `json:"loading,omitempty"`
+
 	// Name How the model asks for it.
 	Name string `json:"name"`
 
@@ -7879,7 +7954,7 @@ type Policy struct {
 	// Example: {"application":"support"}
 	Tags *map[string]string `json:"tags,omitempty"`
 
-	// ToolOutputRetention How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the agent config's tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+	// ToolOutputRetention How long a session keeps what its tools were given and gave back on the turns it records: a tool's arguments, its result, a search's query and the wording of a tool's error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it is kept as long as the session. The shortest of the organization's, the app's and the output_retention of the agent config's tool group or connector binding the tool is in applies, so an agent can shorten it and never lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
 	//
 	// Example: 30d
 	ToolOutputRetention *string `json:"tool_output_retention,omitempty"`
@@ -10162,8 +10237,8 @@ type SyncAgentRequest struct {
 	Subagent *string            `json:"subagent,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 
-	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
-	Tools *AgentTools   `json:"tools,omitempty"`
+	// Tools agent.yaml's tools: the functions an SDK provides that the agent may offer, in named groups, as AgentConfigRequest's tools names them, with the same rules. Sent, they replace the stored groups whole, an empty list removing them. Left out, the stored ones stay.
+	Tools *[]ToolGroup  `json:"tools,omitempty"`
 	Tts   *string       `json:"tts,omitempty"`
 	Video *SessionVideo `json:"video,omitempty"`
 
@@ -10391,6 +10466,62 @@ type ToolApprovalCommand struct {
 // ToolApprovalCommandType defines model for ToolApprovalCommand.Type.
 type ToolApprovalCommandType string
 
+// ToolCallFrameType tool_call.started is the call's first frame, tool_call.progress one while it runs or waits, and tool_call.finished its last.
+type ToolCallFrameType string
+
+// ToolCallState One change to a tool call's state. Every watcher is sent tool_call.started once, tool_call.progress for each change while it runs or waits, and tool_call.finished once, carrying the call's whole state each time, so a client keeps the last one it got per tool_call_id.
+type ToolCallState struct {
+	// ApprovedAt When a person allowed the call.
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+
+	// DurationMs From started_at to this change; on tool_call.finished, how long the call took.
+	DurationMs int64 `json:"duration_ms"`
+
+	// Error Why a failed call failed, or what a declined one shows, such as "Not allowed in time".
+	Error *string `json:"error,omitempty"`
+
+	// Progress The last thing said about the call while it runs, such as "Searching for flights": a tool_update, the connector binding's pre_speech, or the question it waits on.
+	Progress *string `json:"progress,omitempty"`
+
+	// RejectedAt When a person declined the call, or its wait for them passed.
+	RejectedAt *time.Time `json:"rejected_at,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+
+	// Status in_progress while it runs, waiting while it is held for a person's approval, and success, failed or cancelled once it finished. A call declined, or whose approval nobody gave in time, is cancelled with rejected_at.
+	Status ToolCallStatus `json:"status"`
+	Tool   string         `json:"tool"`
+
+	// ToolCallId The call, as tool_call, tool_started and tool_ran name it.
+	ToolCallId string `json:"tool_call_id"`
+	TurnId     string `json:"turn_id"`
+
+	// Type tool_call.started is the call's first frame, tool_call.progress one while it runs or waits, and tool_call.finished its last.
+	Type ToolCallFrameType `json:"type"`
+}
+
+// ToolCallStatus in_progress while it runs, waiting while it is held for a person's approval, and success, failed or cancelled once it finished. A call declined, or whose approval nobody gave in time, is cancelled with rejected_at.
+type ToolCallStatus string
+
+// ToolGroup A named set of functions an SDK provides that the agent may offer, how they are loaded and how long what they were given and gave back is kept. A function an SDK registers, declares on a session or hosts in a worker is offered only when a group names it.
+type ToolGroup struct {
+	// Loading How a tool is offered to the model. full sends its whole description and input schema from the start. summary sends the first line of its description and its arguments without their descriptions, and the first call returns the full description and schema instead of running it: one more model turn for each tool a conversation uses, for less context on every turn. deferred offers nothing until the model needs it: an agent with a deferred tool is offered search_tool, which finds deferred tools by what they do, and load_tool, which returns their full descriptions and offers them from the model's next step on.
+	Loading *ToolLoading `json:"loading,omitempty"`
+
+	// Name What the group is called, unique within the config.
+	Name string `json:"name"`
+
+	// OutputRetention How long the agent's sessions keep what the group's tools were given and gave back on the turns they record: a tool's arguments, its result and the wording of its error. none records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it failed. Left out or empty, it is kept as long as the session. The app's and the organization's policies (tool_output_retention) can shorten it and never lengthen it. It applies to tool calls recorded after it is set.
+	//
+	// Example: 30d
+	OutputRetention *string `json:"output_retention,omitempty"`
+
+	// Tools The functions' names, as the SDK registers them. A name sits in one group at most.
+	Tools []string `json:"tools"`
+}
+
+// ToolLoading How a tool is offered to the model. full sends its whole description and input schema from the start. summary sends the first line of its description and its arguments without their descriptions, and the first call returns the full description and schema instead of running it: one more model turn for each tool a conversation uses, for less context on every turn. deferred offers nothing until the model needs it: an agent with a deferred tool is offered search_tool, which finds deferred tools by what they do, and load_tool, which returns their full descriptions and offers them from the model's next step on.
+type ToolLoading string
+
 // ToolResultCommand defines model for ToolResultCommand.
 type ToolResultCommand struct {
 	Error      *string               `json:"error,omitempty"`
@@ -10411,12 +10542,30 @@ type ToolStats struct {
 
 	// AvgTokens What a call put in front of the model, its arguments and its result, estimated at four characters a token.
 	AvgTokens float64 `json:"avg_tokens"`
-	Calls     int64   `json:"calls"`
+
+	// AvgTurnsBeforeUse Turns a session took before its first call, on average: 0 is a call on the first turn. Null on the row over every tool.
+	AvgTurnsBeforeUse *float64 `json:"avg_turns_before_use"`
+	Calls             int64    `json:"calls"`
+
+	// DefinitionTokens What the tool's whole definition, its name, description and schema, costs every turn that carries it, estimated at four characters a token. Null when no call recorded it.
+	DefinitionTokens *int64 `json:"definition_tokens"`
 
 	// Failed Calls that ended in an error.
-	Failed int64    `json:"failed"`
-	P99Ms  *float64 `json:"p99_ms"`
-	Tool   string   `json:"tool"`
+	Failed int64 `json:"failed"`
+
+	// Loading How the latest call had the tool offered: full, summary or deferred. Empty when no call recorded it, as calls made before it was recorded and built-in tools.
+	Loading string   `json:"loading"`
+	P99Ms   *float64 `json:"p99_ms"`
+
+	// SessionShare Sessions that called it, out of the window's sessions, from 0 to 1. Null when no session took a turn.
+	SessionShare *float64 `json:"session_share"`
+
+	// Sessions Sessions that called it at least once.
+	Sessions int64 `json:"sessions"`
+
+	// SummaryTokens What its definition costs offered as a summary. Null unless its loading is summary.
+	SummaryTokens *int64 `json:"summary_tokens"`
+	Tool          string `json:"tool"`
 }
 
 // TranscriptEntity Something the recording named, for the providers that pick them out.
@@ -11793,6 +11942,9 @@ type GetAgentStatsParams struct {
 
 	// To End of the window, exclusive.
 	To time.Time `form:"to" json:"to"`
+
+	// Agent The id of an agent config: only its sessions are counted. Omitted is every agent.
+	Agent *string `form:"agent,omitempty" json:"agent,omitempty"`
 }
 
 // GetSpendParams defines parameters for GetSpend.
@@ -16031,7 +16183,8 @@ type ClientInterface interface {
 
 	// GetAgentStats How the calling customer's agents ran, across all of them
 	//
-	// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+	// The most agents that were running at once, and which tools they called: how often, in how many sessions and after how many turns, how much each call put in front of the model, what the tool's definition costs every turn that carries it and how long a call took.
+	// With agent, the sessions, turns and tools are that agent config's alone; the peak is still every agent's.
 	// One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
 	//
 	// Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
@@ -22737,7 +22890,8 @@ func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, req
 
 // GetAgentStats How the calling customer's agents ran, across all of them
 //
-// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+// The most agents that were running at once, and which tools they called: how often, in how many sessions and after how many turns, how much each call put in front of the model, what the tool's definition costs every turn that carries it and how long a call took.
+// With agent, the sessions, turns and tools are that agent config's alone; the peak is still every agent's.
 // One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
 //
 // Corresponds with GET /v1/stats/agents (the `GetAgentStats` operationId).
@@ -34765,6 +34919,18 @@ func NewGetAgentStatsRequest(server string, params *GetAgentStatsParams) (*http.
 			}
 		}
 
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -39345,7 +39511,8 @@ type ClientWithResponsesInterface interface {
 
 	// GetAgentStatsWithResponse How the calling customer's agents ran, across all of them
 	//
-	// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+	// The most agents that were running at once, and which tools they called: how often, in how many sessions and after how many turns, how much each call put in front of the model, what the tool's definition costs every turn that carries it and how long a call took.
+	// With agent, the sessions, turns and tools are that agent config's alone; the peak is still every agent's.
 	// One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -65269,6 +65436,8 @@ type GetAgentStatsResponse struct {
 	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -65302,6 +65471,11 @@ func (r GetAgentStatsResponse) GetJSON402() *PaymentRequired {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r GetAgentStatsResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAgentStatsResponse) GetJSON404() *NotFound {
+	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -72380,7 +72554,8 @@ func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, param
 
 // GetAgentStatsWithResponse How the calling customer's agents ran, across all of them
 //
-// The most agents that were running at once, and which tools they called: how often, how much each call put in front of the model and how long it took.
+// The most agents that were running at once, and which tools they called: how often, in how many sessions and after how many turns, how much each call put in front of the model, what the tool's definition costs every turn that carries it and how long a call took.
+// With agent, the sessions, turns and tools are that agent config's alone; the peak is still every agent's.
 // One figure for the whole window rather than a row per bucket, because neither a peak nor a percentile can be summed out of smaller ones.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -102722,6 +102897,13 @@ func ParseGetAgentStatsResponse(rsp *http.Response) (*GetAgentStatsResponse, err
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

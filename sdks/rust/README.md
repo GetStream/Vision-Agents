@@ -76,7 +76,6 @@ tools.register_with_tool_call_context(
         ..Default::default()
     },
     async |tool_call_context: ToolCallContext, arguments| {
-        tool_call_context.update("checking seats").await?;
         tool_call_context.disallow_interruptions().await?;
         let user = &tool_call_context.user.id;
         Ok::<_, Error>(book(&arguments["flight_id"], user, &tool_call_context.id).await)
@@ -96,10 +95,7 @@ tools.register_with_tool_call_context(
 
 `tool_call_context.id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation`
-say where it came from. `update(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
-a speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
-on, for a write that must not stop halfway, and returns `Error::NotHeld` when the router had
+say where it came from. `disallow_interruptions` keeps the call going from then on, for a write that must not stop halfway, and returns `Error::NotHeld` when the router had
 already cancelled it. A cancelled call is aborted at its next `.await` and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.
 

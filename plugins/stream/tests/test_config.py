@@ -659,18 +659,19 @@ class TestSyncAgent:
 
         assert router.bodies == []
 
-    async def test_offering_tools_progressively_is_sent(
-        self, router: Router, support_dir
-    ):
+    async def test_tool_groups_are_sent(self, router: Router, support_dir):
         (support_dir / "agent.yaml").write_text(
-            "name: support\ntools:\n  progressive: true\n"
+            "name: support\ntools:\n"
+            "  - name: booking\n    loading: summary\n    tools: [lookup_booking]\n"
         )
 
         result = await stream.sync_agent(
             "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert router.configs[result.config.id]["tools"] == {"progressive": True}
+        assert router.configs[result.config.id]["tools"] == [
+            {"name": "booking", "loading": "summary", "tools": ["lookup_booking"]}
+        ]
 
     async def test_a_file_saying_nothing_about_tools_sends_nothing(
         self, router: Router, support_dir

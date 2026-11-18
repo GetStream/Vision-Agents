@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -27,8 +29,13 @@ func (m *Manager) HostTools(hosts ToolHosts) { m.hosts = hosts }
 //
 // The agent is the session's agent id, or failing that the name its config was opened by,
 // since a session opened by name carries an agent id of its own. The worker running a call
-// reaches the session through conversation.
-func (m *Manager) hostedTools(spec Spec, sessionID string, conversation dispatch.Progress, declared []harness.Tool, next agent.ToolRunner) ([]harness.Tool, agent.ToolRunner) {
+// reaches the session through conversation. A tool no group of the session's config names
+// is left out: the worker connected before the session opened, so there is nobody to refuse.
+//
+// Tools hosted for every agent (dispatch.EveryAgent) come after the agent's own, and only
+// where a group of the session's config names them: registered once for the app, each agent
+// takes the ones its agent.yaml enables, so the others are not worth a warning.
+func (m *Manager) hostedTools(spec Spec, loading toolLoading, sessionID string, conversation dispatch.Progress, declared []harness.Tool, next agent.ToolRunner) ([]harness.Tool, agent.ToolRunner) {
 	if m.hosts == nil {
 		return declared, next
 	}
@@ -47,27 +54,50 @@ func (m *Manager) hostedTools(spec Spec, sessionID string, conversation dispatch
 	for _, tool := range declared {
 		taken[tool.Name] = true
 	}
-	hosted := map[string]bool{}
-	for _, tool := range offered {
-		if taken[tool.Name] {
-			continue
-		}
-		hosted[tool.Name] = true
-		offer := harness.Tool{
+	// hosted is the agent id each offered tool is hosted under, which its calls go to.
+	hosted := map[string]string{}
+	offer := func(agentID string, tool dispatch.Tool) {
+		taken[tool.Name] = true
+		hosted[tool.Name] = agentID
+		offered := harness.Tool{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
 			Interruptible: tool.Interruptible, Timeout: tool.Timeout,
 		}
 		if tool.Approval != "" {
-			offer.Approval = &harness.ToolApproval{Title: tool.Approval}
+			offered.Approval = &harness.ToolApproval{Title: tool.Approval}
 		}
-		declared = append(declared, offer)
+		declared = append(declared, offered)
+	}
+	var ungrouped []string
+	for _, tool := range offered {
+		if taken[tool.Name] {
+			continue
+		}
+		if !loading.grouped(tool.Name) {
+			ungrouped = append(ungrouped, tool.Name)
+			continue
+		}
+		offer(hostedAs, tool)
+	}
+	if loading.configured {
+		everyAgent, _ := m.hosts.HostedTools(spec.CustomerID, dispatch.EveryAgent)
+		for _, tool := range everyAgent {
+			if !taken[tool.Name] && loading.grouped(tool.Name) {
+				offer(dispatch.EveryAgent, tool)
+			}
+		}
+	}
+	if len(ungrouped) > 0 {
+		m.logger.Warn("not offering tools a worker hosts that no tool group of the agent's config names",
+			"session", sessionID, "agent", hostedAs, "tools", ungrouped)
 	}
 	if len(hosted) == 0 {
 		return declared, next
 	}
 	m.logger.Info("offering tools a worker hosts", "session", sessionID, "agent", hostedAs, "tools", len(hosted))
 	return declared, &hostedRunner{
-		hosts: m.hosts, spec: spec, agentID: hostedAs, sessionID: sessionID, conversation: conversation, names: hosted, next: next,
+		hosts: m.hosts, spec: spec, sessionID: sessionID, conversation: conversation, hostedAs: hosted, next: next,
+		logger: m.logger,
 	}
 }
 
@@ -79,15 +109,17 @@ func (m *Manager) hostedTools(spec Spec, sessionID string, conversation dispatch
 type hostedRunner struct {
 	hosts        ToolHosts
 	spec         Spec
-	agentID      string
 	sessionID    string
 	conversation dispatch.Progress
-	names        map[string]bool
-	next         agent.ToolRunner
+	// hostedAs is the agent id each hosted tool's calls go to.
+	hostedAs map[string]string
+	next     agent.ToolRunner
+	logger   *slog.Logger
 }
 
 func (r *hostedRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-	if !r.names[call.Name] {
+	agentID, ok := r.hostedAs[call.Name]
+	if !ok {
 		return r.next.Run(ctx, call)
 	}
 	hosted := dispatch.ToolCall{
@@ -101,7 +133,12 @@ func (r *hostedRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Conten
 	} else if r.spec.Caller.UserID != "" {
 		hosted.User = &dispatch.User{ID: r.spec.Caller.UserID}
 	}
-	return r.hosts.RunHosted(ctx, r.spec.CustomerID, r.agentID, hosted)
+	parts, err := r.hosts.RunHosted(ctx, r.spec.CustomerID, agentID, hosted)
+	if gone := (dispatch.NoWorkerError{}); errors.As(err, &gone) {
+		r.logger.Warn("a tool a worker hosted when the session opened has no worker running it now; the agent carries on without it",
+			"session", r.sessionID, "agent", agentID, "tool", call.Name, "tool_call", call.ID)
+	}
+	return parts, err
 }
 
 // hostedProgress is a session as the worker running one of its hosted calls reaches it. The

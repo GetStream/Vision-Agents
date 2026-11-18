@@ -58,7 +58,7 @@ type SyncAgentRequest struct {
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
 	Agents         *[]ChildAgent      `json:"agents,omitempty" maxItems:"16" doc:"agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names."`
-	Tools          *AgentTools        `json:"tools,omitempty" doc:"How connector tools are offered. A setting left out keeps what is stored."`
+	Tools          *[]ToolGroup       `json:"tools,omitempty" maxItems:"64" doc:"agent.yaml's tools: the functions an SDK provides that the agent may offer, in named groups, as AgentConfigRequest's tools names them, with the same rules. Sent, they replace the stored groups whole, an empty list removing them. Left out, the stored ones stay."`
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
@@ -278,7 +278,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := outputRetentionComplaint(config); !ok {
+	if message, ok := toolsComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
@@ -597,8 +597,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 		config.Connectors = storedBindings(*body.Connectors)
 		config.LeftOutConnectors = leftOutOf(body.LeftOutConnectors)
 	}
-	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
-	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, body.Tools)
+	if body.Tools != nil {
+		config.ToolGroups = toolGroupsOf(*body.Tools)
+	}
 	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
 	config.Calls = callsOr(config.Calls, body.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, body.ResumeHistory)

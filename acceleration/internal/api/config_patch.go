@@ -45,7 +45,7 @@ type AgentConfigPatch struct {
 	Harness            *Harness                 `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
 	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty"`
-	Tools              *AgentTools              `json:"tools,omitempty"`
+	Tools              *[]ToolGroup             `json:"tools,omitempty" maxItems:"64" doc:"Replaces the tool groups whole; an empty list removes them all."`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
@@ -231,8 +231,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.EpisodeCards != nil {
 		setEpisodeCards(&config, *patch.EpisodeCards)
 	}
-	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
-	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, patch.Tools)
+	if patch.Tools != nil {
+		config.ToolGroups = toolGroupsOf(*patch.Tools)
+	}
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
 	config.Calls = callsOr(config.Calls, patch.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
@@ -249,7 +250,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := outputRetentionComplaint(config); !ok {
+	if message, ok := toolsComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	config.Tags = override(config.Tags, patch.Tags)

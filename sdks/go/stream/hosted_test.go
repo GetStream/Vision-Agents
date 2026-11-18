@@ -69,6 +69,40 @@ func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
 	s.NotContains(byName["search_docs"], "approval")
 }
 
+func (s *HostedCallSuite) TestOneRegistryHostedForTwoAgentsIsDeclaredForEachAndAnswersBoth() {
+	router := newPool(s.T(), func(connection *websocket.Conn) {
+		_ = connection.WriteJSON(Frame{"type": "tool_call", "id": "call-1", "session_id": "sales-session", "name": "lookup_order", "arguments": "{}"})
+		_ = connection.WriteJSON(Frame{"type": "tool_call", "id": "call-2", "session_id": "support-session", "name": "lookup_order", "arguments": "{}"})
+	})
+	functions := tools.NewRegistry()
+	s.Require().NoError(tools.Register(functions, "lookup_order", "Look up an order", func(ctx context.Context, _ struct{}) (any, error) {
+		return "shipped for " + tools.ToolCallContextFrom(ctx).SessionID, nil
+	}))
+	worker := waiting(s.T(), router, DispatchOptions{})
+	worker.Host(hostedAgent{"sales", functions}, time.Minute)
+	worker.Host(hostedAgent{"support", functions}, time.Minute)
+	ctx, cancel := context.WithCancel(s.T().Context())
+	stopped := run(s.T(), ctx, worker)
+	defer func() {
+		cancel()
+		stopped()
+	}()
+
+	hostedFor := map[string]string{}
+	for range 2 {
+		declared := router.told(s.T(), "host_tools")
+		hostedFor[declared.String("agent_id")] = declared["tools"].([]any)[0].(map[string]any)["name"].(string)
+	}
+	answers := map[string]string{}
+	for range 2 {
+		answered := router.told(s.T(), "tool_result")
+		answers[answered.String("tool_call_id")] = answered.String("output")
+	}
+
+	s.Equal(map[string]string{"sales": "lookup_order", "support": "lookup_order"}, hostedFor)
+	s.Equal(map[string]string{"call-1": "shipped for sales-session", "call-2": "shipped for support-session"}, answers)
+}
+
 func (s *HostedCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 	router := newPool(s.T(), func(connection *websocket.Conn) {
 		_ = connection.WriteJSON(Frame{
@@ -124,7 +158,7 @@ func (s *HostedCallSuite) TestAPictureReachesTheRouter() {
 	s.Equal("https://example.com/kitchen.jpg", parts[1].(map[string]any)["image_url"].(map[string]any)["url"])
 }
 
-func (s *HostedCallSuite) TestAHostedFunctionSaysHowItIsGoingAndHoldsItsWrite() {
+func (s *HostedCallSuite) TestAHostedFunctionHoldsItsWrite() {
 	heard := make(chan Frame, 32)
 	router := newPool(s.T(), func(connection *websocket.Conn) {
 		if connection.WriteJSON(Frame{"type": "tool_call", "id": "call-1", "session_id": "s", "name": "rebook_flight", "arguments": "{}"}) != nil {
@@ -144,11 +178,7 @@ func (s *HostedCallSuite) TestAHostedFunctionSaysHowItIsGoingAndHoldsItsWrite() 
 	})
 	functions := tools.NewRegistry()
 	s.Require().NoError(tools.Register(functions, "rebook_flight", "Move a booking", func(ctx context.Context, _ struct{}) (any, error) {
-		toolCallContext := tools.ToolCallContextFrom(ctx)
-		if err := toolCallContext.Update(ctx, "Checking seats"); err != nil {
-			return nil, err
-		}
-		writing := toolCallContext.DisallowInterruptions(ctx)
+		writing := tools.ToolCallContextFrom(ctx).DisallowInterruptions(ctx)
 		if writing.Err() != nil {
 			return nil, writing.Err()
 		}
@@ -170,7 +200,6 @@ func (s *HostedCallSuite) TestAHostedFunctionSaysHowItIsGoingAndHoldsItsWrite() 
 			told = append(told, frame)
 		}
 	}
-	s.Require().Len(told, 2)
-	s.Equal(Frame{"type": "tool_update", "tool_call_id": "call-1", "text": "Checking seats", "verbatim": false}, told[0])
-	s.Equal(Frame{"type": "tool_hold", "tool_call_id": "call-1"}, told[1])
+	s.Require().Len(told, 1)
+	s.Equal(Frame{"type": "tool_hold", "tool_call_id": "call-1"}, told[0])
 }

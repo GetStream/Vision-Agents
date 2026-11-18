@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
@@ -235,6 +236,35 @@ func (a *Agent) UpdateConfig(ctx context.Context, patch acceleration.AgentConfig
 		return nil, failure("updating the agent "+a.name, patched.HTTPResponse, patched.Body)
 	}
 	return patched.JSON200, nil
+}
+
+// Stats is how the agent's sessions used their tools from from up to to: how many sessions
+// took a turn and how many turns, and per tool its calls, failures, latency, share of
+// sessions, turns before its first use and what its definition costs every turn.
+//
+// Server side only, like the config it reads the agent's id from.
+func (a *Agent) Stats(ctx context.Context, from, to time.Time) (*acceleration.AgentStats, error) {
+	config, err := a.Config(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, fmt.Errorf("client: there is no agent called %s to read the stats of", a.name)
+	}
+
+	api, err := a.client.api()
+	if err != nil {
+		return nil, err
+	}
+	read, err := api.GetAgentStatsWithResponse(ctx,
+		&acceleration.GetAgentStatsParams{From: from, To: to, Agent: &config.Id})
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the stats of the agent %s: %w", a.name, err)
+	}
+	if read.JSON200 == nil {
+		return nil, failure("reading the stats of the agent "+a.name, read.HTTPResponse, read.Body)
+	}
+	return read.JSON200, nil
 }
 
 // failure is what the router said went wrong with what was being done, read off the answer

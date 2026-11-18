@@ -102,7 +102,6 @@ from vision_agents.core.llm import ToolCallContext
     needs_approval="Book flight {flight_id}?",
 )
 async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
-    await tool_call_context.update("checking seats")
     await tool_call_context.disallow_interruptions()
     return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
 ```

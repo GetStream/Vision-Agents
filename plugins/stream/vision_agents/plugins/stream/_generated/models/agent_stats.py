@@ -25,12 +25,17 @@ class AgentStats:
             still open counts up to now.
         tool_calls (ToolStats):
         tools (list[ToolStats]): One row per tool, most called first.
+        avg_turns (float | None): Turns a session took in the window, on average. A turn is a reply to the person, not a
+            rewound one or a delegated task's. Null when no session took one.
+        sessions (int): Sessions that took a turn in the window: what a tool's session_share is out of.
     """
 
     peak_at: datetime.datetime | None
     peak_concurrent_sessions: int
     tool_calls: ToolStats
     tools: list[ToolStats]
+    avg_turns: float | None
+    sessions: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +54,11 @@ class AgentStats:
             tools_item = tools_item_data.to_dict()
             tools.append(tools_item)
 
+        avg_turns: float | None
+        avg_turns = self.avg_turns
+
+        sessions = self.sessions
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,6 +67,8 @@ class AgentStats:
                 "peak_concurrent_sessions": peak_concurrent_sessions,
                 "tool_calls": tool_calls,
                 "tools": tools,
+                "avg_turns": avg_turns,
+                "sessions": sessions,
             }
         )
 
@@ -94,11 +106,22 @@ class AgentStats:
 
             tools.append(tools_item)
 
+        def _parse_avg_turns(data: object) -> float | None:
+            if data is None:
+                return data
+            return cast(float | None, data)
+
+        avg_turns = _parse_avg_turns(d.pop("avg_turns"))
+
+        sessions = d.pop("sessions")
+
         agent_stats = cls(
             peak_at=peak_at,
             peak_concurrent_sessions=peak_concurrent_sessions,
             tool_calls=tool_calls,
             tools=tools,
+            avg_turns=avg_turns,
+            sessions=sessions,
         )
 
         agent_stats.additional_properties = d

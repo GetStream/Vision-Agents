@@ -172,13 +172,14 @@ func (w *Worker) progressOf(id string) listening {
 	return w.progress[id]
 }
 
-// Host records that a worker runs these tools for sessions under an agent id, replacing
-// whatever it offered for that agent before. The offer is scoped to the worker's own
-// customer: this is the pool, not the gate.
+// EveryAgent is the agent id of tools a worker hosts for every agent of its customer. A
+// session is offered one of them only when its config's tool groups name it.
+const EveryAgent = ""
+
+// Host records that a worker runs these tools for sessions under an agent id, or EveryAgent,
+// replacing whatever it offered for that agent before. The offer is scoped to the worker's
+// own customer: this is the pool, not the gate.
 func (p *Pool) Host(worker *Worker, agentID string, tools []Tool, timeout time.Duration) error {
-	if agentID == "" {
-		return errors.New("dispatch: hosted tools need the agent they are for")
-	}
 	if len(tools) == 0 {
 		return errors.New("dispatch: hosting no tools is not hosting")
 	}
@@ -252,6 +253,16 @@ func (p *Pool) AgentsHostedBy(worker *Worker) []string {
 	return agents
 }
 
+// NoWorkerError is a hosted call no connected worker runs the tool for: the worker that
+// hosted it when the session opened has gone, or every one running it is full.
+type NoWorkerError struct {
+	Tool string
+}
+
+func (e NoWorkerError) Error() string {
+	return fmt.Sprintf("dispatch: no worker is running %s now", e.Tool)
+}
+
 // RunHosted sends one call to a worker hosting that tool for the agent and waits for its
 // answer, the worker's own timeout, or the caller giving up.
 //
@@ -284,7 +295,7 @@ func (p *Pool) RunHosted(ctx context.Context, customerID, agentID string, call T
 	}
 	if chosen == nil {
 		p.mu.Unlock()
-		return nil, fmt.Errorf("dispatch: no worker is running %s now", call.Name)
+		return nil, NoWorkerError{Tool: call.Name}
 	}
 	chosen.worker.mu.Lock()
 	if _, duplicate := chosen.worker.results[call.ID]; duplicate {

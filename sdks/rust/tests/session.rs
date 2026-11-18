@@ -1102,17 +1102,11 @@ fn holding() -> Tools {
 }
 
 #[tokio::test]
-async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
+async fn a_function_is_told_who_its_call_answers() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
         .register_with_tool_call_context(tool("book"), |tool_call_context: ToolCallContext, _| async move {
-            tool_call_context.update("Looking at flights")
-                .await
-                .map_err(|error| error.to_string())?;
-            tool_call_context.say("One moment.")
-                .await
-                .map_err(|error| error.to_string())?;
             Ok::<_, String>(json!({
                 "id": tool_call_context.id, "session": tool_call_context.session_id, "turn": tool_call_context.turn_id,
                 "user": [tool_call_context.user.id, tool_call_context.user.name], "tier": tool_call_context.user.custom["tier"],
@@ -1131,14 +1125,6 @@ async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
         )
         .await;
 
-    assert_eq!(
-        socket.next().await.unwrap(),
-        json!({"type": "tool_update", "tool_call_id": "t1", "text": "Looking at flights", "verbatim": false})
-    );
-    assert_eq!(
-        socket.next().await.unwrap(),
-        json!({"type": "tool_update", "tool_call_id": "t1", "text": "One moment.", "verbatim": true})
-    );
     let output: serde_json::Value = serde_json::from_str(
         socket.expect("tool_result").await["output"]
             .as_str()

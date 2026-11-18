@@ -578,7 +578,6 @@ class TestSessions:
         @agent.register(description="Look up an order", timeout=2.5)
         async def lookup_order(tool_call_context: stream.ToolCallContext) -> str:
             seen.append(tool_call_context)
-            await tool_call_context.update("searching the archive")
             return "found"
 
         router.frames = [
@@ -593,7 +592,6 @@ class TestSessions:
         ]
         session = await agent.sessions.create(stream.SessionOptions())
         try:
-            update = await asyncio.wait_for(router.commands.get(), 2)
             answer = await asyncio.wait_for(router.commands.get(), 2)
             await asyncio.sleep(0.1)
             assert router.commands.empty(), "the call addressed elsewhere is left"
@@ -603,12 +601,6 @@ class TestSessions:
         assert (
             router.body("POST", "/v1/agents/sessions")["tools"][0]["timeout_ms"] == 2500
         )
-        assert update == {
-            "type": "tool_update",
-            "tool_call_id": "call-2",
-            "text": "searching the archive",
-            "verbatim": False,
-        }
         assert answer["tool_call_id"] == "call-2"
         assert (seen[0].id, seen[0].session_id, seen[0].turn_id) == (
             "call-2",

@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.offered_tool_source import OfferedToolSource
+from ..models.tool_loading import ToolLoading
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -31,6 +32,12 @@ class OfferedTool:
             worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector
             bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not
             connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+        loading (ToolLoading | Unset): How a tool is offered to the model. full sends its whole description and input
+            schema from the start. summary sends the first line of its description and its arguments without their
+            descriptions, and the first call returns the full description and schema instead of running it: one more model
+            turn for each tool a conversation uses, for less context on every turn. deferred offers nothing until the model
+            needs it: an agent with a deferred tool is offered search_tool, which finds deferred tools by what they do, and
+            load_tool, which returns their full descriptions and offers them from the model's next step on.
     """
 
     description: str
@@ -38,6 +45,7 @@ class OfferedTool:
     tokens: int
     parameters: OfferedToolParameters | Unset = UNSET
     source: OfferedToolSource | Unset = UNSET
+    loading: ToolLoading | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +63,10 @@ class OfferedTool:
         if not isinstance(self.source, Unset):
             source = self.source.value
 
+        loading: str | Unset = UNSET
+        if not isinstance(self.loading, Unset):
+            loading = self.loading.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -68,6 +80,8 @@ class OfferedTool:
             field_dict["parameters"] = parameters
         if source is not UNSET:
             field_dict["source"] = source
+        if loading is not UNSET:
+            field_dict["loading"] = loading
 
         return field_dict
 
@@ -96,12 +110,20 @@ class OfferedTool:
         else:
             source = OfferedToolSource._decode(_source)
 
+        _loading = d.pop("loading", UNSET)
+        loading: ToolLoading | Unset
+        if isinstance(_loading, Unset):
+            loading = UNSET
+        else:
+            loading = ToolLoading._decode(_loading)
+
         offered_tool = cls(
             description=description,
             name=name,
             tokens=tokens,
             parameters=parameters,
             source=source,
+            loading=loading,
         )
 
         offered_tool.additional_properties = d

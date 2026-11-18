@@ -183,13 +183,11 @@ run, whose `ID` is the same when the router sends a call again, so a function th
 something can key on it. A call sent again while it is still running joins it, and one that
 finished is answered with what it returned, without running twice.
 
-A call that takes a while can say how it is going, and protect a write from the caller
-talking over the agent:
+A call can protect a write from the caller talking over the agent:
 
 ```go
 func(ctx context.Context, args RebookFlight) (any, error) {
     toolCallContext := tools.ToolCallContextFrom(ctx)
-    toolCallContext.Update(ctx, "Checking seats on the new flight")
 
     // Read only: the caller interrupting cancels ctx, and nothing has changed.
     seat, err := airline.HoldSeat(ctx, args.NewFlightID)
@@ -199,17 +197,13 @@ func(ctx context.Context, args RebookFlight) (any, error) {
 
     // From here on, the caller interrupting no longer cancels the toolCallContext.
     ctx = toolCallContext.DisallowInterruptions(ctx)
-    toolCallContext.Say(ctx, "Got a seat, moving your booking now.")
     return airline.Rebook(ctx, args.BookingID, seat, toolCallContext.ID)
 }
 ```
 
-`toolCallContext.Update` hands the agent a status, which it tells a voice caller in its own
-words once nobody is talking, and which a conversation shows on the call's step.
-`toolCallContext.Say` has it say the words as written, or post them in text; a speech-to-speech
-model may paraphrase them. `DisallowInterruptions` returns a context only the call's timeout and
-the socket ending cancel. When the call was already stopped, that context comes back cancelled,
-so the write never starts. Outside a call, all three do nothing.
+`DisallowInterruptions` returns a context only the call's timeout and the socket ending cancel.
+When the call was already stopped, that context comes back cancelled, so the write never
+starts. Outside a call, it does nothing.
 
 Struct tags describe arguments beyond `schema`:
 

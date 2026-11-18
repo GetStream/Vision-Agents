@@ -639,7 +639,7 @@ describe("Dispatch", () => {
     await running;
   });
 
-  it("hands a hosted function its call, and sends how it is going", async () => {
+  it("hands a hosted function its call", async () => {
     const agent = api.agent("support");
     let seen: { id: string; sessionId: string; turnId: string; user: string } | undefined;
     agent.tools.register({
@@ -652,7 +652,6 @@ describe("Dispatch", () => {
           turnId: toolCallContext.turnId,
           user: toolCallContext.user.id,
         };
-        toolCallContext.update("reading the logs");
         return "found it";
       },
     });
@@ -669,12 +668,6 @@ describe("Dispatch", () => {
       user: { id: "sam" },
     });
 
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "reading the logs",
-      verbatim: false,
-    });
     assert.equal((await connection.next())["output"], "found it");
     assert.deepEqual(seen, { id: "call_1", sessionId: "s1", turnId: "turn_3", user: "sam" });
     dispatch.stop();

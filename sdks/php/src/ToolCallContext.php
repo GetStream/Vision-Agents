@@ -67,23 +67,6 @@ final class ToolCallContext
     }
 
     /**
-     * Tells the people in the conversation how the call is going, such as "Found three
-     * flights, comparing prices". The agent puts it in its own words.
-     */
-    public function update(string $text): void
-    {
-        $this->sendUpdate($text, false);
-    }
-
-    /**
-     * `update()`, said word for word.
-     */
-    public function say(string $text): void
-    {
-        $this->sendUpdate($text, true);
-    }
-
-    /**
      * Keeps the call going if the person talks over the agent from here on, for a call that is
      * past the point of taking back, such as one that has started a payment.
      *
@@ -130,12 +113,5 @@ final class ToolCallContext
     public function stop(): void
     {
         $this->stopping->cancel();
-    }
-
-    private function sendUpdate(string $text, bool $verbatim): void
-    {
-        if ($this->send !== null) {
-            ($this->send)(['type' => 'tool_update', 'tool_call_id' => $this->id, 'text' => $text, 'verbatim' => $verbatim]);
-        }
     }
 }

@@ -562,6 +562,17 @@ func (s *Session) RemoveTool(ctx context.Context, name string) error {
 // Events yields what the backend did until the conversation ends, when the channel closes.
 func (s *Session) Events() <-chan stream.Event { return s.pipeline.Events() }
 
+// On calls handle with every event of kind until off is called. See stream.Pipeline.On.
+func (s *Session) On(kind string, handle func(stream.Event)) (off func()) {
+	return s.pipeline.On(kind, handle)
+}
+
+// ToolCall is the last state the conversation reported for a tool call. See
+// stream.Pipeline.ToolCall.
+func (s *Session) ToolCall(id string) (acceleration.ToolCallState, bool) {
+	return s.pipeline.ToolCall(id)
+}
+
 // Say speaks text without going through the model, for when the words were never in question.
 func (s *Session) Say(text string, interrupt bool) error { return s.pipeline.Say(text, interrupt) }
 

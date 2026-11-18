@@ -64,7 +64,6 @@ as its first argument, ahead of the arguments:
 agent.tools.register("book_flight", description: "Book a flight for the caller",
                      parameters: { type: "object", properties: { flight_id: { type: "string" } } },
                      timeout: 20, approval: "Book flight {flight_id}?") do |tool_call_context, args|
-  tool_call_context.update("checking seats")
   tool_call_context.disallow_interruptions
   bookings.book(args["flight_id"], user: tool_call_context.user.id, key: tool_call_context.id)
 end
@@ -81,10 +80,7 @@ end
 
 `tool_call_context.id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation`
-say where it came from. `update(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
-a speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
-on, for a write that must not stop halfway, and raises `CallNotHeldError` when the call had
+say where it came from. `disallow_interruptions` keeps the call going from then on, for a write that must not stop halfway, and raises `CallNotHeldError` when the call had
 already been stopped. A Ruby thread cannot be stopped from outside, so a call that was cancelled
 or ran out of time keeps running with `tool_call_context.cancelled?` true, and its answer is
 dropped. A call the router addresses to another watcher (`run: false`) is left alone.

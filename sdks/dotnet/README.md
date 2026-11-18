@@ -80,7 +80,6 @@ for as its first argument:
 agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the caller",
     async (toolCallContext, booking, cancellationToken) =>
     {
-        await toolCallContext.UpdateAsync("checking seats", cancellationToken);
         await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
         return await BookAsync(booking.FlightId, toolCallContext.User.Id, idempotencyKey: toolCallContext.Id);
     },
@@ -98,9 +97,7 @@ agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the call
 
 `toolCallContext.Id` is the id the model gave the call, which a call sent again keeps, so it is
 the key to make a side effect happen once; `SessionId`, `TurnId`, `User` and `Conversation` say
-where it came from. `UpdateAsync(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `SayAsync(text)` has it say `text` as written,
-which a speech-to-speech model may paraphrase. `DisallowInterruptionsAsync` keeps the call going
+where it came from. `DisallowInterruptionsAsync` keeps the call going
 from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when the
 router had already cancelled it. A cancelled call has its token cancelled and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.

@@ -85,6 +85,18 @@ func newRouter(t *testing.T) *router {
 		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such agent config"}})
 	})
 
+	mux.HandleFunc("GET /v1/stats/agents", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.URL.Query().Get("agent") != "config-1" {
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such agent config"}})
+			return
+		}
+		answer(w, http.StatusOK, acceleration.AgentStats{
+			Sessions: 40, AvgTurns: ptr(6.5),
+			Tools: []acceleration.ToolStats{{Tool: "weather_lookup", Calls: 12, Sessions: 10, SessionShare: ptr(0.25)}},
+		})
+	})
+
 	mux.HandleFunc("GET /v1/settings/app", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusOK, acceleration.AppSettings{Stream: acceleration.StreamSettings{
@@ -2137,6 +2149,37 @@ func TestUpdatingAnAgentNothingIsStoredUnderFails(t *testing.T) {
 		acceleration.AgentConfigPatch{Guardrail: &policy})
 	if err == nil || !strings.Contains(err.Error(), "nowhere") {
 		t.Errorf("updating an agent nobody stored answered %v", err)
+	}
+}
+
+func TestAnAgentsStatsAreReadForItsConfigOverTheWindow(t *testing.T) {
+	backend := newRouter(t)
+	backend.configs = []acceleration.AgentConfig{{Id: "config-1", Name: "docs"}}
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 1, 0)
+
+	stats, err := backend.client(t).Agent("docs").Stats(t.Context(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Sessions != 40 || len(stats.Tools) != 1 || stats.Tools[0].Tool != "weather_lookup" {
+		t.Fatalf("the stats came back as %+v", stats)
+	}
+	asked := backend.query(t, "GET", "/v1/stats/agents")
+	if asked.Get("from") != "2026-11-01T00:00:00Z" || asked.Get("to") != "2026-12-01T00:00:00Z" {
+		t.Errorf("the window went over as %v", asked)
+	}
+}
+
+func TestTheStatsOfAnAgentNothingIsStoredUnderFail(t *testing.T) {
+	backend := newRouter(t)
+
+	_, err := backend.client(t).Agent("nowhere").Stats(t.Context(), time.Now().Add(-time.Hour), time.Now())
+	if err == nil || !strings.Contains(err.Error(), "nowhere") {
+		t.Errorf("reading the stats of an agent nobody stored answered %v", err)
+	}
+	if backend.requests("GET", "/v1/stats/agents") != 0 {
+		t.Error("an agent with no config had every agent's stats read for it")
 	}
 }
 

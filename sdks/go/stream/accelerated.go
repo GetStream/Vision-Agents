@@ -167,9 +167,10 @@ type Participant struct {
 // Event is one thing the conversation did.
 //
 // Kind is the backend's own name for it: joined, heard, responding, response_delta,
-// responded, spoke, turn, delegated, task_settled, task_cancelled, tool_ran, transferred,
-// pressed, looked_up, backchannel, interrupted, overlap_decided, conversation_compacted,
-// error and left. The fields below are filled from whichever of those carry them, and Frame
+// responded, spoke, turn, delegated, task_settled, task_cancelled, tool_started,
+// tool_updated, tool_ran, tool_call.started, tool_call.progress, tool_call.finished,
+// transferred, pressed, looked_up, backchannel, interrupted, overlap_decided,
+// conversation_compacted, error and left. The fields below are filled from whichever of those carry them, and Frame
 // is the whole thing for anything they do not cover.
 type Event struct {
 	Kind        string
@@ -184,7 +185,10 @@ type Event struct {
 	// Resumed is set on a resumed event, which a text session's socket is sent after it
 	// dropped and reconnected.
 	Resumed *Resumption
-	Frame   Frame
+	// ToolCall is a tool_call.* event's state of the call: the whole of it, so the last one
+	// per ToolCallId is where the call stands (Pipeline.ToolCall).
+	ToolCall *acceleration.ToolCallState
+	Frame    Frame
 }
 
 // Resumption is what a socket that reconnected was told.
@@ -235,6 +239,7 @@ type Pipeline struct {
 	running   sync.WaitGroup
 	watcher   sync.WaitGroup
 	holds     holds
+	listeners listeners
 
 	// changing runs one change of the session's tools at a time, across its request.
 	changing sync.Mutex
@@ -1005,8 +1010,10 @@ func (p *Pipeline) read(ctx context.Context, socket *Socket, out chan<- Event, c
 			}
 		}
 
+		event := eventOf(frame)
+		p.observe(event)
 		select {
-		case out <- eventOf(frame):
+		case out <- event:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -1192,6 +1199,7 @@ func eventOf(frame Frame) Event {
 		Error:       frame.String("error"),
 		Frame:       frame,
 	}
+	event.ToolCall, _ = toolCallOf(frame)
 	files, _ := frame["files"].([]any)
 	for _, listed := range files {
 		file, ok := listed.(map[string]any)

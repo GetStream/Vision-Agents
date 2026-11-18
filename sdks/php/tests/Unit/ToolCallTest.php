@@ -41,7 +41,7 @@ final class ToolCallTest extends TestCase
         $this->server?->stop();
     }
 
-    public function testAToolIsToldWhoItsCallAnswersAndCanSayHowItIsGoing(): void
+    public function testAToolIsToldWhoItsCallAnswers(): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, [
@@ -53,18 +53,12 @@ final class ToolCallTest extends TestCase
         });
         $agent = new Agent(name: 'jean', client: $server->client());
         $agent->tools->register('book', 'Books a flight', [], static function (ToolCallContext $toolCallContext, array $args): string {
-            $toolCallContext->update('Looking at flights');
-            $toolCallContext->say('One moment.');
             return implode(' ', [$toolCallContext->id, $toolCallContext->sessionId, $toolCallContext->turnId, $toolCallContext->user->id, $toolCallContext->user->name,
                 Json::string($toolCallContext->user->custom, 'tier'), $toolCallContext->conversation->cid, $toolCallContext->approved ? 'approved' : 'asked']);
         });
 
         self::watch($server, $agent);
 
-        self::assertSame([
-            ['type' => 'tool_update', 'tool_call_id' => 't1', 'text' => 'Looking at flights', 'verbatim' => false],
-            ['type' => 'tool_update', 'tool_call_id' => 't1', 'text' => 'One moment.', 'verbatim' => true],
-        ], $server->sent('tool_update'));
         self::assertSame('t1 ses_1 turn-1 u1 Ada gold messaging:c1 approved', $server->sent('tool_result')[0]['output']);
     }
 

@@ -277,14 +277,13 @@ class TestDispatch < LocalRouterTest
     assert_equal "w2", dispatch.worker_id
   end
 
-  def test_a_hosted_tools_policies_call_and_updates_go_over_the_dispatch_socket
+  def test_a_hosted_tools_policies_and_call_go_over_the_dispatch_socket
     seen = Thread::Queue.new
     agent = client.agent("travel")
     agent.tools.register("book_flight", description: "Book a flight",
                                         parameters: { type: "object", properties: { flight_id: { type: "string" } } },
                                         interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |tool_call_context, _args|
       seen << tool_call_context
-      tool_call_context.update("checking seats")
       "booked"
     end
     dispatch.host(agent)
@@ -297,8 +296,6 @@ class TestDispatch < LocalRouterTest
 
       peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", turn_id: "turn_3", name: "book_flight",
                       arguments: "{}", user: { id: "sam" })
-      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "checking seats", "verbatim" => false },
-                   peer.receive_type("tool_update"))
       assert_equal "booked", peer.receive_type("tool_result")["output"]
     end
     tool_call_context = seen.pop(timeout: 1)

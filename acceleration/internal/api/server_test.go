@@ -350,6 +350,17 @@ func (s *ServerSuite) TestAgentStatsReportThePeakAndTheToolsCalled() {
 	s.Equal("lookup_order", stats.Tools[0].Tool)
 	s.Require().NotNil(stats.Tools[0].AvgMs)
 	s.InDelta(250, *stats.Tools[0].AvgMs, 0.01)
+	s.EqualValues(1, stats.Sessions)
+	s.Require().NotNil(stats.Tools[0].SessionShare)
+	s.InDelta(1, *stats.Tools[0].SessionShare, 0.001, "the one session that took a turn called it")
+	s.Require().NotNil(stats.Tools[0].AvgTurnsBeforeUse)
+	s.Zero(*stats.Tools[0].AvgTurnsBeforeUse, "it was called on the first turn")
+}
+
+func (s *ServerSuite) TestAgentStatsOfAnAgentThatIsNotTheCallersAreNotFound() {
+	var failure map[string]any
+	s.Equal(http.StatusNotFound, s.serverClient.do(http.MethodGet,
+		"/v1/stats/agents?from="+s.from()+"&to="+s.to(24*time.Hour)+"&agent="+s.utils.uuid(), nil, &failure))
 }
 
 func (s *ServerSuite) TestProvidersReportLiveHealth() {

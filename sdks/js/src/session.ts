@@ -7,6 +7,7 @@ import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import { Speech } from "./speech.js";
 import { ConversationState } from "./state.js";
+import { ToolCalls, type ToolCallState } from "./tool-calls.js";
 import type { ChatClient, VideoClient } from "./stream.js";
 import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
 import { type ToolApproval, Tools } from "./tools.js";
@@ -76,9 +77,11 @@ export interface Participant {
  *
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
  * response_delta, responded, blocked, speaking, spoke, turn, delegated, task_settled,
- * task_cancelled, tool_started, tool_ran, transferred, pressed, looked_up, backchannel,
- * interrupted, overlap_decided, conversation_compacted, conversation_updated, error and left,
- * and tool_call for a call waiting in `session.approvals`. The fields
+ * task_cancelled, tool_started, tool_updated, tool_ran, tool_call.started, tool_call.progress
+ * and tool_call.finished (each call's state, also kept in `session.toolCalls`), transferred,
+ * pressed, looked_up, backchannel, interrupted, overlap_decided, conversation_compacted,
+ * conversation_updated, error and left, and tool_call for a call waiting in
+ * `session.approvals`. The fields
  * below are filled from whichever of those carry them, and `frame` is the whole thing for
  * anything they do not cover.
  *
@@ -198,6 +201,12 @@ export class Session {
    */
   readonly conversation: Conversation;
   /**
+   * Every tool call of the session by `tool_call_id`, as it was last reported: running,
+   * waiting for a person's approval, or how it ended, whichever process runs it. Fed from the
+   * socket beside `events()`, like `state`.
+   */
+  readonly toolCalls = new ToolCalls();
+  /**
    * @internal What this device's camera showed lately, set by a `VoiceSession` while its
    * camera is on. The router's `get_video_frames` is answered from it.
    */
@@ -233,6 +242,8 @@ export class Session {
   /** What arrived while nobody was reading, for the first reader to start with. */
   private readonly backlog: SessionEvent[] = [];
   private readonly readers = new Set<Reader>();
+  /** What `on` registered, by the kind of event each wants. */
+  private readonly handlers = new Map<string, Set<(event: SessionEvent) => void>>();
   private readonly running = new Map<string, AbortController>();
   private readonly holds = new Holds();
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
@@ -491,6 +502,30 @@ export class Session {
     } finally {
       this.readers.delete(reader);
     }
+  }
+
+  /**
+   * Calls `handler` with every event of `kind` that `events()` yields, such as
+   * `tool_call.finished` or `responded`, from now until the returned function is called. It
+   * needs no loop over `events()` and takes nothing from one.
+   */
+  on(kind: string, handler: (event: SessionEvent) => void): () => void {
+    let handlers = this.handlers.get(kind);
+    if (handlers === undefined) {
+      handlers = new Set();
+      this.handlers.set(kind, handlers);
+    }
+    const added = handlers;
+    const handle = (event: SessionEvent): void => handler(event);
+    added.add(handle);
+    return () => {
+      added.delete(handle);
+    };
+  }
+
+  /** The tool call `id` as it was last reported, or undefined before the session said anything of it. */
+  toolCall(id: string): ToolCallState | undefined {
+    return this.toolCalls.get().get(id);
   }
 
   /** Speaks text without going through the model, for when you know what should be said. */
@@ -808,6 +843,7 @@ export class Session {
         this.speech.observe(message);
         this.state.observe(message);
         this.conversation.observe(message);
+        this.toolCalls.observe(message);
 
         if (message.type === "tool_call" && text(message, "name") === CameraFrames.toolName) {
           // Answered by the session rather than offered as a tool, and only by a device whose
@@ -1100,6 +1136,16 @@ export class Session {
   }
 
   private deliver(event: SessionEvent): void {
+    for (const handler of [...(this.handlers.get(event.kind) ?? [])]) {
+      try {
+        handler(event);
+      } catch (cause) {
+        // A handler runs on the socket's read, which one mistake must not stop.
+        queueMicrotask(() => {
+          throw cause;
+        });
+      }
+    }
     if (this.readers.size === 0) {
       this.backlog.push(event);
       if (this.backlog.length > BUFFERED_EVENTS) {
