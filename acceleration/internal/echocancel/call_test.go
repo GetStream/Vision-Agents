@@ -172,11 +172,21 @@ func muLaw(samples []int16) []int16 {
 // of that.
 type talk struct {
 	voice, echo, back, cleaned []int16
+	// lost says which 10 ms frames never reached the agent, which stand in cleaned as silence.
+	lost []bool
 }
 
 // converse runs a call of seconds through a phone line as a call carries it, 20 ms at a time,
 // with the agent's voice at agentAt and the caller's at callerAt, cancelled as cfg says.
 func (s *CallSuite) converse(cfg Config, phone *line, seconds float64, agentAt, callerAt []time.Duration) talk {
+	return s.converseLosing(cfg, phone, seconds, agentAt, callerAt, nil)
+}
+
+// converseLosing is converse with the 20 ms chunks lost says never reaching the agent, from the
+// chunk's index and what the phone sent in it. The line is told how much went missing, by the
+// timestamps of the chunk that comes after, as the edge tells it.
+func (s *CallSuite) converseLosing(cfg Config, phone *line, seconds float64, agentAt, callerAt []time.Duration,
+	lost func(index int, back []int16) bool) talk {
 	length := int(seconds*SampleRate) / chunk * chunk
 	sent, voice := make([]int16, length), make([]int16, length)
 	lay := func(dst, clip []int16, at []time.Duration) {
@@ -194,10 +204,20 @@ func (s *CallSuite) converse(cfg Config, phone *line, seconds float64, agentAt, 
 	defer listening.Close()
 
 	var t talk
+	var missing time.Duration
 	for at := 0; at < length; at += chunk {
 		call.Played(sent[at : at+chunk])
 		back, echo, said := phone.carry(sent[at:at+chunk], voice[at:at+chunk])
 		t.back, t.echo, t.voice = append(t.back, back...), append(t.echo, echo...), append(t.voice, said...)
+		gone := lost != nil && lost(at/chunk, back)
+		t.lost = append(t.lost, gone, gone)
+		if gone {
+			missing += 2 * FrameDuration
+			t.cleaned = append(t.cleaned, make([]int16, len(back))...)
+			continue
+		}
+		listening.Missed(missing)
+		missing = 0
 		t.cleaned = append(t.cleaned, listening.Clean(back)...)
 	}
 	return t
@@ -231,7 +251,9 @@ func db(ratio float64) float64 { return 10 * math.Log10(ratio) }
 // seconds in that hold echo and none of the caller's voice.
 func echoGone(t talk, from, to float64) float64 {
 	echoing, speaking := loud(t.echo), loud(t.voice)
-	only := func(frame int) bool { return echoing(frame) && !speaking(frame) }
+	only := func(frame int) bool {
+		return echoing(frame) && !speaking(frame) && (frame >= len(t.lost) || !t.lost[frame])
+	}
 	return db(energy(t.back, from, to, only) / energy(t.cleaned, from, to, only))
 }
 
@@ -293,4 +315,70 @@ func (s *CallSuite) TestTheCallersVoiceOverTheAgentIsHeard() {
 	kept := voiceKept(t, 25, 44)
 	s.T().Logf("caller over the agent: %.1f dB, echo before them %.1f dB quieter", kept, echoGone(t, 10, 25))
 	s.Greater(kept, -6.0)
+}
+
+// losing loses the 20 ms chunks from at for d.
+func losing(at, d time.Duration) func(int, []int16) bool {
+	from, to := int(at/(2*FrameDuration)), int((at+d)/(2*FrameDuration))
+	return func(index int, _ []int16) bool { return index >= from && index < to }
+}
+
+// dtx is a phone that stops sending while it hears nothing, as Opus DTX does: once its
+// microphone has been quiet for hangover, it sends one chunk every 400 ms until it hears
+// something again.
+func dtx(hangover time.Duration) func(int, []int16) bool {
+	quiet := 0
+	return func(index int, back []int16) bool {
+		var sum float64
+		for _, v := range back {
+			sum += float64(v) * float64(v)
+		}
+		if sum/float64(len(back)) > 100*100 {
+			quiet = 0
+			return false
+		}
+		quiet++
+		return time.Duration(quiet)*2*FrameDuration > hangover && quiet%20 != 0
+	}
+}
+
+func (s *CallSuite) TestTheEchoStaysCancelledAcrossAChunkLost() {
+	for _, gap := range []time.Duration{20 * time.Millisecond, 100 * time.Millisecond, 600 * time.Millisecond} {
+		at := 15 * time.Second
+		t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 25, s.replies(25*time.Second), nil,
+			losing(at, gap))
+
+		after := (at + gap).Seconds()
+		gone := echoGone(t, after, after+2)
+		s.T().Logf("%s of the line lost at 15 s: %.1f dB quieter in the 2 s after it", gap, gone)
+		s.Greater(gone, 20.0, "after %s lost", gap)
+	}
+}
+
+func (s *CallSuite) TestTheEchoStaysCancelledFromAPhoneThatStopsSendingWhileQuiet() {
+	for _, hangover := range []time.Duration{100 * time.Millisecond, 400 * time.Millisecond} {
+		t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 40, s.replies(40*time.Second), nil,
+			dtx(hangover))
+
+		gone := echoGone(t, 10, 39)
+		lost := 0
+		for _, l := range t.lost {
+			if l {
+				lost++
+			}
+		}
+		s.T().Logf("a phone that stops sending %s after it goes quiet (%d%% of the line never sent): %.1f dB quieter from 10 s on",
+			hangover, lost*100/len(t.lost), gone)
+		s.Greater(gone, 20.0, "with a hangover of %s", hangover)
+	}
+}
+
+func (s *CallSuite) TestALineSilentForLongerThanTheVoiceHeldIsCancelledAfresh() {
+	at := 15 * time.Second
+	t := s.converseLosing(Config{}, newLine(250*time.Millisecond, 10), 30, s.replies(30*time.Second), nil,
+		losing(at, 3*time.Second))
+
+	gone := echoGone(t, 19, 29)
+	s.T().Logf("3 s of the line lost at 15 s: %.1f dB quieter from 19 s on", gone)
+	s.Greater(gone, 20.0)
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -31,12 +32,12 @@ const (
 	SampleRate = 16_000
 	// FrameSamples is one 10 ms frame, the only frame AEC3 takes.
 	FrameSamples = SampleRate / 100
-	// frameDuration is how long a frame plays for.
-	frameDuration = 10 * time.Millisecond
+	// FrameDuration is how long a frame plays for.
+	FrameDuration = 10 * time.Millisecond
 	// playedFrames is how much of the agent's voice a line holds that its canceller has not
 	// taken yet: a second. The voice is taken on the line's own goroutine as the line's audio
-	// arrives, so a line whose audio stops for longer drops the oldest of it, which has no
-	// echo left to cancel once the line is back.
+	// arrives, so a line whose audio stops for longer drops the oldest of it, and the
+	// canceller, whose voice and line no longer line up, is replaced.
 	playedFrames = 100
 )
 
@@ -45,26 +46,14 @@ const (
 	// delay, in 4 ms blocks: each filter covers 32 blocks, 128 ms, and starts 24 blocks, 96 ms,
 	// after the one before it (kMatchedFilterWindowSizeSubBlocks and
 	// kMatchedFilterAlignmentShiftSizeSubBlocks in WebRTC's aec3_common.h).
-	filterWindow = 128 * time.Millisecond
+	filterWindow = echodelay.Min
 	filterShift  = 96 * time.Millisecond
-	// MinMaxDelay and MaxMaxDelay bound how late an echo may be looked for: one filter, and
-	// half again the 800 ms a voice takes to come back as echo once it has gone out (the
-	// agent's echoDelay, a round trip of the 400 ms one-way delay ITU-T G.114 sets as the
-	// upper limit for network planning). Each 96 ms more is another matched filter to run.
-	MinMaxDelay = filterWindow
-	MaxMaxDelay = 1200 * time.Millisecond
-	// DefaultMaxDelay covers the 800 ms a voice takes to come back as echo once it has gone
-	// out (the agent's echoDelay), and the agent's own jitter buffer and decoding on top.
-	DefaultMaxDelay = time.Second
 )
-
-// ErrMaxDelay is a MaxDelay outside MinMaxDelay to MaxMaxDelay.
-var ErrMaxDelay = fmt.Errorf("echocancel: the longest echo delay must be from %s to %s", MinMaxDelay, MaxMaxDelay)
 
 // Config is how a call's echo is cancelled.
 type Config struct {
-	// MaxDelay is the longest an echo is looked for after the voice went out. Zero is
-	// DefaultMaxDelay.
+	// MaxDelay is the longest an echo is looked for after the voice went out, from
+	// echodelay.Min to echodelay.Max. Zero is echodelay.Default.
 	MaxDelay time.Duration
 }
 
@@ -78,19 +67,20 @@ func filters(maxDelay time.Duration) int {
 func aec3Config(cfg Config) (goaec3.Config, error) {
 	maxDelay := cfg.MaxDelay
 	if maxDelay == 0 {
-		maxDelay = DefaultMaxDelay
+		maxDelay = echodelay.Default
 	}
-	if maxDelay < MinMaxDelay || maxDelay > MaxMaxDelay {
-		return goaec3.Config{}, ErrMaxDelay
+	if err := echodelay.Check(maxDelay); err != nil {
+		return goaec3.Config{}, err
 	}
 	config := goaec3.DefaultConfig()
 	config.Delay.NumFilters = filters(maxDelay)
 	return config, nil
 }
 
-// Check reports whether cfg is one a call can be cancelled with.
+// Check reports whether cfg is one a call can be cancelled with, by building a canceller with
+// it: AEC3 refuses some configs its own bounds allow.
 func Check(cfg Config) error {
-	_, err := aec3Config(cfg)
+	_, err := NewCall(cfg)
 	return err
 }
 
@@ -105,8 +95,8 @@ var (
 	lineERL = promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "agent_echo_return_loss_db",
-		Help:      "How much quieter the agent's voice was on its way back on a caller's line than when it went out (ERL), in dB, as AEC3 last estimated it when the line closed",
-		Buckets:   []float64{-10, 0, 6, 10, 15, 20, 30, 40, 60},
+		Help:      "How much quieter the agent's voice was on its way back on a caller's line than when it went out (ERL), in dB, as AEC3 last estimated it when the line closed. AEC3 holds its estimate from -30 to 20 dB, so 20 is 20 or more",
+		Buckets:   []float64{-20, -10, -5, 0, 5, 10, 15, 19.9},
 	})
 	lineDelay = promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "router",
@@ -119,6 +109,21 @@ var (
 		Name:      "agent_echo_lines_total",
 		Help:      "Callers' lines the echo canceller listened to, by whether the agent's voice went out while it did, without which there is no echo to measure",
 	}, []string{"voiced"})
+	voiceDropped = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_echo_voice_dropped_frames_total",
+		Help:      "10 ms frames of the agent's voice a caller's line let go before its canceller took them, because the line's audio stopped for more than a second",
+	})
+	gapFrames = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_echo_gap_frames_total",
+		Help:      "10 ms frames missing from a caller's audio, by its timestamps, that the echo canceller stepped over as silence to keep the agent's voice lined up with its echo",
+	})
+	cancellerResets = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "agent_echo_canceller_resets_total",
+		Help:      "Echo cancellers replaced on a caller's line because its audio stopped for longer than the agent's voice is held for, after which the two no longer line up",
+	})
 )
 
 // Call is the agent's voice on one call, as it goes out, and the lines it is cancelled from.
@@ -127,19 +132,24 @@ type Call struct {
 
 	mu    sync.Mutex
 	lines []*Line
-	// listening counts lines, read without the lock by whoever decides whether to keep voice.
-	listening atomic.Int32
+	// listening counts lines and expected the participants who will have one, both read
+	// without the lock by whoever decides whether to keep voice.
+	listening, expected atomic.Int32
 
 	// partial is the start of the next frame of voice. Only Played touches it.
 	partial  [FrameSamples]int16
 	buffered int
 }
 
-// NewCall returns a Call that cancels echo as cfg says.
+// NewCall returns a Call that cancels echo as cfg says. It builds one canceller to check the
+// config with, so a call that could not cancel any line is refused here.
 func NewCall(cfg Config) (*Call, error) {
 	config, err := aec3Config(cfg)
 	if err != nil {
 		return nil, stack.Wrap(err)
+	}
+	if _, err := goaec3.New(config, SampleRate, 1, 1); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("echocancel: %w", err))
 	}
 	return &Call{config: config}, nil
 }
@@ -185,8 +195,14 @@ func (c *Call) Listen() (*Line, error) {
 	return line, nil
 }
 
-// Listening reports whether any line is being cleaned, and so whether the voice is of use.
-func (c *Call) Listening() bool { return c.listening.Load() > 0 }
+// Expect says a participant whose line will be cleaned arrived (1) or left (-1). Their line
+// opens only once their audio does, and the voice going out before then is still what their
+// echo will be of.
+func (c *Call) Expect(delta int) { c.expected.Add(int32(delta)) }
+
+// Wanted reports whether the voice is of use: a line is being cleaned or a participant whose
+// line will be is in the call.
+func (c *Call) Wanted() bool { return c.listening.Load() > 0 || c.expected.Load() > 0 }
 
 // Line is one caller's line being cleaned of the agent's voice. Clean and Close are called on
 // one goroutine, the one the line's audio arrives on.
@@ -199,16 +215,21 @@ type Line struct {
 	// voice holds the frames, waiting the oldest first from next, count of them.
 	voice       [playedFrames][FrameSamples]int16
 	next, count int
-	// voiced is whether any of the voice played was audible.
-	voiced bool
+	// dropped counts the frames let go unread since the voice was last taken.
+	dropped int
+	// voiced is whether any of the voice played was audible, and detached whether the line
+	// is no longer played any.
+	voiced, detached bool
 
 	// taking is the voice taken from the queue, so its lock is not held through AEC3.
 	taking [playedFrames][FrameSamples]int16
 	// render and capture are the frames AEC3 is handed.
 	render, capture [][]float32
-	// pending is the start of the next frame of the line, held until it is whole.
+	// pending is the start of the next frame of the line, held until it is whole, and
+	// silence a frame of nothing, which stands for one missing from the line.
 	pending  [FrameSamples]int16
 	buffered int
+	silence  [FrameSamples]int16
 	closed   bool
 }
 
@@ -219,6 +240,8 @@ func (l *Line) played(frame *[FrameSamples]int16) {
 	if l.count == playedFrames {
 		l.next = (l.next + 1) % playedFrames
 		l.count--
+		l.dropped++
+		voiceDropped.Inc()
 	}
 	l.voice[(l.next+l.count)%playedFrames] = *frame
 	l.count++
@@ -232,16 +255,18 @@ func (l *Line) played(frame *[FrameSamples]int16) {
 	}
 }
 
-// take moves the voice queued since the last call into taking, and says how many frames.
-func (l *Line) take() int {
+// take moves the voice queued since the last call into taking, and says how many frames, and
+// whether any were dropped before they could be taken.
+func (l *Line) take() (int, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := l.count
 	for i := range n {
 		l.taking[i] = l.voice[(l.next+i)%playedFrames]
 	}
-	l.next, l.count = 0, 0
-	return n
+	dropped := l.dropped > 0
+	l.next, l.count, l.dropped = 0, 0, 0
+	return n, dropped
 }
 
 // Clean takes the agent's voice out of a chunk of the line, 16 kHz mono, of any length.
@@ -275,7 +300,11 @@ func (l *Line) Clean(samples []int16) []int16 {
 // cleanFrame hands AEC3 the voice played since the frame before, then cleans this one in
 // place.
 func (l *Line) cleanFrame(frame []int16) {
-	for i := range l.take() {
+	n, dropped := l.take()
+	if dropped {
+		l.reset()
+	}
+	for i := range n {
 		toFloat(l.render[0], l.taking[i][:])
 		// Neither call fails: the frames are built here to the size the canceller was made for.
 		_ = l.canceller.AnalyzeRender(l.render)
@@ -283,6 +312,38 @@ func (l *Line) cleanFrame(frame []int16) {
 	toFloat(l.capture[0], frame)
 	_ = l.canceller.ProcessCapture(l.capture)
 	fromFloat(frame, l.capture[0])
+}
+
+// Missed steps the line over audio missing from it, d long by its timestamps: a caller's
+// phone that sends nothing while its user is quiet (Opus DTX), or packets lost past what the
+// decoder conceals. The agent's voice went on going out meanwhile, so each missing 10 ms is
+// cleaned as silence, which keeps the voice and the line lined up; a gap longer than the
+// voice a line holds replaces the canceller instead, as nothing lines up after it.
+func (l *Line) Missed(d time.Duration) {
+	frames := int((d + FrameDuration/2) / FrameDuration)
+	if frames <= 0 {
+		return
+	}
+	if frames >= playedFrames {
+		l.reset()
+		return
+	}
+	gapFrames.Add(float64(frames))
+	for range frames {
+		l.cleanFrame(l.silence[:])
+		clear(l.silence[:])
+	}
+}
+
+// reset replaces the canceller with a new one, which finds the echo afresh.
+func (l *Line) reset() {
+	canceller, err := goaec3.New(l.call.config, SampleRate, 1, 1)
+	if err != nil {
+		// NewCall built one with the same config.
+		return
+	}
+	l.canceller = canceller
+	cancellerResets.Inc()
 }
 
 // Metrics are what AEC3 last estimated of a line's echo.
@@ -301,11 +362,18 @@ func (l *Line) Metrics() Metrics {
 		Delay: time.Duration(m.DelayMs) * time.Millisecond}
 }
 
-// Close stops cancelling the line, counts it and, if the agent's voice went out while it was
-// listened to, observes what AEC3 last estimated of its echo. It returns those estimates.
-func (l *Line) Close() Metrics {
+// Detach stops playing the line any more of the agent's voice, as the line has ended though
+// whoever cleans it has not closed it yet. It may be called from any goroutine, more than once.
+func (l *Line) Detach() {
 	c := l.call
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.detached {
+		return
+	}
+	l.detached = true
 	for i, line := range c.lines {
 		if line == l {
 			c.lines = append(c.lines[:i], c.lines[i+1:]...)
@@ -313,7 +381,12 @@ func (l *Line) Close() Metrics {
 			break
 		}
 	}
-	c.mu.Unlock()
+}
+
+// Close stops cancelling the line, counts it and, if the agent's voice went out while it was
+// listened to, observes what AEC3 last estimated of its echo. It returns those estimates.
+func (l *Line) Close() Metrics {
+	l.Detach()
 
 	metrics := l.Metrics()
 	l.mu.Lock()

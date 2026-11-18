@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
 )
 
 // LineSuite is one call with one line listened to.
@@ -97,16 +99,18 @@ func (s *LineSuite) TestALineWhoseAudioStopsHoldsOnlyTheLastSecondOfTheVoice() {
 		frame[0] = int16(i + 1)
 		s.call.Played(frame)
 	}
-	s.Equal(playedFrames, s.line.take())
+	taken, dropped := s.line.take()
+	s.Equal(playedFrames, taken)
+	s.True(dropped, "the frames let go are not said to be")
 	s.Equal(int16(51), s.line.taking[0][0], "the oldest frame held is not the first of the last second")
 	s.Equal(int16(150), s.line.taking[playedFrames-1][0])
 }
 
 func (s *LineSuite) TestAPartialFrameOfVoiceIsHeldUntilItIsWhole() {
 	s.call.Played(speech(FrameSamples-1, 7))
-	s.Zero(s.line.take())
+	s.Zero(s.taken(s.line))
 	s.call.Played(speech(FrameSamples+1, 8))
-	s.Equal(2, s.line.take())
+	s.Equal(2, s.taken(s.line))
 }
 
 func (s *LineSuite) TestAClosedLineIsPlayedNoMoreVoice() {
@@ -114,8 +118,8 @@ func (s *LineSuite) TestAClosedLineIsPlayedNoMoreVoice() {
 	s.Require().NoError(err)
 	other.Close()
 	s.call.Played(speech(chunk, 9))
-	s.Zero(other.take())
-	s.Equal(2, s.line.take())
+	s.Zero(s.taken(other))
+	s.Equal(2, s.taken(s.line))
 }
 
 func (s *LineSuite) TestLinesCleanedAlongsideTheVoicePlayedAndLinesComingAndGoingDoNotRace() {
@@ -170,18 +174,24 @@ func (s *ConfigSuite) TestTheDefaultLooksForAnEchoASecondLate() {
 }
 
 func (s *ConfigSuite) TestALongestDelayOutsideItsBoundsIsRefused() {
-	s.ErrorIs(Check(Config{MaxDelay: 100 * time.Millisecond}), ErrMaxDelay)
-	s.ErrorIs(Check(Config{MaxDelay: 2 * time.Second}), ErrMaxDelay)
-	s.NoError(Check(Config{MaxDelay: MaxMaxDelay}))
-	s.NoError(Check(Config{MaxDelay: MinMaxDelay}))
+	s.ErrorIs(Check(Config{MaxDelay: 100 * time.Millisecond}), echodelay.ErrOutOfBounds)
+	s.ErrorIs(Check(Config{MaxDelay: 2 * time.Second}), echodelay.ErrOutOfBounds)
+	s.NoError(Check(Config{MaxDelay: echodelay.Max}))
+	s.NoError(Check(Config{MaxDelay: echodelay.Min}))
 }
 
 func (s *ConfigSuite) TestEveryLongestDelayInItsBoundsMakesACanceller() {
-	for delay := MinMaxDelay; delay <= MaxMaxDelay; delay += 50 * time.Millisecond {
+	for delay := echodelay.Min; delay <= echodelay.Max; delay += 50 * time.Millisecond {
 		call, err := NewCall(Config{MaxDelay: delay})
 		s.Require().NoError(err)
 		line, err := call.Listen()
 		s.Require().NoError(err, "a longest delay of %s", delay)
 		line.Close()
 	}
+}
+
+// taken is how many frames of voice line holds, which are taken from it.
+func (s *LineSuite) taken(line *Line) int {
+	n, _ := line.take()
+	return n
 }

@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
 )
 
 // BenchmarkLine is the cost of one 10 ms frame of a line: the voice played and the line
 // cleaned, with the echo looked for up to each longest delay.
 func BenchmarkLine(b *testing.B) {
-	for _, delay := range []time.Duration{512 * time.Millisecond, DefaultMaxDelay, MaxMaxDelay} {
+	for _, delay := range []time.Duration{512 * time.Millisecond, echodelay.Default, echodelay.Max} {
 		b.Run(fmt.Sprint(delay), func(b *testing.B) {
 			call, err := NewCall(Config{MaxDelay: delay})
 			if err != nil {
