@@ -52,7 +52,8 @@ final class TurnUI {
   /// finished.
   final String content;
 
-  /// Unmerged turn-local source accumulated before patch merging.
+  /// Unmerged turn-local source accumulated before patch merging. While OpenUI streams, it is
+  /// what was written up to the last newline: a delta that ends no line changes nothing shown.
   final String raw;
 
   bool get isStreaming => status == 'streaming';
@@ -278,9 +279,11 @@ final class Conversation {
           mode: _nonEmptyOr(_text(event['mode']), 'replace'),
           raw: '${_uiWritten[event.turnId]?.raw ?? ''}$delta',
         );
-        final updated = _with(
-          uiWritten: {..._uiWritten, event.turnId: pending},
-        )._showUI(event.turnId, now, pending, _Keep.finished);
+        final written = _with(uiWritten: {..._uiWritten, event.turnId: pending});
+        // Only the line still being written grew, so no statement finished: nothing shown changes.
+        final updated = format == 'openui' && !delta.contains('\n')
+            ? written
+            : written._showUI(event.turnId, now, pending, _Keep.finished);
         final nextState = state is Working ? state : ConversationState.responding;
         return failure == null
             ? updated.withState(nextState)
