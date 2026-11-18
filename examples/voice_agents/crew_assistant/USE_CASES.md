@@ -11,9 +11,11 @@ The same pattern runs through all nine:
   live today. Your backend exposes them to the agent as tools, hosted on the router over an
   outgoing connection (`backend/hosted.go`), so it needs no public address for them. The router
   sends each call with the user who asked, and every tool acts for that user only.
-- **The phone asks first for anything that acts.** A tool that changes something (a swap, a
-  ticket, a booking) is declared by the app (`app/agent/crewTools.ts`), so the router waits for the
-  person's yes in the chat before it runs. Read-only tools run anywhere.
+- **The phone asks first for what it does in the person's name.** The three tools that act for the
+  person (a swap, a ticket, a booking) are declared by the app (`app/agent/crewTools.ts`), so the
+  router waits for their yes in the chat before one runs. The backend's tools run without asking,
+  including the two that write, `notify_shift_leader` and `save_shift_reflection`: declare a tool
+  on the phone to have it ask first.
 - **The agent can speak first.** Your backend creates a scheduled task in the person's
   conversation and runs it at once (`agentSpeaksFirst` in `backend/main.go`), so an event in your
   systems becomes the agent's opening message.
@@ -22,17 +24,17 @@ The same pattern runs through all nine:
   dictation and voice mode. Conversations are channels, so they sync, persist and work offline
   like any other chat.
 
-| #   | Use case                     | Starts with                    | Built from                                                             |
-| --- | ---------------------------- | ------------------------------ | ---------------------------------------------------------------------- |
-| 1   | Call-out and coverage        | a message                      | schedule tools, a swap the person approves, a note to the shift leader |
-| 2   | Pre-shift fit check          | the clock-in event             | the agent speaking first, an A2UI checklist                            |
-| 3   | While you were out           | the return-from-time-off event | the agent speaking first, an updates tool                              |
-| 4   | Policy search                | a question                     | a knowledge base, a search tool that answers with citations            |
-| 5   | Troubleshooting and a ticket | a message or a photo           | equipment guides, an A2UI quick fix, a ticket the owner approves       |
-| 6   | Scanning a machine           | a QR code                      | a deep link that opens a conversation about the machine                |
-| 7   | The first 30 days            | the onboarding event           | the team tool, an A2UI quiz, booking a check-in through Cal.com        |
-| 8   | Interview practice           | a message, or voice            | instructions alone, voice mode                                         |
-| 9   | Post-shift reflection        | the clock-out event            | an A2UI form or a voice memo, themes for leaders without names         |
+| #   | Use case                     | Starts with                    | Built from                                                              |
+| --- | ---------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| 1   | Call-out and coverage        | a message                      | schedule tools, a swap the person approves, a note to the shift leader  |
+| 2   | Pre-shift fit check          | the clock-in event             | the agent speaking first, an A2UI checklist                             |
+| 3   | While you were out           | the return-from-time-off event | the agent speaking first, an updates tool                               |
+| 4   | Policy search                | a question                     | a knowledge base, a search tool that answers with citations             |
+| 5   | Troubleshooting and a ticket | a message or a photo           | equipment guides, an A2UI quick fix, a ticket the owner approves        |
+| 6   | Scanning a machine           | a QR code                      | a deep link that opens a conversation about the machine                 |
+| 7   | The first 30 days            | the onboarding event           | the team tool, an A2UI quiz, booking a check-in through Cal.com         |
+| 8   | Interview practice           | a message, or voice            | instructions alone, voice mode                                          |
+| 9   | Post-shift reflection        | the clock-out event            | an A2UI form or a voice memo, themes for leaders without who wrote them |
 
 ## 1. Call-out and coverage
 
@@ -146,12 +148,14 @@ at the end, in text or by voice.
 ## 9. Post-shift reflection
 
 At clock-out, the agent asks how the shift went, as a short form, or the person answers with a
-voice memo. Leaders see the themes and energy across the team, without names.
+voice memo. Leaders see the themes and energy across the team, without who wrote them.
 
 - **Stream:** the agent speaking first, A2UI for the form, and voice memos: an audio file sent with
   a response is transcribed and answered like a message.
 - **You build:** the `clock_out` event, and `save_shift_reflection`, which keeps the themes, energy
-  and win without who wrote them. The leaders' view reads them back (`GET /crew/leader`).
+  and win without who wrote them. The leaders' view reads them back (`GET /crew/leader`). Only the
+  author is left out: a theme or a win is the person's own words, which can still name someone,
+  so review them before leaders see them if that matters.
 - **In the sample:** "Clock out", and the red mic beside the composer for a voice memo. The team
   lead view shows the pulse.
 

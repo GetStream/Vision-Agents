@@ -371,17 +371,44 @@ func TestADecisionMustSayApproveOrReject(t *testing.T) {
 	if got := request(t, handler, "POST", decision, taylor, map[string]any{"details": "Oil smoked"}); got.Code != http.StatusBadRequest {
 		t.Errorf("an edit without approve decided the ticket: %d", got.Code)
 	}
-	if got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false}); got.Code != http.StatusOK {
-		t.Errorf("the ticket wasn't still waiting after the refused edit: %d %s", got.Code, got.Body)
+	got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false})
+	if got.Code != http.StatusOK {
+		t.Fatalf("the ticket wasn't still waiting after the refused edit: %d %s", got.Code, got.Body)
+	}
+	var rejected InboxItem
+	if err := json.Unmarshal(got.Body.Bytes(), &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.WaitingFor != "" || !strings.HasPrefix(rejected.Status, "Not approved by") || strings.Contains(rejected.Status, "repairs") {
+		t.Errorf("approve false didn't reject the ticket: %+v", rejected)
 	}
 }
 
-func TestADecisionNoticeQuotesABoundedTitle(t *testing.T) {
-	long := strings.Repeat("é", noticeTitleRunes+50)
-	if got := excerpt(long, noticeTitleRunes); utf8.RuneCountInString(got) != noticeTitleRunes+1 {
-		t.Errorf("the excerpt has %d runes, want %d and an ellipsis", utf8.RuneCountInString(got), noticeTitleRunes)
+func TestADecisionNoticeStaysWithinTheTasksLimit(t *testing.T) {
+	s, _, handler := newTestServer(t)
+	var notice string
+	s.speak = func(_ context.Context, _, _, _, instructions, _ string) (string, error) {
+		notice = instructions
+		return "task-1", nil
 	}
-	if got := excerpt("Fryer down", noticeTitleRunes); got != "Fryer down" {
-		t.Errorf("a short title was cut: %q", got)
+	hour := time.Now().Add(time.Hour)
+	jordan, taylor := tokenFor(t, "crew-jordan", testSecret, hour), tokenFor(t, owner, testSecret, hour)
+	// A title that %q would escape to ten characters a rune, after a control character.
+	title := "\x00" + strings.Repeat("\U0010FFFF", 1000)
+	drafted := request(t, handler, "POST", "/crew/tickets", jordan, map[string]string{"summary": title, "details": "x", "session_id": "session-1"})
+	var ticket struct {
+		ID string `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(drafted.Body.Bytes(), &ticket); err != nil || ticket.ID == "" {
+		t.Fatalf("drafting: %d %s", drafted.Code, drafted.Body)
+	}
+	if got := request(t, handler, "POST", "/crew/tickets/"+ticket.ID+"/decision", taylor, map[string]any{"approve": true}); got.Code != http.StatusOK {
+		t.Fatalf("deciding: %d %s", got.Code, got.Body)
+	}
+	if n := utf8.RuneCountInString(notice); n == 0 || n > maxNoticeRunes {
+		t.Errorf("the notice has %d characters, want 1 to %d", n, maxNoticeRunes)
+	}
+	if !strings.Contains(notice, ticket.ID) || !strings.Contains(notice, "call no tools") || strings.ContainsRune(notice, 0) {
+		t.Errorf("the notice lost its ticket id or its instructions, or kept a control character: %.200q", notice)
 	}
 }

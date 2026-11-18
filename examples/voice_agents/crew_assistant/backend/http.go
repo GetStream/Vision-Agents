@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -192,8 +193,7 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request, userID string) {
 		return
 	}
 	if item.session != "" {
-		instructions := fmt.Sprintf("Tell the person what happened to the repair ticket they drafted, %q (%s): %s. "+
-			"Say it in one or two short sentences, and call no tools.", excerpt(item.Title, noticeTitleRunes), item.ID, item.Status)
+		instructions := decisionNotice(item)
 		// The decision is made: the notice doesn't end with the owner's request.
 		telling, done := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 		defer done()
@@ -204,9 +204,29 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request, userID string) {
 	answer(w, item)
 }
 
-// noticeTitleRunes is how much of a ticket's title a decision's notice quotes, which keeps it
-// well within a scheduled task's 2,000-character instructions.
-const noticeTitleRunes = 200
+// noticeTitleRunes and noticeStatusRunes are how much of a ticket's title and status a decision's
+// notice quotes, which keeps the notice within maxNoticeRunes.
+const (
+	noticeTitleRunes  = 200
+	noticeStatusRunes = 300
+	// maxNoticeRunes is a scheduled task's limit on its instructions.
+	maxNoticeRunes = 2000
+)
+
+// decisionNotice is what the agent is told to say about a decided ticket: its title, its id and
+// its status. The title is quoted as written, less control characters, rather than escaped,
+// which could make it many times longer.
+func decisionNotice(item InboxItem) string {
+	printable := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, item.Title)
+	return fmt.Sprintf("Tell the person what happened to the repair ticket they drafted, “%s” (%s): %s. "+
+		"Say it in one or two short sentences, and call no tools.",
+		excerpt(printable, noticeTitleRunes), item.ID, excerpt(item.Status, noticeStatusRunes))
+}
 
 // excerpt is text cut to at most n runes, with an ellipsis when it was cut.
 func excerpt(text string, n int) string {
