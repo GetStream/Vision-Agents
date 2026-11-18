@@ -46,9 +46,9 @@ const activityBatch = 1000
 
 // RecordActivity adds deltas to the rows they name, making the ones that are not there yet.
 // A delta naming no organization, such as a hook's or a forward's, which name only the app, is
-// the organization app_organizations holds for its app, when it holds one. Counts are added, the first and last times widen, and a refusal later than the one the
-// row holds replaces it. Deltas naming the same row are summed first: one statement cannot
-// update a row twice.
+// the organization app_organizations holds for its app, when it holds one. Counts are added,
+// the first and last times widen, and a refusal later than the one the row holds replaces it.
+// Deltas naming the same row are summed first: one statement cannot update a row twice.
 func (s *Store) RecordActivity(ctx context.Context, deltas []ActivityDelta) error {
 	folded := make(map[activityKey]*ActivityDelta, len(deltas))
 	order := make([]activityKey, 0, len(deltas))
