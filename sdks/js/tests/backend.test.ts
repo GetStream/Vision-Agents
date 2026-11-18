@@ -107,6 +107,46 @@ describe("Backend", () => {
     assert.equal(connection.headers["user-agent"], `stream-agents-js/${VERSION}`);
   });
 
+  it("opens a page's socket with the URL alone, as a browser takes protocols there", async () => {
+    // A browser's WebSocket reads a second argument as protocols and throws on an object, so
+    // every page socket would fail if it were given the headers.
+    const seen: unknown[][] = [];
+    class Recording {
+      constructor(...args: unknown[]) {
+        seen.push(args);
+      }
+    }
+    const original = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+    Object.defineProperty(globalThis, "WebSocket", { value: Recording, configurable: true, writable: true });
+    try {
+      await inABrowser(async () => {
+        new Backend({ url: router.url, apiKey: "vak_live_x" }).openSocket("ws://x/y");
+      });
+    } finally {
+      if (original) Object.defineProperty(globalThis, "WebSocket", original);
+    }
+
+    assert.deepEqual(seen, [["ws://x/y"]]);
+  });
+
+  it("opens a socket the app passed in with the URL alone, as it is the app's to configure", () => {
+    const seen: unknown[][] = [];
+    class Recording {
+      constructor(...args: unknown[]) {
+        seen.push(args);
+      }
+    }
+
+    new Backend({
+      url: router.url,
+      apiKey: "vak_live_x",
+      apiSecret: "shh",
+      webSocket: Recording as never,
+    }).openSocket("ws://x/y");
+
+    assert.deepEqual(seen, [["ws://x/y"]]);
+  });
+
   it("refuses a request from a backend nobody is billed for", async () => {
     const backend = new Backend({ url: "http://localhost:8080" });
 
