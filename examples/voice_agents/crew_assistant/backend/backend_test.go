@@ -54,7 +54,7 @@ func newTestServer(t *testing.T) (*server, *fakeRoles, http.Handler) {
 	}
 	s := &server{
 		secret: []byte(testSecret), mint: minter.mint, crew: crew, roles: roles,
-		speak: func(context.Context, string, string, string, string) (string, error) { return "task-1", nil },
+		speak: func(context.Context, string, string, string, string, string) (string, error) { return "task-1", nil },
 	}
 	mux := http.NewServeMux()
 	s.routes(mux)
@@ -99,7 +99,7 @@ func TestEveryRouteButTheTokenNeedsAValidToken(t *testing.T) {
 		"no user": tokenFor(t, "", testSecret, hour),
 	} {
 		for _, route := range []struct{ method, path string }{
-			{"POST", "/events"}, {"POST", "/crew/swaps"}, {"POST", "/crew/tickets"},
+			{"POST", "/events"}, {"POST", "/crew/swaps"}, {"POST", "/crew/tickets"}, {"POST", "/crew/tickets/ticket-1/decision"},
 			{"POST", "/crew/check-ins"}, {"POST", "/crew/reflections"}, {"GET", "/crew/leader"},
 		} {
 			got := request(t, handler, route.method, route.path, token, map[string]string{})
@@ -301,5 +301,53 @@ func TestTheSupervisorCanBeNamed(t *testing.T) {
 	got, _ := crew.checkIn("crew-jordan", "Sam Doe", "Friday 10:00", "")
 	if !strings.Contains(fmt.Sprint(got), "sam.doe@example.org") {
 		t.Errorf("the check-in doesn't invite the named supervisor: %v", got)
+	}
+}
+
+func TestTheOwnerApprovesATicketAndTheDrafterHearsIt(t *testing.T) {
+	s, _, handler := newTestServer(t)
+	type told struct{ userID, sessionID, instructions, timezone string }
+	var heard []told
+	s.speak = func(_ context.Context, userID, sessionID, _, instructions, timezone string) (string, error) {
+		heard = append(heard, told{userID, sessionID, instructions, timezone})
+		return "task-1", nil
+	}
+	hour := time.Now().Add(time.Hour)
+	jordan, maya, taylor := tokenFor(t, "crew-jordan", testSecret, hour), tokenFor(t, "crew-maya", testSecret, hour), tokenFor(t, owner, testSecret, hour)
+
+	drafted := request(t, handler, "POST", "/crew/tickets", jordan, map[string]string{"asset": "FRY-02", "summary": "E-41 again", "details": "Reset twice", "session_id": "session-1", "timezone": "Europe/Skopje"})
+	var ticket struct {
+		ID string `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(drafted.Body.Bytes(), &ticket); err != nil || ticket.ID == "" {
+		t.Fatalf("drafting: %d %s", drafted.Code, drafted.Body)
+	}
+	decision := "/crew/tickets/" + ticket.ID + "/decision"
+	if got := request(t, handler, "POST", decision, jordan, map[string]any{"approve": true}); got.Code != http.StatusForbidden {
+		t.Errorf("the drafter approved their own ticket: %d", got.Code)
+	}
+	if got := request(t, handler, "POST", decision, maya, map[string]any{"approve": true}); got.Code != http.StatusForbidden {
+		t.Errorf("a shift leader approved the owner's ticket: %d", got.Code)
+	}
+	if len(heard) != 0 {
+		t.Fatalf("the drafter heard before the owner decided: %+v", heard)
+	}
+
+	got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": true, "details": "Reset twice; oil smoked"})
+	if got.Code != http.StatusOK {
+		t.Fatalf("the owner couldn't approve: %d %s", got.Code, got.Body)
+	}
+	var decided InboxItem
+	if err := json.Unmarshal(got.Body.Bytes(), &decided); err != nil {
+		t.Fatal(err)
+	}
+	if decided.WaitingFor != "" || !strings.Contains(decided.Status, "submitted to repairs") || decided.Details != "Reset twice; oil smoked" {
+		t.Errorf("the ticket wasn't submitted with the owner's edit: %+v", decided)
+	}
+	if len(heard) != 1 || heard[0].userID != "crew-jordan" || heard[0].sessionID != "session-1" || heard[0].timezone != "Europe/Skopje" || !strings.Contains(heard[0].instructions, decided.Status) {
+		t.Errorf("Jordan wasn't told in the conversation the ticket came from: %+v", heard)
+	}
+	if got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false}); got.Code != http.StatusConflict {
+		t.Errorf("a decided ticket was decided again: %d", got.Code)
 	}
 }

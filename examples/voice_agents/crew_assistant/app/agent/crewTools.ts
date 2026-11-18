@@ -50,6 +50,24 @@ const localContext: AIClientTool = {
 };
 
 /**
+ * The phone's IANA timezone, which the agent speaking first needs. Hermes can't always name it, as
+ * on an iOS simulator, so the phone's offset from UTC stands in, as a zone such as `Etc/GMT-1`
+ * (whose sign is the reverse of the offset).
+ */
+export const phoneTimezone = () => {
+  const named = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (named) return named;
+  const hours = new Date().getTimezoneOffset() / 60;
+  return Number.isInteger(hours) ? `Etc/GMT${hours < 0 ? '' : '+'}${hours}` : undefined;
+};
+
+/**
+ * The conversation open on the phone. A drafted ticket names it, with the phone's timezone, so the
+ * person hears there what the owner decided.
+ */
+export const currentConversation: { sessionId?: string } = {};
+
+/**
  * The phone's tools: its clock, and the three actions the person says yes to here before they
  * run. The restaurant's other tools run on the crew backend, which hosts them on the router.
  */
@@ -72,7 +90,7 @@ export const CREW_TOOLS: AIClientTool[] = [
   ),
   tool(
     'create_support_ticket',
-    'Drafts a repair ticket for the owner to review and submit. The phone asks the person first.',
+    'Drafts a repair ticket for the owner to approve and submit. The phone asks the person first.',
     object(
       {
         asset: text('The asset id'),
@@ -82,7 +100,14 @@ export const CREW_TOOLS: AIClientTool[] = [
       },
       ['summary', 'details'],
     ),
-    (body) => crewBackend('crew/tickets', { body }),
+    (body) =>
+      crewBackend('crew/tickets', {
+        body: {
+          ...body,
+          session_id: currentConversation.sessionId,
+          timezone: phoneTimezone(),
+        },
+      }),
     'Drafted a ticket',
     false,
   ),
@@ -131,7 +156,7 @@ export const APPROVALS: Record<string, ToolApproval> = {
   book_check_in: { allowTitle: 'Book it', title: 'Book this check-in?' },
   create_support_ticket: {
     allowTitle: 'Send for review',
-    message: 'The owner reviews it before it goes to repairs.',
+    message: 'The owner approves it before it goes to repairs, and you hear back here.',
     title: 'Draft this repair ticket?',
   },
   request_shift_swap: {

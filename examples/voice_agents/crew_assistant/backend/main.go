@@ -140,10 +140,9 @@ var events = map[string]struct{ title, instructions string }{
 	},
 }
 
-// agentSpeaksFirst has the agent open userID's conversation about an event, by creating a
-// scheduled task in it and running it now.
-func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone string) (string, error) {
-	event := events[kind]
+// agentSpeaksFirst has the agent say what instructions ask for in userID's conversation, about an
+// event or a decision, by creating a scheduled task in it and running it now.
+func agentSpeaksFirst(ctx context.Context, userID, sessionID, title, instructions, timezone string) (string, error) {
 	client, err := stream.Backend{ActingFor: userID}.Client()
 	if err != nil {
 		return "", err
@@ -156,8 +155,8 @@ func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone str
 	created, err := client.CreateScheduledTaskWithResponse(ctx,
 		&acceleration.CreateScheduledTaskParams{XStreamUserId: &userID},
 		acceleration.CreateScheduledTaskJSONRequestBody{
-			Title:        event.title,
-			Instructions: event.instructions,
+			Title:        title,
+			Instructions: instructions,
 			Schedule:     acceleration.ScheduledTaskSchedule{In: &in, Timezone: zone},
 			SessionId:    &sessionID,
 		})
@@ -179,7 +178,7 @@ func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone str
 	go func(id string) {
 		time.Sleep(2 * time.Minute)
 		if deleted, err := client.DeleteScheduledTaskWithResponse(context.Background(), id); err != nil || deleted.StatusCode() >= http.StatusMultipleChoices {
-			log.Printf("the %s task %s stays scheduled: %v", kind, id, err)
+			log.Printf("the %q task %s stays scheduled: %v", title, id, err)
 		}
 	}(task.Id)
 	return task.Id, nil

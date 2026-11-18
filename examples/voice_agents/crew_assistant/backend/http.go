@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -24,8 +25,9 @@ type server struct {
 	mint  func(userID string) (string, error)
 	crew  *restaurant
 	roles roles
-	// speak has the agent open the user's conversation about an event, and answers the task id.
-	speak func(ctx context.Context, userID, sessionID, kind, timezone string) (string, error)
+	// speak has the agent say what instructions ask for in the user's conversation, under title,
+	// and answers the task id.
+	speak func(ctx context.Context, userID, sessionID, title, instructions, timezone string) (string, error)
 }
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -33,6 +35,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /events", s.signedIn(s.event))
 	mux.HandleFunc("POST /crew/swaps", s.signedIn(s.swap))
 	mux.HandleFunc("POST /crew/tickets", s.signedIn(s.ticket))
+	mux.HandleFunc("POST /crew/tickets/{id}/decision", s.signedIn(s.decide))
 	mux.HandleFunc("POST /crew/check-ins", s.signedIn(s.checkIn))
 	mux.HandleFunc("POST /crew/reflections", s.signedIn(s.reflection))
 	mux.HandleFunc("GET /crew/leader", s.signedIn(s.leaderView))
@@ -123,11 +126,12 @@ func (s *server) event(w http.ResponseWriter, r *http.Request, userID string) {
 		http.Error(w, "a session_id is required", http.StatusBadRequest)
 		return
 	}
-	if _, known := events[asked.Kind]; !known {
+	event, known := events[asked.Kind]
+	if !known {
 		http.Error(w, "kind is one of clock_in, clock_out, back_from_time_off and onboarding", http.StatusBadRequest)
 		return
 	}
-	taskID, err := s.speak(r.Context(), userID, asked.SessionID, asked.Kind, asked.Timezone)
+	taskID, err := s.speak(r.Context(), userID, asked.SessionID, event.title, event.instructions, asked.Timezone)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -153,11 +157,41 @@ func (s *server) ticket(w http.ResponseWriter, r *http.Request, userID string) {
 		Summary  string `json:"summary"`
 		Details  string `json:"details"`
 		Priority string `json:"priority"`
+		// SessionID is the conversation it was drafted in, where the person hears the decision, and
+		// Timezone their phone's, which the agent speaking there needs.
+		SessionID string `json:"session_id"`
+		Timezone  string `json:"timezone"`
 	}
 	if !decode(w, r, &asked) {
 		return
 	}
-	respond(w)(s.crew.ticket(userID, asked.Asset, asked.Summary, asked.Details, asked.Priority))
+	respond(w)(s.crew.ticket(userID, asked.Asset, asked.Summary, asked.Details, asked.Priority, asked.SessionID, asked.Timezone))
+}
+
+// decide is the owner approving or rejecting a drafted ticket, with their edits to it. The agent
+// then tells the person who drafted it, in the conversation they drafted it in.
+func (s *server) decide(w http.ResponseWriter, r *http.Request, userID string) {
+	var asked struct {
+		Approve bool   `json:"approve"`
+		Title   string `json:"title"`
+		Details string `json:"details"`
+	}
+	if !decode(w, r, &asked) {
+		return
+	}
+	item, err := s.crew.decide(userID, r.PathValue("id"), asked.Approve, asked.Title, asked.Details)
+	if err != nil {
+		http.Error(w, err.Error(), statusOf(err))
+		return
+	}
+	if item.session != "" {
+		instructions := fmt.Sprintf("Tell the person what happened to the repair ticket they drafted, %q: %s. "+
+			"Say it in one or two short sentences, and call no tools.", item.Title, item.Status)
+		if _, err := s.speak(r.Context(), item.drafter, item.session, "Your repair ticket", instructions, item.timezone); err != nil {
+			log.Printf("couldn't tell %s about %s: %v", item.drafter, item.ID, err)
+		}
+	}
+	answer(w, item)
 }
 
 func (s *server) checkIn(w http.ResponseWriter, r *http.Request, userID string) {

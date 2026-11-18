@@ -30,9 +30,13 @@ export const AgentConfig = {
     id: process.env.EXPO_PUBLIC_AGENT_USER_ID || 'crew-jordan',
     name: 'Jordan Lee',
   },
-  /** Who the team lead view signs in as: a user whose crew role on the backend is leader. */
+  /**
+   * Who the team lead view signs in as: a user whose crew role on the backend is leader. The owner
+   * by default, who approves the repair tickets.
+   */
   leader: {
-    id: process.env.EXPO_PUBLIC_AGENT_LEADER_ID || 'crew-maya',
-    name: 'Maya Chen',
+    id: process.env.EXPO_PUBLIC_AGENT_LEADER_ID || 'crew-taylor',
+    name: 'Taylor Morgan',
+    title: 'owner',
   },
 } as const;

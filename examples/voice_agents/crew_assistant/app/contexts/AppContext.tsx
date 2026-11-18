@@ -30,6 +30,7 @@ import {
   whenUsed,
   withTitles,
 } from '../agent/conversation';
+import { currentConversation, phoneTimezone } from '../agent/crewTools';
 import { createDeviceTools } from '../agent/deviceTools';
 import { imagesOf } from '../agent/photos';
 
@@ -130,7 +131,7 @@ const tellBackend = (kind: CrewEvent, sessionId: string) =>
     body: {
       kind,
       session_id: sessionId,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timezone: phoneTimezone(),
     },
   });
 
@@ -236,6 +237,10 @@ export const AppProvider = ({ client, children }: PropsWithChildren<{ client: St
   const followed = useStateStore(chat ? chatStore(chat) : undefined, selector);
   const session = followed?.session;
   const awaitingAgent = chat !== undefined && chat === awaitedChat && !followed?.hasShownReply;
+
+  useEffect(() => {
+    currentConversation.sessionId = session?.id;
+  }, [session]);
 
   // Runs the calls of the latest reply that wait for this phone, each once.
   const lastReply = followed?.lastReply;
