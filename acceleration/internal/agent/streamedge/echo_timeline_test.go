@@ -9,6 +9,7 @@ import (
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/thesyncim/gopus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -16,12 +17,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// timelineCall is 20 s of the agent talking to a sip- caller whose phone sends every packet,
-// each 20 ms of what it heard of the agent, 300 ms late, as stamp says: stamp is given each
-// packet's number and the packet, with the timestamp and payload a phone would send, to change.
-// It returns what the phone heard and what the edge handed the agent of it, 20 ms for each
-// packet.
-func (s *EchoSuite) timelineCall(stamp func(i int, packet *rtp.Packet)) (heard, handed []int16) {
+// timelineCall is 20 s of the agent talking to a sip- caller whose phone sends a packet every
+// 20 ms of what it heard of the agent, 300 ms late, as stamp says: stamp is given each packet's
+// number and the packet, with the timestamp and payload a phone would send, to change, and
+// says whether the phone sends it. A packet not sent takes no sequence number, as one a phone
+// in DTX leaves out. It returns what the phone heard and what the edge handed the agent of it,
+// 20 ms for each packet sent.
+func (s *EchoSuite) timelineCall(stamp func(i int, packet *rtp.Packet) bool) (heard, handed []int16) {
 	edge := s.sipEdge()
 	s.T().Cleanup(func() { _ = edge.speaker.Close() })
 	edge.report(&sfu_models.Participant{UserId: "sip-1", SessionId: "sip-1-session"}, true)
@@ -40,6 +42,7 @@ func (s *EchoSuite) timelineCall(stamp func(i int, packet *rtp.Packet)) (heard, 
 	s.Require().NoError(err)
 	phone := newPhone()
 	at, pause := 0, 0
+	var seq uint16
 	frame := make([]int16, 5760)
 	for i := range 20 * 50 {
 		if pause > 0 {
@@ -63,12 +66,16 @@ func (s *EchoSuite) timelineCall(stamp func(i int, packet *rtp.Packet)) (heard, 
 		back := phone.back(played)
 		coded, err := encoder.Encode(webrtcaudio.FromInt16(back, echocancel.SampleRate, 1))
 		s.Require().NoError(err)
-		packet := &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 111, SequenceNumber: uint16(i),
+		packet := &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 111, SequenceNumber: seq,
 			Timestamp: uint32(i) * 960}, Payload: coded[0]}
-		stamp(i, packet)
+		if !stamp(i, packet) {
+			continue
+		}
+		seq++
 		track <- packet
 		select {
 		case got := <-edge.Audio():
+			s.Require().Len(got.Audio.Samples, len(back), "the edge handed the agent part of a packet")
 			heard = append(heard, back...)
 			handed = append(handed, got.Audio.Samples...)
 		case <-time.After(5 * time.Second):
@@ -81,10 +88,11 @@ func (s *EchoSuite) timelineCall(stamp func(i int, packet *rtp.Packet)) (heard, 
 // A phone's packets are stamped from its own clock and leave it a little unevenly; the reader
 // times each frame by its packet's stamp.
 func (s *EchoSuite) TestPacketsStampedLateNowAndThenLeaveTheEchoCancelled() {
-	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) {
+	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {
 		if i%10 == 5 {
 			packet.Timestamp += 720 // 15 ms late
 		}
+		return true
 	})
 
 	quieter := gone(heard, handed, 5, 20)
@@ -96,10 +104,11 @@ func (s *EchoSuite) TestPacketsStampedLateNowAndThenLeaveTheEchoCancelled() {
 // before the packet's own time.
 func (s *EchoSuite) TestAPacketThatCannotBeDecodedLeavesTheEchoCancelled() {
 	const broken = 600
-	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) {
+	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {
 		if i == broken {
 			packet.Payload = []byte{0x03, 0xff}
 		}
+		return true
 	})
 
 	at := float64(broken) / 50
@@ -112,14 +121,49 @@ func (s *EchoSuite) TestAPacketThatCannotBeDecodedLeavesTheEchoCancelled() {
 // than the ones before.
 func (s *EchoSuite) TestStampsThatStepBackLeaveTheEchoCancelled() {
 	const back = 600
-	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) {
+	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {
 		if i >= back {
 			packet.Timestamp -= 2 * opusSampleRate
 		}
+		return true
 	})
 
 	at := float64(back) / 50
 	quieter := gone(heard, handed, at, at+3)
 	s.T().Logf("stamps 2 s back from %.0f s on: %.1f dB quieter in the 3 s after", at, quieter)
 	s.Greater(quieter, 60.0)
+}
+
+// counted is the value of the counter the default registry holds by name.
+func (s *EchoSuite) counted(name string) float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	for _, family := range families {
+		if family.GetName() == name {
+			return family.GetMetric()[0].GetCounter().GetValue()
+		}
+	}
+	s.FailNow("no such counter", name)
+	return 0
+}
+
+// After stamps step back, the timeline starts again from them, so a gap after that is still
+// stepped over, once.
+func (s *EchoSuite) TestAGapAfterStampsStepBackIsSteppedOverOnce() {
+	const back, quiet = 600, 700
+	stepped := s.counted("router_agent_echo_gap_frames_total")
+
+	heard, handed := s.timelineCall(func(i int, packet *rtp.Packet) bool {
+		if i >= back {
+			packet.Timestamp -= 2 * opusSampleRate
+		}
+		return i < quiet || i >= quiet+5
+	})
+
+	s.Equal(10.0, s.counted("router_agent_echo_gap_frames_total")-stepped, "100 ms not sent is ten frames")
+	at := float64(quiet-5) / 50
+	quieter := gone(heard, handed, at, at+3)
+	s.T().Logf("100 ms not sent after stamps stepped 2 s back: %.1f dB quieter in the 3 s after", quieter)
+	// As across a gap of 100 ms anywhere (call_test.go in internal/echocancel).
+	s.Greater(quieter, 30.0)
 }

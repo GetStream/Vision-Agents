@@ -279,15 +279,28 @@ func (s *speaker) appendVoice(resampled []webrtcaudio.PCM) {
 	}
 }
 
-// resamplerLeads are how many 16 kHz samples a stream resampler holds back, by input rate.
-var resamplerLeads sync.Map
+// resamplerLeads are how many 16 kHz samples a stream resampler holds back, for the rates a
+// voice provider sends at. Another rate is measured each time: kept for every rate a stream
+// ever came at, the map would have no bound.
+var resamplerLeads = sync.OnceValue(func() map[int]int {
+	leads := map[int]int{}
+	for _, rate := range []int{8_000, 16_000, 22_050, 24_000, 44_100, 48_000} {
+		leads[rate] = measureResamplerLead(rate)
+	}
+	return leads
+})
 
 // resamplerLead is how many 16 kHz samples a stream resampler from rate holds back, and one
-// more for its rounding, read off one that is given a second of silence.
+// more for its rounding.
 func resamplerLead(rate int) int {
-	if lead, ok := resamplerLeads.Load(rate); ok {
-		return lead.(int)
+	if lead, ok := resamplerLeads()[rate]; ok {
+		return lead
 	}
+	return measureResamplerLead(rate)
+}
+
+// measureResamplerLead reads resamplerLead off a resampler that is given a second of silence.
+func measureResamplerLead(rate int) int {
 	probe := webrtcaudio.NewStreamResampler(webrtcaudio.FormatS16, echocancel.SampleRate, 1, 0)
 	out, err := probe.Write(webrtcaudio.FromInt16(make([]int16, rate), rate, 1))
 	if err != nil {
@@ -297,9 +310,7 @@ func resamplerLead(rate int) int {
 	for _, pcm := range out {
 		produced += pcm.Len()
 	}
-	lead := max(0, echocancel.SampleRate-produced) + 1
-	resamplerLeads.Store(rate, lead)
-	return lead
+	return max(0, echocancel.SampleRate-produced) + 1
 }
 
 // takeVoice moves the voice of the frame the track is taking into sent, silence for what the

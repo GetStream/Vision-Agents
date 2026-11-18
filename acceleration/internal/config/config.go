@@ -476,8 +476,8 @@ type Phone struct {
 	// (internal/echocancel), before anything of the agent's hears it: a phone with no echo
 	// cancellation of its own sends it back, and the agent hears its own words as the
 	// caller's. Off by default: a router built without GOEXPERIMENT=simd runs AEC3 in pure Go,
-	// about 0.46 ms of a core per 10 ms of every phone caller, so each environment turns it
-	// on for itself.
+	// which took 0.46 ms of a core per 10 ms of every phone caller on an Apple M4 Max (not
+	// measured on production hardware), so each environment turns it on for itself.
 	EchoCancellation bool `koanf:"echo_cancellation"`
 	// EchoMaxDelay is the longest an echo is looked for after the agent's voice went out, from
 	// echodelay.Min to echodelay.Max. 1s by default. Each 96 ms more is another
@@ -947,8 +947,7 @@ func (c Config) validate() error {
 		return fmt.Errorf("config: phone.agent_join_timeout cannot be negative, got %s", c.Phone.AgentJoinTimeout)
 	}
 	if err := echodelay.Check(c.Phone.EchoMaxDelay); err != nil {
-		return fmt.Errorf("config: phone.echo_max_delay is from %s to %s, got %s",
-			echodelay.Min, echodelay.Max, c.Phone.EchoMaxDelay)
+		return fmt.Errorf("config: phone.echo_max_delay %s: %w", c.Phone.EchoMaxDelay, err)
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)

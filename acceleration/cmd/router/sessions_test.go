@@ -75,7 +75,10 @@ func (s *EdgeForSuite) TestWithEchoCancellationOffNobodysAudioIsCleaned() {
 	s.False(edge.EchoCancelled("sip-+15550100"))
 }
 
-func (s *EdgeForSuite) TestAnEchoDelayTheCancellerRefusesIsRefusedAtStart() {
+// AEC3 takes every delay in echodelay's bounds (echocancel's
+// TestEveryLongestDelayInItsBoundsMakesACanceller), so a delay out of them is what a start
+// refuses.
+func (s *EdgeForSuite) TestAnEchoDelayOutOfItsBoundsIsRefusedAtStart() {
 	_, err := edgeFor(streamapp.NewClients(nil, streamapp.ClientsOptions{}),
 		config.Phone{EchoCancellation: true, EchoMaxDelay: 5 * time.Second})
 

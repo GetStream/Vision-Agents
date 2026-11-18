@@ -3,6 +3,8 @@ package streamedge
 import (
 	"io"
 	"log/slog"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,14 +45,15 @@ type sender struct {
 	quiet   int
 }
 
-// send codes 20 ms the microphone heard and sends it, and says whether it did.
-func (s *EchoSuite) send(to *sender, heard []int16) bool {
+// send codes 20 ms the microphone heard and sends it, and returns what it sent, nil for
+// nothing.
+func (s *EchoSuite) send(to *sender, heard []int16) []byte {
 	defer func() { to.ts += 960 }()
 	if to.dtx {
 		if audio.Audible(heard) {
 			to.quiet = 0
 		} else if to.quiet++; to.quiet > 10 && to.quiet%20 != 0 {
-			return false
+			return nil
 		}
 	}
 	coded, err := to.encoder.Encode(webrtcaudio.FromInt16(heard, echocancel.SampleRate, 1))
@@ -59,15 +62,31 @@ func (s *EchoSuite) send(to *sender, heard []int16) bool {
 	to.track <- &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 111, SequenceNumber: to.seq,
 		Timestamp: to.ts}, Payload: coded[0]}
 	to.seq++
-	return true
+	return coded[0]
 }
 
-// heardOnTheEdge plays the reply over and over for seconds on an edge that cancels the echo of
-// sip- participants, with a sip- caller whose phone sends nothing while it is quiet and a
-// browser user next to them, each hearing the agent's voice back 300 ms later. It returns what
-// each microphone heard and what the edge handed the agent of it, by user id, over the 20 ms
+// edgeCall is what an edge was sent and handed the agent, by user id: heard is what each
+// microphone heard, handed what the edge handed the agent of it, and plain the browser's
+// packets decoded as the edge decodes them, with nothing cancelled.
+type edgeCall struct {
+	heard, handed map[string][]int16
+	plain         []int16
+}
+
+const (
+	// edgeCallLength is how long the call on the edge lasts, edgeAgentUntil when the agent
+	// says its last reply, and edgeCallerAt when the caller speaks, once its echo has gone.
+	edgeCallLength = 30
+	edgeAgentUntil = 18
+	edgeCallerAt   = 20
+)
+
+// heardOnTheEdge plays the reply over and over until edgeAgentUntil on an edge that cancels
+// the echo of sip- participants, with a sip- caller whose phone sends nothing while it is
+// quiet and a browser user next to them, each hearing the agent's voice back 300 ms later. The
+// caller speaks from edgeCallerAt on. It returns what each was sent and handed over the 20 ms
 // both were sent in.
-func (s *EchoSuite) heardOnTheEdge(seconds int) (heard, handed map[string][]int16) {
+func (s *EchoSuite) heardOnTheEdge() edgeCall {
 	edge := s.sipEdge()
 	s.T().Cleanup(func() { _ = edge.speaker.Close() })
 
@@ -94,12 +113,14 @@ func (s *EchoSuite) heardOnTheEdge(seconds int) (heard, handed map[string][]int1
 
 	decoder, err := gopus.NewDecoder(gopus.DefaultDecoderConfig(echocancel.SampleRate, 1))
 	s.Require().NoError(err)
+	plain, err := opus.NewDecoder(opus.Config{SampleRate: stt.SampleRate})
+	s.Require().NoError(err)
 	phone := newPhone()
-	heard, handed = map[string][]int16{}, map[string][]int16{}
+	call := edgeCall{heard: map[string][]int16{}, handed: map[string][]int16{}}
 	at, pause := 0, 0
 	frame := make([]int16, 5760)
-	for range seconds * 50 {
-		if pause > 0 {
+	for i := range edgeCallLength * 50 {
+		if pause > 0 || i >= edgeAgentUntil*50 {
 			pause--
 		} else if len(edge.speaker.frames) < 2 {
 			end := min(at+s.reply.SampleRate/50, len(s.reply.Samples))
@@ -117,33 +138,55 @@ func (s *EchoSuite) heardOnTheEdge(seconds int) (heard, handed map[string][]int1
 			s.Require().NoError(err)
 			copy(played, frame[:n])
 		}
-		back := phone.back(played)
+		echo := phone.back(played)
 		for user, to := range senders {
-			if !s.send(to, back) {
+			mic := echo
+			if user != "browser" {
+				mic = slices.Clone(echo)
+				if from := i*echoFrameSamples - edgeCallerAt*echocancel.SampleRate; from >= 0 && from < len(s.caller) {
+					said := s.caller[from:min(from+echoFrameSamples, len(s.caller))]
+					for j, v := range said {
+						mic[j] = int16(max(math.MinInt16, min(math.MaxInt16, int(mic[j])+int(v))))
+					}
+				}
+			}
+			payload := s.send(to, mic)
+			if payload == nil {
 				continue
+			}
+			if user == "browser" {
+				decoded, err := plain.Decode(payload)
+				s.Require().NoError(err)
+				call.plain = append(call.plain, decoded.ToInt16().Int16()...)
 			}
 			select {
 			case got := <-edge.Audio():
 				s.Require().Equal(user, got.Participant.UserID)
-				heard[user] = append(heard[user], back...)
-				handed[user] = append(handed[user], got.Audio.Samples...)
+				s.Require().Len(got.Audio.Samples, len(mic), "the edge handed the agent part of a packet")
+				call.heard[user] = append(call.heard[user], mic...)
+				call.handed[user] = append(call.handed[user], got.Audio.Samples...)
 			case <-time.After(5 * time.Second):
 				s.FailNow("the edge handed the agent nothing of what was sent", user)
 			}
 		}
 	}
-	return heard, handed
+	return call
 }
 
 func (s *EchoSuite) TestOnlyTheAudioOfTheParticipantsNamedIsCleanedBeforeTheAgentHearsIt() {
-	heard, handed := s.heardOnTheEdge(30)
+	call := s.heardOnTheEdge()
+	heard, handed := call.heard["sip-15550100"], call.handed["sip-15550100"]
 
-	caller := gone(heard["sip-15550100"], handed["sip-15550100"], 5, 25)
-	browser := gone(heard["browser"], handed["browser"], 5, 25)
-	s.T().Logf("the agent's voice coming back from a sip- caller whose phone stops sending while quiet: "+
-		"%.1f dB quieter; from a browser: %.1f dB", caller, browser)
-	s.Greater(caller, 20.0, "the caller's line was not cleaned")
-	s.InDelta(0, browser, 3, "the browser's audio was cleaned")
+	// The caller's phone sends nothing while quiet, so its audio is shorter than the call:
+	// the caller's own voice is measured in its last 8 s, which hold it alone.
+	end := float64(len(heard)) / echocancel.SampleRate
+	echoGone := gone(heard, handed, 5, edgeAgentUntil-3)
+	callerKept := -gone(heard, handed, end-8, end)
+	s.T().Logf("from a sip- caller whose phone stops sending while quiet, the agent's voice %.1f dB quieter "+
+		"and their own %.1f dB", echoGone, callerKept)
+	s.Greater(echoGone, 20.0, "the caller's line was not cleaned")
+	s.InDelta(0, callerKept, 2, "the caller's own voice was not kept")
+	s.Equal(call.plain, call.handed["browser"], "the browser's audio was not handed over as it was decoded")
 }
 
 func (s *EchoSuite) TestEchoCancellationThatNamesNobodyIsRefused() {
@@ -179,7 +222,41 @@ func (s *EchoSuite) TestAReplacedTrackStopsTakingTheAgentsVoiceAtOnce() {
 	close(stop)
 
 	s.Eventually(func() bool { return !edge.echo.Wanted() }, time.Second, time.Millisecond,
+		"the replaced track's line still counts as listening")
+	// Two seconds of voice would overflow the second a line holds, had the line still taken it.
+	dropped := s.counted("router_agent_echo_voice_dropped_frames_total")
+	for range 100 {
+		edge.echo.Played(make([]int16, echoFrameSamples))
+	}
+	s.Equal(dropped, s.counted("router_agent_echo_voice_dropped_frames_total"),
 		"the replaced track's line still takes the agent's voice")
+}
+
+// A track that ends closes its line, which then no longer takes the agent's voice.
+func (s *EchoSuite) TestAPhoneCallersLineClosesWhenItsTrackEnds() {
+	edge := s.sipEdge()
+	track := make(packets, 1)
+	reader, err := audiortc.NewRTPReader(track, webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus,
+		ClockRate: opusSampleRate, Channels: 2}, audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}})
+	s.Require().NoError(err)
+	sending := &sender{track: track}
+	sending.encoder, err = opus.NewEncoder(opus.Config{SampleRate: echocancel.SampleRate,
+		FrameDuration: opusFrameDuration, Application: opus.ApplicationVoIP})
+	s.Require().NoError(err)
+	heard := make(chan struct{})
+	go func() {
+		edge.hear(reader, edge.quality.inbound(track, opusSampleRate), stt.Participant{UserID: "sip-1"},
+			make(chan struct{}))
+		close(heard)
+	}()
+	s.send(sending, make([]int16, echoFrameSamples))
+	<-edge.Audio()
+	s.True(edge.echo.Wanted(), "the caller's line never opened")
+
+	close(track)
+	<-heard
+
+	s.False(edge.echo.Wanted())
 }
 
 func (s *EchoSuite) TestTheAgentsVoiceIsKeptForAPhoneCallerFromWhenTheyArrive() {
@@ -188,6 +265,7 @@ func (s *EchoSuite) TestTheAgentsVoiceIsKeptForAPhoneCallerFromWhenTheyArrive() 
 	edge.report(&sfu_models.Participant{UserId: "browser", SessionId: "b"}, true)
 	s.False(edge.echo.Wanted(), "kept for a browser")
 	edge.report(&sfu_models.Participant{UserId: "sip-1", SessionId: "c"}, true)
+	s.True(edge.echo.Wanted(), "not kept for a caller who arrived without a name")
 	edge.report(&sfu_models.Participant{UserId: "sip-1", SessionId: "c", Name: "Caller"}, true)
 	s.True(edge.echo.Wanted())
 	edge.report(&sfu_models.Participant{UserId: "sip-1", SessionId: "c"}, false)

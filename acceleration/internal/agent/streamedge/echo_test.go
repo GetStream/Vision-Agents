@@ -9,9 +9,11 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	webrtcaudio "github.com/GetStream/getstream-go-webrtc/audio"
 	"github.com/stretchr/testify/suite"
 	"github.com/thesyncim/gopus"
 	"github.com/thesyncim/gopus/container/ogg"
@@ -24,8 +26,10 @@ import (
 type EchoSuite struct {
 	suite.Suite
 	ctx context.Context
-	// reply is the agent's voice as a voice provider hands it over, at 24 kHz.
-	reply audio.PcmData
+	// reply is the agent's voice as a voice provider hands it over, at 24 kHz, and caller a
+	// caller's, at 16 kHz.
+	reply  audio.PcmData
+	caller []int16
 }
 
 func TestEchoSuite(t *testing.T) {
@@ -34,7 +38,14 @@ func TestEchoSuite(t *testing.T) {
 
 func (s *EchoSuite) SetupSuite() {
 	s.ctx = context.Background()
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", "audiofloor", "reply.ogg"))
+	s.reply = audio.Resample(audio.PcmData{Samples: s.fixture("reply"), SampleRate: echocancel.SampleRate, Channels: 1},
+		24_000, 1)
+	s.caller = s.fixture("long")
+}
+
+// fixture is one of the agent's recorded voices, ../testdata/audiofloor/name.ogg, at 16 kHz.
+func (s *EchoSuite) fixture(name string) []int16 {
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "audiofloor", name+".ogg"))
 	s.Require().NoError(err)
 	reader, err := ogg.NewReader(bytes.NewReader(raw))
 	s.Require().NoError(err)
@@ -55,7 +66,7 @@ func (s *EchoSuite) SetupSuite() {
 		s.Require().NoError(err)
 		voice = append(voice, pcm[:n]...)
 	}
-	s.reply = audio.Resample(audio.PcmData{Samples: voice, SampleRate: echocancel.SampleRate, Channels: 1}, 24_000, 1)
+	return voice
 }
 
 // phone is a caller's phone playing what the track sent: it comes back 300 ms later, 10 dB
@@ -242,4 +253,60 @@ func (s *EchoSuite) TestACallWithNobodyToCancelFromKeepsNoVoice() {
 		SampleRate: s.reply.SampleRate, Channels: 1}))
 
 	s.Empty(talker.voice)
+}
+
+// Once an utterance has gone out, the track sends silence, and so does the voice it reports.
+func (s *EchoSuite) TestTheVoiceSentStopsWithTheUtterance() {
+	echo, err := echocancel.NewCall(echocancel.Config{})
+	s.Require().NoError(err)
+	echo.Expect(1)
+	talker := newSpeaker(slog.New(slog.DiscardHandler), echo)
+	s.T().Cleanup(func() { _ = talker.Close() })
+
+	// A fifth of a second from the middle of a word, so its last frame is loud.
+	s.Require().NoError(talker.Write(audio.PcmData{Samples: s.reply.Samples[s.reply.SampleRate : s.reply.SampleRate*6/5],
+		SampleRate: s.reply.SampleRate, Channels: 1}))
+	for len(talker.frames) > 0 {
+		_, err := talker.NextSample(s.ctx)
+		s.Require().NoError(err)
+	}
+	s.Require().NotEqual(make([]int16, echoFrameSamples), talker.sent[:], "the utterance sent no voice")
+	_, err = talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	s.Equal(make([]int16, echoFrameSamples), talker.sent[:])
+}
+
+// The voice kept for an utterance, once the encoder is flushed, is the whole utterance
+// resampled, the resampler's end included, behind the resampler's lead.
+func (s *EchoSuite) TestTheVoiceKeptOnceFlushedIsTheWholeUtterance() {
+	echo, err := echocancel.NewCall(echocancel.Config{})
+	s.Require().NoError(err)
+	echo.Expect(1)
+	talker := newSpeaker(slog.New(slog.DiscardHandler), echo)
+	s.T().Cleanup(func() { _ = talker.Close() })
+	utterance := audio.PcmData{Samples: s.reply.Samples[:s.reply.SampleRate*21/100], SampleRate: s.reply.SampleRate,
+		Channels: 1}
+
+	s.Require().NoError(talker.Write(utterance))
+	talker.mu.Lock()
+	talker.flush()
+	kept := slices.Clone(talker.voice[talker.voiceAt:])
+	talker.mu.Unlock()
+
+	once := webrtcaudio.NewStreamResampler(webrtcaudio.FormatS16, echocancel.SampleRate, 1, 0)
+	want := make([]int16, resamplerLead(utterance.SampleRate))
+	for _, write := range [][]webrtcaudio.PCM{s.resampled(once.Write(webrtcaudio.FromInt16(utterance.Samples,
+		utterance.SampleRate, 1))), s.resampled(once.Flush())} {
+		for _, pcm := range write {
+			want = append(want, pcm.ToInt16().Int16()...)
+		}
+	}
+	s.Equal(want, kept)
+}
+
+// resampled is what a resampler returned, failing the test on its error.
+func (s *EchoSuite) resampled(pcm []webrtcaudio.PCM, err error) []webrtcaudio.PCM {
+	s.Require().NoError(err)
+	return pcm
 }

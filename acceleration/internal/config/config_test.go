@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
@@ -669,7 +670,6 @@ func (s *ConfigSuite) TestPhoneCallsHaveTheirEchoCancelledOnlyWhenTurnedOn() {
 	config, _, err = Load("")
 	s.Require().NoError(err)
 	s.True(config.Phone.EchoCancellation)
-	s.Equal("true", os.Getenv("ROUTER_PHONE_ECHO_CANCELLATION"), "what is exported says the same")
 }
 
 func (s *ConfigSuite) TestAnEchoIsLookedForASecondLateUnlessAskedFor() {
@@ -683,17 +683,42 @@ func (s *ConfigSuite) TestAnEchoIsLookedForASecondLateUnlessAskedFor() {
 	s.Equal(600*time.Millisecond, config.Phone.EchoMaxDelay)
 }
 
-// Under one of AEC3's matched filters there is nothing to look with, and 1.2 s is half again
-// the longest a voice takes to come back as echo.
-func (s *ConfigSuite) TestAnEchoLookedForLaterThanItsBoundsIsRefused() {
-	// Zero would otherwise read as the default and be exported as 0s.
-	for _, delay := range []string{"0s", "100ms", "-1s", "1500ms"} {
-		s.T().Setenv("ROUTER_PHONE_ECHO_MAX_DELAY", delay)
+// The other commands in this repository read the settings from the environment, so echo
+// cancellation set in a file has to reach it.
+func (s *ConfigSuite) TestPhoneEchoSettingsFromTheFileAreExported() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("phone:\n  echo_cancellation: true\n  echo_max_delay: 600ms\n"), 0o600))
 
-		_, _, err := Load("")
+	_, _, err := Load(path)
+	s.Require().NoError(err)
 
-		s.ErrorContains(err, "phone.echo_max_delay", delay)
-	}
+	s.Equal("true", os.Getenv("ROUTER_PHONE_ECHO_CANCELLATION"))
+	s.Equal("600ms", os.Getenv("ROUTER_PHONE_ECHO_MAX_DELAY"))
+}
+
+// refusesEchoMaxDelay checks a phone.echo_max_delay of delay is refused for being out of bounds.
+func (s *ConfigSuite) refusesEchoMaxDelay(delay string) {
+	s.T().Setenv("ROUTER_PHONE_ECHO_MAX_DELAY", delay)
+	parsed, err := time.ParseDuration(delay)
+	s.Require().NoError(err)
+
+	_, _, err = Load("")
+
+	s.ErrorIs(err, echodelay.ErrOutOfBounds)
+	s.ErrorContains(err, "phone.echo_max_delay "+parsed.String())
+}
+
+// Under one of AEC3's matched filters there is nothing to look with; zero would otherwise read
+// as the default and be exported as 0s.
+func (s *ConfigSuite) TestAnEchoLookedForLessThanOneMatchedFilterIsRefused() {
+	s.refusesEchoMaxDelay("0s")
+	s.refusesEchoMaxDelay("100ms")
+	s.refusesEchoMaxDelay("-1s")
+}
+
+// 1.2 s is half again the longest a voice takes to come back as echo.
+func (s *ConfigSuite) TestAnEchoLookedForLaterThanOnePointTwoSecondsIsRefused() {
+	s.refusesEchoMaxDelay("1500ms")
 }
 
 // Zero is how a deployment turns the agent check off.
