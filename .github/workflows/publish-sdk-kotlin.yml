@@ -116,7 +116,7 @@ jobs:
     if: github.event_name == 'push' && needs.version.outputs.channel != 'none'
     runs-on: ubuntu-latest
     # The signing key is a GetStream organization secret: this environment does not limit it, and any
-    # workflow in this repository can read it. Moving it into `release` is AI-3372.
+    # workflow in this repository can read it. AI-3372 tracks limiting it to the release jobs.
     environment: release
     defaults:
       run:
@@ -172,7 +172,7 @@ jobs:
     needs: [ version, publish ]
     runs-on: ubuntu-latest
     # The repository endpoint, bucket and credentials are GetStream organization secrets too: this
-    # environment does not limit them either (AI-3372 moves them into `release`).
+    # environment does not limit them either. AI-3372 tracks limiting them to the release jobs.
     environment: release
     permissions:
       contents: write   # the sdk-kotlin-v* tag of a release
