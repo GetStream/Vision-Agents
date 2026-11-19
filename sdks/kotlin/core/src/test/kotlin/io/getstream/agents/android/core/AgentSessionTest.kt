@@ -178,6 +178,57 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `opening a session watches it and answers its tools`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "Order A-1042: two wool throws." }
+
+        val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup)))
+
+        assertTrue(chat.isConnected.value)
+        assertEquals("/v1/agents/sessions/s1/events", router.handshakes.single().path)
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"r1","turn_id":"t1"}"""))
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("c1"), answer["tool_call_id"])
+        assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `an agent's chat with tools still answers them`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "Order A-1042: two wool throws." }
+
+        val chat = agents.agent("docs").chat(lookup)
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"r1","turn_id":"t1"}"""))
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `a session opened unwatched has no socket, and its turns go through responses`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "" }
+
+        val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup), watch = false))
+
+        val created = router.requests.single { it.path == "/v1/agents/sessions" }
+        assertFalse("tools" in Json.parseToJsonElement(created.body).jsonObject.keys)
+        assertTrue(router.handshakes.isEmpty())
+        assertFalse(chat.isConnected.value)
+        val refused = assertFailsWith<AgentsException.Configuration> { chat.say("hello") }
+        assertTrue("watch = false" in refused.message.orEmpty(), refused.message)
+        assertTrue("responses.create" in refused.message.orEmpty(), refused.message)
+        assertFailsWith<AgentsException.Configuration> { chat.addTools(listOf(lookup)) }
+
+        val asked = chat.responses.create("What are your hours?")
+        assertEquals("r1", asked.id)
+        assertEquals("POST /v1/agents/sessions/s1/responses", router.requests.last().let { "${it.method} ${it.path}" })
+
+        chat.close()
+        assertEquals("POST /v1/agents/sessions/s1/stop", router.requests.last().let { "${it.method} ${it.path}" })
+        assertTrue(router.handshakes.isEmpty())
+    }
+
+    @Test
     fun `a tool that throws tells the model it did not work, since it is mid-sentence waiting`() = runBlocking {
         val broken = AgentTool("lookup_order", "Look up an order.") { error("the orders database is down") }
         val chat = agents.chat(SessionOptions(tools = listOf(broken)))
@@ -791,6 +842,20 @@ class AgentSessionTest {
         assertEquals("not your session", refused.reason)
         assertEquals("https://getstream.io/agents/docs/api/errors/#forbidden", refused.docUrl)
         assertEquals("req-3", refused.requestId)
+    }
+
+    @Test
+    fun `a session whose socket is refused is stopped, and the refusal is what the caller hears`() = runBlocking {
+        router.refuseHandshake = Reply(403, envelope("permission", "forbidden", "not your session"))
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.agent("docs").sessions.create() }
+
+        assertEquals(403, refused.status)
+        assertEquals("forbidden", refused.code)
+        assertEquals(
+            listOf("POST /v1/agents/sessions", "POST /v1/agents/sessions/s1/stop"),
+            router.requests.map { "${it.method} ${it.path}" },
+        )
     }
 
     @Test
