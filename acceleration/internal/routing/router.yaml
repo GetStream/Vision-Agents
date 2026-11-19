@@ -585,6 +585,95 @@ stt:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Scribe v3 Live, launched 2026-11-10 as the successor to Scribe v2 Realtime above: the
+    # same socket and frames, opened with model_id=scribe_v3_live, and ElevenLabs' migration
+    # note says an integration behaves the same until it asks for turn_prediction. They
+    # report a 44% lower WER than v2 across 73 FLEURS languages; Artificial Analysis'
+    # streaming board, read 2026-11-19, has it at 2.9% and 81 ms to the final transcript
+    # against v2's 3.6% and 141 ms.
+    #
+    # The languages are v2's list. ElevenLabs have not yet published per-language error
+    # rates for v3, only the average across 73, so nothing yet says which further languages
+    # it can be trusted with.
+    #
+    # $0.22 an audio hour, the rate ElevenLabs now publish for every plan
+    # (https://elevenlabs.io/pricing/api, read 2026-11-19), before the $0.08 an hour
+    # keyterm prompting adds, which nothing here meters yet.
+    - provider: elevenlabs
+      model: scribe_v3_live
+      description: "ElevenLabs' Scribe v3 Live: v2 Realtime's successor, more accurate and faster to the final word."
+      benchmark: { word_error_rate: 0.029, latency_ms: 81 }
+      languages:
+        [
+          az,
+          be,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gu,
+          hi,
+          hr,
+          hu,
+          hy,
+          id,
+          is,
+          it,
+          ja,
+          ka,
+          kk,
+          kn,
+          lt,
+          lv,
+          mk,
+          ml,
+          mr,
+          ms,
+          mt,
+          ne,
+          nl,
+          no,
+          or,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sr,
+          sv,
+          sw,
+          ta,
+          te,
+          tr,
+          uk,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # The same two as v2, because they are what this package sends. v3 also offers a
+      # turn_prediction commit strategy, multilang_mode, a 10,000-term keyterm library and
+      # realtime diarize, and declares none of them: nothing here sends them yet.
+      supports: [keyterms, endpointing]
+      # ElevenLabs' account, the same answer as v2 above.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # AssemblyAI's Universal-3.6 Pro Realtime, launched 2026-09-29 for voice agents. It
     # switches between its 32 languages mid-sentence and decides where a turn ended from
     # the words rather than from a silence alone. No benchmark line: Artificial Analysis
@@ -916,7 +1005,7 @@ stt:
       prefer: muse/muse-voice-transcribe-1.0
       only:
         - muse/muse-voice-transcribe-1.0
-        - elevenlabs/scribe_v2_realtime
+        - elevenlabs/scribe_v3_live
         - cartesia/ink-2
         - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
 

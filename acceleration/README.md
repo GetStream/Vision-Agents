@@ -901,6 +901,7 @@ Google reports it as a token count rather than streaming it, so there are no
 | `deepgram/flux-general-en`                                 | en        | $0.276         |
 | `deepgram/flux-general-multi`                              | 12        | $0.276         |
 | `elevenlabs/scribe_v2_realtime`                            | 57        | $0.39          |
+| `elevenlabs/scribe_v3_live`                                | 57        | $0.22          |
 | `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
 | `grok/grok-stt`                                            | 25        | $0.20          |
 | `inworld/inworld-stt-1`                                    | 30        | $0.15          |

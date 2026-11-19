@@ -1,5 +1,6 @@
-// Package elevenlabs implements the stt.STT contract on top of ElevenLabs' Scribe v2
-// Realtime.
+// Package elevenlabs implements the stt.STT contract on top of ElevenLabs' realtime Scribe:
+// Scribe v2 Realtime and Scribe v3 Live, which share one socket and one protocol and differ
+// only in the model_id the session is opened with.
 //
 // ElevenLabs serve Scribe twice over. This is the streaming half, which is the one a call
 // needs; the batch model is more accurate and has features this one does not, diarization
@@ -43,6 +44,9 @@ const ProviderName = "elevenlabs"
 
 // DefaultModel is Scribe v2 Realtime, the streaming model.
 const DefaultModel = "scribe_v2_realtime"
+
+// LiveModel is Scribe v3 Live, the successor to DefaultModel on the same socket.
+const LiveModel = "scribe_v3_live"
 
 // DefaultURL is the realtime transcription socket.
 const DefaultURL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
@@ -155,7 +159,7 @@ type serverMessage struct {
 	Warning string `json:"warning"`
 }
 
-// STT is one Scribe v2 Realtime session.
+// STT is one realtime Scribe session.
 type STT struct {
 	options Options
 	keys    *keypool.Pool

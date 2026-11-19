@@ -61,3 +61,44 @@ func (s *ElevenlabsIntegrationSuite) TestALessPatientDetectorStillSettlesTheSame
 
 	s.RequireAccurate(s.SettledText(provider))
 }
+
+// ElevenlabsLiveIntegrationSuite holds Scribe v3 Live to the same bar. It is a second suite
+// rather than a case in the one above because the model is chosen before the session opens,
+// and a model_id the server does not know refuses the session rather than falling back.
+type ElevenlabsLiveIntegrationSuite struct {
+	sttsuite.Suite
+}
+
+func TestElevenlabsLiveIntegrationSuite(t *testing.T) {
+	suite.Run(t, &ElevenlabsLiveIntegrationSuite{Suite: sttsuite.Suite{
+		New: func() stt.STT {
+			provider, err := New(Options{Model: LiveModel})
+			require.NoError(t, err)
+			return provider
+		},
+		Requires:        []string{"ELEVENLABS_API_KEY"},
+		SettlesOnClose:  true,
+		MaxToFirstWords: 3 * time.Second,
+	}})
+}
+
+// TestKeytermsAreAcceptedByTheSession backs the keyterms router.yaml declares for v3.
+func (s *ElevenlabsLiveIntegrationSuite) TestKeytermsAreAcceptedByTheSession() {
+	provider, err := New(Options{Model: LiveModel, Keyterms: []string{"Mia", "Scribe"}})
+	s.Require().NoError(err)
+	s.Start(provider)
+	defer s.Hangup(provider)
+
+	s.RequireAccurate(s.SettledText(provider))
+}
+
+// TestALessPatientDetectorStillSettlesTheSameTurn backs the endpointing router.yaml
+// declares for v3.
+func (s *ElevenlabsLiveIntegrationSuite) TestALessPatientDetectorStillSettlesTheSameTurn() {
+	provider, err := New(Options{Model: LiveModel, VadSilenceThresholdSecs: 0.4, MinSilenceDurationMs: 200})
+	s.Require().NoError(err)
+	s.Start(provider)
+	defer s.Hangup(provider)
+
+	s.RequireAccurate(s.SettledText(provider))
+}
