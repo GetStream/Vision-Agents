@@ -141,7 +141,8 @@ jobs:
       # untagged tests are unit tests, which CI (Go) runs.
       - name: Test ${{ matrix.group }}
         run: |
-          tests=$(for p in $PACKAGES; do grep -l '^//go:build integration' "$p"/*_test.go; done | xargs grep -ho '^func Test[A-Za-z0-9_]*' | cut -c6- | sort -u | paste -sd'|' -)
+          files=$(for p in $PACKAGES; do grep -l '^//go:build integration' "$p"/*_test.go; done)
+          tests=$(grep -ho '^func Test[A-Za-z0-9_]*' $files | cut -d' ' -f2 | sort -u | paste -sd'|' -)
           go test -tags integration -p 1 -count=1 -timeout 30m -run "^($tests)$" -skip "$SKIP" $PACKAGES
         env:
           GOEXPERIMENT: simd
