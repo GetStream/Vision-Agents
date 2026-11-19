@@ -36,6 +36,12 @@ type ConnectionRequest struct {
 	UserID string
 }
 
+// ConnectionOptions is whose connection Get and Delete reach.
+type ConnectionOptions struct {
+	// UserID is the user the connection belongs to. Empty is an app connection.
+	UserID string
+}
+
 // AuthorizeOptions is what starting a consent asks.
 type AuthorizeOptions struct {
 	// ReturnURL is the app's page the browser goes back to when the consent ends, with
@@ -98,10 +104,10 @@ func (c *Connections) Authorize(ctx context.Context, id string, options Authoriz
 	return *started.JSON201, nil
 }
 
-// Get is one connection of userID's, or of the app's when userID is empty. Another user's is not
-// found, the same as one that does not exist. An app's is reached with any user named too.
-func (c *Connections) Get(ctx context.Context, id, userID string) (acceleration.Connection, error) {
-	api, err := c.reach(id, userID)
+// Get is one connection of options.UserID's, or of the app's when it is empty. Another user's is
+// not found, the same as one that does not exist. An app's is reached with any user named too.
+func (c *Connections) Get(ctx context.Context, id string, options ConnectionOptions) (acceleration.Connection, error) {
+	api, err := c.reach(id, options.UserID)
 	if err != nil {
 		return acceleration.Connection{}, err
 	}
@@ -149,10 +155,10 @@ func (c *Connections) List(ctx context.Context, filter ConnectionFilter) ([]acce
 	}
 }
 
-// Delete disconnects a connection of userID's, or of the app's when userID is empty, and drops
+// Delete disconnects a connection of options.UserID's, or of the app's when it is empty, and drops
 // its credentials. One an agent config binds as its fixed connection is refused with a 409.
-func (c *Connections) Delete(ctx context.Context, id, userID string) error {
-	api, err := c.reach(id, userID)
+func (c *Connections) Delete(ctx context.Context, id string, options ConnectionOptions) error {
+	api, err := c.reach(id, options.UserID)
 	if err != nil {
 		return err
 	}

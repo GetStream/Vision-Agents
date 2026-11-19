@@ -221,7 +221,7 @@ func TestAnAppConnectionNamesNoUser(t *testing.T) {
 	}
 
 	created := connectFor(t, api.Connections(), "github", "")
-	if _, err := api.Connections().Get(t.Context(), *created.Id, ""); err != nil {
+	if _, err := api.Connections().Get(t.Context(), *created.Id, ConnectionOptions{UserID: ""}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -280,7 +280,7 @@ func TestAUsersConnectionIsReachedOnlyAsThem(t *testing.T) {
 	connections := backend.client(t).Connections()
 	created := connectFor(t, connections, "linear", "anya")
 
-	got, err := connections.Get(t.Context(), *created.Id, "anya")
+	got, err := connections.Get(t.Context(), *created.Id, ConnectionOptions{UserID: "anya"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,9 +288,9 @@ func TestAUsersConnectionIsReachedOnlyAsThem(t *testing.T) {
 		t.Errorf("the connection came back as %+v", got)
 	}
 	for _, user := range []string{"bob", ""} {
-		_, read := connections.Get(t.Context(), *created.Id, user)
+		_, read := connections.Get(t.Context(), *created.Id, ConnectionOptions{UserID: user})
 		_, authorized := connections.Authorize(t.Context(), *created.Id, AuthorizeOptions{UserID: user})
-		deleted := connections.Delete(t.Context(), *created.Id, user)
+		deleted := connections.Delete(t.Context(), *created.Id, ConnectionOptions{UserID: user})
 		for name, err := range map[string]error{"read": read, "authorized": authorized, "deleted": deleted} {
 			var refused *stream.RouterError
 			if !errors.As(err, &refused) || refused.Status != http.StatusNotFound || refused.Code != "connection_not_found" {
@@ -298,7 +298,7 @@ func TestAUsersConnectionIsReachedOnlyAsThem(t *testing.T) {
 			}
 		}
 	}
-	if _, err := connections.Get(t.Context(), *created.Id, "anya"); err != nil {
+	if _, err := connections.Get(t.Context(), *created.Id, ConnectionOptions{UserID: "anya"}); err != nil {
 		t.Errorf("another user deleted anya's connection: %v", err)
 	}
 }
@@ -357,7 +357,7 @@ func TestDeletingAConnectionRemovesIt(t *testing.T) {
 	connections := backend.client(t).Connections()
 	created := connectFor(t, connections, "linear", "anya")
 
-	if err := connections.Delete(t.Context(), *created.Id, "anya"); err != nil {
+	if err := connections.Delete(t.Context(), *created.Id, ConnectionOptions{UserID: "anya"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -369,10 +369,10 @@ func TestDeletingAConnectionRemovesIt(t *testing.T) {
 		t.Errorf("the delete asked %v", query)
 	}
 	var refused *stream.RouterError
-	if _, err := connections.Get(t.Context(), *created.Id, "anya"); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
+	if _, err := connections.Get(t.Context(), *created.Id, ConnectionOptions{UserID: "anya"}); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
 		t.Errorf("the deleted connection was read: %v", err)
 	}
-	if err := connections.Delete(t.Context(), *created.Id, "anya"); !errors.As(err, &refused) || refused.Code != "connection_not_found" {
+	if err := connections.Delete(t.Context(), *created.Id, ConnectionOptions{UserID: "anya"}); !errors.As(err, &refused) || refused.Code != "connection_not_found" {
 		t.Errorf("deleting it again answered %v", err)
 	}
 }
@@ -392,13 +392,13 @@ func TestAConnectionWithNoIDIsRefusedBeforeTheRouter(t *testing.T) {
 	}
 	connections := api.Connections()
 
-	if _, err := connections.Get(t.Context(), "", "anya"); err == nil {
+	if _, err := connections.Get(t.Context(), "", ConnectionOptions{UserID: "anya"}); err == nil {
 		t.Error("a connection with no id was read")
 	}
 	if _, err := connections.Authorize(t.Context(), "", AuthorizeOptions{UserID: "anya"}); err == nil {
 		t.Error("a connection with no id was authorized")
 	}
-	if err := connections.Delete(t.Context(), "", "anya"); err == nil {
+	if err := connections.Delete(t.Context(), "", ConnectionOptions{UserID: "anya"}); err == nil {
 		t.Error("a connection with no id was deleted")
 	}
 	if got := arrived.Load(); got != 0 {
@@ -426,9 +426,9 @@ func TestAConnectionRefusalIsTheRoutersError(t *testing.T) {
 	for _, ctx := range []context.Context{t.Context(), cancelled} {
 		_, created := connections.Create(ctx, ConnectionRequest{Connector: "linear", UserID: "anya"})
 		_, authorized := connections.Authorize(ctx, "connection-1", AuthorizeOptions{UserID: "anya"})
-		_, read := connections.Get(ctx, "connection-1", "anya")
+		_, read := connections.Get(ctx, "connection-1", ConnectionOptions{UserID: "anya"})
 		_, listed := connections.List(ctx, ConnectionFilter{UserID: "anya"})
-		deleted := connections.Delete(ctx, "connection-1", "anya")
+		deleted := connections.Delete(ctx, "connection-1", ConnectionOptions{UserID: "anya"})
 		for name, err := range map[string]error{"create": created, "authorize": authorized, "get": read, "list": listed, "delete": deleted} {
 			var refused *stream.RouterError
 			switch {
@@ -449,7 +449,7 @@ func TestACallNamingAUserReachesAnAppConnectionButListsOnlyTheUsers(t *testing.T
 	app := connectFor(t, connections, "github", "")
 	connectFor(t, connections, "linear", "alice")
 
-	if _, err := connections.Get(t.Context(), *app.Id, "alice"); err != nil {
+	if _, err := connections.Get(t.Context(), *app.Id, ConnectionOptions{UserID: "alice"}); err != nil {
 		t.Errorf("a call naming alice could not read the app's connection: %v", err)
 	}
 	listed, err := connections.List(t.Context(), ConnectionFilter{UserID: "alice"})
@@ -472,13 +472,13 @@ func TestEveryCallSendsTheUserItNamesAsTheActingUser(t *testing.T) {
 	if _, err := connections.Authorize(t.Context(), *created.Id, AuthorizeOptions{UserID: "alice"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connections.Get(t.Context(), *created.Id, "alice"); err != nil {
+	if _, err := connections.Get(t.Context(), *created.Id, ConnectionOptions{UserID: "alice"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connections.List(t.Context(), ConnectionFilter{UserID: "alice"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := connections.Delete(t.Context(), *created.Id, "alice"); err != nil {
+	if err := connections.Delete(t.Context(), *created.Id, ConnectionOptions{UserID: "alice"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, call := range []string{"POST /v1/agents/connections", "POST " + one + "/authorizations", "GET " + one, "GET /v1/agents/connections", "DELETE " + one} {
@@ -498,7 +498,7 @@ func TestEveryCallSendsTheUserItNamesAsTheActingUser(t *testing.T) {
 	if _, err := connections.List(t.Context(), ConnectionFilter{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := connections.Delete(t.Context(), *app.Id, ""); err != nil {
+	if err := connections.Delete(t.Context(), *app.Id, ConnectionOptions{UserID: ""}); err != nil {
 		t.Fatal(err)
 	}
 	if acting := backend.actingFor("DELETE", "/v1/agents/connections/"+*app.Id); !slices.Equal(acting, []string{""}) {
