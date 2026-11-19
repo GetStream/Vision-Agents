@@ -652,6 +652,65 @@ stt:
         trains_on_data: "yes"
         retention: unspecified
 
+    # AssemblyAI-STT-3.7-Realtime-Agent, launched 2026-11-17 to replace Universal-3.6 Pro
+    # for voice agents, which stays above because AssemblyAI still fully support it. The
+    # same socket, protocol and parameters, so only speech_model differs; the same 32
+    # languages (assemblyai.com/llms/models.md, read 2026-11-19). Artificial Analysis
+    # measured 3.2% WER and 101 ms to the final transcript (read 2026-11-19), against
+    # 3.6% and 192 ms for Universal-3.6 Pro on its min_latency preset.
+    #
+    # $0.45 an hour, the same as Universal-3.6 Pro, billed by how long the socket is open,
+    # with keyterms included (assemblyai.com/pricing, read 2026-11-19). Speaker labels,
+    # Voice Focus, prompting and Medical Mode are add-ons this package never sends.
+    - provider: assemblyai
+      model: assemblyai-stt-3-7-realtime-agent
+      description: "AssemblyAI's STT 3.7 for voice agents: switches between 32 languages mid-sentence and finds the turn's end from the words."
+      benchmark: { word_error_rate: 0.032, latency_ms: 101 }
+      languages:
+        [
+          af,
+          ar,
+          ca,
+          da,
+          de,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fr,
+          gl,
+          he,
+          hi,
+          it,
+          ja,
+          ko,
+          mr,
+          nl,
+          nn,
+          no,
+          pt,
+          ro,
+          ru,
+          sv,
+          tr,
+          ur,
+          vi,
+          xh,
+          yue,
+          zh,
+          zu,
+        ]
+      realtime: true
+      tier: low-latency
+      # What universal-3-6-pro declares, for the same reason: keyterms_prompt and
+      # max_turn_silence are all this package sends of what the model can do.
+      supports: [keyterms, endpointing]
+      # The same account and the same model improvement program as universal-3-6-pro.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # Fish Audio's transcribe-stream-1, their realtime transcriber for voice agents. It
     # ends a turn when the words read as finished rather than on a silence alone, and
     # tells the caller's turns from noise and other voices, which are never reported. No
