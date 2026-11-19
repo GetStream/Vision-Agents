@@ -711,7 +711,7 @@ void main() {
         await chat.open();
         chat
           ..offer('m2', garden)
-          // The older card is built only now, as the person scrolls up.
+          // Cards are offered as they are built, which need not be the order they were written.
           ..offer('m1', terrace);
         await until(() => sessions.routes.contains(tools));
 

@@ -205,7 +205,7 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('refuses a table taken since rather than booking another venue\'s of that id', (
+    testWidgets('refuses a taken table rather than booking another venue\'s of that id', (
       tester,
     ) async {
       await open(tester);
