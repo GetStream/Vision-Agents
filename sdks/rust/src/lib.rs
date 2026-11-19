@@ -39,7 +39,7 @@ pub use backend::{
     USAGE_CATEGORIES_HEADER, region_url, sign, sign_for,
 };
 pub use client::{Client, segment};
-pub use connections::Connections;
+pub use connections::{AuthorizeOptions, ConnectionFilter, Connections, NewConnection};
 pub use dispatch::{Dispatch, InboundCall, InboundImage, InboundMessage};
 pub use error::{Error, Result, RouterFailure};
 pub use folder::Folder;
