@@ -88,11 +88,11 @@ public sealed class ConnectionsTests
         router.On("GET", "/v1/agents/connections", seen => router.To("GET", "/v1/agents/connections").Count > 2
             ? new Reply(400, Fixtures.Failure("invalid_request", "too_many_pages", "read past the last page"))
             : seen.Query.GetValueOrDefault("cursor") switch
-        {
-            null => new Reply(200, new { items = new[] { Connection("conn-3"), Connection("conn-2") }, has_more = true, next_cursor = "after-2" }),
-            "after-2" => new Reply(200, new { items = new[] { Connection("conn-1") }, has_more = false }),
-            var other => new Reply(400, Fixtures.Failure("invalid_request", "invalid_cursor", $"no page after {other}")),
-        });
+            {
+                null => new Reply(200, new { items = new[] { Connection("conn-3"), Connection("conn-2") }, has_more = true, next_cursor = "after-2" }),
+                "after-2" => new Reply(200, new { items = new[] { Connection("conn-1") }, has_more = false }),
+                var other => new Reply(400, Fixtures.Failure("invalid_request", "invalid_cursor", $"no page after {other}")),
+            });
         using var client = Fixtures.Client(router);
 
         var listed = await client.Connections.ListAsync(new ConnectionFilter { ConnectorId = "linear", UserId = "alice" }, TestContext.Current.CancellationToken);
