@@ -85,9 +85,9 @@ final class ScheduledTasks {
 
   /// One page of the times a task came due, newest first.
   ///
-  /// A snooze writes none. Pausing settles a run in progress as missed, and resuming a one-shot
-  /// that came due while paused records that time as missed; nothing a pause slept through is
-  /// replayed. Pass the page's [ListPage.nextCursor] as [cursor] for the next one.
+  /// A snooze writes none. Pausing settles a scheduled run in progress as missed (a run by hand
+  /// records its own outcome), and resuming a one-shot that came due while paused records that
+  /// time as missed; nothing a pause slept through is replayed. Pass the page's [ListPage.nextCursor] as [cursor] for the next one.
   Future<ListPage<ScheduledTaskRun>> runs(String id, {int? limit, String? cursor}) async {
     final page = await _operations.listScheduledTaskRuns(
       id: id,
