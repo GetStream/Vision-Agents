@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -60,7 +61,10 @@ type Condition struct {
 	// the tags do not have it, so a new summary keeps the alert's Sentry issue.
 	Summary string
 	// Repeat is the least time between two events of the condition, or of one of its items,
-	// in place of the loop's Limit; zero keeps the Limit. The first event is not held back.
+	// while it keeps holding, in place of the loop's Limit; zero keeps the Limit. Once it stops
+	// holding, the next time it holds is sent at once. A check that is given the loop's limit
+	// (IncreasedSinceAlert, IncreasedPer) must be given the Repeat instead, or it loses every
+	// increase the Repeat holds back.
 	Repeat time.Duration
 }
 
@@ -140,6 +144,9 @@ func (l *Loop) check() {
 		}
 		holds, extra := condition.Check(now)
 		if !holds {
+			if condition.Repeat != 0 {
+				delete(l.sent, condition.Name)
+			}
 			continue
 		}
 		if last, ok := l.sent[condition.Name]; ok && now.Sub(last) < l.repeat(condition) {
@@ -154,6 +161,16 @@ func (l *Loop) check() {
 // interval, in order so the events of one check go out the same way every time.
 func (l *Loop) checkItems(now time.Time, condition Condition) {
 	held := condition.Items(now)
+	if condition.Repeat != 0 {
+		prefix := condition.Name + ":"
+		for key := range l.sent {
+			if item, ok := strings.CutPrefix(key, prefix); ok {
+				if _, holds := held[item]; !holds {
+					delete(l.sent, key)
+				}
+			}
+		}
+	}
 	for _, item := range slices.Sorted(maps.Keys(held)) {
 		key := condition.Name + ":" + item
 		if last, ok := l.sent[key]; ok && now.Sub(last) < l.repeat(condition) {
