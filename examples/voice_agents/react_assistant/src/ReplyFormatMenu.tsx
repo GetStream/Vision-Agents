@@ -10,7 +10,8 @@ const CARDS_KEY = "cardsInNewConversations";
 
 /**
  * Whether a new conversation is told the UI instructions the reply format chose. Off, it opens
- * with `ui: false` and the agent answers in text. On unless the person turned it off.
+ * with `ui: false`: the agent is not taught UI, so it is expected to answer in text, though UI it
+ * writes anyway is still shown. On unless the person turned it off.
  */
 export function cardsInNewConversations(): boolean {
   return storedFlag(CARDS_KEY, true);
@@ -135,7 +136,7 @@ export function ReplyFormatMenu() {
               <strong>Interactive UI</strong>
               <span>
                 Off opens this page's new conversations without the UI instructions chosen above, so
-                the agent answers in text.
+                the agent is expected to answer in text. It can still write UI unprompted.
               </span>
             </span>
           </label>
