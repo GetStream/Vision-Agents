@@ -237,7 +237,7 @@ class Client:
             {"id": guest.id, "name": guest.name or "Guest"}, guest.token
         )
 
-    def agent(self, name: str, *, user_id: str = "") -> "Agent":
+    def agent(self, name: str, *, user_id: Optional[str] = None) -> "Agent":
         """An agent addressed by the name it is configured under.
 
         No request is made: this is the name in a wrapper, and a name that matches nothing
@@ -248,7 +248,7 @@ class Client:
             user_id: The end user every request about the agent is for, sent as
                 ``X-Stream-User-Id``: the sessions it opens are theirs, and their work
                 counts against their spend limits and this client's team and usage
-                categories. Server side only. Empty is the client's own work.
+                categories. Server side only. None is the client's own work.
 
         Raises:
             ValueError: A ``user_id`` on a client that is not server side.
@@ -260,7 +260,7 @@ class Client:
         config: str = "",
         tags: Optional[dict[str, str]] = None,
         *,
-        user_id: str = "",
+        user_id: Optional[str] = None,
     ) -> Router:
         """Route through a stored router config, named by what it was stored under or its id.
 
@@ -279,7 +279,7 @@ class Client:
             tags: Cost labels carried onto everything routed here.
             user_id: The end user the routed work is for, sent as ``X-Stream-User-Id``: it
                 counts against their spend limits and this client's team and usage
-                categories. Server side only. Empty is the client's own work.
+                categories. Server side only. None is the client's own work.
 
         Raises:
             ValueError: A ``user_id`` on a client that is not server side.
@@ -334,7 +334,7 @@ class Client:
             f"claiming the guest {guest_id}",
         )
 
-    def _acting(self, user_id: str, what: str) -> Backend:
+    def _acting(self, user_id: Optional[str], what: str) -> Backend:
         """This client's backend, or a copy of it acting for ``user_id`` when one is named."""
         if not user_id:
             return self.backend

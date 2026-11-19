@@ -444,7 +444,7 @@ consent = await api.connections.authorize(
 # and finish before consent.expires_at.
 
 connection = await api.connections.get(connection.id, user_id="alice")
-mine = await api.connections.list(connector="linear", user_id="alice")  # every page
+mine = await api.connections.list(connector_id="linear", user_id="alice")  # every page
 await api.connections.delete(connection.id, user_id="alice")
 ```
 

@@ -352,7 +352,7 @@ class TestConnections:
         wanted = [router.add("linear", user_id="alice") for _ in range(5)]
         router.add("linear")
 
-        listed = await api.connections.list(connector="linear", user_id="alice")
+        listed = await api.connections.list(connector_id="linear", user_id="alice")
 
         assert [c.id for c in listed] == [row["id"] for row in reversed(wanted)]
         queries = [r["query"] for r in router.requests]
@@ -428,6 +428,29 @@ class TestConnections:
 
         with pytest.raises(ValueError, match="needs its id"):
             await methods[call]("", user_id="alice")
+
+        assert router.requests == []
+
+    async def test_every_option_is_named_never_positional(
+        self, api: stream.Client, router: ConnectionsRouter
+    ):
+        # A user id passed in the label's or the connector's slot would silently create
+        # or read the wrong connection.
+        calls = [
+            lambda: api.connections.create("linear", "alice"),
+            lambda: api.connections.authorize("c-1", "https://app.example", "alice"),
+            lambda: api.connections.get("c-1", "alice"),
+            lambda: api.connections.list("linear"),
+            lambda: api.connections.delete("c-1", "alice"),
+        ]
+
+        for call in calls:
+            with pytest.raises(TypeError):
+                await call()
+        with pytest.raises(TypeError):
+            api.agent("docs", "alice")
+        with pytest.raises(TypeError):
+            api.router("clinic", None, "alice")
 
         assert router.requests == []
 
