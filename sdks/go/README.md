@@ -740,9 +740,9 @@ consent, err := connections.Authorize(ctx, *connection.Id, client.AuthorizeOptio
 // Open consent.LaunchUrl in a popup from a page of the return URL's origin, and post it
 // consent.HandoffToken. The attempt ends at consent.ExpiresAt.
 
-connection, err = connections.Get(ctx, *connection.Id, "alice") // Status is pending until alice consents
+connection, err = connections.Get(ctx, *connection.Id, client.ConnectionOptions{UserID: "alice"}) // Status is pending until alice consents
 mine, err := connections.List(ctx, client.ConnectionFilter{UserID: "alice"})
-err = connections.Delete(ctx, *connection.Id, "alice")
+err = connections.Delete(ctx, *connection.Id, client.ConnectionOptions{UserID: "alice"})
 ```
 
 Each call takes the user, and the SDK sends it as the owner and as `X-Stream-User-Id`, so the
