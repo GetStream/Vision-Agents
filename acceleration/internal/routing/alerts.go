@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,10 +52,10 @@ func Alerts(limit time.Duration) []alerts.Condition {
 	return []alerts.Condition{
 		// Every lost row is revenue, so there is no hold.
 		{Name: "lost", Level: alerts.Page, Check: lostCheck(limit),
-			Summary: "usage rows were dropped before they were written to Postgres; that work is never billed"},
+			Summary: "usage rows were dropped before they were written to Postgres; they are not billed until replayed (router usage replay)"},
 		// A producer bug the service refuses.
 		{Name: "rejected", Level: alerts.Page, Check: alerts.IncreasedSinceAlert(func() float64 { return alerts.Total(usageRejected) }, limit),
-			Summary: "the usage service refused usage rows; they stay unbilled until they are shipped again"},
+			Summary: "the usage service refused usage rows; they stay unbilled until the producer is fixed and they are reshipped (router usage reship --rejected)"},
 		{Name: "write_failing", Level: alerts.Page, Check: writeFailing(writeFailingFor),
 			Summary: "usage rows keep failing to write to Postgres and none was written; they wait in memory, and a crash loses them"},
 		// Past this, billable work is answered 503 spend_check_unavailable.
@@ -65,7 +66,7 @@ func Alerts(limit time.Duration) []alerts.Condition {
 		{Name: "unowned", Level: alerts.Warn, Check: alerts.IncreasingFor(func() float64 { return alerts.Total(usageUnowned) }, unownedFor),
 			Summary: "usage rows of an app that has joined no organization keep waiting; they are not billed until the app joins one"},
 		{Name: "pending_slow", Level: alerts.Warn, Check: aboveFor(oldestPending, pendingSlowSeconds, 0, "oldest_pending_seconds"),
-			Summary: "usage rows wait over a minute to be written: Postgres is slow"},
+			Summary: fmt.Sprintf("a usage row has waited over %d seconds to be written: Postgres is slow, or writes are failing and retried", pendingSlowSeconds)},
 		// A site that owns work and names neither a key nor an origin: its rows are billed, and
 		// counted against no key's limit.
 		{Name: "unattributed", Level: alerts.Warn, Check: alerts.IncreasedSinceAlert(func() float64 { return alerts.Total(usageUnattributed) }, limit),
