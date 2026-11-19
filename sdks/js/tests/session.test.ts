@@ -539,6 +539,24 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("keeps a tool call whose id is a round of thinking's, and each call once", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1);
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "The weather tool knows." }, 2);
+    conversation.observe({ type: "tool_started", tool_call_id: "r1", tool: "weather", turn_id: "t1" }, 3);
+    conversation.observe({ type: "tool_started", tool_call_id: "r1", tool: "weather", turn_id: "t1" }, 4);
+    conversation.observe({ type: "tool_ran", tool_call_id: "r1", tool: "weather", turn_id: "t1", error: "" }, 10);
+
+    assert.deepEqual(
+      conversation.get().turns[0]?.steps?.map((step) => [step.kind, step.id, step.status]),
+      [
+        ["reasoning", "r1", "completed"],
+        ["tool_call", "r1", "completed"],
+      ],
+    );
+  });
+
   it("drops what a refused reply wrote before the screen's verdict, and keeps how it got there", () => {
     const conversation = new Conversation(true);
 

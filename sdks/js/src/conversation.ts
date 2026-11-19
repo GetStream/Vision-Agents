@@ -715,7 +715,10 @@ function settled(turn: Turn, now: number): Turn {
 /** `turn` with `call` begun, or `turn` itself for a call it already shows. */
 function called(turn: Turn, call: ToolStep): Turn {
   const steps = turn.steps ?? [];
-  return steps.some((step) => step.id === call.id) ? turn : withSteps(turn, [...steps, Object.freeze(call)]);
+  // A round of thinking's id is ours, so a call may share it.
+  return steps.some((step) => step.kind === "tool_call" && step.id === call.id)
+    ? turn
+    : withSteps(turn, [...steps, Object.freeze(call)]);
 }
 
 /** `turn` with the running call `id` changed as `change` says, or `turn` itself when it has none. */
