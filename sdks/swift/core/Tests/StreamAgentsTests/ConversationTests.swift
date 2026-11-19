@@ -276,4 +276,123 @@ private func event(_ json: String) throws -> AgentEvent {
 
         #expect(merged == "$open = null\nroot = Card([hdr])")
     }
+
+    @Test func aWrittenRepliesThinkingAndToolCallsAreItsStepsInTheOrderTheyHappened() throws {
+        var conversation = Conversation()
+        let start = Date(timeIntervalSince1970: 1_000)
+        func at(_ seconds: TimeInterval) -> Date { start.addingTimeInterval(seconds) }
+
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1","prompt":"Lisbon?"}"#), at: at(0))
+        conversation.apply(
+            try event(#"{"type":"reasoning_delta","turn_id":"t1","text":"The user wants "}"#), at: at(1))
+        conversation.apply(try event(#"{"type":"reasoning_delta","turn_id":"t1","text":"Lisbon."}"#), at: at(2))
+        conversation.apply(
+            try event(
+                #"{"type":"tool_started","tool_call_id":"call_1","tool":"search","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}"#
+            ), at: at(3))
+        conversation.apply(
+            try event(
+                #"{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"search","text":"Reading 3 pages","verbatim":false}"#
+            ), at: at(4))
+        conversation.apply(
+            try event(
+                #"{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"search","text":"One moment.","verbatim":true}"#
+            ), at: at(4))
+        conversation.apply(
+            try event(
+                #"{"type":"tool_started","tool_call_id":"call_2","tool":"get_weather","turn_id":"t1","started_at":"2026-11-19T10:00:05Z"}"#
+            ), at: at(5))
+        conversation.apply(
+            try event(
+                #"{"type":"tool_ran","tool_call_id":"call_1","turn_id":"t1","tool":"search","arguments":"{}","result":"…","files":null,"error":""}"#
+            ), at: at(6))
+        conversation.apply(
+            try event(
+                #"{"type":"tool_ran","tool_call_id":"call_2","turn_id":"t1","tool":"get_weather","arguments":"{}","result":"","files":null,"error":"no forecast"}"#
+            ), at: at(7))
+        conversation.apply(
+            try event(
+                #"{"pending_work":true,"type":"responded","turn_id":"t1","text":"","time_to_first_token_ms":0}"#
+            ), at: at(7))
+
+        let first = try #require(conversation.turns.first)
+        #expect(first.isDone == false)
+        guard first.steps.count == 3,
+            case .reasoning(let round) = first.steps[0],
+            case .toolCall(let search) = first.steps[1],
+            case .toolCall(let weather) = first.steps[2]
+        else {
+            Issue.record("the steps were \(first.steps)")
+            return
+        }
+        #expect(round.id == "r1")
+        #expect(round.text == "The user wants Lisbon.")
+        #expect(round.isStreaming == false)
+        #expect(search.name == "search")
+        #expect(search.status == .completed)
+        #expect(search.summary == "Reading 3 pages")
+        #expect(search.duration == 3)
+        #expect(weather.status == .failed)
+        #expect(weather.duration == 2)
+
+        // The tools' results are taken up in a turn of their own.
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t2","prompt":""}"#), at: at(8))
+        conversation.apply(try event(#"{"type":"reasoning_delta","turn_id":"t2","text":"Sunny."}"#), at: at(9))
+        conversation.apply(try event(#"{"type":"response_delta","turn_id":"t2","text":"It's sunny."}"#), at: at(10))
+        conversation.apply(
+            try event(
+                #"{"pending_work":false,"type":"responded","turn_id":"t2","text":"It's sunny.","time_to_first_token_ms":900}"#
+            ), at: at(11))
+
+        let second = try #require(conversation.turns.last)
+        #expect(second.isDone)
+        #expect(second.steps.map(\.id) == ["r1"])
+        #expect(second.text == "It's sunny.")
+    }
+
+    @Test func aRoundOfThinkingIsTimedFromWhenTheModelWasAskedNotFromItsFirstWords() throws {
+        var conversation = Conversation()
+        let start = Date(timeIntervalSince1970: 1_000)
+
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1","prompt":"Lisbon?"}"#), at: start)
+        // A model that thinks for a while and then sends its reasoning in one burst.
+        conversation.apply(
+            try event(#"{"type":"reasoning_delta","turn_id":"t1","text":"Weighing it up."}"#),
+            at: start.addingTimeInterval(4))
+        conversation.apply(
+            try event(#"{"type":"response_delta","turn_id":"t1","text":"Yes."}"#),
+            at: start.addingTimeInterval(4.25))
+
+        guard case .reasoning(let round)? = conversation.turns.first?.steps.first else {
+            Issue.record("no round of thinking")
+            return
+        }
+        #expect(round.at == start)
+        #expect(round.duration == 4.25)
+    }
+
+    @Test func thinkingStreamsUntilTheModelMovesOnAndAnInterruptedTurnEnds() throws {
+        var conversation = Conversation()
+
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1","prompt":"Lisbon?"}"#))
+        conversation.apply(try event(#"{"type":"reasoning_delta","turn_id":"t1","text":"Hmm"}"#))
+        conversation.apply(try event(#"{"type":"response_delta","turn_id":"t1","text":""}"#))
+
+        guard case .reasoning(let streaming)? = conversation.turns.first?.steps.first else {
+            Issue.record("no round of thinking")
+            return
+        }
+        // An empty delta wrote nothing, so the model is still thinking.
+        #expect(streaming.isStreaming)
+        #expect(conversation.turns.first?.isDone == false)
+
+        conversation.apply(try event(#"{"type":"interrupted","turn_id":"t1","participant":null}"#))
+
+        guard case .reasoning(let cut)? = conversation.turns.first?.steps.first else {
+            Issue.record("no round of thinking")
+            return
+        }
+        #expect(cut.isStreaming == false)
+        #expect(conversation.turns.first?.isDone == true)
+    }
 }

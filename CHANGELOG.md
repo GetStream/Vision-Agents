@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Swift SDK shows an incognito session
+
+An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat.
+
 ### The JavaScript SDK shows an incognito session in the Chat UI
 
 An incognito session has no Stream Chat channel, so `AgentChat` used to show it with no messages. It now builds the conversation from the session's socket: one reply per question, with its rounds of reasoning, its tool calls with their durations and summaries, an approval card for a call that asks first, and the generated UI, in the same shape stream-chat-react's AI components read from a kept conversation. The router sends a written reply's reasoning on the session socket as `reasoning_delta` (`turn_id`, `text`), and `session.conversation` keeps each turn's `steps` (reasoning and tool calls, in order) and whether it is `done`. A round of reasoning is timed from when the model was asked or took the reply up again, as the router times a kept one. Edit and regenerate stay off, and the router's `visible_tools` does not apply, so every tool call shows. Deploy the router before releasing this SDK: an older one sends no reasoning, and the reply shows only its tool calls. `react_assistant` has an incognito toggle at the top right of a new chat (#2090).
