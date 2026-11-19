@@ -42,6 +42,16 @@ export {
 
 export { AgentHandle } from "./handle.js";
 
+export {
+  Connections,
+  type Authorization,
+  type AuthorizationOptions,
+  type Connection,
+  type ConnectionFilter,
+  type ConnectionOptions,
+  type ConnectionUser,
+} from "./connections.js";
+
 export { Memories } from "./memories.js";
 
 export { SimulationRuns, Simulations, type SimulationRunQuery } from "./simulations.js";
