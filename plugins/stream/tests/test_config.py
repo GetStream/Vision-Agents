@@ -1,3 +1,4 @@
+from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
 
 import pytest
@@ -71,11 +72,19 @@ class Router:
         )
 
     async def _update_config(self, request: web.Request) -> web.Response:
-        return web.json_response(
-            self._store(
-                self.configs, await self._config(request), request.match_info["id"]
-            )
-        )
+        id = request.match_info["id"]
+        body = await self._config(request)
+        # As the router's storedSkillSandboxComplaint: a config left without a sandbox is
+        # refused while a skill it names, as stored, still has scripts.
+        if not body.get("sandbox"):
+            for skill in self.skills.values():
+                if (
+                    skill["config_id"] == id
+                    and skill["name"] in (body.get("skills") or [])
+                    and _scripts(skill)
+                ):
+                    return _refused(f"skill {skill['name']!r} needs a sandbox")
+        return web.json_response(self._store(self.configs, body, id))
 
     async def _list_skills(self, request: web.Request) -> web.Response:
         held = request.query.get("config_id", "")
@@ -88,14 +97,24 @@ class Router:
         )
 
     async def _create_skill(self, request: web.Request) -> web.Response:
-        return web.json_response(
-            status=201, data=self._store(self.skills, await request.json())
-        )
+        body = await request.json()
+        if refused := self._skill_refused(body):
+            return refused
+        return web.json_response(status=201, data=self._store(self.skills, body))
 
     async def _update_skill(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        if refused := self._skill_refused(body):
+            return refused
         return web.json_response(
-            self._store(self.skills, await request.json(), request.match_info["id"])
+            self._store(self.skills, body, request.match_info["id"])
         )
+
+    def _skill_refused(self, body: dict[str, Any]) -> web.Response | None:
+        """As the router's skillSandboxComplaint: scripts need the config's sandbox."""
+        if _scripts(body) and not self.configs[body["config_id"]].get("sandbox"):
+            return _refused(f"skill {body['name']!r} needs a sandbox")
+        return None
 
     async def _sync(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -219,6 +238,28 @@ class Router:
         return stored
 
 
+def _scripts(skill: dict[str, Any]) -> list[str]:
+    """The files of a skill the router runs rather than reads, as harness.Scripts."""
+    return [
+        path
+        for path in skill.get("files") or {}
+        if PurePosixPath(path).suffix.lower() not in (".md", ".mdx", ".txt")
+    ]
+
+
+def _refused(message: str) -> web.Response:
+    return web.json_response(
+        status=400,
+        data={
+            "error": {
+                "type": "invalid_request",
+                "code": "invalid_request",
+                "message": message,
+            }
+        },
+    )
+
+
 class TestDefineAgent:
     @pytest.fixture
     async def router(self) -> AsyncIterator[Router]:
@@ -329,6 +370,59 @@ class TestDefineAgent:
         config = await self.define(router)
 
         assert "sandbox" not in router.configs[config.id]
+
+    async def test_one_edit_drops_the_vm_and_a_skills_scripts_together(
+        self, router: Router
+    ):
+        forms = Skill(
+            name="forms",
+            description="Fill a form",
+            instructions="Fill it in.",
+            files={"scripts/fill.py": "print(1)", "reference.md": "# Forms"},
+        )
+        await self.define(router, skills=[forms], vm=Daytona)
+
+        forms.files = {"reference.md": "# Forms"}
+        config = await self.define(router, skills=[forms])
+
+        assert "sandbox" not in router.configs[config.id]
+        [skill] = list(router.skills.values())
+        assert skill["files"] == {"reference.md": "# Forms"}
+
+    async def test_one_edit_adds_the_vm_and_a_skills_scripts_together(
+        self, router: Router
+    ):
+        forms = Skill(
+            name="forms",
+            description="Fill a form",
+            instructions="Fill it in.",
+            files={"reference.md": "# Forms"},
+        )
+        await self.define(router, skills=[forms])
+
+        forms.files = {"scripts/fill.py": "print(1)", "reference.md": "# Forms"}
+        config = await self.define(router, skills=[forms], vm=Daytona)
+
+        assert router.configs[config.id]["sandbox"] == "daytona"
+        [skill] = list(router.skills.values())
+        assert skill["files"] == forms.files
+
+    async def test_an_edit_that_drops_the_vm_but_keeps_scripts_is_refused(
+        self, router: Router
+    ):
+        forms = Skill(
+            name="forms",
+            description="Fill a form",
+            instructions="Fill it in.",
+            files={"scripts/fill.py": "print(1)"},
+        )
+        config = await self.define(router, skills=[forms], vm=Daytona)
+
+        with pytest.raises(RuntimeError, match="needs a sandbox"):
+            await self.define(router, skills=[forms])
+
+        assert router.configs[config.id]["sandbox"] == "daytona"
+        assert len(router.skills) == 1, "the skill was edited, not copied"
 
 
 class TestKnowledge:
