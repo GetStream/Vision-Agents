@@ -175,21 +175,21 @@ showing it the photos sent with it (`Images`, by URL), and
 is cancelled, after the work in hand has finished. A connection the router drops is opened
 again, telling the router how much is still being handled.
 
-A worker can also host an agent's tools for every session opened under that agent, including
-sessions opened from a browser. The router sends each call here. Handlers are optional:
+A worker can also host the app's tools, registered once on the client for every agent, for any
+session, including sessions opened from a browser. The router offers a tool to a session only
+where a tool group of its agent's agent.yaml names it, and sends each call here:
 
 ```csharp
 using var client = new VisionAgentsClient();
-var agent = client.Agent("my-agent");
-agent.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
+client.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
     (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
-await new Dispatch(new DispatchOptions { Client = client }).Host(agent, toolTimeout: TimeSpan.FromMinutes(1)).RunAsync(stopping);
+await client.RunDispatchAsync(stopping);
 ```
 
 A hosted tool takes the same `interruptible`, `timeout` and `approval` (asked on a voice call),
 can take its call, and is cancelled when the router gives up on it. If the router refuses the
-tools, `RunAsync` throws `InvalidOperationException` with the
-reason.
+tools, `RunDispatchAsync` throws `InvalidOperationException` with the reason. A worker that also
+answers calls or messages hosts them with `dispatch.Host(client)` before `RunAsync`.
 
 ## An agent written down as a directory
 

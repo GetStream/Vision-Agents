@@ -224,10 +224,9 @@ public sealed class ToolCallTests
             answered = await peer.ReceiveAsync("tool_result");
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("payments");
-        Payments(agent.Tools);
+        Payments(client.Tools);
 
-        await new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1))
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
             .RunAsync(TestContext.Current.CancellationToken);
 
         var tools = declared!["tools"]!.AsArray().ToDictionary(tool => tool.Text("name"), tool => tool!.AsObject());
@@ -260,10 +259,9 @@ public sealed class ToolCallTests
             }
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("payments");
-        Payments(agent.Tools);
+        Payments(client.Tools);
 
-        await new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1))
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
             .RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("c2", Assert.Single(answered, frame => frame.Text("type") == "tool_result").Text("id"));
@@ -285,10 +283,9 @@ public sealed class ToolCallTests
             sent.Add(await peer.ReceiveAsync("tool_result"));
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("payments");
-        Payments(agent.Tools);
+        Payments(client.Tools);
 
-        await new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1))
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
             .RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("""{"type":"tool_hold","tool_call_id":"c1"}""", sent[0].ToJsonString());
