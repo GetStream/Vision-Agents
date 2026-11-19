@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Go SDK connects a user's own accounts
+
+`client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.
+
 ### The Swift SDK shows an incognito session
 
 An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat (#2091).
