@@ -584,6 +584,32 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task ADirectoryRenamedInCodeIsSyncedAndRunUnderThatName()
+    {
+        var root = Path.Combine(_workspace, "agents", "jean");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\n");
+
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("support", "cfg-1") });
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+        await using (var deploy = new Agent(new AgentOptions { Config = root, Name = "support", Client = client }))
+        {
+            await deploy.SyncAsync(cancel);
+        }
+        await using var agent = new Agent(new AgentOptions { Config = root, Name = "support", Client = client });
+
+        await agent.ChatAsync(cancellationToken: cancel);
+
+        Assert.Equal(
+            ("support", "support"),
+            (router.Only("POST", "/v1/agents/sync").Body.Text("name"), router.Only("POST", "/v1/agents/sessions").Body.Text("agent")));
+    }
+
+    [Fact]
     public async Task ASessionForAnAgentNeverSyncedSaysToSyncIt()
     {
         await using var router = await TestRouter.StartAsync();

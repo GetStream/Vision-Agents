@@ -380,8 +380,8 @@ public sealed class Knowledge
 /// into each session it opens, and its <see cref="Tools"/>, which the model calls back into.
 /// </para>
 /// <para>
-/// An agent built from a directory opens its sessions under the config stored by the
-/// directory's name, and never syncs on its own: <see cref="SyncAsync"/> stores the directory,
+/// An agent built from a directory opens its sessions under the config stored by its
+/// <see cref="Name"/>, and never syncs on its own: <see cref="SyncAsync"/> stores the directory,
 /// and <c>.agent_sync</c> makes a second sync of an unchanged directory a read.
 /// </para>
 /// </remarks>
@@ -405,7 +405,7 @@ public sealed class Agent : IAsyncDisposable
         {
             Folder = Folder.Load(path);
         }
-        _config = Folder?.Name ?? options.Config ?? "";
+        _config = Folder is null ? options.Config ?? "" : options.Name is { Length: > 0 } ? options.Name : Folder.Name;
         _configId = options.ConfigId ?? "";
         if (_configId != "" && (Folder is not null || _config != ""))
         {
