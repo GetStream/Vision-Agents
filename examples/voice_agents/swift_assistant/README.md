@@ -128,6 +128,11 @@ a change), and `go run ./configure` again, which binds both:
   is not written again and a message is not edited: the router cannot rewind a conversation kept
   in Chat. The composer's options sheet has Think harder, which asks with a higher
   `reasoning_effort`.
+- **Incognito chat** is the dashed circle at the top right of a new chat. Its session is created
+  with `incognito: true`, so it has no channel, isn't listed, and Juno learns nothing from it;
+  `AgentChat` shows it from the session's `turnMessages`, reasoning, tool calls and approvals
+  included. Leaving it, or picking another conversation, ends it for good. The photos sent with a
+  question go to the agent but don't show on the question once it is sent.
 - **Photos** from the composer go with the question, shrunk and inline as data URIs. The
   router uploads them to the conversation's channel and writes them on the person's message,
   where the chat shows them; the model sees them with that question's reply.
