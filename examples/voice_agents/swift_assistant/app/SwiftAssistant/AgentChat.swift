@@ -237,7 +237,7 @@ final class AgentChat: AIConversationTransport {
             if isIncognito {
                 options.incognito = true
             }
-            session = try await Assistant.agents.chat(options)
+            session = try await Assistant.agents.sessions.create(options)
         }
         if !isIncognito {
             let channel = try await session.chat()
@@ -249,7 +249,6 @@ final class AgentChat: AIConversationTransport {
             read(channel)
         }
         follow(session)
-        await session.start()
         self.session = session
         publish()
         return session

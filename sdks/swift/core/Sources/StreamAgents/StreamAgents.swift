@@ -54,6 +54,10 @@ public struct SessionOptions: Sendable {
     public var voice: String?
     /// Functions of yours the agent may call, answered on this device.
     public var tools: [AgentTool] = []
+    /// Whether to watch the conversation over its socket, which is what answers `tools` and
+    /// reports what the agent is doing as it happens. False opens it with no socket and no
+    /// tools: ask through `responses.create` and read the turn back from `responses`.
+    public var watch = true
     /// Cost labels, carried onto every request the session makes.
     public var tags: [String: String] = [:]
     /// Where a sign-in the conversation asks for goes back to. Name your app's own scheme in
@@ -200,7 +204,9 @@ public struct StreamAgents: Sendable {
     /// Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
     ///
     /// The replies still come through the model with the same instructions, skills and
-    /// knowledge a call would have had, and arrive as deltas on the session's socket.
+    /// knowledge a call would have had, and arrive as deltas on the session's socket. The
+    /// socket opens on `start()`, so whatever is read from `events()` before it is every event;
+    /// `agent(_:).sessions.create` opens it straight away.
     public func chat(agent: String? = nil, tools: [AgentTool] = []) async throws -> AgentSession {
         var options = SessionOptions(agent: agent)
         options.tools = tools
@@ -211,14 +217,14 @@ public struct StreamAgents: Sendable {
     public func chat(_ options: SessionOptions) async throws -> AgentSession {
         var options = options
         options.startVoice = false
-        let session = try await createSession(options)
-        return await AgentSession(backend: backend, session: session, tools: options.tools)
+        return try await open(options, start: false)
     }
 
     /// Puts an agent on the session's own call, `agent:<session id>`, and follows it.
     ///
     /// The agent joins as soon as this returns. Joining the same call from this device is what
-    /// `VoiceSession` is for; this only starts the agent and gives you the state layer.
+    /// `VoiceSession` is for; this only starts the agent and gives you the state layer, whose
+    /// socket opens on `start()`.
     public func voice(agent: String? = nil, tools: [AgentTool] = []) async throws -> AgentSession {
         var options = SessionOptions(agent: agent)
         options.tools = tools
@@ -229,8 +235,28 @@ public struct StreamAgents: Sendable {
     public func voice(_ options: SessionOptions) async throws -> AgentSession {
         var options = options
         options.startVoice = true
-        let session = try await createSession(options)
-        return await AgentSession(backend: backend, session: session, tools: options.tools)
+        return try await open(options, start: false)
+    }
+
+    /// Opens a session, and with `start` watches it before returning. One whose socket cannot
+    /// open is stopped rather than left with nobody watching it, and the failure thrown.
+    func open(_ options: SessionOptions, start: Bool) async throws -> AgentSession {
+        guard options.watch else {
+            // Unwatched, no tool is run here, so none is declared.
+            var options = options
+            options.tools = []
+            return await AgentSession(
+                backend: backend, session: try await createSession(options), tools: [], watched: false)
+        }
+        let session = await AgentSession(
+            backend: backend, session: try await createSession(options), tools: options.tools)
+        guard start else { return session }
+        await session.start()
+        if let failure = await session.failure {
+            try? await close(sessionID: session.id)
+            throw failure
+        }
+        return session
     }
 
     /// Starts a session without following it, for a caller building its own state layer.
@@ -356,15 +382,16 @@ public struct Sessions: Sendable {
         self.agent = agent
     }
 
-    /// Opens a conversation held in writing: no call is joined, nothing is transcribed or
-    /// spoken.
+    /// Opens a conversation and starts watching it, returning once the router is sending it
+    /// here: the tools in `options` are answered on this device from the first turn. It is held
+    /// in writing unless `options.startVoice` puts the agent on its call.
     ///
-    /// Ask it things with `responses`. Call `start()` on it to watch the reply arrive and to
-    /// answer the tools in `options`, which run on this device.
+    /// Ask it things with `responses`. With `options.watch` false it opens with no socket and
+    /// no tools, and what needs the socket throws, saying so.
     public func create(_ options: SessionOptions = SessionOptions()) async throws -> AgentSession {
         var options = options
         if options.agent == nil { options.agent = agent }
-        return try await agents.chat(options)
+        return try await agents.open(options, start: true)
     }
 
     /// One page of this caller's conversations, the ones that ended included: the ones
