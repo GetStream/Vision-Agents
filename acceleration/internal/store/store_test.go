@@ -118,24 +118,44 @@ func (s *StoreSuite) TearDownSuite() {
 	}
 }
 
+// storeTables is every table a store test writes. A table that references one of them is listed
+// too, as a DELETE does not cascade.
+const storeTables = "requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity," +
+	" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks," +
+	" voices, agent_sessions, agent_responses, agent_response_items, conversation_documents, agent_branch_switches, agent_branch_messages, users," +
+	" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs," +
+	" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions," +
+	" connector_connections, connector_authorization_attempts, connector_oauth_clients," +
+	" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting, channel_thread_inbound, chat_inbound, image_jobs," +
+	" connector_event_destinations, connector_event_deliveries, contact_map, user_phones, episodes," +
+	" connection_event_subscriptions, connection_event_deliveries," +
+	" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases," +
+	" campaigns, campaign_contacts, campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes," +
+	" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls, cost_anomaly_notices," +
+	" voice_samples, voice_bindings, apps, agent_session_tools, limit_grant_uses, episode_activity, connector_tool_pins," +
+	" connector_audit_credentials, connector_connection_clients, connector_invocation_arguments," +
+	" connector_connection_validations, channel_thread_people, channel_thread_members, channel_thread_starters," +
+	" user_phone_history, api_keys"
+
+// emptyStoreTables deletes their rows rather than truncating them: TRUNCATE makes new files for
+// every table and index, which costs far more than deleting the few rows a test leaves. The
+// replica role turns foreign keys and row triggers off, as TRUNCATE does not run them either:
+// price_changes' guard refuses a DELETE.
+var emptyStoreTables = "SET LOCAL session_replication_role = replica; DELETE FROM " +
+	strings.ReplaceAll(storeTables, ", ", "; DELETE FROM ")
+
+// SetupTest empties the tables once in each database: with one database, the shard's is the
+// shared one.
 func (s *StoreSuite) SetupTest() {
-	for _, db := range append([]bun.IDB{s.store.db}, s.store.shards()...) {
-		_, err := db.ExecContext(
-			s.ctx,
-			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity,"+
-				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
-				" voices, agent_sessions, agent_responses, agent_response_items, conversation_documents, agent_branch_switches, agent_branch_messages, users,"+
-				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+
-				" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
-				" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
-				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting, channel_thread_inbound, chat_inbound, image_jobs,"+
-				" connector_event_destinations, connector_event_deliveries, contact_map, user_phones, episodes,"+
-				" connection_event_subscriptions, connection_event_deliveries,"+
-				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
-				" campaigns, campaign_contacts, campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
-				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls, cost_anomaly_notices CASCADE",
-		)
-		s.Require().NoError(err)
+	databases := s.store.shards()
+	if s.store.Sharded() {
+		databases = append(databases, s.store.db)
+	}
+	for _, db := range databases {
+		s.Require().NoError(db.RunInTx(s.ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			_, err := tx.ExecContext(ctx, emptyStoreTables)
+			return err
+		}))
 	}
 }
 
