@@ -194,11 +194,13 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberAServerThatCantRuleLeavesTh
 // Non-chorus agents hear the transcriber as they always have: no floor of chorus-asr's, and its
 // words holding still are put to the flow controller.
 func (s *AgentSuite) TestWithoutChorusASRTheTranscribersWordsHoldingStillAreATurn() {
-	s.join(true)
-	caller := stt.Participant{ID: "alice"}
-	s.speak(caller)
-	s.transcriberWrites(caller, 1, stt.ModeReplacement, "what time do you open")
-	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the words that held still were never answered")
-	s.Nil(s.agent.audioFloor)
-	s.False(s.agent.actsOnChorusASR())
+	s.onFakeClock(func() {
+		s.join(true)
+		caller := stt.Participant{ID: "alice"}
+		s.speak(caller)
+		s.transcriberWrites(caller, 1, stt.ModeReplacement, "what time do you open")
+		s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the words that held still were never answered")
+		s.Nil(s.agent.audioFloor)
+		s.False(s.agent.actsOnChorusASR())
+	})
 }
