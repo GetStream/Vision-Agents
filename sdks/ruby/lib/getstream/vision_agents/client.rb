@@ -29,7 +29,7 @@ module GetStream
     #
     #   api.get("/v1/agents/sessions/{id}", path: { id: "sess_1" }, user_id: "ada")
     #
-    # nil keeps whoever the backend acts for; an empty one is for nobody.
+    # nil keeps whoever the backend acts for; an empty one drops that user (a client's own user_id: stays).
     class Client
       OPEN_TIMEOUT = 10
       # Creating a session returns once the agent is in the call, which can take seconds.

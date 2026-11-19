@@ -445,7 +445,7 @@ Each call takes the user, and the SDK sends it as the owner and in `X-Stream-Use
 two never differ. Another user's connection is not found, the same as one that does not exist.
 An app's connection is reached by every call, one naming a user included, but `list` with a
 `user_id` lists only that user's. Leave `user_id` out for the app's own connection, which any
-of its agents may be bound to. All of it is server side only.
+of its agents may be bound to (a client built with its own `user_id:` still sends that one). All of it is server side only.
 
 Any request can name its user the same way: `api.get`, `post`, `put`, `patch`, `delete` and
 `socket` take `user_id:` and send it in `X-Stream-User-Id` with the client's own credential.
