@@ -1834,28 +1834,23 @@ var interruptsAlone = map[string]bool{
 }
 
 func overlapNoise(text string) bool {
-	fields := wordList(text)
-	if len(fields) == 0 {
+	t := strings.ToLower(words(text))
+	if t == "" {
 		return false
 	}
-	t := strings.Join(fields, " ")
 	if strings.Contains(t, "cough") || strings.Contains(t, "ahem") {
 		return true
 	}
-	// A murmur written apart is still the one it is: "uh huh" is assent, as "uh-huh" is.
-	if noise, murmur := murmurs[strings.Join(fields, "")]; murmur {
-		return noise
-	}
-	return !slices.ContainsFunc(fields, func(field string) bool { return !murmurs[field] })
+	return murmurs[t]
 }
 
 // murmurs are the words of someone listening rather than taking the floor. True marks the ones
-// that are noise, alone or in a run of noise ("hum humm"), which overlapNoise is; the rest are
-// assent, which only a run of murmurs is. The punctuation is gone (words), so "uh-huh" is "uhhuh".
+// that are noise said alone (overlapNoise); the rest are assent, which only a run of murmurs is.
+// The punctuation is gone (words), so "uh-huh" is "uhhuh".
 var murmurs = map[string]bool{
-	"huh": true, "uh": true, "mm": true, "hm": true, "hmm": true, "hum": true, "humm": true,
+	"huh": true, "uh": true, "mm": true, "hm": true, "hmm": true,
 	"okay": false, "ok": false, "yeah": false, "yes": false, "yep": false, "yup": false,
-	"uhhuh": false, "mhm": false, "mmhm": false, "mmhmm": false, "right": false, "sure": false, "alright": false,
+	"uhhuh": false, "mhm": false, "mmhmm": false, "right": false, "sure": false, "alright": false,
 	"got": false, "it": false, "gotcha": false, "thank": false, "thanks": false, "you": false,
 }
 

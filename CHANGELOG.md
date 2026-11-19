@@ -727,7 +727,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
 
-With `unified_replies` on, an agent acting on chorus-asr let the reply model rule on each turn from its words alone, and chorus-asr's ruling, made from the audio, was dropped: a radio's "Thank you so much" it ruled ignored was answered "You're welcome." Chorus-asr now rules on every turn whenever it acts, and unified replies apply only without it. A run of hums ("hum humm", "hmm hmm") is now noise like a cough, so it is no longer written into the transcript or shown to the next reply; assent written apart ("uh huh", "mm hm") is still assent.
+With `unified_replies` on, an agent acting on chorus-asr let the reply model rule on each turn from its words alone, and chorus-asr's ruling, made from the audio, was dropped: a radio's "Thank you so much" it ruled ignored was answered "You're welcome." Chorus-asr now rules on every turn whenever it acts, and unified replies apply only without it.
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 

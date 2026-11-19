@@ -2617,28 +2617,9 @@ func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsWithTheAgentQuietIsHeardAndKep
 	s.Equal("and what time do you open", s.converse.takeAside(caller.ID))
 }
 
-// With the agent quiet, a run of hums is no words either: nothing of it is heard, and the next
-// reply sees nothing of it.
-func (s *ConverseSuite) TestTheFloorsIgnoreOfARunOfHumsWithTheAgentQuietStaysIgnored() {
-	ready := s.settle("Hum, humm.", s.quiet())
-	s.Equal([]ActionKind{ActIgnore}, kinds(s.floorIgnores(ready, s.quiet())))
-	seen := s.seen
-	s.Never(func() bool { return countOf[Heard](seen()) > 0 }, 50*time.Millisecond, 5*time.Millisecond, "the hums were heard")
-	s.Empty(s.converse.takeAside(caller.ID))
-}
-
-// Assent the transcriber wrote apart, "uh huh", is the assent "uh-huh" is: heard, and kept for
-// the next reply to see.
-func (s *ConverseSuite) TestTheFloorsIgnoreOfAssentWrittenApartIsKeptForTheNextReply() {
-	ready := s.settle("uh huh", s.quiet())
-	s.Equal([]ActionKind{ActIgnore}, kinds(s.floorIgnores(ready, s.quiet())))
-	s.eventually(func() bool { return len(s.heard()) == 1 }, "the assent was never heard")
-	s.Equal("uh huh", s.converse.takeAside(caller.ID))
-}
-
 // A cough or a lone "uh" is no words: it stays ignored, and nothing is heard of it.
 func (s *ConverseSuite) TestTheFloorsIgnoreOfNoiseStaysIgnored() {
-	for _, noise := range []string{"uh", "(cough)", "hmm hmm"} {
+	for _, noise := range []string{"uh", "(cough)"} {
 		s.Run(noise, func() {
 			s.build(DuplexOptions{})
 			ready := s.settle(noise, s.talking())
