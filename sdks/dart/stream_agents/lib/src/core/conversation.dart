@@ -68,17 +68,18 @@ final class TurnUI {
     'content': content,
   };
 
+  /// Compares what shows, not [raw]: the text written so far is kept by [Conversation], which
+  /// counts it, so no delta is lost to a holder that skips equal values.
   @override
   bool operator ==(Object other) =>
       other is TurnUI &&
       other.format == format &&
       other.version == version &&
       other.status == status &&
-      other.content == content &&
-      other.raw == raw;
+      other.content == content;
 
   @override
-  int get hashCode => Object.hash(format, version, status, content, raw);
+  int get hashCode => Object.hash(format, version, status, content);
 
   @override
   String toString() => 'TurnUI($format, $status, ${content.length} chars)';
@@ -175,6 +176,8 @@ final class Ended extends ConversationState {
 /// socket around it. Folding in an event returns a new conversation, or this one untouched
 /// when the event changes nothing, so `identical` is a cheap test for "did anything happen".
 final class Conversation {
+  /// A conversation built here has no UI being written; derive from an existing one
+  /// ([withoutTurn], [withState]) to keep it.
   const Conversation({this.turns = const [], this.state = ConversationState.idle, this.failure})
     : _uiWritten = const {};
 
