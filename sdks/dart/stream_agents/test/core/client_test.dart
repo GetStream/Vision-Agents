@@ -300,6 +300,7 @@ void main() {
           projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
           returnUrl: 'com.example.app:/connected',
+          ui: false,
         ),
       );
 
@@ -311,6 +312,7 @@ void main() {
         'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
         'return_url': 'com.example.app:/connected',
+        'ui': false,
       });
       expect(session.id, 's1');
       expect(session.isText, isTrue);
@@ -370,29 +372,6 @@ void main() {
       expect(remembering, {'memory': <String, Object?>{}});
       expect(router.last('POST /v1/agents/sessions').json, <String, Object?>{});
     });
-
-    test(
-      'a session that shows no UI says so, and one that says nothing leaves it to the config',
-      () async {
-        router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
-
-        await agents.sessions.create(const SessionOptions(ui: false));
-        await agents.sessions.create(const SessionOptions(ui: true));
-        await agents.sessions.create();
-
-        expect(
-          [
-            for (final request in router.arrived)
-              if ('${request.method} ${request.path}' == 'POST /v1/agents/sessions') request.json,
-          ],
-          [
-            {'ui': false},
-            {'ui': true},
-            <String, Object?>{},
-          ],
-        );
-      },
-    );
 
     test('a voice session asks to start voice and is on its own call', () async {
       router.answer(
