@@ -1,5 +1,6 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 
 /// Brand design-system presets applied to both OpenUI and A2UI generated surfaces as well as
@@ -7,19 +8,19 @@ import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 enum BrandProfile {
   stream(
     title: 'Stream Default',
-    subtitle: 'Electric blue accent · 16px rounded cards',
+    subtitle: 'Electric blue accent · 16pt rounded cards',
     accent: Color(0xFF005FFF),
     cornerRadius: 16,
   ),
   ember(
     title: 'Ember Hospitality',
-    subtitle: 'Warm terracotta accent · 10px compact cards',
+    subtitle: 'Warm terracotta accent · 10pt compact cards',
     accent: Color(0xFFD95D24),
     cornerRadius: 10,
   ),
   nordic(
     title: 'Nordic Mobility',
-    subtitle: 'Crisp teal accent · 6px architectural edges',
+    subtitle: 'Crisp teal accent · 6pt architectural edges',
     accent: Color(0xFF0F766E),
     cornerRadius: 6,
   );
@@ -36,9 +37,45 @@ enum BrandProfile {
   final Color accent;
   final double cornerRadius;
 
-  A2UIThemeData get a2uiTheme => A2UIThemeData(accent: accent, cornerRadius: cornerRadius);
+  A2UIThemeData get a2uiTheme => A2UIThemeData(
+    accent: accent,
+    cornerRadius: cornerRadius,
+    buttonCornerRadius: cornerRadius * 0.75,
+    controlCornerRadius: cornerRadius / 2,
+  );
 
+  /// The brand chosen in Settings, kept between launches once [load] has run.
   static final ValueNotifier<BrandProfile> active = ValueNotifier(BrandProfile.stream);
+
+  /// Where the chosen brand is kept, by its name.
+  static const _storageKey = 'brand';
+
+  /// Reads the brand chosen at an earlier launch into [active], and keeps each one chosen from
+  /// now on.
+  ///
+  /// A brand that can't be read leaves the default in place: the app opens all the same.
+  static Future<void> load() async {
+    try {
+      final stored = await SharedPreferencesAsync().getString(_storageKey);
+      active.value = values.asNameMap()[stored] ?? active.value;
+    } on Exception catch (error) {
+      debugPrint('Reading the chosen brand failed: $error');
+    }
+    if (_keeping) return;
+    _keeping = true;
+    active.addListener(_save);
+  }
+
+  /// Whether [active] is saved as it changes, which it is once [load] has run.
+  static bool _keeping = false;
+
+  static Future<void> _save() async {
+    try {
+      await SharedPreferencesAsync().setString(_storageKey, active.value.name);
+    } on Exception catch (error) {
+      debugPrint('Saving the chosen brand failed: $error');
+    }
+  }
 }
 
 /// Inherited brand tokens read by OpenUI components and custom portable widgets.
