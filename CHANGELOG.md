@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Go SDK connects a user's own accounts
+
+`client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", User: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, User})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, user)`, `List(ctx, client.ConnectionFilter{User, Connector})`, `Delete(ctx, id, user)`. The user is named once and sent as both the owner and `X-Stream-User-Id`. No user is the app's own connection.
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).

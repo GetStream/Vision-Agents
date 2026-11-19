@@ -725,12 +725,36 @@ What the router answers is in micros too: `client.USD(limit.LimitMicros)` prints
 Work a limit refuses is a `*stream.RouterError` of 402 `spend_limit_reached`, or 429
 `user_limit_reached` for one end user's.
 
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through. A backend creates one for a user, sends the user's browser to the provider's consent,
+and reads whether it connected:
+
+```go
+connections := api.Connections()
+connection, err := connections.Create(ctx, client.ConnectionRequest{Connector: "linear", User: "alice"})
+consent, err := connections.Authorize(ctx, *connection.Id, client.AuthorizeOptions{
+    ReturnURL: "https://app.example.com/settings", User: "alice",
+})
+// Open consent.LaunchUrl in a popup from a page of the return URL's origin, and post it
+// consent.HandoffToken. The attempt ends at consent.ExpiresAt.
+
+connection, err = connections.Get(ctx, *connection.Id, "alice") // Status is pending until alice consents
+mine, err := connections.List(ctx, client.ConnectionFilter{User: "alice"})
+err = connections.Delete(ctx, *connection.Id, "alice")
+```
+
+Each call names the user once, and the SDK sends it as the owner and as `X-Stream-User-Id`, so
+the two never differ. Another user's connection is not found, the same as one that does not
+exist. Leave `User` empty for the app's own connection, which any of its agents may be bound to.
+
 ## Layout
 
 | Path            | What is in it                                                     |
 | --------------- | ----------------------------------------------------------------- |
 | `agents/`       | `Agent`, its lifecycle, the harness, the directory loader and function registration |
-| `client/`       | Agents by name, their sessions, responses and items, forking and guest users, spend limits and teams |
+| `client/`       | Agents by name, their sessions, responses and items, forking and guest users, spend limits and teams, connections |
 | `stream/`       | The remote pipeline, the backend it talks to, the socket and the phone endpoints |
 | `edge/`         | Creating the Stream call and minting a link to listen in on it     |
 | `tools/`        | The function registry and the JSON Schema derived from an argument struct |
