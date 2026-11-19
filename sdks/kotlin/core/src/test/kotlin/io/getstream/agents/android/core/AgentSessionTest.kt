@@ -376,6 +376,125 @@ class AgentSessionTest {
         chat.close()
     }
 
+    /** `c1` as an approval card restored from the channel shows it, which this session's socket was never asked. */
+    private val shownRefund = ShownToolCall(
+        "c1",
+        "issue_refund",
+        """{"order_id":"A-1042","reason":"it arrived unopened"}""",
+        requestId = "m1",
+        turnId = "t1",
+    )
+
+    @Test
+    fun `a call shown from the conversation, allowed, is answered on its turn and runs here`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = true)
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"Refunded A-1042","error":"","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation, declined, never runs and the model is told so`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = false, summary = "Kept the order")
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":false,"summary":"Kept the order","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"","error":"The person declined this call.","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation of a tool this session lacks, allowed, is left to whoever has it`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(CopyOnWriteArrayList()))))
+
+        chat.decide(shownRefund.copy(name = "get_location"), allowed = true)
+        chat.say("still there?")
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown without its arguments, allowed, tells the model it could not run`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund.copy(arguments = null), allowed = true)
+
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"","error":"The call's arguments were too long for the conversation to keep, so it could not run.",""" +
+                """"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation answered twice, such as a double tap, is answered and run once`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = true)
+        chat.decide(shownRefund, allowed = true)
+        chat.decide(shownRefund, allowed = false)
+
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(JsonPrimitive("tool_result"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        chat.say("still there?")
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation that the session holds is answered as the one it holds, once`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        router.script.send(Script.Send(refundCall))
+        chat.approvals.first { it.isNotEmpty() }
+        chat.decide(shownRefund.copy(arguments = null, requestId = "", turnId = ""), allowed = true)
+
+        assertEquals(emptyList(), chat.approvals.value)
+        // The request and turn, and the arguments it runs with, are the socket's own.
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(JsonPrimitive("Refunded A-1042"), Json.parseToJsonElement(router.nextSent()).jsonObject["output"])
+        chat.decide(shownRefund, allowed = true)
+        chat.say("still there?")
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
     /** A tool that asks first, so whether a call of it is answered here shows in [AgentSession.approvals] at once. */
     private fun reserve(title: String) = AgentTool("reserve_table", "Reserve a table.", approval = AgentTool.Approval(title)) { "Reserved." }
 
