@@ -174,7 +174,6 @@ the other commands that read them there.
 | `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
-| `PHONIC_API_KEY`        | Phonic credentials, used by the Phonic-1 speech-to-speech model |
 | `TOGETHER_API_KEY`      | Together AI credentials, used by the Together-hosted Parakeet and both Nemotrons |
 | `PARAKEET_WS_URL`       | The Parakeet WebSocket endpoint                            |
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |

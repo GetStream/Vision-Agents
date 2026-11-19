@@ -2452,31 +2452,6 @@ sts:
         trains_on_data: "no"
         retention: 30d
 
-    # Phonic-1, over Phonic's own socket rather than OpenAI's events: its own package.
-    # Launched 2026-10-29 (per trackers; Phonic posted no dated announcement this could
-    # find), first on the Artificial Analysis speech-to-speech index at 87.1 as "Phonic 1
-    # (High)", at 0.61s to first audio; Phonic claim under 600 ms. It calls tools, takes
-    # typed turns and changes instructions and tools mid-session, but does not see, stops
-    # when the caller talks, and has no silence timer it documents as ending a turn. One
-    # price per conversation minute, no tokens: $0.07 on the Starter plan, which is what a
-    # new key is on, against $0.065 on Pro with a $200 monthly minimum
-    # (phonic.ai/pricing, read 2026-11-19). Phonic report no time, so the seconds are the
-    # router's from when Phonic took the config. 51 languages
-    # (docs.phonic.ai/docs/build/agents/supported_languages); the first asked for is the
-    # one the agent starts in. Phonic publish nothing about training on API traffic, and
-    # keep transcripts and audio indefinitely by default; zero retention is for Enterprise
-    # plans only, and refused on this key.
-    - provider: phonic
-      model: phonic-1
-      description: "Top of the Artificial Analysis speech-to-speech board and the quickest to first audio there. Calls tools, cannot see, priced per minute."
-      languages: [ar, az, bg, bn, cs, da, de, el, en, es, fa, fi, fil, fr, gu, he, hi, hu, id, it, ja, ka, km, kn, ko, lt, lv, ml, mr, ms, ne, nl, "no", pa, pl, pt, ro, ru, si, sk, sq, sv, sw, ta, te, th, tr, uk, ur, vi, yue, zh]
-      realtime: true
-      tier: low-latency
-      supports: [tools, text, input_transcript, output_transcript]
-      data_policy:
-        trains_on_data: unknown
-        retention: unspecified
-
     # Alibaba's Qwen 3.5 Omni, top of the Artificial Analysis quality board and by far the
     # cheapest, at $0.03 an hour of input on that board. It takes no tools and no typed
     # turns, and its session is configured once, before the first audio. Alibaba have
