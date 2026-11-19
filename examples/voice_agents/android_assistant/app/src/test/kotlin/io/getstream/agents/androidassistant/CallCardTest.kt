@@ -107,4 +107,21 @@ class CallCardTest {
         assertEquals("t2", shown.turn.id)
         assertSame(storedCard, shown.document)
     }
+
+    @Test
+    fun `the last root a change Stream Chat stored sets is the one that counts`() {
+        // Statements apply in order, so a root set to null after a card empties it, and a card
+        // after a null root draws.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"root = null"}""",
+        )
+        fun stored(content: String) =
+            assertNotNull(AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to TurnUI("openui", isStreaming = false, content = content).customData)))
+        val emptied = stored("root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")\nroot = null")
+        val drawn = stored("root = null\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")")
+
+        assertNull(callCard(conversation, emptySet()) { emptied })
+        assertSame(drawn, assertNotNull(callCard(conversation, emptySet()) { drawn }).document)
+    }
 }
