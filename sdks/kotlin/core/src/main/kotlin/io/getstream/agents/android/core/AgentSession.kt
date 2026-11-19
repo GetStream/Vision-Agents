@@ -179,16 +179,17 @@ public class AgentSession internal constructor(
      * the model is told the person declined, and the call's step shows [summary]. A call that
      * is not waiting is left alone, so answering twice does nothing; one the conversation shows
      * waiting that this session was never asked is answered with a [ShownToolCall]. If the answer
-     * cannot be sent, the call waits again.
+     * cannot be sent, the call waits again, unless the router cancelled it meanwhile.
      */
     public suspend fun decide(toolCallId: String, allowed: Boolean, summary: String = "") {
-        if (held.value.none { it.id == toolCallId } || !answered.add(toolCallId)) return
+        if (toolCallId in cancelled || held.value.none { it.id == toolCallId } || !answered.add(toolCallId)) return
         decideHeld(toolCallId, allowed, summary)
     }
 
     /**
      * Answers the call claimed in [answered] if it is waiting in [approvals], and says whether it
-     * was. If the answer cannot be sent, the call waits again and its claim is let go.
+     * was. If the answer cannot be sent, its claim is let go and the call waits again, unless the
+     * router cancelled it meanwhile.
      */
     private suspend fun decideHeld(toolCallId: String, allowed: Boolean, summary: String): Boolean {
         var index = -1
@@ -204,9 +205,12 @@ public class AgentSession internal constructor(
             socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
         } catch (e: Exception) {
             // Cancelled, the answer is taken as not sent, since a call left claimed can never be
-            // answered again.
+            // answered again. One the router cancelled meanwhile does not wait again: the cancel
+            // is remembered before it is taken out of the calls waiting, so it is either seen
+            // here or takes the call out after it is put back.
             if (e !is AgentsException && e !is CancellationException) throw e
             held.update { it.toMutableList().apply { add(minOf(index, size), decided) } }
+            if (call.id in cancelled) held.update { waiting -> waiting.filterNot { it.id == call.id } }
             answered -= call.id
             throw e
         }
