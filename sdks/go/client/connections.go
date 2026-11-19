@@ -15,23 +15,25 @@ const connectionsPage = 200
 // Connections are the accounts the app and its users hold at connectors, such as a user's
 // Linear: what an agent's tools reach that account through. Only a backend may ask.
 //
-// The user is named once, on the client: api.ForUser("alice").Connections(). A user-owned
-// connection is that user's, and is reached only while acting for them: the user goes to the
-// router as the owner and as X-Stream-User-Id alike, so the two never differ. On a client
-// acting for nobody the connections are the app's own.
+// The user is named once, on the client: alice, err := api.ForUser("alice"), then
+// alice.Connections(). The user goes to the router as the owner and as X-Stream-User-Id alike,
+// so the two never differ. A user-owned connection is reached only while acting for that user;
+// an app-owned one is reached by every backend client, one acting for a user included. On a
+// client acting for nobody, Create and List are the app's own.
 type Connections struct {
 	client *Client
 }
 
-// Connections is the connections of the user this client acts for (ForUser), or the app's
-// own when it acts for nobody.
+// Connections is the connections resource of this client: Create and List are the user's this
+// client acts for (ForUser), or the app's own when it acts for nobody.
 func (c *Client) Connections() *Connections { return &Connections{client: c} }
 
 // ForUser is a client that runs work for one end user while keeping the app's credential: a
 // backend's, so it is refused on a device client, which holds its user's token (SetUser).
 //
 // It returns a client rather than mutating this one, as SetUser does, so which user a request
-// was for never depends on when it happened to run.
+// was for never depends on when it happened to run. The new client carries none of this one's
+// team or usage categories: the user's work is not counted against them, as with SetUser.
 func (c *Client) ForUser(userID string) (*Client, error) {
 	if !c.ServerSide() {
 		return nil, errors.New("client: working for a user keeps the app's credential, which only a " +
@@ -42,6 +44,7 @@ func (c *Client) ForUser(userID string) (*Client, error) {
 	}
 	backend := c.backend
 	backend.ActingFor = userID
+	backend.Team, backend.UsageCategories = "", nil
 	resolved, err := backend.Resolve()
 	if err != nil {
 		return nil, err
@@ -104,8 +107,9 @@ func (c *Connections) Authorize(ctx context.Context, id, returnURL string) (acce
 	return *started.JSON201, nil
 }
 
-// Get is one connection of the user this client acts for, or of the app's. Another owner's is
-// not found, the same as one that does not exist.
+// Get is one connection. An app's is reached by every backend client; a user's only while
+// acting for that user, and for anybody else it is not found, the same as one that does not
+// exist.
 func (c *Connections) Get(ctx context.Context, id string) (acceleration.Connection, error) {
 	api, err := c.reach(id)
 	if err != nil {
@@ -122,7 +126,8 @@ func (c *Connections) Get(ctx context.Context, id string) (acceleration.Connecti
 	return *got.JSON200, nil
 }
 
-// List is every connection of the user this client acts for, or of the app's, newest first,
+// List is every connection of the user this client acts for (only theirs, not the app's), or of
+// the app's when it acts for nobody, newest first,
 // read page by page. connector keeps one connector's; empty is every connector's.
 func (c *Connections) List(ctx context.Context, connector string) ([]acceleration.Connection, error) {
 	owner := acceleration.ConnectionOwnerTypeApp

@@ -519,3 +519,43 @@ func TestAConnectionRefusalIsTheRoutersError(t *testing.T) {
 		}
 	}
 }
+
+// Catches a ForUser client that keeps the parent's team and usage categories, which counts the
+// user's work against the app client's own team.
+func TestForUserCountsNothingAgainstTheParentsTeam(t *testing.T) {
+	backend := newRouter(t)
+	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme", Team: "finance", UsageCategories: []string{"project:x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	alice, err := api.ForUser("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect(t, alice.Connections(), "linear")
+
+	sent := backend.heard[len(backend.heard)-1]
+	if got := sent.Get(stream.UsageCategoriesHeader); got != "" {
+		t.Errorf("alice's request carried the usage categories %q", got)
+	}
+}
+
+// Catches docs and code that disagree on reach: a backend acting for a user reaches the app's
+// connections, as the router lets every backend, while its List holds the user's only.
+func TestAUserClientReachesAnAppConnectionButListsOnlyItsOwn(t *testing.T) {
+	backend := newRouter(t)
+	app := connect(t, backend.client(t).Connections(), "github")
+	alice := backend.asUser(t, "alice").Connections()
+
+	if _, err := alice.Get(t.Context(), *app.Id); err != nil {
+		t.Errorf("a user's client could not read the app's connection: %v", err)
+	}
+	listed, err := alice.List(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 0 {
+		t.Errorf("alice's list held %d connections of the app's", len(listed))
+	}
+}
