@@ -431,4 +431,29 @@ private func event(_ json: String) throws -> AgentEvent {
         #expect(conversation.turns.map(\.text) == ["Two meetings today."])
     }
 
+    @Test func aToolCallWhoseIDIsARoundOfThinkingsIsKeptAndEachCallOnce() throws {
+        var conversation = Conversation()
+
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
+        conversation.apply(try event(#"{"type":"reasoning_delta","turn_id":"t1","text":"The weather tool knows."}"#))
+        for _ in 0..<2 {
+            conversation.apply(
+                try event(
+                    #"{"type":"tool_started","tool_call_id":"r1","tool":"get_weather","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}"#
+                ))
+        }
+        conversation.apply(
+            try event(
+                #"{"type":"tool_ran","tool_call_id":"r1","turn_id":"t1","tool":"get_weather","arguments":"{}","result":"Sunny","files":null,"error":""}"#
+            ))
+
+        let steps = try #require(conversation.turns.first).steps
+        guard steps.count == 2, case .reasoning(let round) = steps[0], case .toolCall(let call) = steps[1] else {
+            Issue.record("the steps were \(steps)")
+            return
+        }
+        #expect(round.id == "r1")
+        #expect(call.id == "r1")
+        #expect(call.status == .completed)
+    }
 }

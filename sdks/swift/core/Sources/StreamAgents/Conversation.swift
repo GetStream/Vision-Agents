@@ -356,9 +356,11 @@ extension Turn {
         steps[steps.count - 1] = .reasoning(round)
     }
 
-    /// Begins `call`, unless the turn already shows it.
+    /// Begins `call`, unless the turn already shows it. A round of thinking's id is ours, so a
+    /// call may share it.
     fileprivate mutating func call(_ call: TurnStep.ToolCall) {
-        guard !steps.contains(where: { $0.id == call.id }) else { return }
+        guard !steps.contains(where: { if case .toolCall(let shown) = $0 { shown.id == call.id } else { false } })
+        else { return }
         steps.append(.toolCall(call))
     }
 
