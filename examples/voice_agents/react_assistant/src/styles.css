@@ -139,6 +139,12 @@ button {
   color: var(--text);
 }
 
+/* Incognito on: the toggle stays lit, so it is plain this chat is not kept. */
+.icon-button[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
 .content {
   position: relative;
   flex: 1;

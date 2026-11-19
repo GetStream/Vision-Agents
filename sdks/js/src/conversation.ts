@@ -26,9 +26,57 @@ export interface Turn {
   readonly text: string;
   /** Interactive UI generated for an agent turn, streaming in and then complete. */
   readonly ui?: TurnUI;
+  /**
+   * What the agent did on its way to the turn's text, in order: each round of the model's
+   * thinking on a written reply, and each tool it called. Never set on a participant's turn.
+   */
+  readonly steps?: readonly TurnStep[];
+  /**
+   * Set once the agent is done with the turn: it answered with no tools or work left to come,
+   * or it was interrupted. A turn whose tools are still running is not. Never set on a
+   * participant's turn.
+   */
+  readonly done?: boolean;
   /** When the turn began, in milliseconds since the epoch. */
   readonly at: number;
 }
+
+/** A round of the model's thinking in an agent turn, which is read, never spoken. */
+export interface ReasoningStep {
+  readonly kind: "reasoning";
+  /** `r1`, `r2` and on, in the order the turn thought. */
+  readonly id: string;
+  /** `streaming` while the model thinks, `completed` once it writes, calls a tool or finishes. */
+  readonly status: "streaming" | "completed";
+  /** The thinking so far. */
+  readonly text: string;
+  /**
+   * When the model began on it, in milliseconds since the epoch: when it was asked, or took the
+   * reply up again after writing or a tool, as a kept reply's step is timed.
+   */
+  readonly at: number;
+  /** How long the model thought, in milliseconds, once it is completed. */
+  readonly durationMs?: number;
+}
+
+/** A call of a tool in an agent turn: what was called and how it went, not what it was given or gave. */
+export interface ToolStep {
+  readonly kind: "tool_call";
+  /** The call's id, which `session.decide` answers it by while it waits in `approvals`. */
+  readonly id: string;
+  /** The tool. */
+  readonly name: string;
+  readonly status: "running" | "completed" | "failed";
+  /** What whoever runs it last said about how it is going (`tool_update`), or the empty string. */
+  readonly summary: string;
+  /** When it began, in milliseconds since the epoch. */
+  readonly at: number;
+  /** How long it ran, in milliseconds, once it is no longer running. */
+  readonly durationMs?: number;
+}
+
+/** One thing the agent did in a turn. */
+export type TurnStep = ReasoningStep | ToolStep;
 
 /** The conversation as the socket has left it. The same object until something in it changes. */
 export interface ConversationRecord {
@@ -77,6 +125,8 @@ export class Conversation {
   private readonly listeners = new Set<() => void>();
   /** What each turn's UI block has written so far, unmerged, until the turn's UI is settled. */
   private readonly uiRawByTurn = new Map<string, PendingUI>();
+  /** When the model last took each turn in flight up again, which a round of thinking is timed from. */
+  private readonly resumedAt = new Map<string, number>();
 
   constructor(connected: boolean) {
     this.snapshot = Object.freeze({
@@ -143,12 +193,58 @@ export class Conversation {
       case "responding": {
         const turnId = text(frame, "turn_id");
         this.uiRawByTurn.delete(turnId);
+        this.resumedAt.set(turnId, now);
         this.turns([...turns, Object.freeze({ id: turnId, speaker: "agent", text: "", at: now })]);
         return;
       }
       case "response_delta": {
         const delta = text(frame, "text");
-        this.write(text(frame, "turn_id"), delta, now, (was) => was + delta);
+        const turnId = text(frame, "turn_id");
+        if (delta) {
+          this.amend(turnId, now, (turn) => settled(turn, now), false);
+          this.resumedAt.set(turnId, now);
+        }
+        this.write(turnId, delta, now, (was) => was + delta);
+        return;
+      }
+      case "reasoning_delta": {
+        const delta = text(frame, "text");
+        const turnId = text(frame, "turn_id");
+        if (delta) {
+          const began = this.resumedAt.get(turnId) ?? now;
+          this.amend(turnId, now, (turn) => thought(turn, delta, began), true);
+        }
+        return;
+      }
+      case "tool_started": {
+        const call: ToolStep = {
+          kind: "tool_call",
+          id: text(frame, "tool_call_id"),
+          name: text(frame, "tool"),
+          status: "running",
+          summary: "",
+          at: now,
+        };
+        this.amend(text(frame, "turn_id"), now, (turn) => called(settled(turn, now), call), true);
+        return;
+      }
+      case "tool_updated": {
+        // Words to say as written are a line of the reply, not how the call is going.
+        const said = text(frame, "text");
+        if (frame["verbatim"] !== true && said) {
+          const id = text(frame, "id");
+          this.amend(text(frame, "turn_id"), now, (turn) => toolChanged(turn, id, () => ({ summary: said })), false);
+        }
+        return;
+      }
+      case "tool_ran": {
+        const status = text(frame, "error") ? "failed" : "completed";
+        this.amend(
+          text(frame, "turn_id"),
+          now,
+          (turn) => toolChanged(turn, text(frame, "tool_call_id"), (call) => ({ status, durationMs: now - call.at })),
+          false,
+        );
         return;
       }
       case "ui_delta": {
@@ -157,6 +253,8 @@ export class Conversation {
           return;
         }
         const turnId = text(frame, "turn_id");
+        this.amend(turnId, now, (turn) => settled(turn, now), false);
+        this.resumedAt.set(turnId, now);
         const format = text(frame, "format");
         if (!format) {
           return;
@@ -200,11 +298,19 @@ export class Conversation {
         if (said) {
           this.write(turnId, said, now, () => said);
         }
+        // A reply whose tools or work are still to come is carried on by a turn of its own.
+        const done = frame["pending_work"] !== true;
+        this.resumedAt.delete(turnId);
+        this.amend(turnId, now, (turn) => (done ? ended(settled(turn, now)) : settled(turn, now)), false);
         return;
       }
-      case "interrupted":
-        this.settleUI(text(frame, "turn_id"), now);
+      case "interrupted": {
+        const turnId = text(frame, "turn_id");
+        this.settleUI(turnId, now);
+        this.resumedAt.delete(turnId);
+        this.amend(turnId, now, (turn) => ended(settled(turn, now)), false);
         return;
+      }
       case "error":
         this.change({ failure: text(frame, "error"), failureContext: text(frame, "context"), failureAt: now });
         return;
@@ -221,6 +327,7 @@ export class Conversation {
   /** @internal The socket stopped, with the error that stopped it if it did not end normally. */
   disconnected(cause?: Error): void {
     this.uiRawByTurn.clear();
+    this.resumedAt.clear();
     this.change({
       connected: false,
       approvals: Object.freeze([]),
@@ -248,6 +355,29 @@ export class Conversation {
     const next = turns.slice();
     next[index] = Object.freeze({ ...turn, text: nextText });
     this.turns(next);
+  }
+
+  /**
+   * Applies `change` to the agent turn `turnId`. A turn this never saw begin is started when
+   * `start` says the frame begins something, and left alone otherwise.
+   */
+  private amend(turnId: string, now: number, change: (turn: Turn) => Turn, start: boolean): void {
+    const turns = this.snapshot.turns;
+    const index = this.agentTurnIndex(turnId);
+    if (index === -1) {
+      if (start) {
+        this.turns([...turns, change(Object.freeze({ id: turnId, speaker: "agent", text: "", at: now }))]);
+      }
+      return;
+    }
+    const turn = turns[index]!;
+    const next = change(turn);
+    if (next === turn) {
+      return;
+    }
+    const changed = turns.slice();
+    changed[index] = next;
+    this.turns(changed);
   }
 
   /**
@@ -524,6 +654,64 @@ function parseOpenUIAssignment(stmt: string): { ident: string; rhs: string } | u
     return { ident, rhs: stmt.slice(i + 1).trim() };
   }
   return undefined;
+}
+
+/**
+ * `turn` with `delta` added to the round of thinking under way, or to a new one when the model
+ * did something else since: every round is numbered from `r1`, as a kept reply's steps are.
+ */
+function thought(turn: Turn, delta: string, began: number): Turn {
+  const steps = turn.steps ?? [];
+  const last = steps[steps.length - 1];
+  if (last?.kind === "reasoning" && last.status === "streaming") {
+    return withSteps(turn, [...steps.slice(0, -1), Object.freeze({ ...last, text: last.text + delta })]);
+  }
+  const round: ReasoningStep = {
+    kind: "reasoning",
+    id: `r${steps.filter((step) => step.kind === "reasoning").length + 1}`,
+    status: "streaming",
+    text: delta,
+    at: began,
+  };
+  return withSteps(turn, [...steps, Object.freeze(round)]);
+}
+
+/** `turn` with its round of thinking under way completed, or `turn` itself when none is. */
+function settled(turn: Turn, now: number): Turn {
+  const steps = turn.steps ?? [];
+  const last = steps[steps.length - 1];
+  if (last?.kind !== "reasoning" || last.status !== "streaming") {
+    return turn;
+  }
+  const done: ReasoningStep = { ...last, status: "completed", durationMs: now - last.at };
+  return withSteps(turn, [...steps.slice(0, -1), Object.freeze(done)]);
+}
+
+/** `turn` with `call` begun, or `turn` itself for a call it already shows. */
+function called(turn: Turn, call: ToolStep): Turn {
+  const steps = turn.steps ?? [];
+  return steps.some((step) => step.id === call.id) ? turn : withSteps(turn, [...steps, Object.freeze(call)]);
+}
+
+/** `turn` with the running call `id` changed as `change` says, or `turn` itself when it has none. */
+function toolChanged(turn: Turn, id: string, change: (call: ToolStep) => Partial<ToolStep>): Turn {
+  const steps = turn.steps ?? [];
+  const index = steps.findIndex((step) => step.kind === "tool_call" && step.id === id && step.status === "running");
+  const call = steps[index] as ToolStep | undefined;
+  if (!call) {
+    return turn;
+  }
+  const next = steps.slice();
+  next[index] = Object.freeze({ ...call, ...change(call) });
+  return withSteps(turn, next);
+}
+
+function ended(turn: Turn): Turn {
+  return turn.done ? turn : Object.freeze({ ...turn, done: true });
+}
+
+function withSteps(turn: Turn, steps: TurnStep[]): Turn {
+  return Object.freeze({ ...turn, steps: Object.freeze(steps) });
 }
 
 function participantTurn(said: string, participant: Participant | undefined, now: number): Turn {

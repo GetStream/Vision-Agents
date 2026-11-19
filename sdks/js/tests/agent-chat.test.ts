@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   AgentChat,
@@ -9,7 +9,10 @@ import {
   type AgentTransportFeed,
   type AgentTransportRequest,
 } from "../src/chat.js";
-import { RouterError, type CreateResponseOptions, type Session, type ToolDecision } from "../src/index.js";
+import { Client, RouterError, Session, Tools, type CreateResponseOptions, type ToolDecision } from "../src/index.js";
+import { messageField } from "../src/message-field.js";
+import { TestRouter } from "./router.js";
+import { until } from "./stream-chat.js";
 
 type Message = { id: string; text?: string; reasoning?: unknown };
 
@@ -31,6 +34,8 @@ function store<T extends object>(initial: T) {
 }
 
 class FakeSession {
+  /** The channel a kept conversation is written into, which an incognito session has none of. */
+  conversationId = "agent:kept";
   live = true;
   deleted = 0;
   closed = 0;
@@ -848,5 +853,151 @@ describe("agentChatTransport", () => {
     session.state.set({ kind: "responding" });
 
     assert.equal(feed.activities.length, before);
+  });
+});
+
+describe("AgentChat over an incognito session", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+    // An incognito session keeps no channel, so it has no conversation_id.
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        call_id: "",
+        call_type: "agent",
+        user_id: "jlahey",
+        agent_id: "trips",
+        state: "live",
+        incognito: true,
+        created_at: "2026-11-18T09:00:00Z",
+      },
+    });
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "sess_1", status: "running", created_at: "2026-11-18T09:00:00Z" },
+    });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  /** What the AI components read of a message, as `fromStreamMessage` reads it. */
+  interface Shown {
+    readonly id: string;
+    readonly text: string;
+    readonly assistant: boolean;
+    readonly generating: boolean;
+    readonly steps: readonly Record<string, unknown>[];
+    readonly thinking: (stepId: string) => string | undefined;
+  }
+
+  /** The chat behind the transport an `AIConversationController` reads, asked one question. */
+  async function asked(tools?: Tools) {
+    const chat = new AgentChat<Message>({
+      open: () => Session.open(api, { incognito: true }, tools ? { tools } : {}),
+    });
+    const transport = agentChatTransport<Message, Shown>(chat, {
+      adapt: (message, reasoningText) => ({
+        id: message.id,
+        text: message.text ?? "",
+        assistant: messageField(message, "ai_generated") === true,
+        generating: messageField(message, "generating") === true,
+        steps: ((message as { attachments?: Record<string, unknown>[] }).attachments ?? []).filter((one) =>
+          String(one["type"]).startsWith("ai_"),
+        ),
+        thinking: (stepId) => reasoningText(message.id, stepId),
+      }),
+    });
+    let shown: readonly Shown[] = [];
+    transport.connect({
+      isConnected: true,
+      updateMessages: (messages) => {
+        shown = messages;
+      },
+      updateHasOlderMessages: () => undefined,
+      updateActivity: () => undefined,
+    });
+    const sending = transport.send({ kind: "message", messageId: "m1", text: "Plan a weekend in Lisbon", attachments: [] });
+    const connection = await router.socket();
+    await sending;
+    return { chat, connection, shown: () => shown };
+  }
+
+  it("shows each reply with its thinking and tool calls, as one reply across its tools' turns", async () => {
+    const { chat, connection, shown } = await asked();
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "They want Lisbon's weather." });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Let me look." });
+    connection.send({ type: "tool_started", tool_call_id: "call_1", tool: "weather", turn_id: "t1", started_at: "2026-11-18T09:00:01Z" });
+    connection.send({ type: "tool_ran", tool_call_id: "call_1", turn_id: "t1", tool: "weather", error: "" });
+    connection.send({ type: "responded", turn_id: "t1", text: "Let me look.", pending_work: true });
+    connection.send({ type: "responding", turn_id: "t2" });
+    connection.send({ type: "reasoning_delta", turn_id: "t2", text: "Sunny, " });
+    connection.send({ type: "reasoning_delta", turn_id: "t2", text: "24." });
+    await until(() => shown().at(-1)?.steps.length === 3, "the second turn's thinking never showed");
+
+    const writing = shown().at(-1);
+    assert.equal(writing?.generating, true, "still writing after its tools ran");
+    assert.equal(writing?.thinking("r2"), "Sunny, 24.");
+
+    connection.send({ type: "response_delta", turn_id: "t2", text: "Sunny and 24°C." });
+    connection.send({ type: "responded", turn_id: "t2", text: "Sunny and 24°C.", pending_work: false });
+    await until(() => shown().at(-1)?.generating === false, "the reply never finished");
+
+    const [question, reply] = shown();
+    assert.equal(shown().length, 2);
+    assert.deepEqual([question?.assistant, question?.text], [false, "Plan a weekend in Lisbon"]);
+    assert.equal(reply?.assistant, true);
+    assert.equal(reply?.text, "Let me look.\n\nSunny and 24°C.");
+    assert.deepEqual(
+      reply?.steps.map((step) => [step["type"], step["id"], step["status"]]),
+      [
+        ["ai_reasoning", "r1", "completed"],
+        ["ai_tool_call", "call_1", "completed"],
+        ["ai_reasoning", "r2", "completed"],
+      ],
+    );
+    assert.equal(reply?.steps[1]?.["name"], "weather");
+    assert.equal(reply?.thinking("r1"), "They want Lisbon's weather.");
+    await chat.close();
+  });
+
+  it("asks the person about a call waiting for them on its step, and answers it through the session", async () => {
+    const tools = new Tools().register<{ why: string }>({
+      name: "share_location",
+      description: "Where the person is",
+      approval: { title: "Share your location?", reasonArgument: "why", allowTitle: "Share" },
+      run: () => "Lisbon",
+    });
+    const { chat, connection, shown } = await asked(tools);
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "tool_started", tool_call_id: "call_9", tool: "share_location", turn_id: "t1", started_at: "2026-11-18T09:00:01Z" });
+    connection.send({
+      type: "tool_call",
+      id: "call_9",
+      name: "share_location",
+      arguments: JSON.stringify({ why: "to find trips nearby" }),
+      turn_id: "t1",
+    });
+    await until(() => shown().at(-1)?.steps[0]?.["status"] === "awaiting_approval", "the call never asked");
+
+    const step = shown().at(-1)?.steps[0];
+    assert.equal(step?.["target_user_id"], "jlahey", "the session's user, whom the approver answers for");
+    assert.deepEqual(step?.["approval"], { title: "Share your location?", reason: "to find trips nearby", allow_title: "Share" });
+
+    await chat.decide("call_9", { allowed: true });
+
+    assert.deepEqual(await connection.next(), { type: "tool_approval", tool_call_id: "call_9", allowed: true, turn_id: "t1" });
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_9", turn_id: "t1", output: "Lisbon" });
+    assert.equal(shown().at(-1)?.steps[0]?.["status"], "running", "no longer waiting once answered");
+    await chat.close();
   });
 });

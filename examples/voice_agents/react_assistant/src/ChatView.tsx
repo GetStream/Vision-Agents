@@ -61,7 +61,7 @@ function useChatState<S>(chat: AgentChat<LocalMessage>, select: (state: AgentCha
  * its way, whether the agent thinks or writes, an error with a way to try again, the reply
  * actions and the Send button turning into Stop. The SDK's `AgentChat` is its transport.
  */
-export function ChatView({ screen }: { screen: ChatScreen }) {
+export function ChatView({ screen, incognito = false }: { screen: ChatScreen; incognito?: boolean }) {
   const { conversation, chat } = screen;
   const { failure: openFailure } = useStore(screen);
   const { activity, error, isEmpty, status } = useAIConversationState(conversation, conversationSelector);
@@ -89,7 +89,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
       <AIConversation
         bottomInset={barHeight}
         conversation={conversation}
-        emptyContent={isLoaded ? <Welcome /> : <LoadingConversation />}
+        emptyContent={isLoaded ? incognito ? <IncognitoWelcome /> : <Welcome /> : <LoadingConversation />}
         footer={
           error ? (
             <p className="failure-pill">
@@ -241,6 +241,19 @@ function Welcome() {
         Good {part}, {Assistant.user.name}
       </h2>
       <p>Ask me anything, show me a photo, or tap the waveform to talk.</p>
+    </div>
+  );
+}
+
+/** What an incognito chat shows before anything is said: what it keeps, which is nothing. */
+function IncognitoWelcome() {
+  return (
+    <div className="welcome">
+      <div className="welcome-icon" aria-hidden>
+        ◌
+      </div>
+      <h2>Incognito chat</h2>
+      <p>This chat won't be saved or listed, and Juno won't remember anything from it.</p>
     </div>
   );
 }

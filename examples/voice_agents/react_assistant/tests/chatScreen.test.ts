@@ -51,6 +51,8 @@ class FakeChannel {
 
 /** A session on the router, recording what it was asked and how it was let go. */
 class FakeSession {
+  /** The channel the conversation is kept in, which an incognito session has none of. */
+  conversationId = "agent:kept";
   live = true;
   closed = 0;
   deleted = 0;

@@ -466,6 +466,106 @@ describe("Session", () => {
     assert.equal(session.failure, undefined, "ended normally");
   });
 
+  it("keeps a written reply's rounds of thinking and its tool calls as its steps, in the order they happened", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "They want " });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "Lisbon's weather." });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Let me look. " });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "The weather tool knows." });
+    connection.send({ type: "tool_started", tool_call_id: "call_1", tool: "weather", turn_id: "t1", started_at: "2026-11-18T09:00:00Z" });
+    connection.send({ type: "tool_updated", id: "call_1", turn_id: "t1", tool: "weather", text: "Reading the forecast", verbatim: false });
+    connection.send({ type: "tool_updated", id: "call_1", turn_id: "t1", tool: "weather", text: "One moment.", verbatim: true });
+    connection.send({ type: "tool_ran", tool_call_id: "call_1", turn_id: "t1", tool: "weather", error: "" });
+    connection.send({ type: "tool_started", tool_call_id: "call_2", tool: "calendar", turn_id: "t1", started_at: "2026-11-18T09:00:01Z" });
+    connection.send({ type: "tool_ran", tool_call_id: "call_2", turn_id: "t1", tool: "calendar", error: "calendar unreachable" });
+    connection.send({ type: "responded", turn_id: "t1", text: "Let me look.", pending_work: true });
+    connection.send({ type: "responding", turn_id: "t2" });
+    connection.send({ type: "reasoning_delta", turn_id: "t2", text: "Sunny, 24." });
+    connection.send({ type: "response_delta", turn_id: "t2", text: "Sunny and 24°C." });
+    connection.send({ type: "responded", turn_id: "t2", text: "Sunny and 24°C.", pending_work: false });
+    for await (const event of session.events()) {
+      if (event.kind === "responded" && !event.pendingWork) {
+        break;
+      }
+    }
+
+    const [first, second] = session.conversation.get().turns;
+    assert.deepEqual(
+      first?.steps?.map((step) =>
+        step.kind === "reasoning"
+          ? [step.id, step.status, step.text]
+          : [step.id, step.name, step.status, step.summary],
+      ),
+      [
+        ["r1", "completed", "They want Lisbon's weather."],
+        ["r2", "completed", "The weather tool knows."],
+        ["call_1", "weather", "completed", "Reading the forecast"],
+        ["call_2", "calendar", "failed", ""],
+      ],
+    );
+    assert.equal(first?.done, undefined, "its tools' result is answered in a turn of its own");
+    assert.deepEqual(
+      second?.steps?.map((step) => [step.id, step.status]),
+      [["r1", "completed"]],
+    );
+    assert.equal(second?.done, true);
+    await session.close();
+  });
+
+  it("times a round of thinking from when the model was asked, not from its first words", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    for await (const event of session.events()) {
+      if (event.kind === "responding") {
+        break;
+      }
+    }
+    // A model that thinks a while and then streams its reasoning all at once, as Grok does.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "Lisbon, this weekend." });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Sunny." });
+    for await (const event of session.events()) {
+      if (event.kind === "response_delta") {
+        break;
+      }
+    }
+
+    const round = session.conversation.get().turns[0]?.steps?.[0];
+    assert.ok(round?.kind === "reasoning" && (round.durationMs ?? 0) >= 50, `thought for ${round?.durationMs} ms`);
+    await session.close();
+  });
+
+  it("leaves thinking streaming until the model moves on, and ends a turn cut off", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "Hmm." });
+    for await (const event of session.events()) {
+      if (event.kind === "reasoning_delta") {
+        break;
+      }
+    }
+    const thinking = session.conversation.get().turns[0]?.steps?.[0];
+    assert.equal(thinking?.kind === "reasoning" && thinking.status, "streaming");
+    assert.equal(thinking?.kind === "reasoning" && thinking.durationMs, undefined);
+
+    connection.send({ type: "interrupted", turn_id: "t1" });
+    for await (const event of session.events()) {
+      if (event.kind === "interrupted") {
+        break;
+      }
+    }
+    const cut = session.conversation.get().turns[0];
+    const settled = cut?.steps?.[0];
+    assert.equal(settled?.kind === "reasoning" && settled.status, "completed");
+    assert.equal(typeof (settled?.kind === "reasoning" && settled.durationMs), "number");
+    assert.equal(cut?.done, true);
+    await session.close();
+  });
+
   it("shows a typed question at once, and once, when the router hears it back", async () => {
     const [session, connection] = await opened();
     router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
@@ -1762,7 +1862,7 @@ describe("Session", () => {
       }
     }
 
-    assert.equal(told, 1, "only the delta that added something");
+    assert.equal(told, 2, "the turn ending, and the delta that added something");
     assert.equal(session.conversation.get().turns.at(-1)?.text, "Hi!");
     await session.close();
   });
