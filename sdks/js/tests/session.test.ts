@@ -1971,8 +1971,8 @@ describe("Regenerate, edit and branches", () => {
 
   /**
    * The session with its channel open and holding `messages`, read by a real stream-chat client
-   * (9, or 10 in CI's js-stream-chat-10 job) from the test router: what is under test is what its
-   * channel state holds, and that 9's query merges rather than replaces.
+   * (9, or 10 in the stream-chat 10 pass of CI's sdks job) from the test router: what is under test
+   * is what its channel state holds, and that 9's query merges rather than replaces.
    */
   async function loaded(messages: Record<string, unknown>[]) {
     const chat = await chatClient(router.url);
