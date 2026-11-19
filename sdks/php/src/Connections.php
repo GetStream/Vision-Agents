@@ -16,13 +16,14 @@ use GetStream\VisionAgents\Generated\ConnectionRequest;
  * The accounts the app and its users hold at connectors, such as a user's Linear: what an
  * agent's tools reach that account through. Server side only.
  *
- * Every call takes the user as its `userId`, sent as the owner and as `X-Stream-User-Id` alike,
- * so the two never differ. No user is the app's own connection, and sends no header, whoever
+ * Every call takes the user as `userId`, sent as the owner and as `X-Stream-User-Id` alike,
+ * so the two never differ: a parameter of `get` and `delete`, a field of the options object the
+ * other calls take. No user is the app's own connection, and sends no header, whoever
  * the client otherwise acts for. A user's connection is reached only naming that user; the
  * app's is reached by every call, one naming a user included.
  *
- *     $connection = $client->connections->create('linear', userId: 'ada');
- *     $consent = $client->connections->authorize($connection->id, 'https://app.example.com/settings', userId: 'ada');
+ *     $connection = $client->connections->create(new NewConnection('linear', userId: 'ada'));
+ *     $consent = $client->connections->authorize($connection->id, new AuthorizeOptions('https://app.example.com/settings', userId: 'ada'));
  */
 final readonly class Connections
 {
@@ -34,19 +35,16 @@ final readonly class Connections
     }
 
     /**
-     * Stores a pending connection to a connector, the user's when `$userId` is given and else
+     * Stores a pending connection to a connector, the user's when `userId` is given and else
      * the app's.
-     *
-     * @param string $connectorId a built-in, such as linear, or one of the app's own
-     * @param ?string $label tells the owner's connections to the same connector apart
      */
-    public function create(string $connectorId, ?string $label = null, ?string $userId = null): Connection
+    public function create(NewConnection $connection): Connection
     {
-        $userId = self::set($userId);
+        $userId = self::set($connection->userId);
         $owner = $userId === null
             ? new ConnectionOwner(ConnectionOwnerType::App)
             : new ConnectionOwner(ConnectionOwnerType::User, $userId);
-        $body = new ConnectionRequest(connectorId: $connectorId, owner: $owner, label: self::set($label));
+        $body = new ConnectionRequest(connectorId: $connection->connectorId, owner: $owner, label: self::set($connection->label));
         return Connection::fromArray(Json::asObject($this->as($userId)->post('/v1/agents/connections', body: $body->toArray())));
     }
 
@@ -54,14 +52,11 @@ final readonly class Connections
      * Starts the provider's consent for a connection: a first one for a pending connection, a
      * reconnect for one connected before. Open the `launchUrl` it returns in a popup from a page
      * of the return URL's origin and post it the `handoffToken`; the attempt ends at `expiresAt`.
-     *
-     * @param ?string $returnUrl the app's page the browser goes back to when the consent ends,
-     *     with connection_id and status added to its query; none goes back to the dashboard
      */
-    public function authorize(string $id, ?string $returnUrl = null, ?string $userId = null): Authorization
+    public function authorize(string $id, AuthorizeOptions $options = new AuthorizeOptions()): Authorization
     {
-        $body = new AuthorizationRequest(returnUrl: self::set($returnUrl));
-        return Authorization::fromArray(Json::asObject($this->as(self::set($userId))->post('/v1/agents/connections/{id}/authorizations', ['id' => $id], body: $body->toArray())));
+        $body = new AuthorizationRequest(returnUrl: self::set($options->returnUrl));
+        return Authorization::fromArray(Json::asObject($this->as(self::set($options->userId))->post('/v1/agents/connections/{id}/authorizations', ['id' => $id], body: $body->toArray())));
     }
 
     /**
@@ -74,19 +69,18 @@ final readonly class Connections
     }
 
     /**
-     * Every connection of the user's, or of the app's when no user is given, newest first, read
-     * page by page. A user's list holds only that user's connections, not the app's.
+     * Every connection of the filter's user, or of the app's when it names none, newest first,
+     * read page by page. A user's list holds only that user's connections, not the app's.
      *
-     * @param ?string $connectorId keeps one connector's
      * @return list<Connection>
      */
-    public function list(?string $connectorId = null, ?string $userId = null): array
+    public function list(ConnectionFilter $filter = new ConnectionFilter()): array
     {
-        $userId = self::set($userId);
+        $userId = self::set($filter->userId);
         $client = $this->as($userId);
         $query = [
             'owner_type' => ($userId === null ? ConnectionOwnerType::App : ConnectionOwnerType::User)->value,
-            'connector_id' => self::set($connectorId),
+            'connector_id' => self::set($filter->connectorId),
             'limit' => self::PAGE,
         ];
         $connections = [];

@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace GetStream\VisionAgents\Tests\Unit;
 
+use GetStream\VisionAgents\AuthorizeOptions;
 use GetStream\VisionAgents\Backend;
 use GetStream\VisionAgents\Client;
+use GetStream\VisionAgents\ConnectionFilter;
 use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\AuthorizationKind;
 use GetStream\VisionAgents\Generated\ConnectionOwnerType;
 use GetStream\VisionAgents\Generated\ConnectionStatus;
 use GetStream\VisionAgents\Json;
+use GetStream\VisionAgents\NewConnection;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\Received;
 use GetStream\VisionAgents\Tests\Support\Rows;
@@ -40,7 +43,7 @@ final class ConnectionsTest extends TestCase
     {
         $this->router->answer('POST', '/v1/agents/connections', 201, self::usersConnection('con_1', 'anya'));
 
-        $created = $this->client->connections->create('linear', 'work', userId: 'anya');
+        $created = $this->client->connections->create(new NewConnection('linear', 'work', 'anya'));
 
         $sent = $this->router->to('POST', '/v1/agents/connections')[0];
         self::assertSame(['connector_id' => 'linear', 'owner' => ['type' => 'user', 'user_id' => 'anya'], 'label' => 'work'], $sent->json());
@@ -73,10 +76,10 @@ final class ConnectionsTest extends TestCase
 
         foreach ([$backend->actingFor('bob'), $backend->onBehalfOf('bob')] as $acting) {
             $connections = new Client($acting)->connections;
-            $connections->create('github', userId: $userId);
+            $connections->create(new NewConnection('github', userId: $userId));
             $connections->get('con_1', $userId);
-            $connections->authorize('con_1', userId: $userId);
-            $connections->list(userId: $userId);
+            $connections->authorize('con_1', new AuthorizeOptions(userId: $userId));
+            $connections->list(new ConnectionFilter($userId));
             $connections->delete('con_1', $userId);
         }
 
@@ -100,8 +103,8 @@ final class ConnectionsTest extends TestCase
         $connections = new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret')->actingFor('bob'))->connections;
 
         $connections->get('con_1', 'anya');
-        $connections->authorize('con_1', userId: 'anya');
-        $listed = $connections->list(userId: 'anya');
+        $connections->authorize('con_1', new AuthorizeOptions(userId: 'anya'));
+        $listed = $connections->list(new ConnectionFilter('anya'));
         $connections->delete('con_1', 'anya');
 
         self::assertSame(
@@ -154,8 +157,8 @@ final class ConnectionsTest extends TestCase
     {
         $this->router->answer('POST', '/v1/agents/connections/con_1/authorizations', 201, self::authorization());
 
-        $started = $this->client->connections->authorize('con_1', 'https://app.example.com/settings', 'anya');
-        $this->client->connections->authorize('con_1', '', 'anya');
+        $started = $this->client->connections->authorize('con_1', new AuthorizeOptions('https://app.example.com/settings', 'anya'));
+        $this->client->connections->authorize('con_1', new AuthorizeOptions('', 'anya'));
 
         [$with, $without] = $this->router->to('POST', '/v1/agents/connections/con_1/authorizations');
         self::assertSame(['return_url' => 'https://app.example.com/settings'], $with->json());
@@ -165,6 +168,27 @@ final class ConnectionsTest extends TestCase
         self::assertSame('https://router.example.com/v1/agents/connections/con_1/launch', $started->launchUrl);
         self::assertSame('handoff-1', $started->handoffToken);
         self::assertSame('2026-09-24T10:10:00+00:00', $started->expiresAt->format(DATE_ATOM));
+    }
+
+    // Catches a call whose adjacent optional strings take a user id in the label, return URL or
+    // connector slot, which files a user's account as the app's: a string is not an options
+    // object, so none of these reaches the router.
+    public function testAStringWhereTheOptionsObjectGoesIsRefusedBeforeSending(): void
+    {
+        $connections = $this->client->connections;
+        foreach ([
+            [[$connections, 'create'], ['linear', 'ada']],
+            [[$connections, 'authorize'], ['con_1', 'ada']],
+            [[$connections, 'list'], ['ada']],
+        ] as [$call, $arguments]) {
+            try {
+                $call(...$arguments);
+                self::fail('a string was taken for an options object');
+            } catch (\TypeError) {
+            }
+        }
+
+        self::assertSame([], $this->router->received());
     }
 
     // Catches a list that reads one page only, drops the connector or the cursor on a later page,
@@ -177,7 +201,7 @@ final class ConnectionsTest extends TestCase
             ['items' => [self::usersConnection('con_1', 'anya')], 'has_more' => false, 'next_cursor' => 'after-3'],
         );
 
-        $listed = $this->client->connections->list('linear', 'anya');
+        $listed = $this->client->connections->list(new ConnectionFilter('anya', 'linear'));
 
         self::assertSame(['con_3', 'con_2', 'con_1'], array_map(static fn ($c): string => $c->id, $listed));
         self::assertSame([
@@ -235,10 +259,10 @@ final class ConnectionsTest extends TestCase
     public static function refusedBeforeSending(): iterable
     {
         $device = static fn (Client $c): Client => $c->asUser('anya', 'tok');
-        yield 'a device creating' => [static fn (Client $c) => $device($c)->connections->create('linear', userId: 'anya'), 'server-side'];
+        yield 'a device creating' => [static fn (Client $c) => $device($c)->connections->create(new NewConnection('linear', userId: 'anya')), 'server-side'];
         yield 'a device listing the app\'s' => [static fn (Client $c) => $device($c)->connections->list(), 'server-side'];
         yield 'a get with no id' => [static fn (Client $c) => $c->connections->get('', 'anya'), 'needs a id'];
-        yield 'an authorization with no id' => [static fn (Client $c) => $c->connections->authorize('', userId: 'anya'), 'needs a id'];
+        yield 'an authorization with no id' => [static fn (Client $c) => $c->connections->authorize('', new AuthorizeOptions(userId: 'anya')), 'needs a id'];
         yield 'a delete with no id' => [static fn (Client $c) => $c->connections->delete(''), 'needs a id'];
     }
 
