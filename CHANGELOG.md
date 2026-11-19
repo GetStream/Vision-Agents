@@ -6,6 +6,10 @@
 
 `client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.
 
+### The Swift SDK shows an incognito session
+
+An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat (#2091).
+
 ### The JavaScript SDK shows an incognito session in the Chat UI
 
 An incognito session has no Stream Chat channel, so `AgentChat` used to show it with no messages. It now builds the conversation from the session's socket: one reply per question, with its rounds of reasoning, its tool calls with their durations and summaries, an approval card for a call that asks first, and the generated UI, in the same shape stream-chat-react's AI components read from a kept conversation. The router sends a written reply's reasoning on the session socket as `reasoning_delta` (`turn_id`, `text`), and `session.conversation` keeps each turn's `steps` (reasoning and tool calls, in order) and whether it is `done`. A round of reasoning is timed from when the model was asked or took the reply up again, as the router times a kept one. Edit and regenerate stay off, and the router's `visible_tools` does not apply, so every tool call shows. Deploy the router before releasing this SDK: an older one sends no reasoning, and the reply shows only its tool calls. `react_assistant` has an incognito toggle at the top right of a new chat (#2090).
@@ -32,6 +36,10 @@ An Anthropic model's signed thinking now reaches a socket client: a `reasoning` 
 ### The JavaScript SDK draws a streaming card a statement at a time
 
 While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2042).
+
+### The Dart SDK draws a streaming card a statement at a time
+
+While a reply's OpenUI streams, `TurnUI.content` holds only its finished statements, so a card no longer reflows with every delta or shows a gauge reading 8 before 86; `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text and a call shows no empty card, and `LiveUI.observe` reports no change for a delta that finishes nothing. A streamed `openui-patch` merges only its finished statements. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. While OpenUI streams, `TurnUI.raw` can lag behind what was written until a delta ends a line, and `TurnUI ==` compares only what shows. `Conversation.withoutTurn(id)` removes a turn, such as a refused question, and keeps a card still being written (#2061).
 
 ### The JavaScript SDK compiles `ui.format: a2ui`
 
