@@ -197,10 +197,10 @@ final class ToolCallTest extends TestCase
             self::until($socket, $server, 'tool_result');
             $socket->close();
         });
-        $agent = $server->client()->agent('payments');
-        self::payments($agent->tools);
+        $client = $server->client();
+        self::payments($client->tools);
 
-        (new Dispatch(client: $server->client()))->host($agent)->run();
+        (new Dispatch(client: $client))->host($client)->run();
 
         $declared = [];
         foreach (Json::objects($server->sent('host_tools')[0], 'tools') as $tool) {
@@ -227,10 +227,10 @@ final class ToolCallTest extends TestCase
             delay(0.4);
             $socket->close();
         });
-        $agent = $server->client()->agent('payments');
-        self::payments($agent->tools);
+        $client = $server->client();
+        self::payments($client->tools);
 
-        (new Dispatch(client: $server->client()))->host($agent)->run();
+        (new Dispatch(client: $client))->host($client)->run();
 
         self::assertSame([['type' => 'tool_result', 'tool_call_id' => 'c2', 'id' => 'c2', 'output' => 'done']], $server->sent('tool_result'));
     }
@@ -247,10 +247,10 @@ final class ToolCallTest extends TestCase
             self::until($socket, $server, 'tool_result');
             $socket->close();
         });
-        $agent = $server->client()->agent('payments');
-        self::payments($agent->tools);
+        $client = $server->client();
+        self::payments($client->tools);
 
-        (new Dispatch(client: $server->client()))->host($agent)->run();
+        (new Dispatch(client: $client))->host($client)->run();
 
         self::assertSame([['type' => 'tool_hold', 'tool_call_id' => 'c1']], $server->sent('tool_hold'));
         self::assertSame([['type' => 'tool_result', 'tool_call_id' => 'c1', 'id' => 'c1', 'output' => 'paid for s1']], $server->sent('tool_result'));

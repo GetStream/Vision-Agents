@@ -322,24 +322,25 @@ worker's server credential acting for the writer.
 
 ### Hosted tools
 
-A worker can also run an agent's tools for every session opened under it, including sessions
-opened from a browser. Hosting alone is enough to `run()`.
+A worker can also run the app's tools, registered once on the client for every agent, for any
+session, including sessions opened from a browser. The router offers a tool to a session only
+where a tool group of its agent's agent.yaml names it.
 
 ```php
-$agent = $client->agent('my-agent');
-$agent->tools->register('get_weather', 'The weather in a city', [
+$client->tools->register('get_weather', 'The weather in a city', [
     'type' => 'object',
     'properties' => ['city' => ['type' => 'string']],
 ], fn (array $args): string => weatherIn($args['city']));
 
-$dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default 30 seconds per tool call
-$dispatch->run();
+$client->runDispatch();
 ```
 
 Each call runs in its own fiber. A hosted tool takes the same `interruptible:`, `timeout:` and
 `approval:` (asked on a voice call), can take its call, and is cancelled when the router gives
-up on it. A refusal throws `HostingRefusedException`, and
-`$dispatch->hosting` lists the agent ids the router accepted.
+up on it; without its own `timeout:` the router waits 30 seconds for a call. A refusal throws
+`HostingRefusedException`. A worker that also answers calls or messages hosts the tools with
+`$dispatch->host($client)` before `run()`, and `$dispatch->hosting` says whether the router
+accepted them.
 
 ## Guests
 
