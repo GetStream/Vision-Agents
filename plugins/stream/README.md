@@ -429,9 +429,9 @@ team. A token's team always wins, then the session's, then the agent's tag.
 ## A user's own accounts
 
 `api.connections` holds the accounts the app and its users have at connectors, such as a
-user's Linear, which an agent's tools reach that account through. Server side only. Each
+user's Linear, through which an agent's tools reach that account. Server side only. Each
 call names the user as `user_id`, sent as the owner and as `X-Stream-User-Id`; without one
-it is the app's own connection.
+it is the app's own connection, and the call is sent as the client is otherwise.
 
 ```python
 api = stream.Client()

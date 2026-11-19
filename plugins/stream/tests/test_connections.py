@@ -214,8 +214,8 @@ class TestConnections:
         assert created.label == "work"
 
     async def test_an_app_connection_names_no_user(self, router: ConnectionsRouter):
-        # A client built acting for somebody still creates the app's own connection
-        # when no user is named on the call.
+        # No user on the call is the app's own connection, sent as the client is: one
+        # built for jean still names jean, and only the acting-for user is dropped.
         api = stream.Client(
             backend=stream.Backend(
                 url=router.url,
@@ -231,7 +231,7 @@ class TestConnections:
 
         sent = router.sent("POST", CONNECTIONS)
         assert sent["body"] == {"connector_id": "linear", "owner": {"type": "app"}}
-        assert USER not in sent["headers"]
+        assert sent["headers"][USER] == "jean"
 
     async def test_every_call_sends_the_user_it_names_and_an_app_call_sends_none(
         self, api: stream.Client, router: ConnectionsRouter
@@ -285,8 +285,9 @@ class TestConnections:
         assert named["headers"][USER] == "alice"
         assert _claims(named["headers"]["Authorization"])["server"] is True
         assert "user_id" not in _claims(named["headers"]["Authorization"])
+        # No user on the call: the client's own, as it signs for itself.
         assert USER not in app["headers"]
-        assert _claims(app["headers"]["Authorization"])["server"] is True
+        assert _claims(app["headers"]["Authorization"])["user_id"] == "jean"
 
     async def test_a_call_naming_a_user_reaches_an_app_connection_but_lists_only_theirs(
         self, api: stream.Client, router: ConnectionsRouter

@@ -1,6 +1,7 @@
 """The accounts the app and its users hold at connectors."""
 
-from typing import Any, List, Optional
+from dataclasses import replace
+from typing import List, Optional, Union
 
 from ._backend import Backend, acting_for
 from ._generated import AuthenticatedClient
@@ -19,7 +20,7 @@ from ._generated.models import (
     ConnectionOwnerType,
     ConnectionRequest,
 )
-from ._generated.types import UNSET
+from ._generated.types import UNSET, Unset
 from .responses import _deleted, _set, _unwrapped
 
 # The most connections the router answers in one page.
@@ -27,14 +28,15 @@ _PAGE = 200
 
 
 class Connections:
-    """The accounts the app and its users hold at connectors, such as a user's Linear: what an
-    agent's tools reach that account through. Server side only.
+    """The accounts the app and its users hold at connectors, such as a user's Linear, through
+    which an agent's tools reach that account. Server side only.
 
     Every method takes the user as ``user_id``, named once per call. The user goes to the
     router as the owner and as ``X-Stream-User-Id`` alike, so the two never differ, whoever
     the client acts for otherwise. A user's connection is reached only naming that user; an
     app's is reached by every call, one naming a user included. No user is the app's own
-    connection.
+    connection, and the call is sent as the client is otherwise, so a client built for a
+    user still names that user in the header.
 
     Example:
         ```python
@@ -134,7 +136,7 @@ class Connections:
             owner = ConnectionOwnerType.CONNECTION_OWNER_TYPE_USER
         client = self._client(user_id)
         connections: List[Connection] = []
-        cursor: Any = UNSET
+        cursor: Union[str, Unset] = UNSET
         while True:
             page = await _unwrapped(
                 list_connections.asyncio(
@@ -161,9 +163,11 @@ class Connections:
         )
 
     def _client(self, user_id: Optional[str]) -> AuthenticatedClient:
-        """The generated client acting for ``user_id``, or for nobody without one,
-        whoever this client acts for otherwise."""
-        return acting_for(self._backend, user_id or "").client()
+        """The generated client acting for ``user_id``, replacing whoever this client acts
+        for. Without one it acts for nobody extra: the user the client was built for stays."""
+        if user_id:
+            return acting_for(self._backend, user_id).client()
+        return replace(self._backend, acting_for="").client()
 
 
 def _id(id: str) -> str:
