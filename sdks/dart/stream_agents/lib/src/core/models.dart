@@ -589,6 +589,358 @@ final class ListPage<T> {
   final String? nextCursor;
 }
 
+/// Which of this user's tasks to list. Null leaves a filter out.
+final class ScheduledTaskQuery {
+  const ScheduledTaskQuery({this.state, this.configId, this.sessionId, this.limit, this.cursor});
+
+  /// Only the ones in this state.
+  final ScheduledTaskState? state;
+
+  /// Only the ones on this agent config.
+  final String? configId;
+
+  /// Only the ones following up in this conversation.
+  final String? sessionId;
+
+  /// Up to 200. Left out is 25.
+  final int? limit;
+
+  /// The [ListPage.nextCursor] of the page before, asked with the same filters. Left out is
+  /// the first page.
+  final String? cursor;
+}
+
+/// Something an agent will do for the user later: a reminder, a check-in, a recurring report.
+final class ScheduledTask {
+  const ScheduledTask({
+    required this.id,
+    required this.createdAt,
+    required this.updatedAt,
+    this.title = '',
+    this.instructions = '',
+    this.schedule = const ScheduledTaskSchedule(),
+    this.deliverTo = const [],
+    this.quietHours,
+    this.state = ScheduledTaskState.unknown,
+    this.nextRunAt,
+    this.upcoming = const [],
+    this.lastRunAt,
+    this.consecutiveFailures = 0,
+    this.createdBy = ScheduledTaskCreatedBy.unknown,
+    this.sessionId = '',
+    this.configId = '',
+    this.custom = const {},
+  });
+
+  final String id;
+
+  /// A short name the user will recognise.
+  final String title;
+
+  /// What the agent is told when the task comes due.
+  final String instructions;
+  final ScheduledTaskSchedule schedule;
+
+  /// Where an occurrence goes, in order, the first that lands: `conversation`, `sms`,
+  /// `whatsapp`, `imessage` or `phone`.
+  final List<String> deliverTo;
+
+  /// The part of the day an occurrence is held through, or null for no hold.
+  final ScheduledTaskQuietHours? quietHours;
+  final ScheduledTaskState state;
+
+  /// Null when there is none left.
+  final DateTime? nextRunAt;
+
+  /// Up to the next five occurrences.
+  final List<DateTime> upcoming;
+
+  /// When a run last finished, or null when none has.
+  final DateTime? lastRunAt;
+
+  /// Failed occurrences in a row. Five fail a repeat and one fails a one-shot, a run that
+  /// failed with `already_called` not counting.
+  final int consecutiveFailures;
+  final ScheduledTaskCreatedBy createdBy;
+
+  /// The conversation the task follows up in. Empty until its first occurrence opens one.
+  final String sessionId;
+  final String configId;
+
+  /// Anything the backend that made the task kept on it.
+  final Map<String, Object?> custom;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScheduledTask &&
+      other.id == id &&
+      other.title == title &&
+      other.instructions == instructions &&
+      other.schedule == schedule &&
+      _sameJson(other.deliverTo, deliverTo) &&
+      other.quietHours == quietHours &&
+      other.state == state &&
+      other.nextRunAt == nextRunAt &&
+      _sameJson(other.upcoming, upcoming) &&
+      other.lastRunAt == lastRunAt &&
+      other.consecutiveFailures == consecutiveFailures &&
+      other.createdBy == createdBy &&
+      other.sessionId == sessionId &&
+      other.configId == configId &&
+      _sameJson(other.custom, custom) &&
+      other.createdAt == createdAt &&
+      other.updatedAt == updatedAt;
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    title,
+    instructions,
+    schedule,
+    Object.hashAll(deliverTo),
+    quietHours,
+    state,
+    nextRunAt,
+    Object.hashAll(upcoming),
+    lastRunAt,
+    consecutiveFailures,
+    createdBy,
+    sessionId,
+    configId,
+    Object.hashAllUnordered(custom.keys),
+    createdAt,
+    updatedAt,
+  ]);
+
+  @override
+  String toString() => 'ScheduledTask($id, ${state.name})';
+}
+
+/// Whether a task will come due.
+enum ScheduledTaskState {
+  active,
+  paused,
+
+  /// A one-shot that ran, or a repeat past its end.
+  completed,
+
+  /// A one-shot whose occurrence failed, or a repeat paused after five failed occurrences in a
+  /// row, a run that failed with `already_called` not counting. `ScheduledTasks.resume` clears
+  /// it.
+  failed,
+
+  /// A state this SDK has never heard of.
+  unknown,
+}
+
+/// Who made a task.
+enum ScheduledTaskCreatedBy {
+  /// The model, in a conversation.
+  agent,
+
+  /// The app's backend.
+  api,
+
+  /// A maker this SDK has never heard of.
+  unknown,
+}
+
+/// When a task comes due. On a change, exactly one of [at] and [after] is given.
+final class ScheduledTaskSchedule {
+  const ScheduledTaskSchedule({
+    this.at,
+    this.after,
+    this.repeat,
+    this.timezone,
+    this.until,
+    this.description = '',
+  });
+
+  /// When it first runs as the user's clock reads it, `2026-10-20T09:00:00`. With an offset or
+  /// `Z` it is that instant.
+  final String? at;
+
+  /// How long from now instead, an ISO 8601 duration: `PT20M`, `P1D`. Never read back.
+  final String? after;
+
+  /// Null for once. Otherwise an RRULE without DTSTART or UNTIL: `FREQ=DAILY`,
+  /// `FREQ=WEEKLY;BYDAY=MO,WE,FR`.
+  final String? repeat;
+
+  /// An IANA zone, such as `Europe/Amsterdam`. Null keeps the task's own.
+  final String? timezone;
+
+  /// The last local date it repeats on, inclusive: `2026-12-31`.
+  final String? until;
+
+  /// What the schedule says in one sentence, written by the router and never sent.
+  final String description;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScheduledTaskSchedule &&
+      other.at == at &&
+      other.after == after &&
+      other.repeat == repeat &&
+      other.timezone == timezone &&
+      other.until == until &&
+      other.description == description;
+
+  @override
+  int get hashCode => Object.hash(at, after, repeat, timezone, until, description);
+}
+
+/// Where the next occurrence moves to.
+sealed class ScheduledTaskNext {
+  const ScheduledTaskNext();
+
+  /// As the user's clock reads it, in the task's zone: `2026-10-20T09:00:00`.
+  const factory ScheduledTaskNext.at(String at) = ScheduledTaskNextAt;
+
+  /// How long from now, an ISO 8601 duration: `PT15M`.
+  const factory ScheduledTaskNext.after(String duration) = ScheduledTaskNextAfter;
+}
+
+/// [ScheduledTaskNext.at].
+final class ScheduledTaskNextAt extends ScheduledTaskNext {
+  const ScheduledTaskNextAt(this.at);
+
+  final String at;
+
+  @override
+  bool operator ==(Object other) => other is ScheduledTaskNextAt && other.at == at;
+
+  @override
+  int get hashCode => at.hashCode;
+}
+
+/// [ScheduledTaskNext.after].
+final class ScheduledTaskNextAfter extends ScheduledTaskNext {
+  const ScheduledTaskNextAfter(this.duration);
+
+  final String duration;
+
+  @override
+  bool operator ==(Object other) => other is ScheduledTaskNextAfter && other.duration == duration;
+
+  @override
+  int get hashCode => duration.hashCode;
+}
+
+/// The part of the user's day an occurrence that comes due in is held through, as their clock
+/// reads it. It may run past midnight: `22:00` to `07:00` holds the night.
+final class ScheduledTaskQuietHours {
+  const ScheduledTaskQuietHours({required this.start, required this.end});
+
+  final String start;
+  final String end;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScheduledTaskQuietHours && other.start == start && other.end == end;
+
+  @override
+  int get hashCode => Object.hash(start, end);
+}
+
+/// One time a task came due, or was run by hand.
+final class ScheduledTaskRun {
+  const ScheduledTaskRun({
+    required this.id,
+    required this.scheduledFor,
+    this.taskId = '',
+    this.trigger = ScheduledTaskRunTrigger.unknown,
+    this.state = ScheduledTaskRunState.unknown,
+    this.deliveredTo = '',
+    this.sessionId = '',
+    this.attempts = 0,
+    this.startedAt,
+    this.finishedAt,
+    this.error = '',
+  });
+
+  final String id;
+  final String taskId;
+
+  /// When the occurrence was due.
+  final DateTime scheduledFor;
+  final ScheduledTaskRunTrigger trigger;
+  final ScheduledTaskRunState state;
+
+  /// Where the follow-up landed: `conversation`, `sms`, `whatsapp`, `imessage` or `phone`.
+  /// Empty until it lands.
+  final String deliveredTo;
+  final String sessionId;
+  final int attempts;
+  final DateTime? startedAt;
+  final DateTime? finishedAt;
+
+  /// Why it failed or was missed, as a short code such as `delivery_failed` or `task_paused`.
+  /// Empty otherwise.
+  final String error;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScheduledTaskRun &&
+      other.id == id &&
+      other.taskId == taskId &&
+      other.scheduledFor == scheduledFor &&
+      other.trigger == trigger &&
+      other.state == state &&
+      other.deliveredTo == deliveredTo &&
+      other.sessionId == sessionId &&
+      other.attempts == attempts &&
+      other.startedAt == startedAt &&
+      other.finishedAt == finishedAt &&
+      other.error == error;
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    taskId,
+    scheduledFor,
+    trigger,
+    state,
+    deliveredTo,
+    sessionId,
+    attempts,
+    startedAt,
+    finishedAt,
+    error,
+  );
+
+  @override
+  String toString() => 'ScheduledTaskRun($id, ${state.name})';
+}
+
+/// What set a run going.
+enum ScheduledTaskRunTrigger {
+  /// It came due.
+  schedule,
+
+  /// It was run by hand.
+  manual,
+
+  /// A trigger this SDK has never heard of.
+  unknown,
+}
+
+/// How a run went.
+enum ScheduledTaskRunState {
+  /// Retries included.
+  running,
+  delivered,
+  failed,
+
+  /// Too late to be worth delivering, or due while the task was paused.
+  missed,
+
+  /// A state this SDK has never heard of.
+  unknown,
+}
+
 /// Whether two values decoded from JSON hold the same thing, maps and lists compared by what
 /// is in them.
 bool _sameJson(Object? a, Object? b) => switch ((a, b)) {

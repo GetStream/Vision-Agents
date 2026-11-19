@@ -1,3 +1,12 @@
+## Upcoming
+
+✅ Added
+
+- `StreamAgents.scheduledTasks` - list, change, pause, resume and delete the user's scheduled tasks.
+- `session.interrupt(requestId:)` - stops only the reply answering that request.
+- `session.say(text, interrupt: true)` - stops what the agent is saying first.
+- `session.addTools` and `session.removeTool` - change a running session's tools.
+
 ## 0.7.0
 
 First release of `stream_agents`, the Flutter client for Stream Agents, versioned with the
