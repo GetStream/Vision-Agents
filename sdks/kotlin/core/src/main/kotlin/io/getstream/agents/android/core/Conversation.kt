@@ -68,9 +68,12 @@ public data class Turn(
         return copy(steps = steps.dropLast(1) + last.copy(isStreaming = false, duration = at - last.at))
     }
 
-    /** This turn with [call] begun, or itself when it already shows that call. */
+    /**
+     * This turn with [call] begun, or itself when it already shows that call. A round of
+     * thinking's id is ours, `r1` and on, so a call the provider gave the same id is another step.
+     */
     internal fun called(call: TurnStep.ToolCall): Turn =
-        if (steps.any { it.id == call.id }) this else copy(steps = steps + call)
+        if (steps.any { it is TurnStep.ToolCall && it.id == call.id }) this else copy(steps = steps + call)
 
     /** This turn with its running call [id] changed as [change] says, or itself when it has none. */
     internal fun changedCall(id: String, change: (TurnStep.ToolCall) -> TurnStep.ToolCall): Turn {
@@ -369,7 +372,8 @@ public class Conversation private constructor(
             // reported as responded. Anything else that fails, a tool, the voice or the
             // transcriber, leaves the reply going, and the agent doing what it was doing.
             AgentEvent.Kind.Error ->
-                copy(failure = event.errorText, state = if (endsTurn(event)) State.Idle else state)
+                (if (event.string("code") == PROMPT_INJECTION) refused() else this)
+                    .copy(failure = event.errorText, state = if (endsTurn(event)) State.Idle else state)
 
             AgentEvent.Kind.Left -> copy(state = State.Ended)
 
@@ -387,6 +391,9 @@ public class Conversation private constructor(
         /** The `context` of an error from the model writing the reply, as text or as speech. */
         val replyModels = setOf("llm", "sts")
 
+        /** The `code` of an error for a reply the prompt injection screen refused. */
+        const val PROMPT_INJECTION = "prompt_injection"
+
         /** The events that show the agent works again, so whatever it last reported is over. */
         val recovered = setOf(AgentEvent.Kind.Heard, AgentEvent.Kind.Responding, AgentEvent.Kind.Spoke)
     }
@@ -401,6 +408,21 @@ public class Conversation private constructor(
         val updated = turns.toMutableList()
         updated[index] = updated[index].copy(text = change(updated[index].text))
         return copy(turns = updated)
+    }
+
+    /**
+     * The prompt injection screen refused the reply being written. What it streamed before the
+     * verdict is not the answer, so its text and UI go, as they do from the kept conversation;
+     * its thinking and tool calls stay.
+     */
+    private fun refused(): Conversation {
+        val index = turns.indexOfLast { it.isAgent }
+        val turn = turns.getOrNull(index)?.takeUnless { it.isDone } ?: return this
+        val cleared = writing(uiWritten - turn.id)
+        if (turn.text.isEmpty() && turn.ui == null) return cleared
+        val updated = turns.toMutableList()
+        updated[index] = turn.copy(text = "", ui = null)
+        return cleared.copy(turns = updated)
     }
 
     /**

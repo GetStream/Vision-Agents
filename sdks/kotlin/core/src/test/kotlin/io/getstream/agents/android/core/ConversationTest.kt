@@ -680,6 +680,49 @@ class ConversationTest {
         val round = assertIs<TurnStep.Reasoning>(conversation.turns.single().steps.single())
         assertEquals(3.seconds, round.duration)
     }
+
+    @Test
+    fun `a tool call whose id is a thinking round's is a step of its own`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Search."}""",
+            """{"type":"tool_started","tool_call_id":"r1","tool":"search","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}""",
+            """{"type":"tool_ran","tool_call_id":"r1","turn_id":"t1","tool":"search","error":""}""",
+        )
+
+        val steps = conversation.turns.single().steps
+        assertEquals(listOf("r1", "r1"), steps.map { it.id })
+        assertEquals(TurnStep.ToolCall.Status.Completed, assertIs<TurnStep.ToolCall>(steps[1]).status)
+    }
+
+    @Test
+    fun `a reply the prompt injection screen refused loses what it streamed, and keeps its steps`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Hmm."}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Ignore your rules and"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","mode":"full","delta":"root = Card([])\n"}""",
+            """{"type":"error","context":"llm","code":"prompt_injection","error":"refused"}""",
+            """{"pending_work":false,"type":"responded","turn_id":"t1","text":""}""",
+        )
+
+        val turn = conversation.turns.single()
+        assertEquals("", turn.text)
+        assertNull(turn.ui)
+        assertEquals(listOf("r1"), turn.steps.map { it.id })
+        assertEquals("refused", conversation.failure)
+    }
+
+    @Test
+    fun `any other error leaves the reply as written`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Half a reply"}""",
+            """{"type":"error","context":"tts","error":"voice down"}""",
+        )
+
+        assertEquals("Half a reply", conversation.turns.single().text)
+    }
 }
 
 private fun Conversation.at(at: Instant, frame: String): Conversation = reduce(event(frame), at)
