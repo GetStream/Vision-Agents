@@ -285,6 +285,12 @@ class LLM(Component):
         """
         ...
 
+    async def sync(self) -> None:
+        """Store the agent's directory as the config a router runs it from.
+
+        Does nothing for an LLM that keeps no config on a router.
+        """
+
     def on_llm_error(
         self,
         *,
