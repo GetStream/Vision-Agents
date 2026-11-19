@@ -6,6 +6,10 @@
 
 `client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.
 
+### The JavaScript SDK shows an incognito session in the Chat UI
+
+An incognito session has no Stream Chat channel, so `AgentChat` used to show it with no messages. It now builds the conversation from the session's socket: one reply per question, with its rounds of reasoning, its tool calls with their durations and summaries, an approval card for a call that asks first, and the generated UI, in the same shape stream-chat-react's AI components read from a kept conversation. The router sends a written reply's reasoning on the session socket as `reasoning_delta` (`turn_id`, `text`), and `session.conversation` keeps each turn's `steps` (reasoning and tool calls, in order) and whether it is `done`. A round of reasoning is timed from when the model was asked or took the reply up again, as the router times a kept one. Edit and regenerate stay off, and the router's `visible_tools` does not apply, so every tool call shows. Deploy the router before releasing this SDK: an older one sends no reasoning, and the reply shows only its tool calls. `react_assistant` has an incognito toggle at the top right of a new chat (#2090).
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
@@ -728,6 +732,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### One `Sync` drops an agent's sandbox and a skill's scripts together
+
+The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 
