@@ -746,8 +746,9 @@ err = connections.Delete(ctx, *connection.Id)
 
 `ForUser` names the user once, and the SDK sends it as the owner and as `X-Stream-User-Id` on
 every request, so the two never differ. It is refused on a device client (`SetUser`) and for an
-empty id. Another user's connection is not found, the same as one that does not exist. On
-`api` itself, which acts for nobody, `api.Connections()` manages the app's own connections,
+empty id. Another user's connection is not found, the same as one that does not exist; an
+app's connection is reached by every backend client, `alice`'s included, but `alice.List` lists
+only alice's. On `api` itself, which acts for nobody, `api.Connections()` manages the app's own connections,
 which any of its agents may be bound to.
 
 ## Layout

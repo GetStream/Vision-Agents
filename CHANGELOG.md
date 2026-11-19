@@ -4,7 +4,7 @@
 
 ### The Go SDK connects a user's own accounts
 
-`api.ForUser("alice").Connections()` creates, authorizes, reads, lists and deletes alice's connections: `Create(ctx, client.ConnectionRequest{Connector: "linear"})`, then `Authorize(ctx, id, returnURL)` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id)`, `List(ctx, connector)`, `Delete(ctx, id)`. `ForUser` is server side only. The user is named once and sent as both the owner and `X-Stream-User-Id`. `api.Connections()` on a client acting for nobody manages the app's own connections.
+`alice, err := api.ForUser("alice")` then `alice.Connections()` creates, authorizes, reads, lists and deletes alice's connections: `Create(ctx, client.ConnectionRequest{Connector: "linear"})`, then `Authorize(ctx, id, returnURL)` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id)`, `List(ctx, connector)`, `Delete(ctx, id)`. `ForUser` is server side only, and the new client carries none of the parent's team or usage categories. The user is named once and sent as both the owner and `X-Stream-User-Id`. `api.Connections()` on a client acting for nobody manages the app's own connections.
 
 ### The Go SDK reads a session's tokens, timeline and decisions
 
