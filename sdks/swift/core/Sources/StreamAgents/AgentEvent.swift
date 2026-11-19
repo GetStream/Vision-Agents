@@ -47,6 +47,7 @@ public struct AgentEvent: Sendable, Hashable {
         case decision
         case responding
         case responseDelta = "response_delta"
+        case reasoningDelta = "reasoning_delta"
         case uiDelta = "ui_delta"
         case uiCompleted = "ui_completed"
         case responded
@@ -57,6 +58,8 @@ public struct AgentEvent: Sendable, Hashable {
         case taskCancelled = "task_cancelled"
         case toolCall = "tool_call"
         case toolCancel = "tool_cancel"
+        case toolStarted = "tool_started"
+        case toolUpdated = "tool_updated"
         case toolRan = "tool_ran"
         case transferred
         case pressed
