@@ -2,6 +2,10 @@
 
 ## Features
 
+### The PHP SDK connects a user's own accounts
+
+`$client->connections` creates, authorizes, reads, lists and deletes connections: `create('linear', userId: 'ada')`, `authorize($id, $returnUrl, userId: 'ada')` for the launch URL, handoff token and expiry of the consent, `get($id, 'ada')`, `list(userId: 'ada')` (every page) and `delete($id, 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
