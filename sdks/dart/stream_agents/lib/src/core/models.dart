@@ -410,6 +410,7 @@ final class SessionOptions {
     this.returnUrl,
     this.memory,
     this.timezone,
+    this.watch = true,
   });
 
   /// An id to hold the session by, for a caller that wants to know it before the session
@@ -476,6 +477,14 @@ final class SessionOptions {
   /// and it is remembered as the user's for the scheduled tasks that follow. Null sends none,
   /// and a zone the router does not know is refused.
   final String? timezone;
+
+  /// Whether to follow the conversation over its socket, which is what answers [tools] and
+  /// reports what the agent is doing word by word.
+  ///
+  /// False opens it without a socket: [tools] are not declared, nothing here answers a call,
+  /// and `say`, `interrupt`, `decide`, `events` and `addTools` throw a [StateError]. Turns go
+  /// in through `responses.create` and are read back from `responses.items`.
+  final bool watch;
 }
 
 /// What a session remembers about the user [Backend.userId] names. It is always theirs: a

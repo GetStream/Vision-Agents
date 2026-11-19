@@ -313,10 +313,87 @@ void main() {
         'return_url': 'com.example.app:/connected',
       });
       expect(session.id, 's1');
-      expect(session.isText, isTrue);
-      expect(session.mode, SessionMode.text);
-      expect(session.modality, SessionModality.text);
-      expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
+      expect(session.session.isText, isTrue);
+      expect(session.session.mode, SessionMode.text);
+      expect(session.session.modality, SessionModality.text);
+      expect(session.session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
+      await session.close();
+    });
+
+    test('opens a session followed, its socket open, and answers its tools', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      final session = await agents
+          .agent('support')
+          .sessions
+          .create(
+            SessionOptions(
+              tools: [
+                AgentTool(
+                  name: 'lookup_order',
+                  description: 'Look up an order.',
+                  run: (arguments) async => 'Order ${arguments['order_id']}: 2 wool throws.',
+                ),
+              ],
+            ),
+          );
+      expect(session.isConnected, isTrue);
+      expect(router.upgrades.single.path, '/v1/agents/sessions/s1/events');
+      final socket = await router.socket();
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"lookup_order",'
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
+      );
+
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': 'Order A-1042: 2 wool throws.',
+        'error': '',
+      });
+      expect(
+        ((router.last('POST /v1/agents/sessions').json as Map)['tools'] as List).single['name'],
+        'lookup_order',
+      );
+      await session.close();
+    });
+
+    test('unwatched, opens no socket and declares no tool, and turns go over HTTP alone', () async {
+      router
+        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson()))
+        ..answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
+
+      final session = await agents
+          .agent('support')
+          .sessions
+          .create(
+            SessionOptions(
+              watch: false,
+              tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => '')],
+            ),
+          );
+      final response = await session.responses.create('What are your hours?');
+
+      expect(response.id, 'r1');
+      expect(router.upgrades, isEmpty);
+      expect(session.connection.value, Connection.notStarted);
+      expect(router.last('POST /v1/agents/sessions').json, {'agent': 'support'});
+      final unwatched = throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('watch: false'), contains('responses.create()')),
+        ),
+      );
+      expect(() => session.say('Hello.'), unwatched);
+      expect(session.interrupt, unwatched);
+      expect(session.events, unwatched);
+      expect(session.start, unwatched);
+      await expectLater(
+        session.addTools([AgentTool(name: 'now', description: 'The time.', run: (_) async => '')]),
+        unwatched,
+      );
+      expect(router.upgrades, isEmpty);
     });
 
     test('an empty return url sends none, so the sign-in goes back to the dashboard', () async {
@@ -385,9 +462,11 @@ void main() {
         'config_id': 'c1',
         'start_voice': true,
       });
-      expect(session.callId, 's1');
-      expect(session.callType, 'agent');
-      expect(session.isText, isFalse);
+      expect(session.session.callId, 's1');
+      expect(session.session.callType, 'agent');
+      expect(session.session.isText, isFalse);
+      expect(session.isConnected, isTrue);
+      await session.close();
     });
 
     test('starting and stopping voice moves a session onto its call and off it', () async {

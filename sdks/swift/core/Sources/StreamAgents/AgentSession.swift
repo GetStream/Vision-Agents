@@ -60,6 +60,8 @@ public final class AgentSession: ObservableObject {
     private var changingTools = false
     private var waitingToChangeTools: [CheckedContinuation<Void, Never>] = []
     private var pump: Task<Void, Never>?
+    /// The one `start()` under way or done, which a second `start()` waits for.
+    private var starting: Task<Void, Never>?
     /// Whoever is reading `events()`, each with a stream of their own, or nil once the session
     /// has stopped and there is nothing more to read.
     private var subscribers: [UUID: AsyncStream<AgentEvent>.Continuation]? = [:]
@@ -70,9 +72,14 @@ public final class AgentSession: ObservableObject {
     /// answer the router's `get_video_frames`.
     var cameraFrames: CameraFrames?
 
-    init(backend: Backend, session: Session, tools: [AgentTool]) {
+    /// Whether anything here watches the conversation. One opened with `watch: false` has no
+    /// socket: its turns go in through `responses.create` and are read back from `responses`.
+    private let watched: Bool
+
+    init(backend: Backend, session: Session, tools: [AgentTool], watched: Bool = true) {
         self.session = session
         self.backend = backend
+        self.watched = watched
         self.tools = Dictionary(tools.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         socket = SessionSocket(
             url: backend.socketURL(
@@ -84,18 +91,31 @@ public final class AgentSession: ObservableObject {
             urlSession: backend.urlSession)
     }
 
-    /// Opens the socket and starts following the conversation. Doing this twice does nothing.
+    /// Opens the socket and starts following the conversation, returning once the router is
+    /// sending it here, or once it failed, which `failure` says. A session from
+    /// `sessions.create` has started already. Doing this twice does nothing, and so does doing
+    /// it on a session opened with `watch: false`.
     public func start() async {
-        guard pump == nil else { return }
+        guard watched else { return }
+        if let starting { return await starting.value }
+        let starting = Task { await connect() }
+        self.starting = starting
+        await starting.value
+        // One that never got as far as the socket can be started again.
+        if pump == nil { self.starting = nil }
+    }
+
+    private func connect() async {
         let headers: [String: String]
         do {
             headers = try await backend.headers()
+        } catch is CancellationError {
+            return
         } catch let error as AgentsError {
             return stopped(error)
         } catch {
             return stopped(.transport(error))
         }
-        guard pump == nil else { return }
         let stream = await socket.open(headers: headers)
         isConnected = true
         pump = Task { [weak self] in
@@ -112,6 +132,10 @@ public final class AgentSession: ObservableObject {
             } catch {
                 self?.stopped(.transport(error))
             }
+        }
+        // A refused upgrade ends the stream at once, with what the router answered.
+        if await !socket.isOpen {
+            await pump?.value
         }
     }
 
@@ -143,6 +167,7 @@ public final class AgentSession: ObservableObject {
     /// Speaks this without going through the model. `interrupt` stops what the agent is saying
     /// first, rather than waiting for it to finish.
     public func say(_ text: String, interrupt: Bool = false) async throws {
+        let socket = try held()
         if interrupt {
             try await socket.send(.interrupt())
         }
@@ -152,7 +177,7 @@ public final class AgentSession: ObservableObject {
     /// Abandons the reply in flight, or with `requestID` only the one answering that request,
     /// wherever it got to. An event's `request_id` names it.
     public func interrupt(requestID: String = "") async throws {
-        try await socket.send(.interrupt(requestID: requestID))
+        try await held().send(.interrupt(requestID: requestID))
     }
 
     /// Has the agent join the session's call, `agent:<session id>`, and carry the conversation
@@ -215,6 +240,8 @@ public final class AgentSession: ObservableObject {
     /// the tools back; after any other failure they stay answered, since the router may have
     /// added them, until the next add or remove of the name settles it.
     public func add(tools: [AgentTool]) async throws {
+        // A conversation nothing is watching has nowhere to be asked for a call.
+        _ = try held()
         guard !tools.isEmpty else { return }
         try await oneAtATime {
             // A name whose adding or removal was never answered may or may not be the router's:
@@ -286,6 +313,7 @@ public final class AgentSession: ObservableObject {
     /// call that is not waiting is left alone, so answering twice does nothing. If the answer
     /// cannot be sent, the call waits again.
     public func decide(_ toolCallID: String, allowed: Bool, summary: String = "") async throws {
+        let socket = try held()
         guard let index = approvals.firstIndex(where: { $0.id == toolCallID }) else { return }
         let request = approvals.remove(at: index)
         let call = request.call
@@ -313,15 +341,20 @@ public final class AgentSession: ObservableObject {
     /// runs nothing and the agent is told the person did not connect. A call that is not waiting
     /// is left alone.
     public func declineLogin(_ toolCallID: String) async throws {
-        try await socket.send(.toolApproval(id: toolCallID, allowed: false))
+        try await held().send(.toolApproval(id: toolCallID, allowed: false))
     }
 
     /// Ends the session and closes the socket. What it recorded and remembered is kept.
     public func close() async {
-        try? await socket.send(.close)
+        if watched {
+            try? await socket.send(.close)
+        } else {
+            try? await StreamAgents(backend: backend).close(sessionID: session.id)
+        }
         await socket.close()
         pump?.cancel()
         pump = nil
+        starting = nil
         isConnected = false
         approvals = []
         conversation.state = .ended
@@ -333,6 +366,18 @@ public final class AgentSession: ObservableObject {
     public func delete() async throws {
         try await StreamAgents(backend: backend).sessions.delete(session.id)
         await close()
+    }
+
+    /// The socket, or what to do instead of it. Everything sent through it is a message to a
+    /// conversation being watched, and one opened with `watch: false` is watched by nothing.
+    private func held() throws -> SessionSocket {
+        guard watched else {
+            throw AgentsError.configuration(
+                "this conversation is not being watched, so there is nothing to send to: open it "
+                    + "without watch: false, or use responses.create and read the turn back through "
+                    + "responses.items")
+        }
+        return socket
     }
 
     /// Runs one change of tools at a time, in the order they were asked for. A handler is
