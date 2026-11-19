@@ -453,22 +453,24 @@ provider's consent, and reads whether it connected:
 
 ```php
 $connections = $client->connections;
-$connection = $connections->create('linear', userId: 'ada');
-$consent = $connections->authorize($connection->id, 'https://app.example.com/settings', userId: 'ada');
+$connection = $connections->create(new NewConnection('linear', userId: 'ada'));
+$consent = $connections->authorize($connection->id, new AuthorizeOptions('https://app.example.com/settings', userId: 'ada'));
 // Open $consent->launchUrl in a popup from a page of the return URL's origin, and post it
 // $consent->handoffToken. The attempt ends at $consent->expiresAt.
 
 $connection = $connections->get($connection->id, 'ada'); // status is pending until ada consents
-$hers = $connections->list(userId: 'ada');
+$hers = $connections->list(new ConnectionFilter(userId: 'ada'));
 $connections->delete($connection->id, 'ada');
 ```
 
-Each call takes the user as `userId`, and the SDK sends it as the owner and as
+Each call takes the user as `userId`: a parameter of `get` and `delete`, a field of `NewConnection`,
+`AuthorizeOptions` and `ConnectionFilter` for the calls with more options, so a user id never takes the
+place of a label, return URL or connector. The SDK sends it as the owner and as
 `X-Stream-User-Id`, so the two never differ. Another user's connection is not found, the same as
 one that does not exist. An app's connection is reached by every call of a backend, one naming a
-user included, but `list` with a `userId` lists only that user's. Leave the user out for the
-app's own connection, which any of its agents may be bound to; `list('linear')` keeps one
-connector's. `Backend::onBehalfOf` is deprecated: pass `userId` to the call instead.
+user included, but `list` with a user lists only that user's. Leave the user out for the
+app's own connection, which any of its agents may be bound to; `new ConnectionFilter(connectorId: 'linear')`
+keeps one connector's. `Backend::onBehalfOf` is deprecated: pass `userId` to the call instead.
 
 ## Shapes and failures
 
