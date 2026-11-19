@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -334,6 +335,12 @@ type Turn struct {
 	// because it arrived after the turn had been abandoned.
 	AudioDroppedMs float64
 	Interrupted    bool
+	// FloorChecks are the chorus-asr model's checks on the floor about the turn by the time it
+	// is reported, the latest floorChecksKept of them by when they were asked, oldest first: the
+	// live account of them. The call's record (Options.Live) can also have checks made after
+	// it, within what the recorder keeps up with and keeps. None for an agent without
+	// chorus-asr floor control.
+	FloorChecks []live.FloorCheck
 }
 
 func (Turn) isAgentEvent() {}

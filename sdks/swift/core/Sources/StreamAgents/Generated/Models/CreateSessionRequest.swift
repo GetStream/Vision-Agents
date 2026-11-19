@@ -79,6 +79,8 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let tools: [SessionTool]?
     /// Omit it and the config decides, or en-low-latency when there is no config.
     let tts: String?
+    /// Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote.
+    let ui: Bool?
     /// The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
     let userId: String?
     let userName: String?
@@ -86,7 +88,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, floorControl: FloorControl? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, maxToolRounds: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwritesPayload? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, team: String? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, floorControl: FloorControl? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, maxToolRounds: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwritesPayload? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, team: String? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, ui: Bool? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.backchannel = backchannel
@@ -126,6 +128,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.toolTimeoutMs = toolTimeoutMs
         self.tools = tools
         self.tts = tts
+        self.ui = ui
         self.userId = userId
         self.userName = userName
         self.video = video
@@ -173,6 +176,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.toolTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .toolTimeoutMs)
         self.tools = try container.decodeIfPresent([SessionTool].self, forKey: .tools)
         self.tts = try container.decodeIfPresent(String.self, forKey: .tts)
+        self.ui = try container.decodeIfPresent(Bool.self, forKey: .ui)
         self.userId = try container.decodeIfPresent(String.self, forKey: .userId)
         self.userName = try container.decodeIfPresent(String.self, forKey: .userName)
         self.video = try container.decodeIfPresent(SessionVideo.self, forKey: .video)
@@ -220,6 +224,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(toolTimeoutMs, forKey: .toolTimeoutMs)
         try container.encodeIfPresent(tools, forKey: .tools)
         try container.encodeIfPresent(tts, forKey: .tts)
+        try container.encodeIfPresent(ui, forKey: .ui)
         try container.encodeIfPresent(userId, forKey: .userId)
         try container.encodeIfPresent(userName, forKey: .userName)
         try container.encodeIfPresent(video, forKey: .video)
@@ -269,6 +274,7 @@ extension CreateSessionRequest: Hashable {
         lhs.toolTimeoutMs == rhs.toolTimeoutMs &&
         lhs.tools == rhs.tools &&
         lhs.tts == rhs.tts &&
+        lhs.ui == rhs.ui &&
         lhs.userId == rhs.userId &&
         lhs.userName == rhs.userName &&
         lhs.video == rhs.video &&
@@ -315,6 +321,7 @@ extension CreateSessionRequest: Hashable {
         hasher.combine(toolTimeoutMs)
         hasher.combine(tools)
         hasher.combine(tts)
+        hasher.combine(ui)
         hasher.combine(userId)
         hasher.combine(userName)
         hasher.combine(video)

@@ -52,6 +52,24 @@ func (s *DisplaySuite) TestAHeldCallsQuestionIsWrittenToChat() {
 	s.Contains(s.raw(receipt.AssistantMessageID), "awaiting_approval")
 }
 
+// The question of a tool that asks first is written to Chat as soon as the call waits, as a
+// held connector call's is, and so is the answer: an app reopened while the call waits reads the
+// question there, and one reopened after the answer is not asked again.
+func (s *DisplaySuite) TestAToolsQuestionAndAnswerAreWrittenToChat() {
+	c := s.open("on_call")
+	c.DescribeTools(map[string]ToolDisplay{"issue_refund": {Approval: &ToolApproval{Title: "Refund this order?"}}})
+	receipt, err := c.BeginCommand("command-a", "Refund order 42", "")
+	s.Require().NoError(err)
+
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "issue_refund", Arguments: `{}`, StartedAt: time.Now().UTC()})
+	saved(s.T(), c)
+	s.Contains(s.raw(receipt.AssistantMessageID), "awaiting_approval")
+
+	c.Observe(agent.ToolApprovalDecided{ID: "call-1", Allowed: true})
+	saved(s.T(), c)
+	s.NotContains(s.raw(receipt.AssistantMessageID), "awaiting_approval")
+}
+
 // A call the config shows already has its step, which then waits rather than a second one.
 func (s *DisplaySuite) TestAShownCallWaitsOnTheStepItHas() {
 	c := s.open("on_call")
@@ -257,4 +275,167 @@ func (s *DisplaySuite) TestTheLiveUpdatesCopyKeepsItsOwnApproval() {
 
 	s.Equal("allowed", reply.Parts[0].Approval.Decision)
 	s.Empty(sent.Parts[0].Approval.Decision, "the live update")
+}
+
+// expiredLine is what a reply says once its session closed with its turn while a call waited
+// for a person to allow it (AI-3302).
+const expiredLine = "The approval expired before anyone answered, so that step did not run. Ask again if you still need it."
+
+// heldReply is a reply to Anya's command that said text and then made crm's echo wait for her.
+func (s *DisplaySuite) heldReply(text string) (*Conversation, CommandReceipt) {
+	c := s.open("on_call")
+	receipt, err := c.BeginCommand("command-a", "check the crm for my shift", "")
+	s.Require().NoError(err)
+	c.Observe(agent.Responding{TurnID: "turn-a"})
+	if text != "" {
+		c.Observe(agent.ResponseDelta{TurnID: "turn-a", Text: text})
+	}
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	s.Require().True(asked)
+	return c, receipt
+}
+
+// An earlier call of the reply was allowed and ran; only the one still waiting expires, so the
+// line must not say that nothing ran (a person may redo what did happen).
+func (s *DisplaySuite) TestTheExpiredLineSpeaksOfTheWaitingStepOnly() {
+	c, _ := s.heldReply("Let me check.")
+	s.Require().True(c.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Allowed: true}))
+	c.Observe(agent.ToolRan{ID: "call-1", Result: "written"})
+	s.Require().Equal("completed", current(c).Parts[0].Status)
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-2", "", allowEcho)
+	s.Require().True(asked)
+
+	c.ExpireApprovals()
+	c.Release()
+
+	s.Equal("completed", current(c).Parts[0].Status, "the call that ran is left as it was")
+	s.Equal("Not allowed in time", current(c).Parts[1].Summary)
+	s.NotContains(current(c).Text, "nothing ran", "the first call ran")
+	s.Contains(current(c).Text, "that step did not run")
+}
+
+// The session of a reply waiting for Anya's approval closes with its turn: the step is
+// declined as one nobody allowed in time, and the reply, once it ends, says so in Chat.
+func (s *DisplaySuite) TestAnExpiredApprovalIsSaidInTheReply() {
+	c, receipt := s.heldReply("Let me check.")
+
+	c.ExpireApprovals()
+	s.True(c.AwaitsApproval("call-1"), "the call waits until the reply ends")
+	s.Equal("Let me check.", current(c).Text)
+	c.Release()
+	saved(s.T(), c)
+
+	s.False(c.AwaitsApproval("call-1"))
+	part := current(c).Parts[0]
+	s.Equal("cancelled", part.Status)
+	s.Equal("declined", part.Approval.Decision)
+	s.Equal("Not allowed in time", part.Summary)
+	stored := s.stored(receipt.AssistantMessageID)
+	s.Equal("Let me check.\n\n"+expiredLine, stored.Text)
+	s.Equal("cancelled", stored.State)
+}
+
+// A reply that said nothing before the call, as on staging, is the line alone; one whose next
+// round had begun keeps the break that round wrote, and gets no second one.
+func (s *DisplaySuite) TestAnExpiredApprovalsLineFollowsWhatTheReplySaid() {
+	silent, _ := s.heldReply("")
+	silent.ExpireApprovals()
+	silent.Release()
+	s.Equal(expiredLine, current(silent).Text)
+
+	begun, _ := s.heldReply("Let me check.")
+	begun.Observe(agent.Responding{TurnID: "turn-a"})
+	s.Require().Equal("Let me check.\n\n", current(begun).Text)
+	begun.ExpireApprovals()
+	begun.Release()
+	s.Equal("Let me check.\n\n"+expiredLine, current(begun).Text)
+}
+
+// Two calls waiting at once are both declined, and the reply says it once.
+func (s *DisplaySuite) TestEveryWaitingCallExpiresAndTheReplySaysItOnce() {
+	c, _ := s.heldReply("Let me check.")
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-2", "", allowEcho)
+	s.Require().True(asked)
+
+	c.ExpireApprovals()
+	c.Release()
+
+	s.Equal("Not allowed in time", current(c).Parts[0].Summary)
+	s.Equal("Not allowed in time", current(c).Parts[1].Summary)
+	s.Equal("Let me check.\n\n"+expiredLine, current(c).Text)
+}
+
+// A call waiting before one that runs expires all the same: the line does not hang on the last
+// step, and the running step is stopped as any is when its reply ends.
+func (s *DisplaySuite) TestAWaitingCallBeforeARunningOneExpires() {
+	c, _ := s.heldReply("Let me check.")
+	c.ShowTools([]string{"crm__lookup"})
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__lookup", StartedAt: time.Now().UTC()})
+	s.Require().Len(current(c).Parts, 2)
+
+	c.ExpireApprovals()
+	c.Release()
+
+	s.Equal("Not allowed in time", current(c).Parts[0].Summary)
+	s.Empty(current(c).Parts[1].Summary)
+	s.Equal("Let me check.\n\n"+expiredLine, current(c).Text)
+}
+
+// A call Anya allows, or the backend declines, before the reply ends waits no more: the reply
+// says nothing of an approval, and the steps keep their answers.
+func (s *DisplaySuite) TestAnApprovalAnsweredBeforeTheReplyEndsDoesNotExpire() {
+	allowed, _ := s.heldReply("Let me check.")
+	allowed.ExpireApprovals()
+	s.Require().True(allowed.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Allowed: true}))
+	allowed.Release()
+	s.Equal("Let me check.", current(allowed).Text)
+	s.Equal("allowed", current(allowed).Parts[0].Approval.Decision)
+
+	declined, _ := s.heldReply("Let me check.")
+	declined.ExpireApprovals()
+	s.Require().True(declined.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Summary: "Not now"}))
+	declined.Release()
+	s.Equal("Let me check.", current(declined).Text)
+	s.Equal("Not now", current(declined).Parts[0].Summary)
+}
+
+// Only the reply being written when the session was told expires: a reply cancelled without
+// it, or one written after it, says nothing of an approval, and a conversation with no reply
+// yet is left as it is.
+func (s *DisplaySuite) TestOnlyTheReplyBeingWrittenExpires() {
+	s.open("on_call").ExpireApprovals()
+
+	c, _ := s.heldReply("Let me check.")
+	c.Cancel()
+	s.Equal("Let me check.", current(c).Text, "a reply nobody said would expire")
+	c.ExpireApprovals()
+	_, err := c.BeginCommand("command-b", "and for Ben?", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-2", "", allowEcho)
+	s.Require().True(asked)
+	c.Cancel()
+	s.Empty(current(c).Text, "a reply begun after it")
+	s.Empty(current(c).Parts[0].Summary)
+}
+
+// A follow-up whose reply is read back, as a scheduled delivery's, reads the line too.
+func (s *DisplaySuite) TestAnExpiredFollowUpIsReadBackWithTheLine() {
+	c := s.open("on_call")
+	_, err := c.BeginFollowUp(ReadBackPrefix+"run-a", "Remind me to check the crm", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	s.Require().True(asked)
+
+	c.ExpireApprovals()
+	c.Release()
+
+	state, text, known := c.FollowUpReply(ReadBackPrefix + "run-a")
+	s.Require().True(known)
+	s.Equal("cancelled", state)
+	s.Equal(expiredLine, text)
 }

@@ -173,7 +173,7 @@ func (s *server) hostedTools(simulationUser string) (*tools.Registry, error) {
 			"Drafts a repair ticket for the owner to review and submit. The phone asks the person first.",
 			func(ctx context.Context, in ticket) (any, error) {
 				return forUser(func(userID string) (any, error) {
-					return s.crew.ticket(userID, in.Asset, in.Summary, in.Details, in.Priority)
+					return s.crew.ticket(userID, in.Asset, in.Summary, in.Details, in.Priority, "", "")
 				})(ctx)
 			}),
 		tools.Register(registry, "book_check_in",

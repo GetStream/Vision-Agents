@@ -41,7 +41,8 @@ func documentHandWritten(api huma.API) {
 		Description: "A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects " +
 			"carrying a `type` and the fields of that event.\n" +
 			"The server sends what the conversation did: `joined`, `heard`, `responding`, " +
-			"`response_delta`, `responded` (pending_work remains true while tools or delegated work " +
+			"`response_delta`, `reasoning_delta` (turn_id and text: the next piece of the model's thinking " +
+			"on a written reply, never spoken), `responded` (pending_work remains true while tools or delegated work " +
 			"are outstanding), `said` (a line the agent says as written rather than asking the model, " +
 			"such as its greeting, with the purpose it has), `speaking` (an utterance started being heard: " +
 			"turn_id, synthesis_id, the text the voice had been sent for it by then, at, when the call's " +
@@ -315,9 +316,24 @@ func documentHandWritten(api huma.API) {
 			"long the caller waited for the first of them. `messages[].content` is a string, or an " +
 			"array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: " +
 			"[{id, name, arguments, signature}]`, with arguments encoded as a JSON string and " +
-			"optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to " +
-			"correlate their content. Completed tool calls include the same replay fields; " +
-			"incomplete responses additionally report `incomplete_reason` (such as " +
+			"optional opaque signature, and may replay their thinking as `reasoning: [{text, " +
+			"signature, redacted, after_tool_calls, after_text}]`, the list a `complete` that did " +
+			"not fail reported, unchanged: a provider that signs its thinking (Anthropic) is sent " +
+			"each block again where it stood, after `after_tool_calls` of the turn's tool calls " +
+			"and, before the first of them, after `after_text` bytes (UTF-8) of its text; every " +
+			"other provider ignores it. A position the turn does not have, or out of order, is " +
+			"refused. Send the blocks with what came before them unchanged too (the same " +
+			"instructions, tools and earlier messages, new turns only appended): when that " +
+			"changed, Claude may refuse the request or answer with the block's stale reasoning. " +
+			"Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. " +
+			"Completed tool calls include the same replay fields. A provider that signs its " +
+			"thinking also sends a `reasoning` frame `{id, block}` as each block finishes, " +
+			"between the `delta`s of the text around it, for display: replay only what " +
+			"`complete` reports, which leaves out a failed response's blocks and any block a " +
+			"replay could not put back exactly (one after a tool call when text follows a call, " +
+			"one after a call dropped for arguments that do not parse, one after two texts with " +
+			"no thinking between them, and every block after those). A `complete`'s " +
+			"incomplete status additionally reports `incomplete_reason` (such as " +
 			"`max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool " +
 			"replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on " +
 			"`image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does " +

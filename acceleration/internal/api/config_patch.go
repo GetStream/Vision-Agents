@@ -30,6 +30,7 @@ type AgentConfigPatch struct {
 	Instructions       *string                  `json:"instructions,omitempty"`
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
+	UiInstructions     *string                  `json:"ui_instructions,omitempty" doc:"What teaches the agent's model to answer with UI. An empty string removes them."`
 	Skills             *[]string                `json:"skills,omitempty"`
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -203,6 +204,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.ReviewInstructions = reviewOf(config.ReviewInstructions, patch.Review)
+	config.UIInstructions = override(config.UIInstructions, patch.UiInstructions)
 	config.Skills = override(config.Skills, patch.Skills)
 	if patch.Connectors != nil {
 		config.Connectors = storedBindings(*patch.Connectors)

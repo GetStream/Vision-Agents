@@ -286,6 +286,9 @@ type Conversation struct {
 	tools map[string]ToolDisplay
 	// asked are the finished replies that asked the end user for a login (authorizations.go).
 	asked []Message
+	// expiring is the reply whose calls still waiting for a person expire when it ends
+	// (ExpireApprovals).
+	expiring string
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
@@ -1794,8 +1797,10 @@ func (c *Conversation) Observe(event agent.Event) {
 		return
 	}
 	// A tool's progress reaches watchers through live updates; Stream stores it once the
-	// reply settles.
-	unsaved := false
+	// reply settles. A question for a person, and their answer, are stored at once, as a held
+	// connector call's are (AwaitApproval): a client that opens the conversation while the call
+	// waits, such as an app reopened after it was closed, reads the question there.
+	unsaved, stored := false, false
 	wasState := m.State
 	coalesce := false
 	switch e := event.(type) {
@@ -1892,6 +1897,8 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.called(m, toolCall{id: e.ID, name: e.Tool, arguments: e.Arguments, startedAt: e.StartedAt})
 		c.state("tools")
 		unsaved = true
+		step := toolStep(m, e.ID)
+		stored = step != nil && step.Status == "awaiting_approval"
 	case agent.ToolApprovalDecided:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1899,7 +1906,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !decided(m, e.ID, e.Allowed, e.Summary, time.Now()) {
 			return
 		}
-		unsaved = true
+		unsaved, stored = true, true
 	case agent.ToolUpdated:
 		if e.Verbatim || !c.acceptTurn(e.TurnID, false) || !reported(m, e.ID, e.Text) {
 			return
@@ -2038,6 +2045,9 @@ func (c *Conversation) Observe(event agent.Event) {
 	c.dirty = true
 	if unsaved {
 		m.Saved = false
+	}
+	if stored {
+		c.save()
 	}
 	now := time.Now()
 	c.unpublished = coalesce && now.Sub(c.lastPublished) < answerEvery
@@ -2179,6 +2189,9 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
+	if c.expiring == m.ID {
+		expire(m, now)
+	}
 	// Only a follow-up, which has no message of a person's, is read back this way, and only
 	// one under ReadBackPrefix ever is.
 	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" && readBack(m.CommandID) {

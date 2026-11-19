@@ -131,6 +131,8 @@ public data class AgentEvent(
         Responding("responding"),
         ResponseDelta("response_delta"),
         Responded("responded"),
+        UiDelta("ui_delta"),
+        UiCompleted("ui_completed"),
         Blocked("blocked"),
         Spoke("spoke"),
         Turn("turn"),

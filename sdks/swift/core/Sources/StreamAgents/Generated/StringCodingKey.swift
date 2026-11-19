@@ -197,6 +197,7 @@ extension StringCodingKey {
     static let trigger: StringCodingKey = "trigger"
     static let tts: StringCodingKey = "tts"
     static let type: StringCodingKey = "type"
+    static let ui: StringCodingKey = "ui"
     static let uiAction: StringCodingKey = "ui_action"
     static let until: StringCodingKey = "until"
     static let upcoming: StringCodingKey = "upcoming"

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { crewBackend } from '../agent/agents';
 import { AgentConfig } from '../agent/config';
@@ -12,6 +12,8 @@ type InboxItem = {
   details: string;
   status: string;
   at: string;
+  /** Who must approve a drafted ticket, until they decide. */
+  waiting_for?: string;
 };
 
 type Pulse = {
@@ -31,14 +33,18 @@ const LABELS: Record<InboxItem['kind'], string> = {
 /**
  * What the shift leaders and the owner see of what the assistant did: call-out alerts, swap
  * requests, drafted repair tickets and booked check-ins, and the team's pulse from end-of-shift
- * reflections, without names. It signs in as a leader, since the crew backend answers the
- * leaders' inbox only to a user whose crew role is leader.
+ * reflections, without names. It signs in as a leader, the owner by default, since the crew
+ * backend answers the leaders' inbox only to a user whose crew role is leader. A ticket waiting
+ * for whoever is signed in can be approved, which submits it, or rejected; either way the agent
+ * tells the person who drafted it.
  */
 export default function LeaderView() {
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [pulse, setPulse] = useState<Pulse>();
   const [failure, setFailure] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
+  // The tickets whose decision is on its way, so none can be decided twice.
+  const [deciding, setDeciding] = useState<ReadonlySet<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +66,25 @@ export default function LeaderView() {
     return () => clearInterval(timer);
   }, [load]);
 
+  const decide = async (id: string, approve: boolean) => {
+    setDeciding((ids) => new Set(ids).add(id));
+    try {
+      await crewBackend(`crew/tickets/${id}/decision`, {
+        body: { approve },
+        userId: AgentConfig.leader.id,
+      });
+      await load();
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeciding((ids) => {
+        const left = new Set(ids);
+        left.delete(id);
+        return left;
+      });
+    }
+  };
+
   const refresh = async () => {
     setRefreshing(true);
     await load();
@@ -73,7 +98,9 @@ export default function LeaderView() {
       contentContainerStyle={styles.container}
       refreshControl={<RefreshControl onRefresh={refresh} refreshing={refreshing} />}
     >
-      <Text style={styles.meta}>Signed in as {AgentConfig.leader.name}, shift leader</Text>
+      <Text style={styles.meta}>
+        Signed in as {AgentConfig.leader.name}, {AgentConfig.leader.title}
+      </Text>
       {failure ? <Text style={styles.failure}>{failure}</Text> : null}
       <Text style={styles.heading}>Inbox</Text>
       {inbox.length === 0 ? (
@@ -88,6 +115,26 @@ export default function LeaderView() {
               {item.from} · {new Date(item.at).toLocaleTimeString([], { timeStyle: 'short' })} ·{' '}
               {item.status}
             </Text>
+            {item.waiting_for === AgentConfig.leader.id ? (
+              <View style={styles.actions}>
+                <Pressable
+                  disabled={deciding.has(item.id)}
+                  onPress={() => void decide(item.id, true)}
+                  style={[styles.action, styles.approve]}
+                  testID='ticket-approve'
+                >
+                  <Text style={styles.approveText}>Approve and submit</Text>
+                </Pressable>
+                <Pressable
+                  disabled={deciding.has(item.id)}
+                  onPress={() => void decide(item.id, false)}
+                  style={styles.action}
+                  testID='ticket-reject'
+                >
+                  <Text style={styles.rejectText}>Reject</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         ))
       )}
@@ -121,6 +168,16 @@ export default function LeaderView() {
 }
 
 const styles = StyleSheet.create({
+  action: {
+    borderColor: '#C8102E',
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  approve: { backgroundColor: '#C8102E' },
+  approveText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   card: {
     backgroundColor: '#FFFFFF',
     borderColor: '#E6E8EC',
@@ -137,6 +194,7 @@ const styles = StyleSheet.create({
   heading: { color: '#0B1220', fontSize: 20, fontWeight: '800', marginBottom: 10, marginTop: 8 },
   kind: { color: '#C8102E', fontSize: 12, fontWeight: '700' },
   meta: { color: '#8A919E', fontSize: 12, marginTop: 4 },
+  rejectText: { color: '#C8102E', fontSize: 14, fontWeight: '700' },
   theme: {
     backgroundColor: '#FDECEE',
     borderRadius: 10,

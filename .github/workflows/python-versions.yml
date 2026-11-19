@@ -1,7 +1,7 @@
 name: Python compatibility check
 on:
   push:
-    branches: [ "main", "accelerate" ]
+    branches: [ "main" ]
     paths:
       - '**/pyproject.toml'
       - 'uv.lock'
@@ -24,13 +24,15 @@ permissions:
   pull-requests: read
 
 jobs:
+  # One job for every version: each only resolves (`uv pip compile`), and the setup took most
+  # of each job's time when there was a job per version. Versions resolve two at a time, each
+  # into its own log so their output does not interleave. Every version is checked even after
+  # one fails, and the job fails at the end, naming the versions that did not resolve.
   resolve:
-    name: Resolve on Python ${{ matrix.python }}
+    name: Resolve on Python 3.10–3.14
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
+    env:
+      PYTHON_VERSIONS: "3.10 3.11 3.12 3.13 3.14"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -38,5 +40,39 @@ jobs:
         uses: ./.github/actions/python-uv-setup
         with:
           sync-flags: "--frozen --only-group dev"
-      - name: Resolve every workspace member on Python ${{ matrix.python }}
-        run: uv run --no-sync dev.py check-python-versions ${{ matrix.python }}
+      - name: Resolve every workspace member on each Python version
+        id: resolve
+        run: |
+          read -ra versions <<< "$PYTHON_VERSIONS"
+          printf '%s\n' "${versions[@]}" | xargs -P 2 -n 1 bash -c '
+            version=$1
+            uv run --no-sync dev.py check-python-versions "$version" > "$RUNNER_TEMP/python-$version.log" 2>&1
+            echo "$?" > "$RUNNER_TEMP/python-$version.status"
+          ' _
+          failed=()
+          for version in "${versions[@]}"; do
+            if [[ $(cat "$RUNNER_TEMP/python-$version.status") != 0 ]]; then
+              failed+=("$version")
+            fi
+          done
+          if (( ${#failed[@]} )); then
+            echo "::error::Did not resolve on Python ${failed[*]}"
+            exit 1
+          fi
+      # Its own step, so the logs show even when the resolve step fails, is cancelled or times
+      # out: a version that never finished shows how far it got.
+      - name: Show each version's resolver output
+        if: always() && steps.resolve.outcome != 'skipped'
+        run: |
+          read -ra versions <<< "$PYTHON_VERSIONS"
+          for version in "${versions[@]}"; do
+            log="$RUNNER_TEMP/python-$version.log"
+            if [[ ! -f $log ]]; then
+              echo "Python $version: did not start"
+            elif [[ ! -f $RUNNER_TEMP/python-$version.status ]]; then
+              echo "Python $version: did not finish; its output so far:"
+              cat "$log"
+            else
+              cat "$log"
+            fi
+          done

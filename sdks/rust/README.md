@@ -290,7 +290,8 @@ is an app connection's id or its only label. Leaving `connectors` out keeps the 
 `connectors: []` removes them. With a `simulations/` directory the config's
 simulations become exactly what it declares, and an empty one deletes them; without one they
 are left alone. `Agent::new("jean")` finds `agents/jean` or `examples/*/jean` from the
-working directory up and syncs it before the first session.
+working directory up, and `agent.sync()` stores it. Nothing syncs on its own: a session runs on
+the stored config, so sync before the agent takes calls.
 
 Part of a stored config is changed without restating the rest:
 

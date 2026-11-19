@@ -139,6 +139,12 @@ button {
   color: var(--text);
 }
 
+/* Incognito on: the toggle stays lit, so it is plain this chat is not kept. */
+.icon-button[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
 .content {
   position: relative;
   flex: 1;
@@ -1055,6 +1061,41 @@ button {
 .seat-pill:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.reservation-confirmation {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.reservation-confirmation-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.reservation-confirmation-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.reservation-confirmation-detail {
+  color: var(--muted);
+}
+
+.reservation-confirmation-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
 }
 
 .voice-live-ui {

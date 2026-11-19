@@ -13,7 +13,7 @@ import {
 import { Client, Session, supportBranchOf, type SupportBranch } from "../src/index.js";
 import { messageField } from "../src/message-field.js";
 import { TestRouter } from "./router.js";
-import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, rewind, until, update, type TestChat } from "./stream-chat.js";
+import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, heldIds, rewind, until, update, type TestChat } from "./stream-chat.js";
 
 /** What the app makes of a Stream message: what the tests read back of the feed. */
 interface Shown {
@@ -131,8 +131,8 @@ describe("agentChatTransport, branching", () => {
   });
 
   /**
-   * An AgentChat over a real stream-chat client (9, or 10 in CI's js-stream-chat-10 job) reading
-   * the channel from the test router, and the transport, connected to a feed.
+   * An AgentChat over a real stream-chat client (9, or 10 in the stream-chat 10 pass of CI's sdks
+   * job) reading the channel from the test router, and the transport, connected to a feed.
    */
   async function connected(messages: Record<string, unknown>[] = conversationOf) {
     const streamChat = await chatClient(router.url);
@@ -334,6 +334,28 @@ describe("agentChatTransport, branching", () => {
     assert.deepEqual(feed.ids, ["q0", "r0"]);
   });
 
+  it("keeps an edit's question that arrived before the channel.rewound event", async () => {
+    const { streamChat, transport, feed } = await connected();
+    router.serve("POST", responsesPath, answering({ message_id: "q1", inclusive: true }));
+    await transport.send(request({ kind: "edit", message: feed.find("q1"), messageId: "ctl_edit", text: "Rome instead" }));
+    const edited = chatMessage("ctl_edit", 10, mark("resp_9", "question", 2, 2));
+    arrive(streamChat as TestChat, edited);
+    await until(() => feed.ids.join() === "q0,r0,ctl_edit", `shows ${feed.ids.join()}`);
+    // The read after the rewind also brings the question's answer, which only that read holds:
+    // once the channel holds it, the read was applied, and the prune after it is all that is left.
+    const answer = chatMessage("r9", 11, { ...mark("resp_9", "reply", 2, 2), ai_generated: true }, "agent");
+    router.serve("POST", QUERY_PATH, channelPage([q0, r0, edited, answer]));
+    const channel = streamChat.channel("agent", "support-1");
+
+    // Chat's event for the rewind the edit made, a moment before the question was written.
+    rewind(streamChat as TestChat, "q1", true, 9);
+    await until(() => heldIds(channel).includes("r9"), `the read after the rewind never landed: ${heldIds(channel).join()}`);
+    // The prune follows the read in the same task, so it has run once the next one starts.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(heldIds(channel), ["q0", "r0", "ctl_edit", "r9"], "what was written after the rewind stays");
+  });
+
   it("refuses a message from before branches, before asking the router anything", async () => {
     const unmarked = chatMessage("old", 1, {}, "agent");
     const { transport, feed } = await connected([unmarked]);
@@ -528,6 +550,32 @@ describe("agentChatTransport, branching", () => {
     await transport.send(request({ text: "And Porto?", messageId: "ctl_ask" }));
 
     assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
+  });
+
+  it("brings the version shown back before editing the question it answers", async () => {
+    const { streamChat, transport, feed } = await connected();
+    // r3 answers q1 with a response of its own, resp_3, where q1 keeps the mark of resp_1: the edit
+    // must go through the reply shown, not the question's mark.
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_3/activate", () => {
+      arrive(streamChat, chatMessage("c_q1", 10, { ...mark("resp_1", "question", 1, 1), resent_from: "q1" }));
+      arrive(streamChat, chatMessage("c_r3", 11, { ...mark("resp_3", "reply", 3, 3, "resp_1"), resent_from: "r3" }, "agent"));
+      return { body: { leaf_response_id: "resp_3", already_active: false, resent: 2, rewound_to: { message_id: "r0", inclusive: false } } };
+    });
+    // The router reads a reply's other version back without the question it shares, so the
+    // question shown stays the channel's own.
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_3/branch", {
+      body: { active: false, items: [branchOf("resp_3", 3, 6).body.items[1]], has_more: false },
+    });
+    router.serve("POST", responsesPath, answering({ message_id: "c_q1", inclusive: true }));
+    await transport.switchBranch(feed.find("r2"), "next");
+    assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r3"]);
+
+    // r3, which answers the question on screen, is the version's, not the conversation's.
+    await transport.send(request({ kind: "edit", message: feed.find("q1"), messageId: "ctl_edit", text: "Rome instead" }));
+
+    // The router edits only through a response on the conversation, which r3 is once brought back.
+    assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_3/activate", responsesPath]);
+    assert.equal((router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>)["replaces"], "resp_3");
   });
 
   it("brings the version shown back before regenerating a reply of it", async () => {

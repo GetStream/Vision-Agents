@@ -97,6 +97,8 @@ final readonly class SyncAgentRequest
         public ?array $agents = null,
         // agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string rem...
         public ?string $image = null,
+        // What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apa...
+        public ?string $uiInstructions = null,
     ) {
     }
 
@@ -148,6 +150,7 @@ final readonly class SyncAgentRequest
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
             agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
             image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
+            uiInstructions: array_key_exists('ui_instructions', $data) && $data['ui_instructions'] !== null ? Json::string($data, 'ui_instructions') : null,
         );
     }
 
@@ -280,6 +283,9 @@ final readonly class SyncAgentRequest
         }
         if ($this->image !== null) {
             $out['image'] = $this->image;
+        }
+        if ($this->uiInstructions !== null) {
+            $out['ui_instructions'] = $this->uiInstructions;
         }
         return $out;
     }

@@ -57,7 +57,7 @@ Leave out:
 
 ## Gotchas
 
-- Every server SDK reads `agent.yaml` and syncs the directory in one request, skipping it when `.agent_sync` matches. They differ in when: Python syncs automatically on starting, the others when you call `sync`. Say which SDK a behaviour applies to
+- Every server SDK reads `agent.yaml` and syncs the directory in one request, skipping it when `.agent_sync` matches. They sync only when you call `sync` (Python `agent.sync()`, .NET `SyncAsync`); a session never syncs. Say which SDK a behaviour applies to
 - Client SDKs (JavaScript in the browser, Swift, Android, Flutter) never sync or configure agents. Swift and browser JavaScript are handed a config id by the backend; Android and Flutter open an agent by its stored name
 - `SyncRouters` rejects unknown keys in `routers/*.yaml` (including `description`)
 

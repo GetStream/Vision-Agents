@@ -130,6 +130,7 @@ class AgentConfigPatch:
             chat_channels (list[AgentChatChannel] | Unset): Replaces the list whole. An empty list removes it.
             agents (list[ChildAgent] | Unset): Replaces the list whole. An empty list removes it.
             image (str | Unset): An empty string removes it, and the agent stops being offered generate_image.
+            ui_instructions (str | Unset): What teaches the agent's model to answer with UI. An empty string removes them.
     """
 
     calls: AgentCalls | Unset = UNSET
@@ -172,6 +173,7 @@ class AgentConfigPatch:
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
     image: str | Unset = UNSET
+    ui_instructions: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.agent_config_patch_plugins_item_type_1 import (
@@ -337,6 +339,8 @@ class AgentConfigPatch:
 
         image = self.image
 
+        ui_instructions = self.ui_instructions
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -420,6 +424,8 @@ class AgentConfigPatch:
             field_dict["agents"] = agents
         if image is not UNSET:
             field_dict["image"] = image
+        if ui_instructions is not UNSET:
+            field_dict["ui_instructions"] = ui_instructions
 
         return field_dict
 
@@ -680,6 +686,8 @@ class AgentConfigPatch:
 
         image = d.pop("image", UNSET)
 
+        ui_instructions = d.pop("ui_instructions", UNSET)
+
         agent_config_patch = cls(
             calls=calls,
             channels=channels,
@@ -721,6 +729,7 @@ class AgentConfigPatch:
             chat_channels=chat_channels,
             agents=agents,
             image=image,
+            ui_instructions=ui_instructions,
         )
 
         return agent_config_patch

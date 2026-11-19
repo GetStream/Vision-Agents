@@ -88,7 +88,7 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 	bridge, err := s.phone.InboundBridge(r.Context(), "telnyx", to)
 	if errors.Is(err, phone.ErrNoSealer) {
 		hangUp(w, logger, "hung up a telnyx call: this router has no key to open trunk passwords: "+
-			"set ROUTER_AUTH_KEK, then attach the number again", "to", to)
+			"set ROUTER_DEV_KEK (local), or ROUTER_AUTH_KEK_V1_WRAPPED with ROUTER_AUTH_KMS_KEY (hosted), then attach the number again", "to", to)
 		return
 	}
 	if errors.Is(err, store.ErrNoNumber) {

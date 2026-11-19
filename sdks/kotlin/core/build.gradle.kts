@@ -49,11 +49,11 @@ publishing {
             pom {
                 name = artifactId
                 description = "Android client for Stream Agents."
-                url = "https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/kotlin"
+                url = "https://github.com/GetStream/Vision-Agents/tree/main/sdks/kotlin"
                 licenses {
                     license {
                         name = "Apache-2.0"
-                        url = "https://github.com/GetStream/Vision-Agents/blob/accelerate/LICENSE"
+                        url = "https://github.com/GetStream/Vision-Agents/blob/main/LICENSE"
                     }
                 }
                 developers {
@@ -64,7 +64,7 @@ publishing {
                 }
                 scm {
                     connection = "scm:git:github.com/GetStream/Vision-Agents.git"
-                    url = "https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/kotlin"
+                    url = "https://github.com/GetStream/Vision-Agents/tree/main/sdks/kotlin"
                 }
             }
         }

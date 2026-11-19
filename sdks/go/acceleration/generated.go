@@ -1330,6 +1330,24 @@ func (e ErrorType) Valid() bool {
 	}
 }
 
+// Defines values for FloorCheckKind.
+const (
+	OverAgent FloorCheckKind = "over_agent"
+	Pause     FloorCheckKind = "pause"
+)
+
+// Valid indicates whether the value is a known member of the FloorCheckKind enum.
+func (e FloorCheckKind) Valid() bool {
+	switch e {
+	case OverAgent:
+		return true
+	case Pause:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GeneratedImageMediaType.
 const (
 	Imagejpeg GeneratedImageMediaType = "image/jpeg"
@@ -3761,11 +3779,14 @@ type AgentConfig struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools The functions an SDK provides that the agent may offer, in named groups. Empty when there are none, and then the agent offers no function.
-	Tools        *[]ToolGroup  `json:"tools,omitempty"`
-	Tts          *string       `json:"tts,omitempty"`
-	UpdatedAt    time.Time     `json:"updated_at"`
-	Video        *SessionVideo `json:"video,omitempty"`
-	VisibleTools *[]string     `json:"visible_tools,omitempty"`
+	Tools *[]ToolGroup `json:"tools,omitempty"`
+	Tts   *string      `json:"tts,omitempty"`
+
+	// UiInstructions Absent when the agent is taught no UI.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	Video          *SessionVideo `json:"video,omitempty"`
+	VisibleTools   *[]string     `json:"visible_tools,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
@@ -3866,9 +3887,12 @@ type AgentConfigPatch struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools Replaces the tool groups whole; an empty list removes them all.
-	Tools *[]ToolGroup  `json:"tools,omitempty"`
-	Tts   *string       `json:"tts,omitempty"`
-	Video *SessionVideo `json:"video,omitempty"`
+	Tools *[]ToolGroup `json:"tools,omitempty"`
+	Tts   *string      `json:"tts,omitempty"`
+
+	// UiInstructions What teaches the agent's model to answer with UI. An empty string removes them.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	Video          *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -3999,9 +4023,12 @@ type AgentConfigRequest struct {
 	Tags *map[string]string `json:"tags,omitempty"`
 
 	// Tools The functions an SDK provides that the agent may offer, in named groups, each with how it is loaded. A function an SDK registers, declares on a session or hosts in a worker is offered only when a group names it: a session declaring one that none names is refused (400 tool_not_configured), and a worker's is left out. The router's own tools, connector tools and other agents are not named here. Omitted or null on an update, the groups stored stay; an empty list removes them all. The mapping this field once was, with progressive and output_retention, is refused: loading summary and output_retention on a group or a connector binding replaced them.
-	Tools *[]ToolGroup  `json:"tools,omitempty"`
-	Tts   *string       `json:"tts,omitempty"`
-	Video *SessionVideo `json:"video,omitempty"`
+	Tools *[]ToolGroup `json:"tools,omitempty"`
+	Tts   *string      `json:"tts,omitempty"`
+
+	// UiInstructions What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	Video          *SessionVideo `json:"video,omitempty"`
 
 	// VisibleTools Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search.
 	VisibleTools *[]string `json:"visible_tools,omitempty"`
@@ -6247,6 +6274,9 @@ type CreateSessionRequest struct {
 	// Tts Omit it and the config decides, or en-low-latency when there is no config.
 	Tts *string `json:"tts,omitempty"`
 
+	// Ui Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote.
+	Ui *bool `json:"ui,omitempty"`
+
 	// UserId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
 	UserId   *string       `json:"user_id,omitempty"`
 	UserName *string       `json:"user_name,omitempty"`
@@ -6665,6 +6695,34 @@ type FileSource struct {
 	Url string `json:"url"`
 }
 
+// FloorCheck defines model for FloorCheck.
+type FloorCheck struct {
+	// Acted Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced.
+	Acted bool `json:"acted"`
+
+	// At When the check was asked.
+	At time.Time `json:"at"`
+
+	// Kind What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
+	Kind FloorCheckKind `json:"kind"`
+
+	// LatencyMs The round trip to the chorus-asr server.
+	LatencyMs float64 `json:"latency_ms"`
+
+	// Options The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them.
+	Options *[]FloorOption `json:"options,omitempty"`
+
+	// PausedMs How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
+	PausedMs *float64 `json:"paused_ms,omitempty"`
+
+	// Point The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar.
+	Point  *string     `json:"point,omitempty"`
+	Ruling FloorRuling `json:"ruling"`
+}
+
+// FloorCheckKind What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
+type FloorCheckKind string
+
 // FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 type FloorControl struct {
 	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
@@ -6676,6 +6734,27 @@ type FloorControl struct {
 	//
 	// Example: stream/chorus-asr
 	Model *string `json:"model,omitempty"`
+}
+
+// FloorOption defines model for FloorOption.
+type FloorOption struct {
+	Option      string  `json:"option"`
+	Probability float64 `json:"probability"`
+}
+
+// FloorRuling defines model for FloorRuling.
+type FloorRuling struct {
+	// Cannot The caller wants something none of the agent's tools can do.
+	Cannot *bool `json:"cannot,omitempty"`
+
+	// Disposition respond, wait, clarify or ignore.
+	Disposition string `json:"disposition"`
+
+	// Floor stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended.
+	Floor string `json:"floor"`
+
+	// Tool The tool the caller wants.
+	Tool *string `json:"tool,omitempty"`
 }
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
@@ -10238,9 +10317,12 @@ type SyncAgentRequest struct {
 	Tags     *map[string]string `json:"tags,omitempty"`
 
 	// Tools agent.yaml's tools: the functions an SDK provides that the agent may offer, in named groups, as AgentConfigRequest's tools names them, with the same rules. Sent, they replace the stored groups whole, an empty list removing them. Left out, the stored ones stay.
-	Tools *[]ToolGroup  `json:"tools,omitempty"`
-	Tts   *string       `json:"tts,omitempty"`
-	Video *SessionVideo `json:"video,omitempty"`
+	Tools *[]ToolGroup `json:"tools,omitempty"`
+	Tts   *string      `json:"tts,omitempty"`
+
+	// UiInstructions What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none.
+	UiInstructions *string       `json:"ui_instructions,omitempty"`
+	Video          *SessionVideo `json:"video,omitempty"`
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
@@ -10391,6 +10473,9 @@ type TimelineEntry struct {
 
 	// FirstFrameQueuedMs Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
 	FirstFrameQueuedMs *float64 `json:"first_frame_queued_ms,omitempty"`
+
+	// FloorChecks The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control.
+	FloorChecks *[]FloorCheck `json:"floor_checks,omitempty"`
 
 	// Heard What the caller said, when it can be matched to this exchange.
 	Heard *string `json:"heard,omitempty"`

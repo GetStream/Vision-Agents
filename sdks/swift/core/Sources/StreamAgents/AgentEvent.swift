@@ -47,6 +47,7 @@ public struct AgentEvent: Sendable, Hashable {
         case decision
         case responding
         case responseDelta = "response_delta"
+        case reasoningDelta = "reasoning_delta"
         case uiDelta = "ui_delta"
         case uiCompleted = "ui_completed"
         case responded

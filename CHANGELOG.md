@@ -9,6 +9,32 @@ Python's `stream.Client` has `tools`, a function registry for the whole app, and
 ### Tool stats show how to load each tool, per agent
 
 `GET /v1/stats/agents` takes `agent`, an agent config id, and answers how many sessions took a turn and how many turns they took. Each tool now also has the sessions that called it and their share, the turns a session took before its first call, how it was loaded, and what its definition costs every turn, in full and as a summary: the numbers that decide between `full`, `summary` and `deferred`. A call's token cost and its tool's definition size now survive tool output retention, which used to shrink a redacted call's tokens to its tool name. Calls recorded before this have no definition size.
+### The Go SDK connects a user's own accounts
+
+`client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.
+
+### The Swift SDK shows an incognito session
+
+An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat (#2091).
+
+### The JavaScript SDK shows an incognito session in the Chat UI
+
+An incognito session has no Stream Chat channel, so `AgentChat` used to show it with no messages. It now builds the conversation from the session's socket: one reply per question, with its rounds of reasoning, its tool calls with their durations and summaries, an approval card for a call that asks first, and the generated UI, in the same shape stream-chat-react's AI components read from a kept conversation. The router sends a written reply's reasoning on the session socket as `reasoning_delta` (`turn_id`, `text`), and `session.conversation` keeps each turn's `steps` (reasoning and tool calls, in order) and whether it is `done`. A round of reasoning is timed from when the model was asked or took the reply up again, as the router times a kept one. Edit and regenerate stay off, and the router's `visible_tools` does not apply, so every tool call shows. Deploy the router before releasing this SDK: an older one sends no reasoning, and the reply shows only its tool calls. `react_assistant` has an incognito toggle at the top right of a new chat (#2090).
+
+### The Go SDK reads a session's tokens, timeline and decisions
+
+`client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
+
+### The Go SDK compiles `ui.format: a2ui`
+
+`agents.LoadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the A2UI 1.0 prompt in a ```` ```ui:a2ui@1.0 ```` block with the catalog `getstream.io:app-catalog`, the one stream-chat-swift's renderer draws. The JavaScript SDK writes the same prompt, and both are held to one fixture (#2028).
+### A session can turn an agent's generative UI off
+
+An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go and JavaScript SDKs now sync agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing these SDKs: an older router drops `ui_instructions`. A Go-synced agent is then taught no UI until the router is upgraded, when the next start syncs it again and the router writes it; JavaScript keeps the UI in `instructions` meanwhile. A config saved without the field keeps the UI it has. Removing `ui:` from a synced folder removes the UI on the next start, since the folder's fingerprint changes; a folder that never had `ui:` is not synced again, so UI added to its config by hand stays until a PATCH with `"ui_instructions": ""` clears it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui`; `swift_assistant` and `react_assistant` have an Interactive UI switch in their settings that sets it (#2076).
+
+### Claude's thinking survives a round trip through the language-model socket
+
+An Anthropic model's signed thinking now reaches a socket client: a `reasoning` frame `{id, block}` as each block finishes, between the `delta`s of the text around it, for display, and the list to replay as `reasoning` on `complete` (not on a failed one). An assistant message in a `respond` frame may send that list back unchanged, and the Anthropic driver replays each block as `thinking` (with its signature) or `redacted_thinking` exactly where the model wrote it: after `after_tool_calls` of the turn's calls and, before the first, after `after_text` bytes of its text, splitting the text back into the blocks it came as. Claude may refuse a turn whose thinking was moved or whose prefix changed, or answer with the block's stale reasoning, so a position the turn does not have is refused, and `complete` leaves out every block a replay could not put back exactly: those after a call once text follows a call, those after a call dropped for arguments that do not parse, those after two texts in a row, and any after them. A model on a tool loop picks up its reasoning where it left off instead of thinking from scratch every round. Unsigned blocks are never sent, a call that takes no arguments now reports `{}`, other providers ignore the field, and a request without it is unchanged (#2069).
 
 ### A running session takes more of its caller's tools, and gives them back
 
@@ -17,6 +43,10 @@ Python's `stream.Client` has `tools`, a function registry for the whole app, and
 ### The JavaScript SDK draws a streaming card a statement at a time
 
 While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2042).
+
+### The Dart SDK draws a streaming card a statement at a time
+
+While a reply's OpenUI streams, `TurnUI.content` holds only its finished statements, so a card no longer reflows with every delta or shows a gauge reading 8 before 86; `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text and a call shows no empty card, and `LiveUI.observe` reports no change for a delta that finishes nothing. A streamed `openui-patch` merges only its finished statements. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. While OpenUI streams, `TurnUI.raw` can lag behind what was written until a delta ends a line, and `TurnUI ==` compares only what shows. `Conversation.withoutTurn(id)` removes a turn, such as a refused question, and keeps a card still being written (#2061).
 
 ### The JavaScript SDK compiles `ui.format: a2ui`
 
@@ -28,6 +58,10 @@ A text conversation carried on after it ended in another router process, by a me
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
 `AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
+
+### The Kotlin SDK shows a reply's interactive UI as the socket streams it
+
+`AgentEvent.Kind` has `UiDelta` and `UiCompleted`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time, and a turn has no `Turn.ui` until one is finished. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. `LiveUI` (`observe(conversation)`, then `overlay(messages)` for each reply's custom data) lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as Swift and JavaScript, so a new reply never shows the card of the one before it. A call screen, which shows no channel, shows the newest `Turn.ui` itself, from `TurnUI.customData`. `android_assistant` shows it in chat and on calls, with the trip's map, place cards and calendar, restaurant cards, an availability gauge and a seat selector, the app's own views described by swift_assistant's `UIComponents.json`, and brands switched live in Settings, which OpenUI cards and those views wear (AND-1948, #2054).
 
 ### A call through a customer's own SIP trunk survives the router node that holds it stopping
 
@@ -601,6 +635,20 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A tool call no longer has update or say
 
 A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Say` (and `tools.Line` has only `Hold`), JavaScript `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), Python `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), .NET `UpdateAsync`/`SayAsync`, Ruby `update`/`say`, Rust `update`/`say` and PHP `update()`/`say()`. A session's own `say` stays. A tool says nothing while it runs: the agent tells a waiting caller the work is still going, and a tool's `display_title` is what its call shows. The router still takes `tool_update` from an older SDK, so a released app keeps working.
+### `agents.DefineSkills` takes the id of the agent config the skills belong to
+
+`agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
+
+### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
+
+`ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
+### Python, .NET and Rust: an agent no longer syncs its directory on its own
+
+A Python agent used to store its directory on the router when it joined a call, and a .NET or Rust agent before its first session. In a container that meant a sync on each new container's first call, in the call path, and an overwrite of what was edited in the dashboard or through the API on every restart. Now a session runs on whatever config is stored under the agent's name, and the directory is stored only when asked: Python `await agent.sync()` (which calls the new `LLM.sync()`, implemented by `Accelerated` and doing nothing for an LLM that keeps no config on a router), .NET `await agent.SyncAsync()`, Rust `agent.sync().await` (which still finds the directory `Agent::new` names). Call it before the agent takes calls, e.g. as a deploy step; an agent that was never synced fails to join with a message saying so. Python's `ensure_agent` is gone: use `sync_agent` or `agent.sync()`. Python's `sync_agent` now reads `.agent_sync` as the other SDKs do, so a sync of files unchanged since the last sync sends nothing and returns the stored config (AI-3354).
+
+### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
+
+`Conversation` keeps the UI text a turn is writing private, so its constructor, `copy`, `componentN`, `equals` and `toString` are written by hand. Kotlin callers need no change. Java loses the no-argument constructor: pass the three arguments, `new Conversation(turns, state, failure)`, where it called `new Conversation()`. `Turn` takes a new last parameter, `ui`, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change (AND-1948, #2054).
 
 ### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
 
@@ -706,6 +754,25 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### One `Sync` drops an agent's sandbox and a skill's scripts together
+
+The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.
+### A tool's question survives the app being closed while it waits
+
+A tool call waiting for the person to allow it went to the channel only in live updates, and the call itself only to the socket of the app that asked. An app killed while the question was up and reopened showed "Thinking…" until the tool's timeout failed the call. The question and the person's answer are now stored on the call's step as soon as they happen, as a connector call's are, and a call still waiting for its answer is sent again, with its command, to a watcher that attaches later. A reopened app shows the question and can run the call when the person allows it, with each SDK's `decide` as it is (AI-3392).
+
+### The Go SDK's `Agent.Sync` works for an agent with skills
+
+`Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
+
+### The JavaScript SDK keeps an edited question with stream-chat 10
+
+stream-chat 10 times a `channel.rewound` event's `rewind.created_at` in unix nanoseconds, and the SDK read only a string. Without the moment of the rewind, the re-read that follows the event dropped every message after the rewound one, so the question an edit had just written disappeared from the device that sent it, and a reply to an edited first question was never shown as answered. The rewind's time is now read as a message's is, from a string, a `Date` or nanoseconds (AI-3198, #2057).
+
+### The JavaScript SDK edits a question while another version of its reply is shown
+
+With a reply's earlier version shown (‹ 1/2 ›), editing the question above it was refused with a 409 and nothing changed. The router reads a reply's other versions back without the question they share, so the question was the channel's own while the reply that answers it on screen, which an edit goes through, was the version's, not the conversation's. `agentChatTransport` now brings that version back first, as asking anything on it already does, and the edit goes through (AI-3198, #2084).
+
 ### A customer's refused key no longer raises the operator's key_refused alert
 
 `router_keypool_refused_attempts_total` has a label `owner`: `ours` for a key the router read from its environment, `customer` for a customer's own, such as the key of their own model (`custom/<name>`) or the one they keep for a vendor (BYOK). The `key_refused` alert counts only `ours`: a customer's broken key is theirs to fix. An instance's `api_key_env` is read the way every key variable is (comma separated keys, then `NAME_1`, `NAME_2`), so its keys are the router's own: their refusals still alert, and their rate limits are kept in `router_vendor_rate_limited_total` and `router_vendor_ratelimit_remaining` under that variable (AI-2950).
@@ -713,6 +780,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### The key_refused alert says why a key was refused
 
 The Sentry title of a `key_refused` alert now ends with the reason, such as `usage alert: key_refused GOOGLE_API_KEY/402: out of funds, top up the account`. The other statuses say `400`, `403` and `invalid_key` (key not valid, replace it), `401` (key not valid or its quota spent), `429` (rate limited or spend cap reached) and `quota_exceeded` (quota spent). A status with no reason keeps its title. The fingerprint and the `item` tag are unchanged, so existing Sentry issues and rules still match (AI-3301).
+
+### Each router usage alert says in plain words what it means
+
+The Sentry title of each of the router's eight usage alerts (`lost`, `rejected`, `write_failing`, `holds_flush_failing`, `ship_stale`, `unowned`, `pending_slow`, `unattributed`) now has a one-line summary after its name, such as `usage alert: unowned: usage rows of an app that has joined no organization keep waiting; ...`, and so has the Slack message that carries it. The fingerprint, the tags and the level are unchanged, so existing Sentry issues and the Slack routing rule still match (#2093).
 
 ### OpenAI agents answer every turn on an account with Zero Data Retention
 
@@ -1531,6 +1602,9 @@ A dispatch worker's `answering a call` line and an agent's `ringing` line carry 
 
 In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
 
+### An approval nobody answers in a group channel says so in the reply
+
+In a channel of a type an agent config answers in (`chat_channels`), a tool call waiting for its writer's approval when the router's two-minute turn ends no longer leaves an empty agent message: the reply ends with "The approval expired before anyone answered, so that step did not run. Ask again if you still need it." and the step shows "Not allowed in time" (AI-3302).
 ### A member's line in a call's transcript is no longer read as the agent's
 
 A call's transcript, its timeline and a campaign's outcome read every line marked `source: agent` as the agent's, whoever wrote it, so a member of the channel the transcript is in could put words in the agent's mouth. A call now records the user the agent wrote as, and only that user's lines, or the agent id's, are the agent's; a person's typed turn reads as theirs too. A call from before this change reads as it did (AI-3265).

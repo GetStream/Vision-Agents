@@ -39,6 +39,7 @@ func TestUsageCommandsSuite(t *testing.T) {
 }
 
 func (s *UsageCommandsSuite) SetupTest() {
+	clearKeySources(s.T())
 	s.ctx = context.Background()
 	dsn := os.Getenv(dsnEnvVar)
 	if dsn == "" {

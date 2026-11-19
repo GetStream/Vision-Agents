@@ -44,9 +44,10 @@ in the `vision-agents_pgdata` volume. Rerun it after router changes so you never
 build. Those two ports are also what the standalone `va-pg` and `va-redis` containers use, so
 stop those first if they are running.
 
-`.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
+`.env` must set `ROUTER_DEV_KEK` (single-quoted: compose expands a `$` in it) and
 `ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no connector client secret can be
-saved, and changing it leaves the stored ones unreadable.
+saved, and changing it leaves the stored ones unreadable. The router refuses the old
+`ROUTER_AUTH_KEK`: rename it to `ROUTER_DEV_KEK` and keep its value.
 
 Logs: `docker compose logs -f router`.
 
@@ -54,10 +55,10 @@ An agent, once the router is up:
 
 ```bash
 cd examples/voice_agents/simple_voice_ai
-uv sync && uv run simple_voice_ai.py run
+uv sync && uv run simple_voice_ai.py
 ```
 
-It prints a call URL on the dashboard; open it and talk.
+It stores the agent's directory on the router, then opens a demo call in the browser; talk into it.
 
 The client generators (`plugins/stream/generate.py`, `sdks/swift/generate.py`) are standalone uv scripts with inline metadata: `uv run <script>` does not resolve the workspace.
 

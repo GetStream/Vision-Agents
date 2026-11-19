@@ -593,6 +593,9 @@ type AgentConfig struct {
 	// ReviewInstructions is what the model reviewing a finished call judges it by, in place
 	// of the default scoring guide. Empty, which most configs are, is the default.
 	ReviewInstructions string `bun:"review_instructions,notnull"`
+	// UIInstructions teach the model to answer with UI, such as agent.yaml's ui: compiled by
+	// the SDK. Apart from Instructions so a session can leave them out (AgentSession.NoUI).
+	UIInstructions string `bun:"ui_instructions,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
@@ -2027,6 +2030,9 @@ type AgentSession struct {
 	// ReturnURL is where the consents the session asks for in the chat go back to. Empty,
 	// stored as NULL, is the dashboard. Never shown in the session's own answer.
 	ReturnURL string `bun:"return_url,nullzero"`
+	// NoUI is a session opened with ui false, whose model is not told its config's
+	// UIInstructions, which reopening it keeps. False, stored as NULL, is the default.
+	NoUI bool `bun:"no_ui,nullzero"`
 	// Remembers is whether the session was opened with a memory user id, so it could have
 	// taught the memory store anything. Nil, as on a row made before it was kept, is not known.
 	Remembers *bool `bun:"remembers"`

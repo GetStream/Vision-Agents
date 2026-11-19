@@ -39,7 +39,7 @@ binding on agent config "support": name linear, connection.type session, tools [
 | Setting | Why |
 |---|---|
 | `ROUTER_CONNECTORS_ENABLED=true` | Off by default |
-| `ROUTER_AUTH_KEK` (or `ROUTER_AUTH_KEK_V<n>` + `ROUTER_AUTH_KEK_VERSION`) | Seals the credentials. The router refuses to start without it when connectors are on. Changing it makes stored credentials unreadable. A hosted deployment sets `ROUTER_AUTH_KMS_KEY` + `ROUTER_AUTH_KEK_V<n>_WRAPPED` in its place: README, «The key encryption key in Cloud KMS» |
+| `ROUTER_DEV_KEK` on a laptop or in CI; `ROUTER_AUTH_KMS_KEY` + `ROUTER_AUTH_KEK_V<n>_WRAPPED` (+ `ROUTER_AUTH_KEK_VERSION`) on a hosted router | Seals the credentials. The router refuses to start without it when connectors are on, and refuses `ROUTER_DEV_KEK` beside a KMS setting. Changing it makes stored credentials unreadable. README, «The key encryption key in Cloud KMS» |
 | `ROUTER_PUBLIC_URL` | The provider sends the browser back to `<ROUTER_PUBLIC_URL>/v1/agents/connectors/oauth/callback`. The dashboard shows this redirect URI on each OAuth connector |
 | `DASHBOARD_BASE_URL` | The consent popup reports back only to this origin, unless the consent was started with a `return_url` (`createAuthorization`'s, or for a login or step-up the chat asks for, the session's own from `createSession`), which then replaces it. Unset, a consent without one reports to the wrong place and the dashboard waits forever |
 | `ROUTER_CORS_ORIGINS` | The dashboard origin, when the browser calls the router directly |
@@ -174,7 +174,9 @@ member of the channel; the backend may answer any (`api/conversations.go`, AI-31
 writer has two minutes, not ten, when the Router opened the session for the message, as it does
 unless a session opened through the API answers in the channel: it answers one message for at
 most two minutes (`askTimeout`, `api/messagehooks.go`) and then closes that session, which stops
-the call, and an answer after that is a 404 (`answerHosted`, `api/threadhooks.go`). An entry must match a tool the
+the call, and an answer after that is a 404 (`answerHosted`, `api/threadhooks.go`). The model gets
+no round to say why, so the reply ends with a line that the approval expired, that the step
+waiting did not run (an earlier call of the reply may have), and that the person can ask again, and the step says "Not allowed in time" (`ExpireApprovals`, `conversation/parts.go`, AI-3302). An entry must match a tool the
 binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
 Beside a sensitive connector (Nessy), a binding's write tool needs `require_approval`: the
 config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a

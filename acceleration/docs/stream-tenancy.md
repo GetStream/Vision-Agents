@@ -22,7 +22,7 @@ The router holds no customer's secret. The gateway in front (`stream-accelerate`
 | `chat.inbound_keys` | `ROUTER_CHAT_INBOUND_KEYS` | empty | The ed25519 public keys (standard base64 of 32 bytes, comma-separated, at most two while Stream rotates) that Stream Chat signs its delivery of agent-channel messages to `POST /v1/chat/internal/messages` with. Empty answers that endpoint 404. It queues each message in Postgres; without Postgres it answers 503 |
 | `auth.proxy_declares_kind` | `ROUTER_AUTH_PROXY_DECLARES_KIND` | false | Proxy mode: trust `Stream-Auth-Type` from the proxy, and read its absence as client-side (fail closed) |
 
-App mode needs Postgres, a keyring (`ROUTER_AUTH_KEK`, or `ROUTER_AUTH_KEK_V<n>` with `ROUTER_AUTH_KEK_VERSION`), `auth.mode=proxy` with `auth.proxy_declares_kind`, and the mint endpoint. It refuses `STREAM_USER_TOKEN`. The deployment's own customer keeps the env pair's identity in both modes.
+App mode needs Postgres, a keyring (`ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY` and `ROUTER_AUTH_KEK_VERSION`, or `ROUTER_DEV_KEK` on a laptop), `auth.mode=proxy` with `auth.proxy_declares_kind`, and the mint endpoint. It refuses `STREAM_USER_TOKEN`. The deployment's own customer keeps the env pair's identity in both modes.
 
 ## How it works
 

@@ -380,9 +380,9 @@ public sealed class Knowledge
 /// into each session it opens, and its <see cref="Tools"/>, which the model calls back into.
 /// </para>
 /// <para>
-/// An agent built from a directory syncs it before its first session, so the session opens
-/// under the stored config; <c>.agent_sync</c> makes a second sync of an unchanged
-/// directory a read.
+/// An agent built from a directory opens its sessions under the config stored by its
+/// <see cref="Name"/>, and never syncs on its own: <see cref="SyncAsync"/> stores the directory,
+/// and <c>.agent_sync</c> makes a second sync of an unchanged directory a read.
 /// </para>
 /// </remarks>
 public sealed class Agent : IAsyncDisposable
@@ -393,7 +393,6 @@ public sealed class Agent : IAsyncDisposable
     private readonly AgentOptions _options;
     private readonly bool _ownsClient;
     private readonly string _config;
-    private readonly SemaphoreSlim _syncing = new(1, 1);
     private Edge? _edge;
     private string _configId = "";
     private Session? _session;
@@ -406,7 +405,7 @@ public sealed class Agent : IAsyncDisposable
         {
             Folder = Folder.Load(path);
         }
-        _config = Folder is null ? options.Config ?? "" : "";
+        _config = Folder is null ? options.Config ?? "" : options.Name is { Length: > 0 } ? options.Name : Folder.Name;
         _configId = options.ConfigId ?? "";
         if (_configId != "" && (Folder is not null || _config != ""))
         {
@@ -688,7 +687,6 @@ public sealed class Agent : IAsyncDisposable
         {
             Client.Dispose();
         }
-        _syncing.Dispose();
     }
 
     /// <summary>The session request, rendered from the agent and the conversation.</summary>
@@ -761,23 +759,23 @@ public sealed class Agent : IAsyncDisposable
 
     private async Task<Session> OpenAsync(string? sessionId, bool voice, SessionOptions? options, SessionPhone? phone, bool navigating, CancellationToken cancellationToken)
     {
-        if (Folder is not null && _configId == "")
+        Models.Session created;
+        try
         {
-            await _syncing.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (_configId == "")
-                {
-                    await SyncAsync(cancellationToken).ConfigureAwait(false);
-                }
-            }
-            finally
-            {
-                _syncing.Release();
-            }
+            created = await Client.PostAsync<Models.Session>("/v1/agents/sessions",
+                Request(sessionId, voice, options, phone, navigating), cancellationToken).ConfigureAwait(false);
         }
-        var created = await Client.PostAsync<Models.Session>("/v1/agents/sessions",
-            Request(sessionId, voice, options, phone, navigating), cancellationToken).ConfigureAwait(false);
+        // The router answers a session 404 only when no config is stored under the name.
+        catch (RouterException refused) when (refused.Status == 404 && _configId == "" && _config != "")
+        {
+            throw new RouterException(refused.Status, refused.Operation, $"{refused.Said}; store it with SyncAsync first", refused)
+            {
+                Type = refused.Type,
+                Code = refused.Code,
+                DocUrl = refused.DocUrl,
+                RequestId = refused.RequestId,
+            };
+        }
         var session = await Session.OpenAsync(Client, created, Tools, UserId, new Session.Watch(), cancellationToken).ConfigureAwait(false);
         Volatile.Write(ref _session, session);
         return session;
