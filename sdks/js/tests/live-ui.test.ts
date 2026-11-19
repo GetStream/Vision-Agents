@@ -500,11 +500,11 @@ describe("loadFolder declarative ui catalog and blueprints", () => {
 
     const first = await loadFolder(dir);
     const second = await loadFolder(dir);
-    assert.equal(first.instructions, second.instructions);
-    assert.match(first.instructions, /RestaurantCard\(name: string, rating: number\)/);
-    assert.match(first.instructions, /\*\*venue_booking\*\*/);
-    assert.match(first.instructions, /openui-patch/);
-    assert.doesNotMatch(first.instructions, /BarChart\(/);
+    assert.equal(first.uiInstructions!, second.uiInstructions!);
+    assert.match(first.uiInstructions!, /RestaurantCard\(name: string, rating: number\)/);
+    assert.match(first.uiInstructions!, /\*\*venue_booking\*\*/);
+    assert.match(first.uiInstructions!, /openui-patch/);
+    assert.doesNotMatch(first.uiInstructions!, /BarChart\(/);
   });
 
   it("places a component that takes no parameters, as the Go SDK does", async () => {
@@ -517,7 +517,7 @@ describe("loadFolder declarative ui catalog and blueprints", () => {
     );
 
     const loaded = await loadFolder(dir);
-    assert.match(loaded.instructions, /BrandBadge\(\) — Northwind's logo, for the top of a card\./);
+    assert.match(loaded.uiInstructions!, /BrandBadge\(\) — Northwind's logo, for the top of a card\./);
   });
 
   it("refuses a ui components path that leaves the agent directory", async () => {

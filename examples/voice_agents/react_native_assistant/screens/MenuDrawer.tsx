@@ -10,6 +10,7 @@ import { Plus, useStableCallback } from 'stream-chat-expo';
 
 import { agentSessions } from '../agent/agents';
 import { useAppContext } from '../contexts/AppContext';
+import { Settings } from './Settings';
 
 type SessionRow = Schemas['Session'];
 
@@ -74,7 +75,13 @@ export const MenuDrawer = ({ navigation }: DrawerContentComponentProps) => {
           <Plus size={24} stroke='#000000' />
         </Pressable>
       </View>
-      <FlatList data={sessions} keyExtractor={keyExtractor} renderItem={renderItem} />
+      {/* Under the conversations, so a short screen scrolls to it. */}
+      <FlatList
+        data={sessions}
+        keyExtractor={keyExtractor}
+        ListFooterComponent={Settings}
+        renderItem={renderItem}
+      />
     </SafeAreaView>
   );
 };

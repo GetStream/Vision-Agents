@@ -13,10 +13,9 @@ import { Drawer } from 'expo-router/drawer';
 import type { LocalMessage } from 'stream-chat';
 import { Chat, OverlayProvider, useCreateChatClient } from 'stream-chat-expo';
 
-import { StreamTheme } from 'stream-chat-expo/ai-components';
-
 import { streamToken } from '../agent/agents';
 import { AgentConfig } from '../agent/config';
+import { BrandProvider } from '../components/Brand';
 import { AppProvider } from '../contexts/AppContext';
 
 import { MenuDrawer } from '../screens/MenuDrawer';
@@ -37,7 +36,7 @@ export default function Layout() {
     <SafeAreaProvider>
       <KeyboardProvider>
         <AppProvider client={chatClient}>
-          <StreamTheme>
+          <BrandProvider>
             <GestureHandlerRootView style={styles.container}>
               <OverlayProvider>
                 <Chat client={chatClient} isMessageAIGenerated={isMessageAIGenerated}>
@@ -50,7 +49,7 @@ export default function Layout() {
                 </Chat>
               </OverlayProvider>
             </GestureHandlerRootView>
-          </StreamTheme>
+          </BrandProvider>
         </AppProvider>
       </KeyboardProvider>
     </SafeAreaProvider>

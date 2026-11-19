@@ -198,6 +198,10 @@ func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event mes
 	}
 	if opened {
 		defer func() {
+			// The session ends with the turn, before a call held for a person's approval would
+			// stop waiting (session.approvalWait), so the model is never told the call expired:
+			// the reply says it.
+			found.ExpireApprovals()
 			if _, err := s.sessions.Close(found.ID(), session.OwnerOf(found.Spec())); err != nil {
 				s.logger.Error("could not close the session of a channel the Router answers in", "channel", cid, "session", found.ID(), "error", err)
 			}

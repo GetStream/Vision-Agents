@@ -10,12 +10,13 @@ import { approverFor, ChatView } from "./ChatView";
 import { ConversationList, SidebarRail } from "./ConversationList";
 import { Conversations, displayTitle, type SessionRow } from "./conversations";
 import { messageOf } from "./errors";
-import { ReplyFormatMenu } from "./ReplyFormatMenu";
+import { cardsInNewConversations, ReplyFormatMenu } from "./ReplyFormatMenu";
 import { deviceTools } from "./deviceTools";
 import { IncognitoIcon, MenuIcon, NewChatIcon } from "./icons";
 import { useMediaQuery, useStoredFlag, useTheme, WIDE } from "./layout";
 import { scheduleReminders } from "./reminders";
 import { useStore } from "./store";
+import { ChatScreenContext } from "./tripComponents";
 import { VoiceMode } from "./VoiceMode";
 
 /**
@@ -249,10 +250,13 @@ function Assistant_() {
           <ReplyFormatMenu />
         </header>
         <main className="content">
-          <ChatView incognito={isIncognito} key={String(screenKey(screen))} screen={screen} />
-          {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
-              Picking another conversation in the sidebar hangs up, as leaving this one does. */}
-          {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
+          {/* A card the agent shows, in writing or on the call, can give the conversation's session a tool. */}
+          <ChatScreenContext value={screen}>
+            <ChatView incognito={isIncognito} key={String(screenKey(screen))} screen={screen} />
+            {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
+                Picking another conversation in the sidebar hangs up, as leaving this one does. */}
+            {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
+          </ChatScreenContext>
         </main>
       </div>
     </div>
@@ -286,6 +290,8 @@ function screenDeps(tools: Tools, incognito: boolean): ChatScreenDeps {
           returnUrl: Assistant.returnUrl,
           tools,
           ...(incognito ? { incognito } : {}),
+          // Off leaves the UI instructions the backend chose out of this conversation.
+          ...(cardsInNewConversations() ? {} : { ui: false }),
         });
       }
       try {

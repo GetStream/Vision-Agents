@@ -1,7 +1,7 @@
 import type { PropsWithChildren } from 'react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import { type ConversationSnapshot, type Session } from '@stream-io/stream-agents';
+import { type ConversationSnapshot } from '@stream-io/stream-agents';
 import {
   AgentChat,
   agentChatTransport,
@@ -29,6 +29,7 @@ import {
 } from '../agent/conversation';
 import { createDeviceTools } from '../agent/deviceTools';
 import { imagesOf } from '../agent/photos';
+import { formatSaved } from '../agent/replyFormat';
 import { THINK_HARDER } from '../chatOptions';
 
 const IDLE: ConversationSnapshot = { kind: 'idle', skills: [] };
@@ -44,29 +45,6 @@ const deviceTools = createDeviceTools({ clientId, userId: AgentConfig.user.id })
 const SIGN_IN_SCHEME = 'io.getstream.expochatgptsample';
 const SIGN_IN_RETURN_URL = `${SIGN_IN_SCHEME}://sign-in`;
 
-// The person's answer to a call that asks first. stream-agents' `decide` answers only a call this
-// session was asked on its own socket, and leaves any other alone, so a question shown from the
-// channel, as after reopening the conversation or reloading the app, would wait forever. Such a
-// call is answered with the frames `decide` sends, which the router matches by the call's id: an
-// allowed client tool's call then waits for this phone, whose runner runs it.
-const answerApproval = (session: Session, toolCallId: string, allowed: boolean) => {
-  if (session.approvals.some((request) => request.id === toolCallId)) {
-    session.decide(toolCallId, { allowed });
-    return;
-  }
-  const socket = (
-    session as unknown as { held(): { send(frame: Record<string, unknown>): void } }
-  ).held();
-  socket.send({ allowed, tool_call_id: toolCallId, type: 'tool_approval' });
-  if (!allowed) {
-    socket.send({
-      error: 'The person declined this call.',
-      tool_call_id: toolCallId,
-      type: 'tool_result',
-    });
-  }
-};
-
 // Answers go over the session's socket, which opens for them in a conversation that was only
 // read so far. Each throws when it can't send, so the card lets the person answer again.
 const approverFor = (chat: Chat): AIToolApprover => ({
@@ -75,7 +53,7 @@ const approverFor = (chat: Chat): AIToolApprover => ({
     decline: async (call) => (await chat.session()).declineLogin(call.id),
   }),
   clientId,
-  decide: async (call, allowed) => answerApproval(await chat.session(), call.id, allowed),
+  decide: (call, allowed) => chat.decide(call.id, { allowed }),
   userId: AgentConfig.user.id,
 });
 
@@ -125,23 +103,24 @@ const selector = ({ messages, session }: ChatState) => ({
 const openSession: OpenAgentSession = (sessionId) =>
   sessionId
     ? agentSessions().resume(sessionId, { tools: deviceTools.sessionTools() })
-    : agentSessions().create({
-        modelOverwrites: { llm: AgentConfig.chatModel },
-        return_url: SIGN_IN_RETURN_URL,
-        tools: deviceTools.sessionTools(),
-      });
+    : // A conversation keeps the format it starts with: one changing in Settings goes first.
+      formatSaved().then(() =>
+        agentSessions().create({
+          modelOverwrites: { llm: AgentConfig.chatModel },
+          return_url: SIGN_IN_RETURN_URL,
+          tools: deviceTools.sessionTools(),
+        }),
+      );
 
 const newChat = (sessionId?: string): Chat =>
   new AgentChat<LocalMessage>({ open: openSession, sessionId });
 
 // The conversation's state over the chat. Asking goes through the session, which records the
 // question in the channel and answers it there; the router takes photos as data URIs, and
-// thinking harder as a high reasoning effort.
+// thinking harder as a high reasoning effort. A reply written again, or a question edited, keeps
+// its earlier versions, which the transport switches between with ‹ i/n ›.
 const conversationOf = (chat: Chat) =>
   new AIConversationController({
-    // The agents router keeps the conversation in Stream Chat and can't rewind it, so a reply
-    // can't be written again or a message edited: either would only be asked again as new.
-    actions: { edit: false, regenerate: false },
     approver: approverFor(chat),
     transport: agentChatTransport(chat, {
       adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
