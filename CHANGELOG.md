@@ -4,7 +4,7 @@
 
 ### The .NET SDK connects a user's own accounts
 
-`VisionAgentsClient.Connections` creates, authorizes, reads, lists and deletes connections: `CreateAsync("linear", userId: "alice")`, `AuthorizeAsync(id, returnUrl, userId)` for the consent's launch URL, handoff token and expiry, `GetAsync(id, userId)`, `ListAsync(connectorId, userId)` reading every page, and `DeleteAsync(id, userId)`; a user given is sent as the owner and as `X-Stream-User-Id`, and none is the app's own connection.
+`VisionAgentsClient.Connections` creates, authorizes, reads, lists and deletes connections: `CreateAsync("linear", new NewConnectionOptions { UserId = "alice" })`, `AuthorizeAsync(id, new AuthorizeOptions { ReturnUrl = ..., UserId = ... })` for the consent's launch URL, handoff token and expiry, `GetAsync(id, userId)`, `ListAsync(new ConnectionFilter { ConnectorId = ..., UserId = ... })` reading every page, and `DeleteAsync(id, userId)`; a user given is sent as the owner and as `X-Stream-User-Id`, and none is the app's own connection (#2099).
 
 ### The Go SDK reads a session's tokens, timeline and decisions
 
