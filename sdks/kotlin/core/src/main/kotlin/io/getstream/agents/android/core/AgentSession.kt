@@ -202,7 +202,10 @@ public class AgentSession internal constructor(
         val call = decided.call
         try {
             socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
-        } catch (e: AgentsException) {
+        } catch (e: Exception) {
+            // Cancelled, the answer is taken as not sent, since a call left claimed can never be
+            // answered again.
+            if (e !is AgentsException && e !is CancellationException) throw e
             held.update { it.toMutableList().apply { add(minOf(index, size), decided) } }
             answered -= call.id
             throw e
@@ -235,7 +238,8 @@ public class AgentSession internal constructor(
         if (decideHeld(call.id, allowed, summary) || call.id in cancelled) return
         try {
             socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
-        } catch (e: AgentsException) {
+        } catch (e: Exception) {
+            if (e !is AgentsException && e !is CancellationException) throw e
             answered -= call.id
             throw e
         }
