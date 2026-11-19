@@ -740,6 +740,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 
 The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.
+### A tool's question survives the app being closed while it waits
+
+A tool call waiting for the person to allow it went to the channel only in live updates, and the call itself only to the socket of the app that asked. An app killed while the question was up and reopened showed "Thinking…" until the tool's timeout failed the call. The question and the person's answer are now stored on the call's step as soon as they happen, as a connector call's are, and a call still waiting for its answer is sent again, with its command, to a watcher that attaches later. A reopened app shows the question and can run the call when the person allows it, with each SDK's `decide` as it is (AI-3392).
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 

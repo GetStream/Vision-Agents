@@ -573,6 +573,7 @@ func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
 // (WatchFrom), sent resumed and then what it missed after cursor.
 func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Event, func()) {
 	attached := &watcher{events: make(chan Event, watcherBuffer), seat: seat}
+	asking := s.askingPerson()
 
 	s.mu.Lock()
 	if s.state == Ended {
@@ -615,6 +616,21 @@ func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Even
 	}
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
+	}
+	// A call still waiting for the person to allow it is asked again of a watcher that comes
+	// later, such as an app reopened after the one that was asked was closed: the question is
+	// on the reply's step, and only a watcher that has the call can answer it and run it.
+	for _, pending := range asking {
+		if resent[pending.ID] {
+			continue
+		}
+		if resent == nil {
+			resent = map[string]bool{}
+		}
+		resent[pending.ID] = true
+		replayed := s.placed(pending)
+		replayed.Run = s.seatRuns(seat, replayed.Name)
+		attached.send(replayed)
 	}
 	if seat.ReplayPendingVoiceTools && s.Voicing() && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
@@ -2361,6 +2377,24 @@ func (s *Session) broadcast(event Event) {
 				"session", s.id, "watcher", id)
 		}
 	}
+}
+
+// askingPerson is the calls still waiting for the person to allow them, on the step of the
+// conversation's reply, each with its command as askTool sends it. It is read without s.mu,
+// since the conversation broadcasts to the session under its own lock.
+func (s *Session) askingPerson() []ToolCall {
+	if s.persisted == nil || s.tools == nil {
+		return nil
+	}
+	var asking []ToolCall
+	for _, pending := range s.tools.Pending() {
+		if !s.persisted.AwaitsApproval(pending.ID) {
+			continue
+		}
+		pending.CommandID, _ = s.persisted.CommandForTurn(pending.TurnID)
+		asking = append(asking, pending)
+	}
+	return asking
 }
 
 // placed is call with what it is part of filled in: this session, its conversation, and
