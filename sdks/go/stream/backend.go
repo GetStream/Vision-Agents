@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 )
 
 const (
@@ -143,6 +144,10 @@ type Backend struct {
 	// reaches a conversation that belongs to somebody. Unlike UserID it keeps the app's own
 	// credential, so the request is still the server's: what it writes is answered by the
 	// model rather than handed to a dispatch worker, and no daily limit is counted.
+	//
+	// Deprecated: name the user on each call instead, as the UserID of the call's options,
+	// such as client.ConnectionFilter. A backend that holds one user for every request it
+	// makes cannot also make one for somebody else. It keeps working as it did.
 	ActingFor string
 	// Team is the customer's team the work is counted against, such as finance: its spend
 	// and its spend limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
@@ -223,6 +228,13 @@ func (b Backend) Resolve() (Backend, error) {
 		}
 	}
 	return b, nil
+}
+
+// Acting is this backend speaking for who, and for nobody when who names nobody, whoever it
+// spoke for before. It is how the packages of this module act for a user without ActingFor.
+func (b Backend) Acting(who acting.Who) Backend {
+	b.ActingFor = who.ID()
+	return b
 }
 
 // token mints what the proxy verifies: a token signed with the app's secret, naming a user

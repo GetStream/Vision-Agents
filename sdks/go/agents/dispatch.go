@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/client"
+	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -238,9 +239,7 @@ func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
 	if message.SessionID == "" {
 		return errors.New("agents: no session is holding this message; open one with Conversation")
 	}
-	backend := d.backend
-	backend.ActingFor = message.UserID
-	api, err := client.New(backend)
+	api, err := client.New(d.backend.Acting(acting.User(message.UserID)))
 	if err != nil {
 		return err
 	}

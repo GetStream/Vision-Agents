@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Go SDK deprecates `Backend.ActingFor`
+
+Name the user on each call, as the `UserID` of the call's options (`client.ConnectionFilter{UserID: "alice"}`), as the other server SDKs now do. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
+
 ### The Go SDK connects a user's own accounts
 
 `client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.

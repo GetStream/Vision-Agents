@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -215,7 +216,7 @@ func TestAUsersConnectionNamesThemAsOwnerAndActingUser(t *testing.T) {
 // acts for in X-Stream-User-Id, which would make each read depend on who the client was built for.
 func TestAnAppConnectionNamesNoUser(t *testing.T) {
 	backend := newRouter(t)
-	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme", ActingFor: "bob"})
+	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme"}.Acting(acting.User("bob")))
 	if err != nil {
 		t.Fatal(err)
 	}
