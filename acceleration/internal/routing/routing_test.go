@@ -399,7 +399,7 @@ func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoic
 		"a config that goes on to ask for diarize should narrow to the model this group already starts with")
 	s.ElementsMatch([]string{
 		"muse/muse-voice-transcribe-1.0",
-		"elevenlabs/scribe_v2_realtime",
+		"elevenlabs/scribe_v3_live",
 		"cartesia/ink-2",
 		"together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b",
 	}, names(candidates))
