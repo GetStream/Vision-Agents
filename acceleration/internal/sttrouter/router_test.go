@@ -62,7 +62,7 @@ func (s *STTRouterSuite) TestLowLatencyShortcutPrefersTheEnglishFluxModel() {
 	s.Equal("deepgram/flux-general-en", candidates[0].Config.Name())
 }
 
-func (s *STTRouterSuite) TestAnEnglishCallGoesToTheFourTrustedModelsAndNowhereElse() {
+func (s *STTRouterSuite) TestAnEnglishCallGoesToTheFiveTrustedModelsAndNowhereElse() {
 	// Every live model is realtime, low-latency and speaks English, so this shortcut is
 	// the ones the deployment trusts an English call to rather than everything that could
 	// serve one. The rest stay reachable by name and through the other shortcuts.
@@ -76,6 +76,7 @@ func (s *STTRouterSuite) TestAnEnglishCallGoesToTheFourTrustedModelsAndNowhereEl
 	s.ElementsMatch([]string{
 		"deepgram/flux-general-en",
 		"deepgram/flux-general-multi",
+		"assemblyai/assemblyai-stt-3-7-realtime-agent",
 		"grok/grok-stt",
 		"muse/muse-voice-transcribe-1.0",
 	}, names)

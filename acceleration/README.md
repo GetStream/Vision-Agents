@@ -755,11 +755,11 @@ pick rather than a list of their own to keep:
 
 | Group                | What it is                                                                      |
 | -------------------- | ------------------------------------------------------------------------------- |
-| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B and GPT-5.6 Luna, pinned to Gemma 4 26B |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B, Muse Ember and GPT-5.6 Luna, pinned to Gemma 4 26B |
 | `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
-| `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
-| `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
-| `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
+| `llm-smart`          | The high-quality tier, pinned to GPT-6.2 Astra                                  |
+| `stt-fast`           | Flux, AssemblyAI 3.7 Realtime-Agent, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en` |
+| `stt-accurate`       | Scribe v3 Live, MAI-Transcribe-2, Muse, Ink 2 and Nemotron, pinned to Scribe v3 Live |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
 | `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
 | `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
