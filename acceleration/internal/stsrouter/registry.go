@@ -6,6 +6,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openailive"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openairealtime"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/phonic"
 )
 
 // NewRegistry returns an empty registry.
@@ -65,6 +66,17 @@ func DefaultRegistry() *Registry {
 		})
 	})
 
+	registry.Register(phonic.ProviderName, func(spec routing.Spec) (sts.STS, error) {
+		return phonic.New(phonic.Options{
+			Model:        spec.Model,
+			Voice:        spec.Voice,
+			Instructions: spec.STS.Instructions,
+			Tools:        spec.Tools,
+			Languages:    spec.STS.Languages,
+			Logger:       spec.Logger,
+		})
+	})
+
 	return registry
 }
 
@@ -110,6 +122,8 @@ func capabilitiesFor(provider, model string) (sts.Capabilities, bool) {
 		return openairealtime.CapabilitiesFor(openairealtime.Qwen, model), true
 	case gemini.ProviderName:
 		return gemini.CapabilitiesFor(model), true
+	case phonic.ProviderName:
+		return phonic.CapabilitiesFor(model), true
 	default:
 		return sts.Capabilities{}, false
 	}
