@@ -751,6 +751,10 @@ The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the 
 
 A tool call waiting for the person to allow it went to the channel only in live updates, and the call itself only to the socket of the app that asked. An app killed while the question was up and reopened showed "Thinking…" until the tool's timeout failed the call. The question and the person's answer are now stored on the call's step as soon as they happen, as a connector call's are, and a call still waiting for its answer is sent again, with its command, to a watcher that attaches later. A reopened app shows the question and can run the call when the person allows it, with each SDK's `decide` as it is (AI-3392).
 
+### The JavaScript SDK answers a tool's question from a reopened app
+
+`AgentChat.decide` reads the call's step under `custom` in stream-chat 10, where it found no call to answer. A call allowed from the conversation before it reached this session, such as one a reopened app shows from history, now runs once the router sends it, instead of failing because the conversation keeps no arguments for it (AI-3392).
+
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 
 `Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).

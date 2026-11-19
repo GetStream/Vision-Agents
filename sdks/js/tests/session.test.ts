@@ -950,20 +950,24 @@ describe("Session", () => {
         await session.close();
       });
 
-      it("allowed with its arguments too long for the conversation to show, tells the model it couldn't run", async () => {
+      it("allowed without its arguments, runs it once the router sends the call, without asking again", async () => {
         const [session, connection] = await opened(refunds());
 
         session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
-
         assert.equal((await connection.next()).type, "tool_approval");
+        assert.deepEqual(ran, [], "nothing to run it with yet");
+
+        connection.send(refundCall);
+
         assert.deepEqual(await connection.next(), {
           type: "tool_result",
           tool_call_id: "call_1",
           request_id: "m1",
           turn_id: "t1",
-          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+          output: "Refunded A-1042",
         });
-        assert.deepEqual(ran, []);
+        assert.deepEqual(ran, ["A-1042"]);
+        assert.deepEqual(session.approvals, []);
         await session.close();
       });
 
