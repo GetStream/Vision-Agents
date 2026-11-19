@@ -2,6 +2,8 @@
 
 ## Features
 
+The Rust SDK connects a user's own accounts: `Client::connections()` has `create(connector, label, user_id)`, `authorize(id, return_url, user_id)` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(connector, user_id)` (every page) and `delete(id, user_id)`; a user given goes out as both the owner and `X-Stream-User-Id`, and `None` is the app's own connection.
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
