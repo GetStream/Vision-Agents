@@ -502,8 +502,8 @@ stt:
     # reason Nemotron's third tier is: a language the vendor's own figures say it
     # transcribes badly is not one to route a call to.
     #
-    # $0.39 an audio hour at the standard rate, before the $0.05 an hour keyterm prompting
-    # adds; an annual Business plan brings the base to $0.28.
+    # $0.22 an audio hour on every plan (repriced 2026-11-17, the same as Scribe v3 Live),
+    # before the $0.08 an hour keyterm prompting adds.
     - provider: elevenlabs
       model: scribe_v2_realtime
       description: "ElevenLabs' live Scribe, built for the 150 ms a live call needs."
@@ -585,6 +585,95 @@ stt:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Scribe v3 Live, launched 2026-11-10 as the successor to Scribe v2 Realtime above: the
+    # same socket and frames, opened with model_id=scribe_v3_live, and ElevenLabs' migration
+    # note says an integration behaves the same until it asks for turn_prediction. They
+    # report a 44% lower WER than v2 across 73 FLEURS languages; Artificial Analysis'
+    # streaming board, read 2026-11-19, has it at 2.9% and 81 ms to the final transcript
+    # against v2's 3.6% and 141 ms.
+    #
+    # The languages are v2's list. ElevenLabs have not yet published per-language error
+    # rates for v3, only the average across 73, so nothing yet says which further languages
+    # it can be trusted with.
+    #
+    # $0.22 an audio hour, the rate ElevenLabs now publish for every plan
+    # (https://elevenlabs.io/pricing/api, read 2026-11-19), before the $0.08 an hour
+    # keyterm prompting adds, which nothing here meters yet.
+    - provider: elevenlabs
+      model: scribe_v3_live
+      description: "ElevenLabs' Scribe v3 Live: v2 Realtime's successor, more accurate and faster to the final word."
+      benchmark: { word_error_rate: 0.029, latency_ms: 81 }
+      languages:
+        [
+          az,
+          be,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gu,
+          hi,
+          hr,
+          hu,
+          hy,
+          id,
+          is,
+          it,
+          ja,
+          ka,
+          kk,
+          kn,
+          lt,
+          lv,
+          mk,
+          ml,
+          mr,
+          ms,
+          mt,
+          ne,
+          nl,
+          no,
+          or,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sr,
+          sv,
+          sw,
+          ta,
+          te,
+          tr,
+          uk,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # The same two as v2, because they are what this package sends. v3 also offers a
+      # turn_prediction commit strategy, multilang_mode, a 10,000-term keyterm library and
+      # realtime diarize, and declares none of them: nothing here sends them yet.
+      supports: [keyterms, endpointing]
+      # ElevenLabs' account, the same answer as v2 above.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # AssemblyAI's Universal-3.6 Pro Realtime, launched 2026-09-29 for voice agents. It
     # switches between its 32 languages mid-sentence and decides where a turn ended from
     # the words rather than from a silence alone. No benchmark line: Artificial Analysis
@@ -648,6 +737,65 @@ stt:
       # Self-serve accounts are in the model improvement program until an admin on a paid
       # plan opts out in Data Controls, and only an opted-out account gets zero retention
       # for streaming. Opting out makes this "no" and none.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
+    # AssemblyAI-STT-3.7-Realtime-Agent, launched 2026-11-17 to replace Universal-3.6 Pro
+    # for voice agents, which stays above because AssemblyAI still fully support it. The
+    # same socket, protocol and parameters, so only speech_model differs; the same 32
+    # languages (assemblyai.com/llms/models.md, read 2026-11-19). Artificial Analysis
+    # measured 3.2% WER and 101 ms to the final transcript (read 2026-11-19), against
+    # 3.6% and 192 ms for Universal-3.6 Pro on its min_latency preset.
+    #
+    # $0.45 an hour, the same as Universal-3.6 Pro, billed by how long the socket is open,
+    # with keyterms included (assemblyai.com/pricing, read 2026-11-19). Speaker labels,
+    # Voice Focus, prompting and Medical Mode are add-ons this package never sends.
+    - provider: assemblyai
+      model: assemblyai-stt-3-7-realtime-agent
+      description: "AssemblyAI's STT 3.7 for voice agents: switches between 32 languages mid-sentence and finds the turn's end from the words."
+      benchmark: { word_error_rate: 0.032, latency_ms: 101 }
+      languages:
+        [
+          af,
+          ar,
+          ca,
+          da,
+          de,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fr,
+          gl,
+          he,
+          hi,
+          it,
+          ja,
+          ko,
+          mr,
+          nl,
+          nn,
+          no,
+          pt,
+          ro,
+          ru,
+          sv,
+          tr,
+          ur,
+          vi,
+          xh,
+          yue,
+          zh,
+          zu,
+        ]
+      realtime: true
+      tier: low-latency
+      # What universal-3-6-pro declares, for the same reason: keyterms_prompt and
+      # max_turn_silence are all this package sends of what the model can do.
+      supports: [keyterms, endpointing]
+      # The same account and the same model improvement program as universal-3-6-pro.
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
@@ -916,7 +1064,7 @@ stt:
       prefer: muse/muse-voice-transcribe-1.0
       only:
         - muse/muse-voice-transcribe-1.0
-        - elevenlabs/scribe_v2_realtime
+        - elevenlabs/scribe_v3_live
         - cartesia/ink-2
         - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
 
@@ -2810,6 +2958,27 @@ llm:
         trains_on_data: "no"
         retention: unspecified
 
+    # Meta's Muse Ember, the smallest Muse: $0.10/1M in and $0.50/1M out up to 200k tokens
+    # of prompt, three times that above (dev.meta.ai/models/muse-ember, read 2026-11-19).
+    # Artificial Analysis put it at about 470 output tokens a second. It takes Spark's
+    # requests unchanged: none is a 400, so the provider asks for low, and tool_choice takes
+    # auto and nothing else. Unlike Spark it is quick enough for the fast tier: streamed, the
+    # first answer token came 1.0-2.3 s after the request at minimal and low effort, against
+    # 1.5-4.7 s for Spark. Nothing prefers it; it is reached by name or as failover in the
+    # fast tier. The Standard terms are Spark's: no training, no retention window named.
+    - provider: meta
+      model: muse-ember-1.0
+      description: "Meta's smallest Muse, fast and cheap. Reads images and always thinks first."
+      benchmark: { output_tokens_per_second: 468 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
     # The open-weight models, and the hosts that serve them.
     #
     # The weights are the same wherever they run, so a second host of a model already
@@ -3084,6 +3253,27 @@ llm:
       model: gemini-4-hydrogen
       description: "Google's cheaper Gemini 4, quick at agent and tool work. Reads images, and can be asked to think from low to xhigh."
       benchmark: { intelligence_index: 51 }
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
+    # Gemini 4 Neon, between Hydrogen and Carbon, generally available on the paid tier only.
+    # It takes low, medium, high and xhigh, as Hydrogen does, and the provider asks for high.
+    # Artificial Analysis score it 44, 55, 60 and 61 across those. At low it took a median
+    # 3.9 s to its first answer token on our runs, against 2.2 s for Hydrogen and 1.6 s for
+    # 3.8 Flash, so it is no live-path model. The same unified 1M-token context as Argon.
+    # $3 in, $0.15 cached and $15 out per 1M tokens, flat across the context, thinking
+    # billed as output, implicit caching only (aistudio.google.com/docs/pricing, read
+    # 2026-11-19). The data terms are the paid Developer API's, as for Argon above.
+    - provider: gemini
+      model: gemini-4-neon
+      description: "Google's stronger Gemini 4 for hard work, above Hydrogen and dearer. Reads images, and can be asked to think from low to xhigh."
+      benchmark: { intelligence_index: 60 }
       context_window: 1048576
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true

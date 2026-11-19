@@ -20,7 +20,7 @@ const defaultBaseURL = "https://api.meta.ai/v1"
 
 // models are the Standard-tier ids, which Meta do not train on. The contributor variants
 // do, and are refused.
-var models = []string{DefaultModel, "muse-wonder-1.0"}
+var models = []string{DefaultModel, "muse-wonder-1.0", "muse-ember-1.0"}
 
 type Options struct {
 	APIKey          string

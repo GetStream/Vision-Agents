@@ -376,6 +376,17 @@ func TestASequencedEventIsItsOwnFrameWithACursor(t *testing.T) {
 	require.JSONEq(t, `{"type":"response_delta","turn_id":"turn-1","text":"Hel","cursor":"a1b2.7"}`, string(raw))
 }
 
+func TestAReplysThinkingReachesTheSocketUnderItsTurn(t *testing.T) {
+	// An incognito session keeps no Chat message to stream the thinking into, so the socket
+	// is the only place a client sees it.
+	sent, ok := frameOf(agent.ReasoningDelta{TurnID: "turn-1", Text: "The user wants Lisbon."})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"reasoning_delta","turn_id":"turn-1","text":"The user wants Lisbon."}`, string(raw))
+}
+
 func TestAResumedFrameCarriesTheReceiptOfTheCommandAskedAfter(t *testing.T) {
 	receipt := conversation.CommandReceipt{CommandID: "command-1", UserMessageID: "command-1", AssistantMessageID: "reply-1", State: "interrupted"}
 
