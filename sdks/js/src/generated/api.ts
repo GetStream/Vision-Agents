@@ -459,7 +459,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Add people to ring
-         * @description A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
+         * @description A draft, or an auto_enroll campaign that is scheduled, running or paused: there they start on the first step at the next calling hours, or at start_at when it has not come. Any other campaign is refused with 409 campaign_locked. Contacts who opted out of calls are added as rejected, without a call, once the campaign has launched. Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["addCampaignContacts"];
@@ -488,10 +488,20 @@ export type paths = {
         readonly get: operations["getCampaignContact"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
+        /**
+         * Remove one contact of a draft
+         * @description Once the campaign has launched, 409 campaign_locked: stop the contact instead.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteCampaignContact"];
         readonly options?: never;
         readonly head?: never;
-        readonly patch?: never;
+        /**
+         * Change one contact of a draft
+         * @description A field left out keeps its value; variables, when sent, replace them all, and an empty time_zone or instructions clears it. A number without a country code is read in the campaign's default_country. A value that would be refused on add is refused with 400, saying the reason. A number another contact of the campaign has is refused with 409 contact_duplicate. Once the campaign has launched, 409 campaign_locked: stop the contact instead.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly patch: operations["updateCampaignContact"];
         readonly trace?: never;
     };
     readonly "/v1/agents/campaigns/{id}/contacts/{contact_id}/stop": {
@@ -547,7 +557,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Launch a draft
-         * @description Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+         * @description Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["launchCampaign"];
@@ -5956,7 +5966,7 @@ export type components = {
             readonly mode: "contact" | "fixed";
         };
         /**
-         * @description What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+         * @description What a campaign rings. standard rings the contacts it was given before launch, and completes once it is done with them. auto_enroll also takes contacts while scheduled, running or paused, starts each on the first step within calling hours, and runs until it is stopped. Fixed once the campaign is created.
          * @enum {string}
          */
         readonly CampaignType: "standard" | "auto_enroll";
@@ -6862,6 +6872,18 @@ export type components = {
          * @enum {string}
          */
         readonly ContactStage: "enrolled" | "in_progress" | "completed" | "rejected" | "stopped" | "failed";
+        readonly ContactUpdateRequest: {
+            /** @description What to say to this person. Empty clears it. */
+            readonly instructions?: string;
+            /** @description An IANA zone. Empty clears it. */
+            readonly time_zone?: string;
+            /** @description With or without a country code. */
+            readonly to_number?: string;
+            /** @description Replace all of the contact's variables. Same rules as on add. */
+            readonly variables?: {
+                readonly [key: string]: string;
+            };
+        };
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
         /** @description One place a call's cost came from. */
         readonly CostSource: {
@@ -12759,6 +12781,98 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly deleteCampaignContact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The contact, as the campaign's contacts list it. */
+                readonly contact_id: string;
+                /** @description The campaign. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The contact is gone */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly updateCampaignContact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The contact, as the campaign's contacts list it. */
+                readonly contact_id: string;
+                /** @description The campaign. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContactUpdateRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The contact */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Contact"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

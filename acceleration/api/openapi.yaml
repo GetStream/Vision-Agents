@@ -2485,7 +2485,7 @@ components:
         - fallback
       type: object
     CampaignType:
-      description: What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+      description: What a campaign rings. standard rings the contacts it was given before launch, and completes once it is done with them. auto_enroll also takes contacts while scheduled, running or paused, starts each on the first step within calling hours, and runs until it is stopped. Fixed once the campaign is created.
       enum:
         - standard
         - auto_enroll
@@ -4133,6 +4133,24 @@ components:
         - stopped
         - failed
       type: string
+    ContactUpdateRequest:
+      properties:
+        instructions:
+          description: What to say to this person. Empty clears it.
+          maxLength: 2000
+          type: string
+        time_zone:
+          description: An IANA zone. Empty clears it.
+          type: string
+        to_number:
+          description: With or without a country code.
+          type: string
+        variables:
+          additionalProperties:
+            type: string
+          description: Replace all of the contact's variables. Same rules as on add.
+          type: object
+      type: object
     ContentPart:
       oneOf:
         - $ref: '#/components/schemas/TextContentPart'
@@ -13605,7 +13623,7 @@ paths:
       summary: Who a campaign rings, and how far it has got
     post:
       description: |-
-        A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
+        A draft, or an auto_enroll campaign that is scheduled, running or paused: there they start on the first step at the next calling hours, or at start_at when it has not come. Any other campaign is refused with 409 campaign_locked. Contacts who opted out of calls are added as rejected, without a call, once the campaign has launched. Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: addCampaignContacts
       parameters:
@@ -13660,6 +13678,59 @@ paths:
           $ref: '#/components/responses/Unavailable'
       summary: Add people to ring
   /v1/agents/campaigns/{id}/contacts/{contact_id}:
+    delete:
+      description: |-
+        Once the campaign has launched, 409 campaign_locked: stop the contact instead.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteCampaignContact
+      parameters:
+        - description: The campaign.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The campaign.
+            type: string
+        - description: The contact, as the campaign's contacts list it.
+          in: path
+          name: contact_id
+          required: true
+          schema:
+            description: The contact, as the campaign's contacts list it.
+            type: string
+      responses:
+        "204":
+          description: The contact is gone
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Remove one contact of a draft
     get:
       description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
       operationId: getCampaignContact
@@ -13709,6 +13780,69 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: One contact, with every dial made to them
+    patch:
+      description: |-
+        A field left out keeps its value; variables, when sent, replace them all, and an empty time_zone or instructions clears it. A number without a country code is read in the campaign's default_country. A value that would be refused on add is refused with 400, saying the reason. A number another contact of the campaign has is refused with 409 contact_duplicate. Once the campaign has launched, 409 campaign_locked: stop the contact instead.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: updateCampaignContact
+      parameters:
+        - description: The campaign.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The campaign.
+            type: string
+        - description: The contact, as the campaign's contacts list it.
+          in: path
+          name: contact_id
+          required: true
+          schema:
+            description: The contact, as the campaign's contacts list it.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactUpdateRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: The contact
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Change one contact of a draft
   /v1/agents/campaigns/{id}/contacts/{contact_id}/stop:
     post:
       description: |-
@@ -13821,7 +13955,7 @@ paths:
   /v1/agents/campaigns/{id}/launch:
     post:
       description: |-
-        Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+        Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: launchCampaign
       parameters:

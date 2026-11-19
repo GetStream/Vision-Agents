@@ -40,8 +40,9 @@ class Campaign:
             while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to
             ring.
         tags (CampaignTags):
-        type_ (CampaignType): What a campaign rings. standard rings the contacts it was given; auto_enroll is refused
-            for now. Fixed once the campaign is created.
+        type_ (CampaignType): What a campaign rings. standard rings the contacts it was given before launch, and
+            completes once it is done with them. auto_enroll also takes contacts while scheduled, running or paused, starts
+            each on the first step within calling hours, and runs until it is stopped. Fixed once the campaign is created.
         completed_at (datetime.datetime | Unset): When it had nobody left to ring.
         launched_at (datetime.datetime | Unset):
         paused_reason (str | Unset): Why the router paused the campaign itself: the code of what refused its next call,

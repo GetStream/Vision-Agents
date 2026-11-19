@@ -107,10 +107,12 @@ def sync_detailed(
 ) -> Response[AddContactsResponse | ErrorResponse]:
     """Add people to ring
 
-     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
-    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
-    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
-    and why.
+     A draft, or an auto_enroll campaign that is scheduled, running or paused: there they start on the
+    first step at the next calling hours, or at start_at when it has not come. Any other campaign is
+    refused with 409 campaign_locked. Contacts who opted out of calls are added as rejected, without a
+    call, once the campaign has launched. Up to 1,000 a request. Each number is stored in E.164, read in
+    default_country when it has no country code. A row that cannot be rung, or repeats a number the
+    campaign holds, is refused and the rest are added: refused says which and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -145,10 +147,12 @@ def sync(
 ) -> AddContactsResponse | ErrorResponse | None:
     """Add people to ring
 
-     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
-    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
-    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
-    and why.
+     A draft, or an auto_enroll campaign that is scheduled, running or paused: there they start on the
+    first step at the next calling hours, or at start_at when it has not come. Any other campaign is
+    refused with 409 campaign_locked. Contacts who opted out of calls are added as rejected, without a
+    call, once the campaign has launched. Up to 1,000 a request. Each number is stored in E.164, read in
+    default_country when it has no country code. A row that cannot be rung, or repeats a number the
+    campaign holds, is refused and the rest are added: refused says which and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -178,10 +182,12 @@ async def asyncio_detailed(
 ) -> Response[AddContactsResponse | ErrorResponse]:
     """Add people to ring
 
-     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
-    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
-    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
-    and why.
+     A draft, or an auto_enroll campaign that is scheduled, running or paused: there they start on the
+    first step at the next calling hours, or at start_at when it has not come. Any other campaign is
+    refused with 409 campaign_locked. Contacts who opted out of calls are added as rejected, without a
+    call, once the campaign has launched. Up to 1,000 a request. Each number is stored in E.164, read in
+    default_country when it has no country code. A row that cannot be rung, or repeats a number the
+    campaign holds, is refused and the rest are added: refused says which and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -214,10 +220,12 @@ async def asyncio(
 ) -> AddContactsResponse | ErrorResponse | None:
     """Add people to ring
 
-     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
-    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
-    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
-    and why.
+     A draft, or an auto_enroll campaign that is scheduled, running or paused: there they start on the
+    first step at the next calling hours, or at start_at when it has not come. Any other campaign is
+    refused with 409 campaign_locked. Contacts who opted out of calls are added as rejected, without a
+    call, once the campaign has launched. Up to 1,000 a request. Each number is stored in E.164, read in
+    default_country when it has no country code. A row that cannot be rung, or repeats a number the
+    campaign holds, is refused and the rest are added: refused says which and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

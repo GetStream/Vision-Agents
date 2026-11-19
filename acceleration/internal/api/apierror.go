@@ -86,6 +86,7 @@ const (
 	codeCallNotFound            = "call_not_found"
 	codeCampaignNotFound        = "campaign_not_found"
 	codeContactNotFound         = "contact_not_found"
+	codeContactDuplicate        = "contact_duplicate"
 	codeCampaignLocked          = "campaign_locked"
 	codeCampaignNotReady        = "campaign_not_ready"
 	codeConsentRequired         = "consent_required"

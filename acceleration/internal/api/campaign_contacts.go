@@ -19,10 +19,22 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-var errUnknownContact = APIError{
-	Type: ErrorTypeNotFound, Code: codeContactNotFound,
-	Message: "no such contact",
-}
+var (
+	errUnknownContact = APIError{
+		Type: ErrorTypeNotFound, Code: codeContactNotFound,
+		Message: "no such contact",
+	}
+	errDuplicateContact = APIError{
+		Type: ErrorTypeConflict, Code: codeContactDuplicate,
+		Message: "another contact of the campaign has this number",
+	}
+	// errContactsFixed is a change to one contact once the campaign has launched, when calls may
+	// already have been made to them.
+	errContactsFixed = APIError{
+		Type: ErrorTypeConflict, Code: codeCampaignLocked,
+		Message: "a contact can only be changed or removed while the campaign is a draft: stop them instead",
+	}
+)
 
 const (
 	defaultContactPage = 50
@@ -67,8 +79,8 @@ func (s *Server) listCampaignContacts(ctx context.Context, request *listCampaign
 	return &listCampaignContactsResponse{Body: rendered}, nil
 }
 
-// addCampaignContacts adds people to ring to a draft. A row that cannot be rung is refused and
-// the rest are added.
+// addCampaignContacts adds people to ring to a draft, or to an auto-enroll campaign that has not
+// ended. A row that cannot be rung is refused and the rest are added.
 func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignContactsRequest) (*addCampaignContactsResponse, error) {
 	_, current, err := s.campaign(ctx, request.Id)
 	if err != nil {
@@ -76,9 +88,6 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 	}
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
-	}
-	if current.State != store.Draft {
-		return nil, errCampaignLocked
 	}
 	country := strings.ToUpper(cmp.Or(value(request.Body.DefaultCountry), current.DefaultCountry, "US"))
 	if phonenumbers.GetCountryCodeForRegion(country) == 0 {
@@ -150,6 +159,80 @@ func contactFrom(input ContactInput, country string) (store.Contact, RefusedReas
 		TimeZone:     zone,
 		Instructions: value(input.Instructions),
 	}, ""
+}
+
+// updateCampaignContact changes one contact of a draft. A field left out keeps its value.
+func (s *Server) updateCampaignContact(ctx context.Context, request *updateCampaignContactRequest) (*campaignContactResponse, error) {
+	_, current, err := s.campaign(ctx, request.Id)
+	if err != nil {
+		return nil, err
+	}
+	if current.State != store.Draft {
+		return nil, errContactsFixed
+	}
+	if request.Body == nil {
+		return nil, invalidRequest("a request body is required")
+	}
+	found, _, err := s.store.CampaignContact(ctx, current.ID, request.ContactId)
+	if errors.Is(err, store.ErrNoCampaignContact) {
+		return nil, errUnknownContact
+	}
+	if err != nil {
+		return nil, err
+	}
+	body := request.Body
+	input := ContactInput{
+		ToNumber:     cmp.Or(value(body.ToNumber), found.ToNumber),
+		Variables:    found.Variables,
+		TimeZone:     &found.TimeZone,
+		Instructions: &found.Instructions,
+	}
+	if body.Variables != nil {
+		input.Variables = body.Variables
+	}
+	if body.TimeZone != nil {
+		input.TimeZone = body.TimeZone
+	}
+	if body.Instructions != nil {
+		input.Instructions = body.Instructions
+	}
+	contact, reason := contactFrom(input, cmp.Or(current.DefaultCountry, "US"))
+	if reason != "" {
+		return nil, invalidRequest("the contact was not changed: " + string(reason))
+	}
+	_, err = s.store.UpdateContact(ctx, current.ID, found.ID, contact)
+	switch {
+	case errors.Is(err, store.ErrDuplicateContact):
+		return nil, errDuplicateContact
+	case errors.Is(err, store.ErrCampaignLocked):
+		return nil, errContactsFixed
+	case errors.Is(err, store.ErrNoCampaignContact):
+		return nil, errUnknownContact
+	case err != nil:
+		return nil, err
+	}
+	return s.contactAnswer(ctx, current, found.ID)
+}
+
+// deleteCampaignContact removes one contact of a draft.
+func (s *Server) deleteCampaignContact(ctx context.Context, request *campaignContactRequest) (*struct{}, error) {
+	_, current, err := s.campaign(ctx, request.Id)
+	if err != nil {
+		return nil, err
+	}
+	if current.State != store.Draft {
+		return nil, errContactsFixed
+	}
+	err = s.store.DeleteContact(ctx, current.ID, request.ContactId)
+	switch {
+	case errors.Is(err, store.ErrNoCampaignContact):
+		return nil, errUnknownContact
+	case errors.Is(err, store.ErrCampaignLocked):
+		return nil, errContactsFixed
+	case err != nil:
+		return nil, err
+	}
+	return nil, nil
 }
 
 // deleteCampaignContacts removes every contact of a draft.
@@ -302,7 +385,10 @@ func (s *Server) registerCampaignContacts(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/campaigns/{id}/contacts",
 		Summary:     "Add people to ring",
-		Description: "A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a " +
+		Description: "A draft, or an auto_enroll campaign that is scheduled, running or paused: there they " +
+			"start on the first step at the next calling hours, or at start_at when it has not come. Any " +
+			"other campaign is refused with 409 campaign_locked. Contacts who opted out of calls are added " +
+			"as rejected, without a call, once the campaign has launched. Up to 1,000 a " +
 			"request. Each number is stored in E.164, read in default_country when it has no country code. " +
 			"A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest " +
 			"are added: refused says which and why.\n" + serverSideOnly,
@@ -335,6 +421,33 @@ func (s *Server) registerCampaignContacts(api huma.API) {
 		},
 		Errors: failures,
 	}, s.getCampaignContact)
+	huma.Register(api, huma.Operation{
+		OperationID: "updateCampaignContact",
+		Method:      http.MethodPatch,
+		Path:        "/v1/agents/campaigns/{id}/contacts/{contact_id}",
+		Summary:     "Change one contact of a draft",
+		Description: "A field left out keeps its value; variables, when sent, replace them all, and an empty " +
+			"time_zone or instructions clears it. A number without a country code is read in the campaign's " +
+			"default_country. A value that would be refused on add is refused with 400, saying the reason. " +
+			"A number another contact of the campaign has is refused with 409 contact_duplicate. Once the " +
+			"campaign has launched, 409 campaign_locked: stop the contact instead.\n" + serverSideOnly,
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The contact"},
+		},
+		Errors: append(failures, http.StatusConflict),
+	}, s.updateCampaignContact)
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteCampaignContact",
+		Method:        http.MethodDelete,
+		Path:          "/v1/agents/campaigns/{id}/contacts/{contact_id}",
+		Summary:       "Remove one contact of a draft",
+		Description:   "Once the campaign has launched, 409 campaign_locked: stop the contact instead.\n" + serverSideOnly,
+		DefaultStatus: http.StatusNoContent,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The contact is gone"},
+		},
+		Errors: append(failures, http.StatusConflict),
+	}, s.deleteCampaignContact)
 	huma.Register(api, huma.Operation{
 		OperationID: "stopCampaignContact",
 		Method:      http.MethodPost,
@@ -373,6 +486,20 @@ type addCampaignContactsResponse struct {
 type campaignContactRequest struct {
 	Id        string `path:"id" doc:"The campaign."`
 	ContactId string `path:"contact_id" doc:"The contact, as the campaign's contacts list it."`
+}
+
+type updateCampaignContactRequest struct {
+	Id        string                `path:"id" doc:"The campaign."`
+	ContactId string                `path:"contact_id" doc:"The contact, as the campaign's contacts list it."`
+	Body      *ContactUpdateRequest `required:"true"`
+}
+
+// ContactUpdateRequest is what changes about one contact. A field left out keeps its value.
+type ContactUpdateRequest struct {
+	ToNumber     *string           `json:"to_number,omitempty" doc:"With or without a country code."`
+	Variables    map[string]string `json:"variables,omitempty" doc:"Replace all of the contact's variables. Same rules as on add."`
+	TimeZone     *string           `json:"time_zone,omitempty" doc:"An IANA zone. Empty clears it."`
+	Instructions *string           `json:"instructions,omitempty" maxLength:"2000" doc:"What to say to this person. Empty clears it."`
 }
 
 type campaignContactResponse struct {

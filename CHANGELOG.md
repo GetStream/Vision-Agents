@@ -2,6 +2,10 @@
 
 ## Features
 
+### An auto-enroll campaign takes contacts after it launched, and a draft's contacts can be changed one at a time
+
+`POST /v1/agents/campaigns` now accepts `type: auto_enroll`. Such a campaign may launch with nobody on it, takes contacts with `POST /v1/agents/campaigns/{id}/contacts` while it is scheduled, running or paused, starts each new one on the first step at the next calling hours (or at `start_at` when that has not come), rejects those who opted out of calls without a call, and runs until it is stopped. A standard campaign is unchanged: its list is fixed at launch, and it completes once it is done with everybody. `PATCH` and `DELETE /v1/agents/campaigns/{id}/contacts/{contact_id}` change or remove one contact of a draft; a field left out of a change keeps its value, a number another contact has is refused with 409 `contact_duplicate`, and once the campaign has launched both answer 409 `campaign_locked`, as a contact is then stopped rather than changed (#PR).
+
 ### The Swift SDK shows an incognito session
 
 An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat (#2091).

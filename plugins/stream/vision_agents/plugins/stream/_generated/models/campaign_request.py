@@ -32,8 +32,9 @@ class CampaignRequest:
         name (str | Unset): Required on create.
         sequence (CampaignSequence | Unset):
         tags (CampaignRequestTags | Unset):
-        type_ (CampaignType | Unset): What a campaign rings. standard rings the contacts it was given; auto_enroll is
-            refused for now. Fixed once the campaign is created.
+        type_ (CampaignType | Unset): What a campaign rings. standard rings the contacts it was given before launch, and
+            completes once it is done with them. auto_enroll also takes contacts while scheduled, running or paused, starts
+            each on the first step within calling hours, and runs until it is stopped. Fixed once the campaign is created.
     """
 
     calling_hours: CallingHours | Unset = UNSET

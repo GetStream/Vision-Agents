@@ -36,7 +36,6 @@ var (
 		Type: ErrorTypeInvalidRequest, Code: codeConsentRequired,
 		Message: "launching a campaign needs consent: true, saying the people on it agreed to be called",
 	}
-	errAutoEnrollUnavailable = invalidRequest("auto-enroll campaigns are not available yet")
 )
 
 // campaignNotReady is a launch refused for what the campaign still lacks.
@@ -105,10 +104,6 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 	if name == "" {
 		return nil, invalidRequest("a campaign needs a name")
 	}
-	if body.Type != nil && *body.Type != CampaignTypeStandard {
-		return nil, errAutoEnrollUnavailable
-	}
-
 	if from := value(body.FromNumber); from != "" {
 		if err := s.holdsNumber(ctx, customerID, from); err != nil {
 			return nil, err
@@ -134,7 +129,7 @@ func (s *Server) createCampaign(ctx context.Context, request *createCampaignRequ
 	created := store.Campaign{
 		CustomerID:      customerID,
 		Name:            name,
-		Type:            store.Standard,
+		Type:            string(cmp.Or(value(body.Type), CampaignTypeStandard)),
 		ConfigID:        value(configID),
 		FromNumber:      value(body.FromNumber),
 		DefaultCountry:  value(body.DefaultCountry),
@@ -493,7 +488,8 @@ func (s *Server) readyToLaunch(ctx context.Context, customerID string, draft sto
 	if err != nil {
 		return err
 	}
-	if len(contacts) == 0 {
+	// An auto-enroll campaign is given its people as they are found, after it launched.
+	if len(contacts) == 0 && draft.Type != store.AutoEnroll {
 		return campaignNotReady("a campaign needs contacts to ring before it can launch")
 	}
 	if draft.FromNumber == "" {
@@ -738,7 +734,7 @@ func (s *Server) registerCampaigns(api huma.API) {
 		Path:        "/v1/agents/campaigns/{id}/launch",
 		Summary:     "Launch a draft",
 		Description: "Records the customer's consent and rings the contacts from start_at. A draft missing " +
-			"what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused " +
+			"what it needs (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is refused " +
 			"with campaign_not_ready, saying what. An organization that may not pay for calls is refused here " +
 			"as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who " +
 			"opted out of calls are rejected without a call.\n" + serverSideOnly,
@@ -909,7 +905,8 @@ func (*Campaign) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Sch
 	return schema
 }
 
-// CampaignType is what a campaign rings: standard rings the contacts it was given.
+// CampaignType is what a campaign rings: standard rings the contacts it was given, auto_enroll
+// also those added after it launched.
 type CampaignType string
 
 const (
@@ -919,7 +916,9 @@ const (
 
 func (CampaignType) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "CampaignType", "What a campaign rings. standard rings the contacts it was "+
-		"given; auto_enroll is refused for now. Fixed once the campaign is created.",
+		"given before launch, and completes once it is done with them. auto_enroll also takes contacts "+
+		"while scheduled, running or paused, starts each on the first step within calling hours, and runs "+
+		"until it is stopped. Fixed once the campaign is created.",
 		string(CampaignTypeStandard), string(CampaignTypeAutoEnroll))
 }
 

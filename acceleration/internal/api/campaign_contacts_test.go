@@ -398,6 +398,8 @@ func (s *CampaignContactsSuite) TestAnotherAppsContactsAreNotFound() {
 		{http.MethodPost, s.contactsPath(created.Id), map[string]any{"contacts": []map[string]any{{"to_number": "+14155550172"}}}},
 		{http.MethodDelete, s.contactsPath(created.Id), nil},
 		{http.MethodGet, s.contactPath(created.Id, contact.Id), nil},
+		{http.MethodPatch, s.contactPath(created.Id, contact.Id), map[string]any{"to_number": "+14155550173"}},
+		{http.MethodDelete, s.contactPath(created.Id, contact.Id), nil},
 		{http.MethodPost, s.contactPath(created.Id, contact.Id) + "/stop", nil},
 	} {
 		s.assertHiddenFromOtherApps(func(as *testClient) int {
@@ -416,6 +418,178 @@ func (s *CampaignContactsSuite) TestOnlyTheBackendMayAddContacts() {
 		return as.do(http.MethodPost, s.contactsPath(created.Id),
 			map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}}}, nil)
 	})
+}
+
+func (s *CampaignContactsSuite) TestAnAutoEnrollCampaignTakesPeopleAfterItLaunched() {
+	created := s.launchedAutoEnroll()
+
+	added := s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550181"}}})
+
+	s.Equal(1, added.Added)
+	listed := s.list(created.Id, "").Items
+	s.Require().Len(listed, 1)
+	s.Equal(ContactStageEnrolled, listed[0].Stage)
+	s.NotNil(listed[0].NextAttemptAt, "they are waiting to be rung, not left aside")
+}
+
+func (s *CampaignContactsSuite) TestAPausedAutoEnrollCampaignTakesPeople() {
+	created := s.launchedAutoEnroll()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/pause", nil, nil))
+
+	added := s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550182"}}})
+
+	s.Equal(1, added.Added)
+}
+
+func (s *CampaignContactsSuite) TestAStoppedAutoEnrollCampaignTakesNobody() {
+	created := s.launchedAutoEnroll()
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/stop", nil, nil))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.contactsPath(created.Id),
+		map[string]any{"contacts": []map[string]any{{"to_number": "+14155550183"}}})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(string(payload), codeCampaignLocked)
+	s.Empty(s.list(created.Id, "").Items)
+}
+
+func (s *CampaignContactsSuite) TestADraftsContactIsChanged() {
+	created := s.draft(map[string]any{"default_country": "GB"})
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550184", "variables": map[string]string{"first_name": "Ann"}}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	var changed Contact
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, s.contactPath(created.Id, contact.Id), map[string]any{
+		"to_number": "020 7946 0020", "variables": map[string]string{"first_name": "Anna"}, "time_zone": "Europe/London",
+	}, &changed))
+
+	s.Equal(contact.Id, changed.Id)
+	s.Equal("+442079460020", changed.ToNumber, "read in the campaign's country")
+	s.Equal(map[string]string{"first_name": "Anna"}, changed.Variables)
+	s.Require().NotNil(changed.TimeZone)
+	s.Equal("Europe/London", *changed.TimeZone)
+	s.Equal([]string{"+442079460020"}, s.numbers(s.list(created.Id, "").Items))
+}
+
+func (s *CampaignContactsSuite) TestAChangeLeavesOutWhatItDoesNotName() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550185", "time_zone": "America/Chicago",
+		"variables": map[string]string{"first_name": "Ben"}}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	var changed Contact
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, s.contactPath(created.Id, contact.Id),
+		map[string]any{"variables": map[string]string{"first_name": "Benjamin"}}, &changed))
+
+	s.Equal("+14155550185", changed.ToNumber)
+	s.Require().NotNil(changed.TimeZone)
+	s.Equal("America/Chicago", *changed.TimeZone)
+	s.Equal(map[string]string{"first_name": "Benjamin"}, changed.Variables)
+}
+
+func (s *CampaignContactsSuite) TestAnEmptyTimeZoneClearsIt() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550186", "time_zone": "America/Chicago"}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	var changed Contact
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, s.contactPath(created.Id, contact.Id),
+		map[string]any{"time_zone": ""}, &changed))
+
+	s.Nil(changed.TimeZone)
+}
+
+func (s *CampaignContactsSuite) TestAContactCannotBeChangedToANumberNobodyCanRing() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550187"}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	status, payload := s.serverClient.call(http.MethodPatch, s.contactPath(created.Id, contact.Id), map[string]any{"to_number": "12"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), string(RefusedReasonInvalidNumber))
+	s.Equal([]string{"+14155550187"}, s.numbers(s.list(created.Id, "").Items))
+}
+
+func (s *CampaignContactsSuite) TestAContactCannotTakeAnotherContactsNumber() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550188"}, {"to_number": "+14155550189"}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	status, payload := s.serverClient.call(http.MethodPatch, s.contactPath(created.Id, contact.Id), map[string]any{"to_number": "+14155550189"})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(string(payload), codeContactDuplicate)
+}
+
+func (s *CampaignContactsSuite) TestOneContactIsRemovedFromADraft() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550190"}, {"to_number": "+14155550191"}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, s.contactPath(created.Id, contact.Id), nil, nil))
+
+	s.Equal([]string{"+14155550191"}, s.numbers(s.list(created.Id, "").Items))
+	var campaign Campaign
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id, nil, &campaign))
+	s.Equal(1, campaign.Contacts.Total)
+}
+
+func (s *CampaignContactsSuite) TestALaunchedCampaignsContactIsNeitherChangedNorRemoved() {
+	created := s.launched()
+	contact := s.list(created.Id, "").Items[0]
+
+	status, payload := s.serverClient.call(http.MethodPatch, s.contactPath(created.Id, contact.Id), map[string]any{"to_number": "+14155550192"})
+	s.Equal(http.StatusConflict, status)
+	s.Contains(string(payload), codeCampaignLocked)
+	status, payload = s.serverClient.call(http.MethodDelete, s.contactPath(created.Id, contact.Id), nil)
+	s.Equal(http.StatusConflict, status)
+	s.Contains(string(payload), codeCampaignLocked)
+	s.Equal([]string{contact.ToNumber}, s.numbers(s.list(created.Id, "").Items))
+}
+
+func (s *CampaignContactsSuite) TestChangingOrRemovingAContactOfAnotherCampaignFindsNone() {
+	ours := s.draft(nil)
+	theirs := s.draft(nil)
+	s.add(theirs.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550193"}}})
+	contact := s.list(theirs.Id, "").Items[0]
+
+	status, payload := s.serverClient.call(http.MethodPatch, s.contactPath(ours.Id, contact.Id), map[string]any{"to_number": "+14155550194"})
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(string(payload), codeContactNotFound)
+	status, payload = s.serverClient.call(http.MethodDelete, s.contactPath(ours.Id, contact.Id), nil)
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(string(payload), codeContactNotFound)
+	s.Equal([]string{"+14155550193"}, s.numbers(s.list(theirs.Id, "").Items))
+}
+
+func (s *CampaignContactsSuite) TestOnlyTheBackendMayChangeOrRemoveAContact() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}, {"to_number": s.utils.number()}}})
+	listed := s.list(created.Id, "").Items
+
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodPatch, s.contactPath(created.Id, listed[0].Id), map[string]any{"variables": map[string]string{"a": "b"}}, nil)
+	})
+	s.assertPosture(serverOnly, func(as *testClient) int {
+		return as.do(http.MethodDelete, s.contactPath(created.Id, listed[1].Id), nil, nil)
+	})
+}
+
+// launchedAutoEnroll is a running auto-enroll campaign nobody has been added to yet.
+func (s *CampaignContactsSuite) launchedAutoEnroll() Campaign {
+	from := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(context.Background(), &store.PhoneNumber{
+		E164: from, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	created := s.draft(map[string]any{"type": "auto_enroll", "config_id": s.data.createAgentConfig().Id, "from_number": from})
+	sequence := created.Sequence
+	sequence.Steps[0].Goal = "Confirm the visit"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true}, nil))
+	return created
 }
 
 // draft makes a campaign with what body adds to a name.

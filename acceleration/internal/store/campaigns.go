@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +28,9 @@ var ErrNoCampaign = errors.New("store: there is no campaign")
 
 // ErrNoCampaignContact is a contact the campaign does not hold.
 var ErrNoCampaignContact = errors.New("store: the campaign holds no such contact")
+
+// ErrDuplicateContact is a number another contact of the campaign already holds.
+var ErrDuplicateContact = errors.New("store: another contact of the campaign holds this number")
 
 // MaxCampaignContacts is how many contacts one campaign may hold.
 const MaxCampaignContacts = 100_000
@@ -357,25 +362,8 @@ func (s *Store) LaunchCampaign(ctx context.Context, customerID, id string, launc
 			return s.whyNotChanged(ctx, tx, customerID, id)
 		}
 
-		if _, err := tx.NewUpdate().Model((*Contact)(nil)).
-			Set("stage = ?", Rejected).
-			Set("reason = 'opted_out'").
-			Set("next_attempt_at = NULL").
-			Where("campaign_id = ?", id).
-			Where("stage = ?", Enrolled).
-			Where(`EXISTS (SELECT 1 FROM opt_outs oo WHERE oo.customer_id = ? AND oo.recipient = cc.to_number
-				AND oo.channel IN ('voice', ?) AND oo.revoked_at IS NULL)`, customerID, OptOutAll).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("store: reject opted-out contacts: %w", err)
-		}
-		if _, err := tx.NewUpdate().Model((*Contact)(nil)).
-			Set("step_id = 'step_1'").
-			Set("attempt = 0").
-			Set("next_attempt_at = ?", launch.StartAt).
-			Where("campaign_id = ?", id).
-			Where("stage = ?", Enrolled).
-			Exec(ctx); err != nil {
-			return fmt.Errorf("store: enroll contacts: %w", err)
+		if err := enroll(ctx, tx, customerID, id, launch.StartAt, nil); err != nil {
+			return err
 		}
 		launched, err = campaignIn(ctx, tx, customerID, id)
 		return err
@@ -384,6 +372,36 @@ func (s *Store) LaunchCampaign(ctx context.Context, customerID, id string, launc
 		return Campaign{}, stack.Wrap(err)
 	}
 	return launched, nil
+}
+
+// enroll starts a campaign's waiting contacts on the sequence's first step at at, rejecting those
+// who opted out of voice without a call. Only the contacts in ids are enrolled, or every waiting
+// one when ids is nil.
+func enroll(ctx context.Context, tx bun.Tx, customerID, campaignID string, at time.Time, ids []string) error {
+	only := func(query *bun.UpdateQuery) *bun.UpdateQuery {
+		query = query.Where("campaign_id = ?", campaignID).Where("stage = ?", Enrolled)
+		if ids != nil {
+			query = query.Where("id IN (?)", bun.List(ids))
+		}
+		return query
+	}
+	if _, err := only(tx.NewUpdate().Model((*Contact)(nil)).
+		Set("stage = ?", Rejected).
+		Set("reason = 'opted_out'").
+		Set("next_attempt_at = NULL")).
+		Where(`EXISTS (SELECT 1 FROM opt_outs oo WHERE oo.customer_id = ? AND oo.recipient = cc.to_number
+			AND oo.channel IN ('voice', ?) AND oo.revoked_at IS NULL)`, customerID, OptOutAll).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("store: reject opted-out contacts: %w", err)
+	}
+	if _, err := only(tx.NewUpdate().Model((*Contact)(nil)).
+		Set("step_id = 'step_1'").
+		Set("attempt = 0").
+		Set("next_attempt_at = ?", at)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("store: enroll contacts: %w", err)
+	}
+	return nil
 }
 
 // PauseCampaign pauses a running or scheduled campaign. A reason names what refused its next call when the
@@ -468,9 +486,11 @@ func (s *Store) transitionIn(ctx context.Context, db bun.IDB, customerID, id str
 	return nil
 }
 
-// AddContacts stores people to ring in a draft campaign, in the order given. A number the
-// campaign already holds, or an earlier contact of the same call repeats, is not stored: its
-// index in contacts is returned instead, so the caller can say which were skipped.
+// AddContacts stores people to ring in a draft campaign, or in an auto-enroll campaign that is
+// scheduled, running or paused, in the order given. In a launched one they start the sequence
+// now, or at its start time when that has not come. A number the campaign already holds, or an
+// earlier contact of the same call repeats, is not stored: its index in contacts is returned
+// instead, so the caller can say which were skipped.
 func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []Contact) (added []Contact, duplicates []int, err error) {
 	if campaignID == "" {
 		return nil, nil, stack.Wrap(errors.New("store: a campaign id is required"))
@@ -495,8 +515,12 @@ func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []C
 
 	stored := make(map[string]int64, len(contacts))
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if err := lockDraft(ctx, tx, campaignID); err != nil {
+		campaign, err := lockCampaign(ctx, tx, campaignID)
+		if err != nil {
 			return err
+		}
+		if !takesContacts(campaign) {
+			return ErrCampaignLocked
 		}
 		for start := 0; start < len(contacts); start += insertChunk {
 			chunk := contacts[start:min(start+insertChunk, len(contacts))]
@@ -527,7 +551,14 @@ func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []C
 		if held > MaxCampaignContacts {
 			return ErrTooManyContacts
 		}
-		return nil
+		if campaign.State == Draft || len(stored) == 0 {
+			return nil
+		}
+		at := now
+		if campaign.StartAt != nil && campaign.StartAt.After(now) {
+			at = *campaign.StartAt
+		}
+		return enroll(ctx, tx, campaign.CustomerID, campaignID, at, slices.Collect(maps.Keys(stored)))
 	})
 	if err != nil {
 		return nil, nil, stack.Wrap(err)
@@ -544,21 +575,40 @@ func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []C
 	return added, duplicates, nil
 }
 
-// lockDraft holds a campaign's row, which keeps a launch from slipping in between a check
-// that it is still a draft and the write that relies on it.
-func lockDraft(ctx context.Context, tx bun.Tx, campaignID string) error {
-	var state string
-	err := tx.NewSelect().Model((*Campaign)(nil)).Column("state").Where("id = ?", campaignID).For("UPDATE").Scan(ctx, &state)
+// lockCampaign holds a campaign's row, which keeps a launch or a stop from slipping in between
+// a check of its state and the write that relies on it.
+func lockCampaign(ctx context.Context, tx bun.Tx, campaignID string) (Campaign, error) {
+	var campaign Campaign
+	err := tx.NewSelect().Model(&campaign).Column("customer_id", "state", "type", "start_at").
+		Where("id = ?", campaignID).For("UPDATE").Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return unknownCampaign(campaignID)
+		return Campaign{}, unknownCampaign(campaignID)
 	}
 	if err != nil {
-		return fmt.Errorf("store: campaign state: %w", err)
+		return Campaign{}, fmt.Errorf("store: campaign state: %w", err)
 	}
-	if state != Draft {
+	return campaign, nil
+}
+
+// lockDraft holds a campaign's row as lockCampaign does, and refuses one that is not a draft.
+func lockDraft(ctx context.Context, tx bun.Tx, campaignID string) error {
+	campaign, err := lockCampaign(ctx, tx, campaignID)
+	if err != nil {
+		return err
+	}
+	if campaign.State != Draft {
 		return ErrCampaignLocked
 	}
 	return nil
+}
+
+// takesContacts is a campaign people may be added to: a draft, or an auto-enroll campaign that
+// has not ended.
+func takesContacts(campaign Campaign) bool {
+	if campaign.State == Draft {
+		return true
+	}
+	return campaign.Type == AutoEnroll && slices.Contains([]string{Scheduled, Running, Paused}, campaign.State)
 }
 
 // DeleteContacts removes every contact of a draft campaign.
@@ -569,6 +619,69 @@ func (s *Store) DeleteContacts(ctx context.Context, campaignID string) error {
 		}
 		if _, err := tx.NewDelete().Model((*Contact)(nil)).Where("campaign_id = ?", campaignID).Exec(ctx); err != nil {
 			return fmt.Errorf("store: delete contacts: %w", err)
+		}
+		return nil
+	})
+	return stack.Wrap(err)
+}
+
+// UpdateContact changes a draft's contact: its number, variables, time zone and instructions all
+// become what changes holds. It keeps its place in the queue.
+func (s *Store) UpdateContact(ctx context.Context, campaignID, contactID string, changes Contact) (Contact, error) {
+	if changes.ToNumber == "" {
+		return Contact{}, stack.Wrap(errors.New("store: a contact needs a number to ring"))
+	}
+	if changes.Variables == nil {
+		changes.Variables = map[string]string{}
+	}
+	var changed Contact
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockDraft(ctx, tx, campaignID); err != nil {
+			return err
+		}
+		err := tx.NewUpdate().Model(&changed).
+			Set("to_number = ?", changes.ToNumber).
+			Set("variables = ?", changes.Variables).
+			Set("time_zone = ?", changes.TimeZone).
+			Set("instructions = ?", changes.Instructions).
+			Where("id = ?", contactID).
+			Where("campaign_id = ?", campaignID).
+			Returning("*").
+			Scan(ctx)
+		if isViolation(err, uniqueViolation) {
+			return ErrDuplicateContact
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return unknownContact(contactID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: update contact: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Contact{}, stack.Wrap(err)
+	}
+	return changed, nil
+}
+
+// DeleteContact removes one contact of a draft.
+func (s *Store) DeleteContact(ctx context.Context, campaignID, contactID string) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockDraft(ctx, tx, campaignID); err != nil {
+			return err
+		}
+		result, err := tx.NewDelete().Model((*Contact)(nil)).
+			Where("id = ?", contactID).
+			Where("campaign_id = ?", campaignID).
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("store: delete contact: %w", err)
+		}
+		if affected, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("store: delete contact: %w", err)
+		} else if affected == 0 {
+			return unknownContact(contactID)
 		}
 		return nil
 	})

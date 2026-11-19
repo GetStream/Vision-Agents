@@ -113,10 +113,10 @@ def sync_detailed(
     """Launch a draft
 
      Records the customer's consent and rings the contacts from start_at. A draft missing what it needs
-    (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with
-    campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a
-    call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted
-    out of calls are rejected without a call.
+    (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is
+    refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused
+    here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts
+    who opted out of calls are rejected without a call.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -152,10 +152,10 @@ def sync(
     """Launch a draft
 
      Records the customer's consent and rings the contacts from start_at. A draft missing what it needs
-    (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with
-    campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a
-    call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted
-    out of calls are rejected without a call.
+    (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is
+    refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused
+    here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts
+    who opted out of calls are rejected without a call.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -186,10 +186,10 @@ async def asyncio_detailed(
     """Launch a draft
 
      Records the customer's consent and rings the contacts from start_at. A draft missing what it needs
-    (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with
-    campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a
-    call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted
-    out of calls are rejected without a call.
+    (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is
+    refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused
+    here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts
+    who opted out of calls are rejected without a call.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -223,10 +223,10 @@ async def asyncio(
     """Launch a draft
 
      Records the customer's consent and rings the contacts from start_at. A draft missing what it needs
-    (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with
-    campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a
-    call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted
-    out of calls are rejected without a call.
+    (contacts unless it is auto_enroll, one of the app's numbers, an agent config, a ready sequence) is
+    refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused
+    here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts
+    who opted out of calls are rejected without a call.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
