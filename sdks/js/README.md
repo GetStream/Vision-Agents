@@ -605,7 +605,9 @@ the socket beside `events()`, so it takes nothing from a loop reading them, and 
 `get` and `subscribe`. It is not the session's lifecycle, which is `session.created.state`.
 
 `session.conversation` is the rest of what a page shows, fed the same way: `turns`, what this
-device typed, what was transcribed on the call and the agent's replies as they were written;
+device typed, what was transcribed on the call and the agent's replies as they were written,
+each agent turn with its `steps` (every round of the model's thinking on a written reply, and
+every tool it called, by name and how it went) and `done` once nothing more of it is to come;
 `failure`, what the agent last reported going wrong, such as speech recognition on a call,
 with `failureContext` naming the part (`stt`, `llm`, `sts`, `tts`) and `failureAt` when, until
 the agent next hears, answers or speaks;
@@ -661,6 +663,14 @@ question on its way. A reply the model couldn't write shows as the AI indicator'
 with no text of the router's, so the components show their own. `chat.state` has the shape of
 `StateStore` from `@stream-io/state-store`, so `useStateStore(chat.state, selector)` reads it.
 It reads the channel with stream-chat 9 or 10, whichever `session.chat()` opens it on.
+
+An incognito session (`sessions.create({ incognito: true, tools })`) keeps no channel, and
+`AgentChat` shows it all the same: its messages are made from `session.conversation`, in the
+shape of the channel's, so the same `adapt` and `fromStreamMessage` read them. The agent's turns
+between two of the person's messages are one reply, with each round of thinking and each tool
+call as its steps, its whole thinking through `reasoningText`, and a call waiting in `approvals`
+asking the session's user, whom the approver answers for. Nothing is kept, so it can't be carried
+on, loaded again or branched: offer neither regenerate nor edit.
 
 **Regenerate, edit and ‹ i/n ›.** The transport has `switchBranch`, so the controller offers
 regenerate on every reply and edit on every message of the person's, and shows ‹ i/n › from each
