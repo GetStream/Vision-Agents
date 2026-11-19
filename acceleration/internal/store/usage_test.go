@@ -530,7 +530,7 @@ func (s *StoreSuite) TestARedactedCallStillReportsWhatItAndItsToolCost() {
 	s.calledTool(session, "one-1", "lookup_order", s.base,
 		map[string]any{"call_id": "c1", "loading": ToolLoadingSummary, "definition_tokens": 461, "summary_tokens": 84},
 		map[string]any{"call_id": "c1", "arguments": `{"order":"A-1"}`, "tokens": 250})
-	_, err := s.store.db.NewUpdate().Model((*AgentResponseItem)(nil)).
+	_, err := s.store.ShardDB().NewUpdate().Model((*AgentResponseItem)(nil)).
 		Set("redact_at = ?", s.base).Where("session_id = ?", "one").Exec(s.ctx)
 	s.Require().NoError(err)
 	redacted, err := s.store.RedactToolOutput(s.ctx, s.base.Add(time.Hour), 100)

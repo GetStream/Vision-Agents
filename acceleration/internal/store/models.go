@@ -653,7 +653,7 @@ type AgentConfig struct {
 	// EpisodeCards off; WritesCards is the two together.
 	EpisodeCardsRecord bool `bun:"episode_cards_record,notnull"`
 	// ToolGroups are the functions an SDK provides that the config's sessions may offer, and
-	// how each group is loaded (20270102090000_agent_config_tool_groups.sql). A function no
+	// how each group is loaded (20270103090000_agent_config_tool_groups.sql). A function no
 	// group names is not offered. The row's progressive_tools and tool_output_retention
 	// columns, which groups and connector bindings replaced, are not modelled: a router still
 	// running the release before reads them, so they are left in place.
