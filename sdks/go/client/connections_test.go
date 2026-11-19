@@ -2,9 +2,11 @@ package client
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"slices"
@@ -390,5 +392,40 @@ func TestAConnectionWithNoIDIsRefusedBeforeTheRouter(t *testing.T) {
 	}
 	if len(backend.asked) != 0 {
 		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
+
+// Catches a refusal or a failed request that comes back as an empty connection rather than as
+// the router's error, or without the context's.
+func TestAConnectionRefusalIsTheRoutersError(t *testing.T) {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, http.StatusServiceUnavailable, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Type: "unavailable", Code: "connectors_unavailable", Message: "connections are not configured",
+		}})
+	}))
+	t.Cleanup(refusing.Close)
+	api, err := New(stream.Backend{URL: refusing.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := api.Connections()
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	for _, ctx := range []context.Context{t.Context(), cancelled} {
+		_, created := connections.Create(ctx, ConnectionRequest{Connector: "linear", User: "anya"})
+		_, authorized := connections.Authorize(ctx, "connection-1", AuthorizeOptions{User: "anya"})
+		_, read := connections.Get(ctx, "connection-1", "anya")
+		_, listed := connections.List(ctx, ConnectionFilter{User: "anya"})
+		deleted := connections.Delete(ctx, "connection-1", "anya")
+		for name, err := range map[string]error{"create": created, "authorize": authorized, "get": read, "list": listed, "delete": deleted} {
+			var refused *stream.RouterError
+			switch {
+			case ctx == cancelled && !errors.Is(err, context.Canceled):
+				t.Errorf("a cancelled %s answered %v", name, err)
+			case ctx != cancelled && (!errors.As(err, &refused) || refused.Status != http.StatusServiceUnavailable || refused.Code != "connectors_unavailable"):
+				t.Errorf("a refused %s answered %v", name, err)
+			}
+		}
 	}
 }
