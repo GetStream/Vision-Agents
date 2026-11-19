@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,6 +41,29 @@ func (s *UsageAlertsSuite) TestTheRouterHasItsEightConditions() {
 		"lost": alerts.Page, "rejected": alerts.Page, "write_failing": alerts.Page, "ship_stale": alerts.Page,
 		"holds_flush_failing": alerts.Page, "unowned": alerts.Warn, "pending_slow": alerts.Warn, "unattributed": alerts.Warn,
 	}, levels)
+}
+
+// The Slack message of an alert is its Sentry title: without a summary it names only the alert.
+func (s *UsageAlertsSuite) TestEveryConditionSaysWhatItMeans() {
+	for _, condition := range Alerts(time.Minute) {
+		s.NotEmpty(strings.TrimSpace(condition.Summary), condition.Name)
+	}
+}
+
+// A row lost is written back by replay and a refused one is queued again by reship: the summary
+// must name the command, not say the work is gone or ships by itself.
+func (s *UsageAlertsSuite) TestLostAndRejectedNameTheirWayBack() {
+	s.Contains(s.named("lost").Summary, "router usage replay")
+	s.Contains(s.named("rejected").Summary, "router usage reship --rejected")
+}
+
+// The two causes of a row waiting: Postgres slow, or writes failing and retried. The wait is
+// the threshold the condition checks.
+func (s *UsageAlertsSuite) TestPendingSlowNamesBothCausesAndItsThreshold() {
+	summary := s.named("pending_slow").Summary
+	s.Contains(summary, fmt.Sprintf("%d seconds", pendingSlowSeconds))
+	s.Contains(summary, "Postgres is slow")
+	s.Contains(summary, "writes are failing")
 }
 
 func (s *UsageAlertsSuite) TestHoldsFlushFailingPagesOncePastTenSeconds() {

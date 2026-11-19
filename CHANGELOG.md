@@ -11,7 +11,7 @@
 `agents.LoadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the A2UI 1.0 prompt in a ```` ```ui:a2ui@1.0 ```` block with the catalog `getstream.io:app-catalog`, the one stream-chat-swift's renderer draws. The JavaScript SDK writes the same prompt, and both are held to one fixture (#2028).
 ### A session can turn an agent's generative UI off
 
-An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go SDK now syncs agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing this Go SDK: an older router drops `ui_instructions`, so the agent is taught no UI until the router is upgraded, when the next start syncs it again and the router writes it. A config saved without the field keeps the UI it has, and a sync of a folder without `ui:` removes it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui` (#2076).
+An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go and JavaScript SDKs now sync agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing these SDKs: an older router drops `ui_instructions`. A Go-synced agent is then taught no UI until the router is upgraded, when the next start syncs it again and the router writes it; JavaScript keeps the UI in `instructions` meanwhile. A config saved without the field keeps the UI it has. Removing `ui:` from a synced folder removes the UI on the next start, since the folder's fingerprint changes; a folder that never had `ui:` is not synced again, so UI added to its config by hand stays until a PATCH with `"ui_instructions": ""` clears it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui`; `swift_assistant` and `react_assistant` have an Interactive UI switch in their settings that sets it (#2076).
 
 ### Claude's thinking survives a round trip through the language-model socket
 
@@ -748,6 +748,10 @@ With a reply's earlier version shown (‹ 1/2 ›), editing the question above i
 ### The key_refused alert says why a key was refused
 
 The Sentry title of a `key_refused` alert now ends with the reason, such as `usage alert: key_refused GOOGLE_API_KEY/402: out of funds, top up the account`. The other statuses say `400`, `403` and `invalid_key` (key not valid, replace it), `401` (key not valid or its quota spent), `429` (rate limited or spend cap reached) and `quota_exceeded` (quota spent). A status with no reason keeps its title. The fingerprint and the `item` tag are unchanged, so existing Sentry issues and rules still match (AI-3301).
+
+### Each router usage alert says in plain words what it means
+
+The Sentry title of each of the router's eight usage alerts (`lost`, `rejected`, `write_failing`, `holds_flush_failing`, `ship_stale`, `unowned`, `pending_slow`, `unattributed`) now has a one-line summary after its name, such as `usage alert: unowned: usage rows of an app that has joined no organization keep waiting; ...`, and so has the Slack message that carries it. The fingerprint, the tags and the level are unchanged, so existing Sentry issues and the Slack routing rule still match (#2093).
 
 ### OpenAI agents answer every turn on an account with Zero Data Retention
 
@@ -1566,6 +1570,9 @@ A dispatch worker's `answering a call` line and an agent's `ringing` line carry 
 
 In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
 
+### An approval nobody answers in a group channel says so in the reply
+
+In a channel of a type an agent config answers in (`chat_channels`), a tool call waiting for its writer's approval when the router's two-minute turn ends no longer leaves an empty agent message: the reply ends with "The approval expired before anyone answered, so that step did not run. Ask again if you still need it." and the step shows "Not allowed in time" (AI-3302).
 ### A member's line in a call's transcript is no longer read as the agent's
 
 A call's transcript, its timeline and a campaign's outcome read every line marked `source: agent` as the agent's, whoever wrote it, so a member of the channel the transcript is in could put words in the agent's mouth. A call now records the user the agent wrote as, and only that user's lines, or the agent id's, are the agent's; a person's typed turn reads as theirs too. A call from before this change reads as it did (AI-3265).
