@@ -1669,6 +1669,7 @@ void main() {
       expect(missed.state, ScheduledTaskRunState.missed);
       expect(missed.error, 'task_paused');
       expect(missed.startedAt, isNull);
+      expect(missed.finishedAt, isNull);
       expect(page.nextCursor, 'runs-2');
     });
   });
