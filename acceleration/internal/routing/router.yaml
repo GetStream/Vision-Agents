@@ -2407,12 +2407,11 @@ llm:
     # times input; a prompt over 272k tokens costs twice the input, cached and write rates
     # and 1.5 times the output for the whole request; and the tier OpenAI answer that they
     # served a request at multiplies every rate: flex and batch half, fast twice, and
-    # ultrafast, which only GPT-6 Astra and GPT-6.1 Sol offer, six times. Fast was called
-    # priority until July 2026, and GPT-5.6 and earlier still answer priority for a fast
-    # request, so priority is priced as fast. A tier not named here is priced at the
-    # default rates and logged. GPT-6.2 Sol and Astra have default rates only: the provider
-    # never sends service_tier, they take no flex, and their ultrafast moves from three to six
-    # times on 2027-03-01, which a price entry cannot say.
+    # ultrafast, which only GPT-6 Astra, GPT-6.1 Sol and GPT-6.2 Sol and Astra offer, six
+    # times. GPT-6.2's ultrafast is three times until 2027-03-01, when it goes to six, and
+    # GPT-6.2 offers no flex. Fast was called priority until July 2026, and GPT-5.6 and
+    # earlier still answer priority for a fast request, so priority is priced as fast. A
+    # tier not named here is priced at the default rates and logged.
     - provider: openai
       model: gpt-5.6-luna
       description: "OpenAI's small, fast model. Reads images, and costs little."
