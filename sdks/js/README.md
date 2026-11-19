@@ -984,6 +984,6 @@ git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
 ```
 
 then on npmjs.com, under the package's settings, add GitHub Actions as a trusted publisher:
-`GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in
+`GetStream/Agents`, workflow `release-sdk-js.yml`. From then on the version in
 `package.json` is not maintained: semantic-release writes the next one into the package it
 publishes and nothing is committed back.
