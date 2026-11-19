@@ -471,6 +471,39 @@ func (c *Conversation) DecideApproval(e agent.ToolApprovalDecided) bool {
 	return true
 }
 
+// approvalExpired is the line a reply ends with when it ended while a call still waited for a
+// person to allow it (ExpireApprovals): why the call did not run, and what to do next.
+const approvalExpired = "The approval expired before anyone answered, so that step did not run. Ask again if you still need it."
+
+// ExpireApprovals has the reply being written, if it ends with a call still waiting for a person
+// to allow it, decline that call as one nobody allowed in time and say so (expire). It is for a
+// reply whose session closes with its turn: the call is stopped then, and the model gets no round
+// to say why it did not run. Until the reply ends, an answer still reaches the call.
+func (c *Conversation) ExpireApprovals() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if m := c.data.Current; m != nil {
+		c.expiring = m.ID
+	}
+}
+
+// expire declines each call of m still waiting for a person, with the summary a call nobody
+// allowed in time gets (session.holdForApproval), and ends m's text with approvalExpired when
+// one did.
+func expire(m *Message, now time.Time) {
+	expired := false
+	for _, part := range m.Parts {
+		expired = decided(m, part.ID, false, "Not allowed in time", now) || expired
+	}
+	if !expired {
+		return
+	}
+	if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
+		m.Text += "\n\n"
+	}
+	m.Text += approvalExpired
+}
+
 // toolStep is the step of the call id on m, or nil.
 func toolStep(m *Message, id string) *Part {
 	for i := range m.Parts {
