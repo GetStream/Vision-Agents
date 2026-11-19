@@ -708,6 +708,9 @@ func TestActingForAUserKeepsTheServersToken(t *testing.T) {
 	if user != "" {
 		t.Errorf("the token names %q, want nobody", user)
 	}
+	if server := claimsOf(t, credentials, "shh")["server"]; server != true {
+		t.Errorf("the token's server claim is %v, want true", server)
+	}
 	if got := credentials.Get(UserHeader); got != "anya" {
 		t.Errorf("%s was %q, want anya", UserHeader, got)
 	}
