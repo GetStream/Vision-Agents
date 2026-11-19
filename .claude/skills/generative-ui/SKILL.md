@@ -147,10 +147,10 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
   (`flutter_assistant/lib/agent_chat.dart`), and in Swift too (`swift_assistant`'s
   `AgentChat.swift`, which publishes each change inside an animation) and Kotlin
   (`android_assistant`'s `AgentTransport.kt`, which redraws the conversation when `observe` says
-  what shows changed). Swift's, JavaScript's and Kotlin's `TurnUI.content` also hold back the
-  OpenUI statement no newline has ended yet while it streams, so a card grows a part at a time
+  what shows changed). Swift's, JavaScript's, Kotlin's and Dart's `TurnUI.content` also hold back
+  the OpenUI statement no newline has ended yet while it streams, so a card grows a part at a time
   rather than reflowing with every delta, and `LiveUI` leaves a reply its text until one
-  statement is finished (Dart doesn't yet). The rules, which keep a card from jumping:
+  statement is finished. The rules, which keep a card from jumping:
   - A reply that names its turn (`support_runtime.turn_id`) shows only that turn's UI.
   - Before its turn id is in Chat, the newest generating reply shows `latest()`: the newest
     turn's UI, only when that turn is the agent's. The person's question (`said`) and a new
