@@ -290,29 +290,45 @@ void main() {
       },
     );
 
-    test('interrupts the current reply, or only the one answering a request', () async {
+    test('interrupts the current reply', () async {
       final chat = await agents.chat();
       final socket = await router.socket();
 
-      chat
-        ..interrupt()
-        ..interrupt(requestId: 'm1');
+      chat.interrupt();
 
       expect(await socket.next(), {'type': 'interrupt'});
+      await chat.close();
+      expect(await socket.next(), {'type': 'close'});
+    });
+
+    test('interrupts only the reply answering a request', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat.interrupt(requestId: 'm1');
+
       expect(await socket.next(), {'type': 'interrupt', 'request_id': 'm1'});
       await chat.close();
       expect(await socket.next(), {'type': 'close'});
     });
 
-    test('says something after what is in flight, or stops that first', () async {
+    test('says something after what is in flight', () async {
       final chat = await agents.chat();
       final socket = await router.socket();
 
-      chat
-        ..say('One moment.')
-        ..say('Sorry, wrong order.', interrupt: true);
+      chat.say('One moment.');
 
       expect(await socket.next(), {'type': 'say', 'text': 'One moment.'});
+      await chat.close();
+      expect(await socket.next(), {'type': 'close'});
+    });
+
+    test('stops what is in flight before saying something', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat.say('Sorry, wrong order.', interrupt: true);
+
       expect(await socket.next(), {'type': 'interrupt'});
       expect(await socket.next(), {'type': 'say', 'text': 'Sorry, wrong order.'});
       await chat.close();

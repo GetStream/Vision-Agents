@@ -1580,21 +1580,38 @@ void main() {
       expect(task.id, 't1');
     });
 
-    test('pauses, resumes and cancels a task by its id', () async {
-      router
-        ..answer('POST $tasks/t1/pause', Answer(200, scheduledTaskJson(state: 'paused')))
-        ..answer('POST $tasks/t1/resume', Answer(200, scheduledTaskJson()))
-        ..answer('DELETE $tasks/t1', const Answer(204));
+    test('pauses a task by its id', () async {
+      router.answer('POST $tasks/t1/pause', Answer(200, scheduledTaskJson(state: 'paused')));
 
       final paused = await agents.scheduledTasks.pause('t1');
-      final resumed = await agents.scheduledTasks.resume('t1');
-      await agents.scheduledTasks.delete('t1');
 
       expect(paused.state, ScheduledTaskState.paused);
+      expect(
+        [for (final request in router.arrived) '${request.method} ${request.path}'],
+        ['POST $tasks/t1/pause'],
+      );
+    });
+
+    test('resumes a task by its id', () async {
+      router.answer('POST $tasks/t1/resume', Answer(200, scheduledTaskJson()));
+
+      final resumed = await agents.scheduledTasks.resume('t1');
+
       expect(resumed.state, ScheduledTaskState.active);
       expect(
         [for (final request in router.arrived) '${request.method} ${request.path}'],
-        ['POST $tasks/t1/pause', 'POST $tasks/t1/resume', 'DELETE $tasks/t1'],
+        ['POST $tasks/t1/resume'],
+      );
+    });
+
+    test('cancels a task by its id', () async {
+      router.answer('DELETE $tasks/t1', const Answer(204));
+
+      await agents.scheduledTasks.delete('t1');
+
+      expect(
+        [for (final request in router.arrived) '${request.method} ${request.path}'],
+        ['DELETE $tasks/t1'],
       );
     });
 
