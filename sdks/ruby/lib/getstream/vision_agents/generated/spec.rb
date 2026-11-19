@@ -3222,7 +3222,7 @@ module GetStream
           required: %w[allowed request_id tool_call_id type].freeze, open: false
         }.freeze,
         "ToolCallState" => {
-          properties: %w[approved_at duration_ms error progress rejected_at started_at status tool tool_call_id turn_id type].freeze,
+          properties: %w[approved_at display_title duration_ms error progress rejected_at started_at status tool tool_call_id turn_id type].freeze,
           required: %w[type tool_call_id tool turn_id status started_at duration_ms].freeze, open: false
         }.freeze,
         "ToolGroup" => {

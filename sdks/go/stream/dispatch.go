@@ -246,6 +246,9 @@ func (d *Dispatch) host() {
 		declared := []Frame{}
 		for _, function := range offer.functions.List() {
 			tool := Frame{"name": function.Name, "description": function.Description, "parameters": function.Parameters}
+			if function.DisplayTitle != "" {
+				tool["display_title"] = function.DisplayTitle
+			}
 			if function.Interruptible {
 				tool["interruptible"] = true
 			}

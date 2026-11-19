@@ -12,6 +12,7 @@ use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Generated\SessionTool;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
+use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
 use GetStream\VisionAgents\Tests\Support\Rows;
 use GetStream\VisionAgents\ToolCallContext;
@@ -150,6 +151,51 @@ final class ToolCallTest extends TestCase
         self::assertSame('[{"city":"Rome"}]', $tools->call('simple', '{"city":"Rome"}', $call));
         self::assertSame('c1 {"city":"Rome"}', $tools->call('context', '{"city":"Rome"}', $call));
         self::assertSame('c1', $tools->call('only_call', '{}', $call));
+    }
+
+    public function testStringArgumentsAreAllRequiredUnlessTheCallerSaysWhich(): void
+    {
+        $properties = ['location' => 'a city or region', 'unit' => 'celsius or fahrenheit'];
+        $described = [
+            'location' => ['type' => 'string', 'description' => 'a city or region'],
+            'unit' => ['type' => 'string', 'description' => 'celsius or fahrenheit'],
+        ];
+
+        self::assertSame(['type' => 'object', 'properties' => $described, 'required' => ['location', 'unit']], Tools::strings($properties));
+        self::assertSame(['type' => 'object', 'properties' => $described, 'required' => ['location']], Tools::strings($properties, ['location']));
+        self::assertSame([], Tools::strings($properties, [])['required']);
+    }
+
+    public function testAToolWithNoStringArgumentsIsSentAnEmptyPropertiesObject(): void
+    {
+        $router = new LocalRouter();
+        try {
+            $router->answer('POST', '/v1/agents/sessions', 201, Rows::session());
+            $agent = new Agent(name: 'jean', client: $router->client());
+            $agent->tools->register('ping', 'Checks the line', Tools::strings([]), static fn (array $args): string => 'pong');
+
+            $agent->chat();
+
+            self::assertStringContainsString(
+                '"tools":[{"description":"Checks the line","name":"ping","parameters":{"type":"object","properties":{},"required":[]}}]',
+                $router->to('POST', '/v1/agents/sessions')[0]->body,
+            );
+        } finally {
+            $router->stop();
+        }
+    }
+
+    public function testAToolRegisteredWithNamedArgumentsRuns(): void
+    {
+        $tools = (new Tools())->register(
+            name: 'weather_lookup',
+            description: 'Look up the current weather for a location',
+            parameters: Tools::strings(['location' => 'a city or region']),
+            run: static fn (array $args): string => 'sunny in ' . Json::string($args, 'location'),
+        );
+
+        self::assertSame('sunny in Lyon', $tools->call('weather_lookup', '{"location":"Lyon"}'));
+        self::assertSame(['location'], Json::object($tools->declared()[0]->toArray(), 'parameters')['required']);
     }
 
     public function testAToolIsDeclaredWithOnlyThePoliciesItSets(): void

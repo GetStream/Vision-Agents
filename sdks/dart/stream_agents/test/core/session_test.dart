@@ -238,6 +238,74 @@ void main() {
       await chat.close();
     });
 
+    test('a typed tool runs on the arguments its fromJson read', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.typed<_OrderLookup>(
+              name: 'lookup_order',
+              description: 'Look up an order.',
+              fromJson: _OrderLookup.fromJson,
+              run: (lookup) async => 'Order ${lookup.orderId}: ${lookup.items} items.',
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"lookup_order",'
+        r'"arguments":"{\"order_id\":\"A-1042\",\"items\":2}"}',
+      );
+
+      final result = await socket.next();
+      expect(result['output'], 'Order A-1042: 2 items.');
+      expect(result['error'], '');
+      await chat.close();
+    });
+
+    test('tells the model a typed tool failed when its arguments do not read', () async {
+      final ran = <_OrderLookup>[];
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.typed<_OrderLookup>(
+              name: 'lookup_order',
+              description: 'Look up an order.',
+              fromJson: _OrderLookup.fromJson,
+              run: (lookup) async {
+                ran.add(lookup);
+                return 'found';
+              },
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket
+        ..send(
+          '{"type":"tool_call","id":"missing","name":"lookup_order",'
+          r'"arguments":"{\"items\":2}"}',
+        )
+        ..send(
+          '{"type":"tool_call","id":"wrong_type","name":"lookup_order",'
+          r'"arguments":"{\"order_id\":\"A-1042\",\"items\":\"two\"}"}',
+        );
+
+      final results = {
+        for (final result in [await socket.next(), await socket.next()])
+          result['tool_call_id']: result,
+      };
+      for (final result in results.values) {
+        expect(result['output'], '');
+        expect(result['error'], isNotEmpty);
+      }
+      expect(results.keys, unorderedEquals(['missing', 'wrong_type']));
+      expect(ran, isEmpty);
+      await chat.close();
+    });
+
     test('answers with pictures as parts beside the words', () async {
       final chat = await agents.chat(
         SessionOptions(
@@ -1694,4 +1762,13 @@ void main() {
       await chat.close();
     });
   });
+}
+
+class _OrderLookup {
+  _OrderLookup.fromJson(Map<String, Object?> json)
+    : orderId = json['order_id']! as String,
+      items = json['items']! as int;
+
+  final String orderId;
+  final int items;
 }

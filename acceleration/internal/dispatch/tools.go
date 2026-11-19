@@ -30,6 +30,8 @@ type Tool struct {
 	Description string
 	// Parameters is a JSON Schema object describing the arguments.
 	Parameters map[string]any
+	// DisplayTitle is what a call is doing, in words for the people in the conversation.
+	DisplayTitle string `json:",omitempty"`
 	// Interruptible says the caller interrupting cancels a call in flight.
 	Interruptible bool `json:",omitempty"`
 	// Timeout is how long one call may take, in place of what the worker gave all its

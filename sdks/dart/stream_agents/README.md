@@ -116,6 +116,25 @@ final session = await agents.agent('support').chat(SessionOptions(tools: [lookup
 
 The agent only sees what the tool returns.
 
+Dart has no reflection, so to read the arguments into a class of your own, give the tool its
+`fromJson`. The model is still shown `parameters`; arguments that do not read, such as a missing
+one, tell the model the tool failed, as a `run` that throws does:
+
+```dart
+class WeatherLookup {
+  WeatherLookup.fromJson(Map<String, Object?> json) : location = json['location']! as String;
+  final String location;
+}
+
+final weatherLookup = AgentTool.typed<WeatherLookup>(
+  name: 'weather_lookup',
+  description: 'Look up the current weather for a location',
+  parameters: AgentTool.strings({'location': 'a city or region'}, required: ['location']),
+  fromJson: WeatherLookup.fromJson,
+  run: (lookup) => weather.today(lookup.location),
+);
+```
+
 A running session takes more tools, such as the ones a card shown in it brings, and gives them
 back. The model is offered the change from the next turn, once the reply in progress and its tool
 calls have finished, so never wait for either from inside one of the session's own tools:

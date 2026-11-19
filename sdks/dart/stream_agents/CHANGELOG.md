@@ -6,6 +6,7 @@
 - `session.interrupt(requestId:)` - stops only the reply answering that request.
 - `session.say(text, interrupt: true)` - stops what the agent is saying first.
 - `session.addTools` and `session.removeTool` - change a running session's tools.
+- `AgentTool.typed` - a tool whose arguments its `fromJson` reads into a class of yours.
 
 ## 0.7.0
 

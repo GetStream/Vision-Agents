@@ -321,6 +321,21 @@ func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 	s.Equal(30*time.Second, timeout, "a worker that names no timeout takes the session's default")
 }
 
+func (s *DispatchSuite) TestAHostedToolKeepsWhatItsCallsAreShownDoing() {
+	s.serverClient.agentNamed("stream-support")
+	worker := s.worker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-support",
+		"tools": []frame{{"name": "weather_lookup", "description": "Look up the weather", "display_title": " Checking the weather "}},
+	}))
+
+	s.Require().Equal("hosting", s.next(worker)["type"])
+	tools, _ := s.dispatch.HostedTools(s.customerID(), "stream-support")
+	s.Require().Len(tools, 1)
+	s.Equal("Checking the weather", tools[0].DisplayTitle)
+}
+
 func (s *DispatchSuite) TestAHostedToolsOwnTimeoutReplacesTheWorkers() {
 	s.serverClient.agentNamed("stream-support")
 	worker := s.worker()

@@ -34,6 +34,8 @@ final readonly class ToolCallState
         public ?string $progress = null,
         // When a person declined the call, or its wait for them passed.
         public ?\DateTimeImmutable $rejectedAt = null,
+        // What the call is doing, in words for the people in the conversation, such as "Checking the weather": the di...
+        public ?string $displayTitle = null,
     ) {
     }
 
@@ -54,6 +56,7 @@ final readonly class ToolCallState
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             progress: array_key_exists('progress', $data) && $data['progress'] !== null ? Json::string($data, 'progress') : null,
             rejectedAt: array_key_exists('rejected_at', $data) && $data['rejected_at'] !== null ? Json::date($data, 'rejected_at') : null,
+            displayTitle: array_key_exists('display_title', $data) && $data['display_title'] !== null ? Json::string($data, 'display_title') : null,
         );
     }
 
@@ -83,6 +86,9 @@ final readonly class ToolCallState
         }
         if ($this->rejectedAt !== null) {
             $out['rejected_at'] = Json::dateValue($this->rejectedAt);
+        }
+        if ($this->displayTitle !== null) {
+            $out['display_title'] = $this->displayTitle;
         }
         return $out;
     }

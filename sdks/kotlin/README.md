@@ -137,6 +137,20 @@ val lookup = AgentTool(
 val chat = agents.agent("docs").chat(lookup)
 ```
 
+Or let a `@Serializable` class be the arguments and their schema. A property with no default
+that is not nullable is required, `@SerialName` names it, and `@AgentTool.Describe` tells the
+model what it is. Arguments that do not decode tell the model why, as a tool that throws does:
+
+```kotlin
+@Serializable
+data class WeatherLookup(@AgentTool.Describe("a city or region") val location: String)
+
+val weatherLookup = AgentTool.typed<WeatherLookup>(
+    name = "weather_lookup",
+    description = "Look up the current weather for a location",
+) { args -> weather.today(args.location) }
+```
+
 Tools are answered inside `AgentSession` whether or not anybody collects `events()`, and a
 `tool_cancel` cancels the coroutine running one. `displayTitle` is what the people in the
 conversation see while it runs, and `executor = AgentTool.Executor.Client` shows the call as

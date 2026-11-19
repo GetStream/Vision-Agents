@@ -19,7 +19,9 @@ type key struct {
 	byok                              bool
 }
 
-func keyOf(item Item) key { return key{item.Modality, item.Provider, item.Model, item.Region, item.BYOK} }
+func keyOf(item Item) key {
+	return key{item.Modality, item.Provider, item.Model, item.Region, item.BYOK}
+}
 
 func keyOfEntry(entry Entry) key {
 	return key{entry.Modality, entry.Provider, entry.Model, entry.Region, entry.BYOK}

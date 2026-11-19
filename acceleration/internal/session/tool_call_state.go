@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 )
 
 // ToolCallStatus is where one tool call stands.
@@ -38,6 +40,9 @@ type ToolCallState struct {
 	Tool   string
 	TurnID string
 	Status ToolCallStatus
+	// DisplayTitle is what the call is doing, in words for the people in the conversation,
+	// as its tool declared it. Empty when the tool declared none.
+	DisplayTitle string
 	// Progress is the last thing said about the call while it runs, such as "Searching for
 	// flights", or the question it waits on.
 	Progress  string
@@ -61,6 +66,8 @@ type ToolCallChanged struct {
 type toolCalls struct {
 	// approves reports whether a call to a tool waits for a person before it runs.
 	approves func(tool string) bool
+	// titles is what a call to a tool is shown doing, or empty for nothing.
+	titles func(tool string) string
 
 	mu    sync.Mutex
 	calls map[string]*ToolCallState
@@ -86,6 +93,9 @@ func (t *toolCalls) observe(event agent.Event) (ToolCallChanged, bool) {
 		}
 		if t.approves != nil && t.approves(typed.Tool) {
 			state.Status = ToolCallWaiting
+		}
+		if t.titles != nil {
+			state.DisplayTitle = t.titles(typed.Tool)
 		}
 		if waiting, ok := t.early[typed.ID]; ok {
 			delete(t.early, typed.ID)
@@ -193,4 +203,15 @@ func (s *Session) approves(tool string) bool {
 		}
 	}
 	return false
+}
+
+// toolTitle is what a call to the tool is shown doing, as whoever declared it said: the
+// caller, or the worker hosting it.
+func (s *Session) toolTitle(tool string) string {
+	all := slices.Concat(s.declaredTools(), s.otherTools)
+	title := ""
+	if at := slices.IndexFunc(all, named(tool)); at >= 0 {
+		title = all[at].DisplayTitle
+	}
+	return persistent.ToolTitle(tool, title)
 }

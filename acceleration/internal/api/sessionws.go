@@ -1015,7 +1015,7 @@ func toolStateFrame(changed session.ToolCallChanged) frame {
 		"started_at":   state.StartedAt,
 		"duration_ms":  state.Duration.Milliseconds(),
 	}
-	for key, value := range map[string]string{"progress": state.Progress, "error": state.Error} {
+	for key, value := range map[string]string{"display_title": state.DisplayTitle, "progress": state.Progress, "error": state.Error} {
 		if value != "" {
 			rendered[key] = value
 		}
@@ -1030,17 +1030,18 @@ func toolStateFrame(changed session.ToolCallChanged) frame {
 
 // ToolCallState is one change to a tool call's state, sent to every watcher of the session.
 type ToolCallState struct {
-	Type       ToolCallFrameType `json:"type"`
-	ToolCallID string            `json:"tool_call_id" doc:"The call, as tool_call, tool_started and tool_ran name it."`
-	Tool       string            `json:"tool"`
-	TurnID     string            `json:"turn_id"`
-	Status     ToolCallStatus    `json:"status"`
-	Progress   string            `json:"progress,omitempty" doc:"The last thing said about the call while it runs, such as \"Searching for flights\": a tool_update, the connector binding's pre_speech, or the question it waits on."`
-	StartedAt  time.Time         `json:"started_at"`
-	DurationMS int64             `json:"duration_ms" doc:"From started_at to this change; on tool_call.finished, how long the call took."`
-	ApprovedAt *time.Time        `json:"approved_at,omitempty" doc:"When a person allowed the call."`
-	RejectedAt *time.Time        `json:"rejected_at,omitempty" doc:"When a person declined the call, or its wait for them passed."`
-	Error      string            `json:"error,omitempty" doc:"Why a failed call failed, or what a declined one shows, such as \"Not allowed in time\"."`
+	Type         ToolCallFrameType `json:"type"`
+	ToolCallID   string            `json:"tool_call_id" doc:"The call, as tool_call, tool_started and tool_ran name it."`
+	Tool         string            `json:"tool"`
+	TurnID       string            `json:"turn_id"`
+	Status       ToolCallStatus    `json:"status"`
+	DisplayTitle string            `json:"display_title,omitempty" doc:"What the call is doing, in words for the people in the conversation, such as \"Checking the weather\": the display_title its tool was declared with, or \"Searching the web\" for the router's own search. Absent when the tool declared none."`
+	Progress     string            `json:"progress,omitempty" doc:"The last thing said about the call while it runs, such as \"Searching for flights\": a tool_update, the connector binding's pre_speech, or the question it waits on."`
+	StartedAt    time.Time         `json:"started_at"`
+	DurationMS   int64             `json:"duration_ms" doc:"From started_at to this change; on tool_call.finished, how long the call took."`
+	ApprovedAt   *time.Time        `json:"approved_at,omitempty" doc:"When a person allowed the call."`
+	RejectedAt   *time.Time        `json:"rejected_at,omitempty" doc:"When a person declined the call, or its wait for them passed."`
+	Error        string            `json:"error,omitempty" doc:"Why a failed call failed, or what a declined one shows, such as \"Not allowed in time\"."`
 }
 
 func (*ToolCallState) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

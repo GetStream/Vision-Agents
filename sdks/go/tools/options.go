@@ -19,6 +19,19 @@ func Interruptible(interruptible bool) Option {
 	}
 }
 
+// DisplayTitle is what a call is doing, in words for the people in the conversation, such as
+// "Checking the weather". Apps show it while the call runs.
+func DisplayTitle(title string) Option {
+	return func(function *Function) error {
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return fmt.Errorf("a display title cannot be empty")
+		}
+		function.DisplayTitle = title
+		return nil
+	}
+}
+
 // Timeout bounds one call, in place of the session's default.
 func Timeout(timeout time.Duration) Option {
 	return func(function *Function) error {

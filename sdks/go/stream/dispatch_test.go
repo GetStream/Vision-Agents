@@ -557,6 +557,29 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 	stopped()
 }
 
+func TestAHostedFunctionTellsTheRouterWhatItsCallsAreShownDoing(t *testing.T) {
+	router := newPool(t, func(*websocket.Conn) {})
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "weather_lookup", "Look up the weather", func(context.Context, struct{}) (any, error) {
+		return "sunny", nil
+	}, tools.DisplayTitle("Checking the weather")); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.Host(toolHost{functions}, time.Minute)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := run(t, ctx, worker)
+
+	declared := router.told(t, "host_tools")
+	hosted, _ := declared["tools"].([]any)
+	if len(hosted) != 1 || hosted[0].(map[string]any)["display_title"] != "Checking the weather" {
+		t.Errorf("the router was told %v", declared["tools"])
+	}
+	cancel()
+	stopped()
+}
+
 func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 	// The first connection is cut without a close frame, the way a router pod being
 	// replaced ends it, and the second goes away with one. A worker that stopped at

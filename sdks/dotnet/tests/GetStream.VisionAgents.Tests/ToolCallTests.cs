@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -209,6 +210,62 @@ public sealed class ToolCallTests
         Assert.Null(Refused(approval: "Refund {amount}? {not a placeholder}"));
         Assert.Equal(1, tools.Count);
     }
+
+    [Fact]
+    public void ARecordParametersDescriptionIsItsArgumentsDescription()
+    {
+        var schema = Schema<WeatherLookup>();
+
+        Assert.Equal("""{"type":"string","description":"a city or region"}""", schema["properties"]!["location"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void APropertysDescriptionIsItsArgumentsDescription()
+    {
+        var schema = Schema<Booking>();
+
+        Assert.Equal("how many people are coming", schema["properties"]!["guests"]!.Text("description"));
+    }
+
+    [Fact]
+    public void ATypesDescriptionDescribesTheArgumentsAndAnyObjectOfThatType()
+    {
+        var schema = Schema<Trip>();
+
+        Assert.Equal("a journey of one leg", schema.Text("description"));
+        Assert.Equal("one hop between two places", schema["properties"]!["leg"]!.Text("description"));
+    }
+
+    [Fact]
+    public void ArgumentsWithNoDescriptionAreDeclaredAsTheyAre()
+    {
+        var schema = Schema<Undescribed>();
+
+        Assert.Equal("""{"type":["object","null"],"properties":{"location":{"type":"string"}},"required":["location"]}""",
+            schema.ToJsonString());
+    }
+
+    private static JsonObject Schema<TArguments>()
+    {
+        var tools = new Tools().Register<TArguments, string>("tool", "A tool", (_, _) => Task.FromResult(""));
+        return JsonSerializer.SerializeToNode(Assert.Single(tools.Declared()).Parameters)!.AsObject();
+    }
+
+    private sealed record WeatherLookup([Description("a city or region")] string Location);
+
+    private sealed record Booking
+    {
+        [Description("how many people are coming")]
+        public int Guests { get; init; }
+    }
+
+    [Description("a journey of one leg")]
+    private sealed record Trip(Leg Leg);
+
+    [Description("one hop between two places")]
+    private sealed record Leg(string From);
+
+    private sealed record Undescribed(string Location);
 
     [Fact]
     public async Task AHostedToolIsDeclaredWithItsPoliciesAndAnsweredByCallId()
