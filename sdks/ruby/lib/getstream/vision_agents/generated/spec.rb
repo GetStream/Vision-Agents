@@ -508,7 +508,7 @@ module GetStream
         }.freeze,
         "getAgentStats" => {
           method: :get, path: "/v1/stats/agents",
-          path_params: [].freeze, query: %w[from to].freeze,
+          path_params: [].freeze, query: %w[from to agent].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1942,8 +1942,8 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentStats" => {
-          properties: %w[peak_at peak_concurrent_sessions tool_calls tools].freeze,
-          required: %w[peak_concurrent_sessions peak_at tool_calls tools].freeze, open: false
+          properties: %w[avg_turns peak_at peak_concurrent_sessions sessions tool_calls tools].freeze,
+          required: %w[peak_concurrent_sessions peak_at sessions avg_turns tool_calls tools].freeze, open: false
         }.freeze,
         "AgentUser" => {
           properties: %w[include_phone_history phone phone_history_since user_id].freeze,
@@ -3234,8 +3234,8 @@ module GetStream
           required: %w[tool_call_id type].freeze, open: false
         }.freeze,
         "ToolStats" => {
-          properties: %w[avg_ms avg_tokens calls failed p99_ms tool].freeze,
-          required: %w[tool calls failed avg_tokens avg_ms p99_ms].freeze, open: false
+          properties: %w[avg_ms avg_tokens avg_turns_before_use calls definition_tokens failed loading p99_ms session_share sessions summary_tokens tool].freeze,
+          required: %w[tool calls failed sessions session_share avg_turns_before_use avg_tokens avg_ms p99_ms loading definition_tokens summary_tokens].freeze, open: false
         }.freeze,
         "TranscriptEntity" => {
           properties: %w[end_ms start_ms text type].freeze,
