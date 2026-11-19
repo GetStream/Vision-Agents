@@ -2,6 +2,10 @@
 
 ## Features
 
+### The .NET SDK connects a user's own accounts
+
+`VisionAgentsClient.Connections` creates, authorizes, reads, lists and deletes connections: `CreateAsync("linear", userId: "alice")`, `AuthorizeAsync(id, returnUrl, userId)` for the consent's launch URL, handoff token and expiry, `GetAsync(id, userId)`, `ListAsync(connectorId, userId)` reading every page, and `DeleteAsync(id, userId)`; a user given is sent as the owner and as `X-Stream-User-Id`, and none is the app's own connection.
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).

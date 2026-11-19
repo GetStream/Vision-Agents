@@ -83,6 +83,12 @@ public sealed class VisionAgentsClient : IDisposable
     public Teams Teams => new(this);
 
     /// <summary>
+    /// The accounts the app and its users hold at connectors, each call naming the user it is
+    /// for. Server side only.
+    /// </summary>
+    public Connections Connections => new(this);
+
+    /// <summary>
     /// Speech-to-text, text-to-speech, the language model and search, on their own, under a
     /// stored router config and with cost labels on everything routed.
     /// </summary>

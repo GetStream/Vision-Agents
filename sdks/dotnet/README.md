@@ -383,6 +383,30 @@ What the router answers is in micros too: `Usd.FromMicros(limit.LimitMicros)` pr
 `$20000.00`. Work a limit refuses is a `RouterException` of 402 `spend_limit_reached`, or 429
 `user_limit_reached` for one end user's. Spend limits and teams are server side only.
 
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through. A backend creates one for a user, sends the user's browser to the provider's consent,
+and reads whether it connected:
+
+```csharp
+var connections = api.Connections;
+var connection = await connections.CreateAsync("linear", userId: "alice");
+var consent = await connections.AuthorizeAsync(connection.Id, "https://app.example.com/settings", userId: "alice");
+// Open consent.LaunchUrl in a popup from a page of the return URL's origin, and post it
+// consent.HandoffToken. The attempt ends at consent.ExpiresAt.
+
+connection = await connections.GetAsync(connection.Id, userId: "alice"); // Status is pending until alice consents
+var hers = await connections.ListAsync(userId: "alice");
+await connections.DeleteAsync(connection.Id, userId: "alice");
+```
+
+Each call takes the user, and the SDK sends it as the owner and as `X-Stream-User-Id`, so the
+two never differ. Another user's connection is not found, the same as one that does not exist.
+An app's connection is reached by every call of a backend, one naming a user included, but
+`ListAsync` with a `userId` lists only that user's. Leave the user out for the app's own
+connection, which any of its agents may be bound to. Connections are server side only.
+
 ## Working on this package
 
 Everything runs in Docker; nothing is installed on the host.
