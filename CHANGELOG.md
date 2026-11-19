@@ -4,7 +4,7 @@
 
 ### A tool is registered once for the app, and each agent's agent.yaml enables it
 
-Python's `stream.Client` has `tools`, a function registry for the whole app, and `Dispatch.host(client)` runs it for every agent: a session is offered one of those tools only when a tool group of its agent's `agent.yaml` names it, and a tool of the same name an agent hosts itself wins. A worker asks for this with `every_agent: true` on its `host_tools` frame; one naming neither an agent nor `every_agent` is still refused, so a forgotten agent id never offers tools to every agent.
+Every server SDK's client has a tool registry for the whole app, and one call runs it for every agent: Go `client.Tools().Add(...)` and `client.RunDispatch(ctx)`, Python `client.tools.register(...)` and `await client.run_dispatch()`, JavaScript `client.tools.register(...)` and `await client.runDispatch()`, .NET `client.Tools.Register(...)` and `await client.RunDispatchAsync()`, Ruby `client.tools.register(...)` and `client.run_dispatch`, Rust `client.tools().register(...)` and `client.run_dispatch().await`, PHP `$client->tools->register(...)` and `$client->runDispatch()`. A worker that also answers calls or messages hosts them with `dispatch.host(client)`. A session is offered one of those tools only when a tool group of its agent's `agent.yaml` names it, and a tool of the same name an agent hosts itself wins. A worker asks for this with `every_agent: true` on its `host_tools` frame; one naming neither an agent nor `every_agent` is still refused, so a forgotten agent id never offers tools to every agent.
 
 ### Tool stats show how to load each tool, per agent
 
@@ -631,6 +631,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 `GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
 
 ## Breaking Changes
+
+### Tools are hosted from the client, not from an agent
+
+An agent handle no longer has tools to host: Go `client.Agent.Tools()`, Python `Agent.register` and `Agent.functions`, JavaScript `AgentHandle.tools`, Rust `AgentRef.tools` and PHP `AgentHandle::$tools` are gone. Register the tools on the client and run them with its `run_dispatch` (see above), and name each one in a tool group of the agents that use it. `Dispatch.host` takes the client in place of an agent in every SDK, and the hosting refusal no longer names an agent: JavaScript's `HostingRefusedError` and PHP's `HostingRefusedException` lose `agentId`, and PHP's `Dispatch::$hosting` is a boolean. A session's own tools stay: Go `SessionOptions.Tools`, Python `SessionOptions(tools=...)`, and the in-process `Agent`'s tools in JavaScript, .NET, Ruby and Go's `agents` package.
 
 ### A tool call no longer has update or say
 
