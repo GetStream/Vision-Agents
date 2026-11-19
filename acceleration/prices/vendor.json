@@ -128,7 +128,7 @@
     {"modality":"stt","provider":"muse","model":"muse-voice-transcribe-1.0","region":"us","rates":{"audio_ms":{"usd":0.18,"per":3600000}}},
     {"modality":"stt","provider":"cartesia","model":"ink-2","region":"us","rates":{"audio_ms":{"usd":0.40365404,"per":3600000}}},
     {"modality":"stt","provider":"inworld","model":"inworld-stt-1","region":"us","rates":{"audio_ms":{"usd":0.15,"per":3600000}}},
-    {"modality":"stt","provider":"elevenlabs","model":"scribe_v2_realtime","region":"us","rates":{"audio_ms":{"usd":0.39,"per":3600000}}},
+    {"modality":"stt","provider":"elevenlabs","model":"scribe_v2_realtime","region":"us","rates":{"audio_ms":{"usd":0.22,"per":3600000}}},
     {"modality":"stt","provider":"elevenlabs","model":"scribe_v3_live","region":"us","rates":{"audio_ms":{"usd":0.22,"per":3600000}}},
     {"modality":"stt","provider":"assemblyai","model":"universal-3-6-pro","region":"us","rates":{"audio_ms":{"usd":0.45,"per":3600000}}},
     {"modality":"stt","provider":"assemblyai","model":"assemblyai-stt-3-7-realtime-agent","region":"us","rates":{"audio_ms":{"usd":0.45,"per":3600000}}},

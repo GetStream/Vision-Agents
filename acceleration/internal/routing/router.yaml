@@ -502,8 +502,8 @@ stt:
     # reason Nemotron's third tier is: a language the vendor's own figures say it
     # transcribes badly is not one to route a call to.
     #
-    # $0.39 an audio hour at the standard rate, before the $0.05 an hour keyterm prompting
-    # adds; an annual Business plan brings the base to $0.28.
+    # $0.22 an audio hour on every plan (repriced 2026-11-17, the same as Scribe v3 Live),
+    # before the $0.08 an hour keyterm prompting adds.
     - provider: elevenlabs
       model: scribe_v2_realtime
       description: "ElevenLabs' live Scribe, built for the 150 ms a live call needs."
