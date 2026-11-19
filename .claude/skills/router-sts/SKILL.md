@@ -76,18 +76,6 @@ What the table is saying:
 - **Temperature is not here.** Only Nova Sonic, which is not yet a provider, takes it on a
   live session, and a knob the others ignore in silence is worse than one that is absent.
 
-## Phonic
-
-[`internal/sts/phonic`](../../../acceleration/internal/sts/phonic) speaks Phonic's own socket:
-one `config` frame (it refuses an unknown field), `generate_reply` for typed turns and prompts,
-`update_system_prompt` and `update_tools_subset` mid-session, inline tools that must be
-`strict`. The caller's audio goes up at 16 kHz in frames of at most 40 ms. Asked for audio
-ahead of real time, it still sends `assistant_finished_speaking` on its own playback clock,
-and a barge-in comes as that frame followed by `interrupted_response`, so a finished reply is
-held 300 ms before it is settled. There is no client-side cancel. It reports no usage and
-bills per conversation minute, so the provider counts the session's seconds itself
-(`SessionBilled`).
-
 ## Model ids drift
 
 `gemini-3.1-flash-live-preview` replaced `gemini-2.5-flash-native-audio-preview-12-2025`;
