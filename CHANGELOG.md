@@ -733,6 +733,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### One `Sync` drops an agent's sandbox and a skill's scripts together
+
+The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.
+
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 
 `Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
