@@ -550,9 +550,10 @@ func (w *watcher) send(event Event) bool {
 
 // Watch attaches a consumer and returns it along with the way to detach.
 //
-// Every watcher sees everything from the moment it attached. Nothing is replayed: a caller
-// that connects late has missed the conversation, and a control channel that opened with a
-// backlog would have it answering tool calls that timed out before it arrived.
+// Every watcher sees everything from the moment it attached. Nothing else is replayed, but a
+// call still waiting for the person to allow it is asked again: a caller that connects late has
+// missed the conversation, and a control channel that opened with a backlog would have it
+// answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
 	return s.WatchAs(Seat{Owner: OwnerOf(s.Spec())})
 }
@@ -619,9 +620,11 @@ func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Even
 	}
 	// A call still waiting for the person to allow it is asked again of a watcher that comes
 	// later, such as an app reopened after the one that was asked was closed: the question is
-	// on the reply's step, and only a watcher that has the call can answer it and run it.
+	// on the reply's step, and only a watcher that has the call can answer it and run it. One
+	// answered or finished since asking was read is not: the answer is recorded on the call
+	// before the conversation hears it (DecideCommandTool).
 	for _, pending := range asking {
-		if resent[pending.ID] {
+		if resent[pending.ID] || !s.tools.asking(pending.ID) {
 			continue
 		}
 		if resent == nil {
@@ -1838,6 +1841,7 @@ func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, 
 	if !bound || expected != commandID || !s.tools.waitsOn(id, turnID) {
 		return false
 	}
+	s.tools.decide(id, turnID)
 	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})
 	return true
 }

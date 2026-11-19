@@ -197,6 +197,19 @@ func (s *SessionSuite) TestACallWaitingForThePersonIsSentAgainToALaterWatcher() 
 	s.Equal("turn-a", asked.TurnID)
 	s.True(asked.Run)
 
+	// Answered between the read of what is asked and the send: the call carries the answer
+	// before the conversation does, and the watcher is not asked.
+	running.tools.decide(call.ID, call.TurnID)
+	s.True(running.persisted.AwaitsApproval(call.ID), "the conversation has not heard the answer yet")
+	racing, stopRacing := running.Watch()
+	defer stopRacing()
+	select {
+	case event := <-racing:
+		_, tool := event.(ToolCall)
+		s.False(tool, "a call answered before the send is not sent")
+	default:
+	}
+
 	s.True(running.DecideCommandTool(call.ID, "command-a", "turn-a", true, ""))
 	answered, stopAnswered := running.Watch()
 	defer stopAnswered()
