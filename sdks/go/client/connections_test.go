@@ -1,0 +1,394 @@
+package client
+
+import (
+	"cmp"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+)
+
+// standInConnectionsPage is the stand-in's page size, below what List asks for, so a list
+// longer than it shows the cursor is followed.
+const standInConnectionsPage = 2
+
+// serveConnections answers the connection routes with the router's owner rule
+// (acceleration/internal/api/connections.go, ownerOf and mayReach): a user's connection is
+// created and reached only while acting for that user, named by X-Stream-User-Id; the app's by
+// any backend.
+func (r *router) serveConnections(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/agents/connections", func(w http.ResponseWriter, request *http.Request) {
+		r.record(request)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		sent := r.bodies[request.Method+" "+request.URL.Path]
+		owner, _ := sent["owner"].(map[string]any)
+		userID, named := owner["user_id"].(string)
+		switch {
+		case owner["type"] == "app" && named:
+			refuseConnection(w, "an app-owned connection has no owner.user_id")
+			return
+		case owner["type"] == "user" && (userID == "" || userID != request.Header.Get(stream.UserHeader)):
+			refuseConnection(w, "owner.user_id must be the user this backend acts for, named by "+stream.UserHeader)
+			return
+		case owner["type"] != "app" && owner["type"] != "user":
+			refuseConnection(w, "owner.type must be app or user")
+			return
+		}
+		connectorID, _ := sent["connector_id"].(string)
+		created := acceleration.Connection{
+			Id:          ptr(fmt.Sprintf("connection-%d", len(r.connections)+1)),
+			ConnectorId: connectorID,
+			Owner:       acceleration.ConnectionOwner{Type: acceleration.ConnectionOwnerType(owner["type"].(string))},
+			Status:      acceleration.ConnectionStatusPending,
+		}
+		if named {
+			created.Owner.UserId = &userID
+		}
+		if label, ok := sent["label"].(string); ok {
+			created.Label = &label
+		}
+		r.connections = append(r.connections, created)
+		answer(w, http.StatusCreated, created)
+	})
+
+	mux.HandleFunc("GET /v1/agents/connections", func(w http.ResponseWriter, request *http.Request) {
+		r.record(request)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		query := request.URL.Query()
+		ownerType := cmp.Or(query.Get("owner_type"), "app")
+		acting := request.Header.Get(stream.UserHeader)
+		var matched []acceleration.Connection
+		for _, connection := range slices.Backward(r.connections) {
+			if string(connection.Owner.Type) != ownerType {
+				continue
+			}
+			if ownerType == "user" && acting != "" && *connection.Owner.UserId != acting {
+				continue
+			}
+			if connector := query.Get("connector_id"); connector != "" && connection.ConnectorId != connector {
+				continue
+			}
+			matched = append(matched, connection)
+		}
+		from, _ := strconv.Atoi(strings.TrimPrefix(query.Get("cursor"), "after-"))
+		to := min(from+standInConnectionsPage, len(matched))
+		page := acceleration.ConnectionPage{Items: ptr(matched[from:to]), HasMore: to < len(matched)}
+		if page.HasMore {
+			page.NextCursor = ptr(fmt.Sprintf("after-%d", to))
+		}
+		answer(w, http.StatusOK, page)
+	})
+
+	mux.HandleFunc("GET /v1/agents/connections/{id}", func(w http.ResponseWriter, request *http.Request) {
+		r.record(request)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		at := r.reachable(request)
+		if at < 0 {
+			connectionNotFound(w)
+			return
+		}
+		answer(w, http.StatusOK, r.connections[at])
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/connections/{id}", func(w http.ResponseWriter, request *http.Request) {
+		r.record(request)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		at := r.reachable(request)
+		if at < 0 {
+			connectionNotFound(w)
+			return
+		}
+		r.connections = slices.Delete(r.connections, at, at+1)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("POST /v1/agents/connections/{id}/authorizations", func(w http.ResponseWriter, request *http.Request) {
+		r.record(request)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		at := r.reachable(request)
+		if at < 0 {
+			connectionNotFound(w)
+			return
+		}
+		answer(w, http.StatusCreated, acceleration.Authorization{
+			Id:           "attempt-1",
+			Kind:         acceleration.Consent,
+			LaunchUrl:    "https://router.example.com/v1/agents/connections/" + *r.connections[at].Id + "/launch",
+			HandoffToken: "handoff-1",
+			ExpiresAt:    pinnedAt.Add(10 * time.Minute),
+		})
+	})
+}
+
+// reachable is the index of the connection a request names, if the request may reach it, and
+// -1 otherwise. The caller holds r.mu.
+func (r *router) reachable(request *http.Request) int {
+	acting := request.Header.Get(stream.UserHeader)
+	for at, connection := range r.connections {
+		if *connection.Id != request.PathValue("id") {
+			continue
+		}
+		if connection.Owner.Type == acceleration.ConnectionOwnerTypeApp ||
+			acting != "" && *connection.Owner.UserId == acting {
+			return at
+		}
+	}
+	return -1
+}
+
+// actingFor is the X-Stream-User-Id of every request to a path, whatever the query, in order.
+func (r *router) actingFor(method, path string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var named []string
+	for at, line := range r.asked {
+		if before, _, _ := strings.Cut(line, "?"); before == method+" "+path {
+			named = append(named, r.heard[at].Get(stream.UserHeader))
+		}
+	}
+	return named
+}
+
+func refuseConnection(w http.ResponseWriter, message string) {
+	answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+		Type: "invalid_request", Code: "invalid_request", Message: message,
+	}})
+}
+
+func connectionNotFound(w http.ResponseWriter) {
+	answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+		Type: "not_found", Code: "connection_not_found", Message: "no such connection",
+	}})
+}
+
+// connectFor creates a connection to connector for user, failing the test if it cannot.
+func connectFor(t *testing.T, connections *Connections, connector, user string) acceleration.Connection {
+	t.Helper()
+	created, err := connections.Create(t.Context(), ConnectionRequest{Connector: connector, User: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return created
+}
+
+// Catches a user connection whose owner and X-Stream-User-Id differ, or that names no user in
+// one of them: the router refuses either.
+func TestAUsersConnectionNamesThemAsOwnerAndActingUser(t *testing.T) {
+	backend := newRouter(t)
+
+	created, err := backend.client(t).Connections().Create(t.Context(),
+		ConnectionRequest{Connector: "linear", Label: "work", User: "anya"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"connector_id": "linear", "label": "work", "owner": map[string]any{"type": "user", "user_id": "anya"}}
+	if sent := backend.body(t, "POST", "/v1/agents/connections"); !reflect.DeepEqual(sent, want) {
+		t.Errorf("the router was sent %v", sent)
+	}
+	if acting := backend.actingFor("POST", "/v1/agents/connections"); !slices.Equal(acting, []string{"anya"}) {
+		t.Errorf("the create acted for %q", acting)
+	}
+	if *created.Owner.UserId != "anya" || created.Status != acceleration.ConnectionStatusPending {
+		t.Errorf("the connection came back as %+v", created)
+	}
+}
+
+// Catches an app connection sent with an owner.user_id, or with the user the client otherwise
+// acts for in X-Stream-User-Id, which would make each read depend on who the client was built for.
+func TestAnAppConnectionNamesNoUser(t *testing.T) {
+	backend := newRouter(t)
+	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme", ActingFor: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := connectFor(t, api.Connections(), "github", "")
+	if _, err := api.Connections().Get(t.Context(), *created.Id, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"connector_id": "github", "owner": map[string]any{"type": "app"}}
+	if sent := backend.body(t, "POST", "/v1/agents/connections"); !reflect.DeepEqual(sent, want) {
+		t.Errorf("the router was sent %v", sent)
+	}
+	for _, path := range []string{"POST /v1/agents/connections", "GET /v1/agents/connections/" + *created.Id} {
+		method, route, _ := strings.Cut(path, " ")
+		if acting := backend.actingFor(method, route); !slices.Equal(acting, []string{""}) {
+			t.Errorf("%s acted for %q", path, acting)
+		}
+	}
+}
+
+// Catches an authorization that drops the return URL or the user, or comes back without the
+// launch URL, the handoff token or when the attempt ends.
+func TestAuthorizingAnswersWhereAndHowLongTheConsentRuns(t *testing.T) {
+	backend := newRouter(t)
+	connections := backend.client(t).Connections()
+	created := connectFor(t, connections, "linear", "anya")
+	path := "/v1/agents/connections/" + *created.Id + "/authorizations"
+
+	started, err := connections.Authorize(t.Context(), *created.Id,
+		AuthorizeOptions{ReturnURL: "https://app.example.com/settings", User: "anya"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if sent := backend.body(t, "POST", path); !reflect.DeepEqual(sent, map[string]any{"return_url": "https://app.example.com/settings"}) {
+		t.Errorf("the router was sent %v", sent)
+	}
+	if acting := backend.actingFor("POST", path); !slices.Equal(acting, []string{"anya"}) {
+		t.Errorf("the authorization acted for %q", acting)
+	}
+	want := acceleration.Authorization{
+		Id: "attempt-1", Kind: acceleration.Consent, HandoffToken: "handoff-1", ExpiresAt: pinnedAt.Add(10 * time.Minute),
+		LaunchUrl: "https://router.example.com/v1/agents/connections/" + *created.Id + "/launch",
+	}
+	if !reflect.DeepEqual(started, want) {
+		t.Errorf("the authorization came back as %+v", started)
+	}
+
+	if _, err := connections.Authorize(t.Context(), *created.Id, AuthorizeOptions{User: "anya"}); err != nil {
+		t.Fatal(err)
+	}
+	if sent := backend.body(t, "POST", path); len(sent) != 0 {
+		t.Errorf("an authorization with no return URL sent %v", sent)
+	}
+}
+
+// Catches a read, an authorization or a delete that sends no user, or another than the one
+// named: the owner reaches their connection, and anybody else is told it does not exist.
+func TestAUsersConnectionIsReachedOnlyAsThem(t *testing.T) {
+	backend := newRouter(t)
+	connections := backend.client(t).Connections()
+	created := connectFor(t, connections, "linear", "anya")
+
+	got, err := connections.Get(t.Context(), *created.Id, "anya")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *got.Id != *created.Id || got.Status != acceleration.ConnectionStatusPending {
+		t.Errorf("the connection came back as %+v", got)
+	}
+	for _, user := range []string{"bob", ""} {
+		_, read := connections.Get(t.Context(), *created.Id, user)
+		_, authorized := connections.Authorize(t.Context(), *created.Id, AuthorizeOptions{User: user})
+		deleted := connections.Delete(t.Context(), *created.Id, user)
+		for name, err := range map[string]error{"read": read, "authorized": authorized, "deleted": deleted} {
+			var refused *stream.RouterError
+			if !errors.As(err, &refused) || refused.Status != http.StatusNotFound || refused.Code != "connection_not_found" {
+				t.Errorf("anya's connection %s as %q: %v", name, user, err)
+			}
+		}
+	}
+	if _, err := connections.Get(t.Context(), *created.Id, "anya"); err != nil {
+		t.Errorf("another user deleted anya's connection: %v", err)
+	}
+}
+
+// Catches a list that reads one page only, lists the app's when a user is named or a user's when
+// none is, or drops the connector.
+func TestListingReadsTheOwnersConnectionsEveryPage(t *testing.T) {
+	backend := newRouter(t)
+	connections := backend.client(t).Connections()
+	first := connectFor(t, connections, "linear", "anya")
+	second := connectFor(t, connections, "github", "anya")
+	third := connectFor(t, connections, "linear", "anya")
+	connectFor(t, connections, "linear", "bob")
+	app := connectFor(t, connections, "linear", "")
+
+	for _, c := range []struct {
+		filter ConnectionFilter
+		want   []string
+		query  url.Values
+		acting string
+	}{
+		{ConnectionFilter{User: "anya"}, []string{*third.Id, *second.Id, *first.Id},
+			url.Values{"owner_type": {"user"}, "limit": {"200"}}, "anya"},
+		{ConnectionFilter{User: "anya", Connector: "linear"}, []string{*third.Id, *first.Id},
+			url.Values{"owner_type": {"user"}, "connector_id": {"linear"}, "limit": {"200"}}, "anya"},
+		{ConnectionFilter{}, []string{*app.Id}, url.Values{"owner_type": {"app"}, "limit": {"200"}}, ""},
+	} {
+		backend.mu.Lock()
+		backend.asked, backend.heard = nil, nil
+		backend.mu.Unlock()
+
+		listed, err := connections.List(t.Context(), c.filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, connection := range listed {
+			ids = append(ids, *connection.Id)
+		}
+		if !slices.Equal(ids, c.want) {
+			t.Errorf("%+v listed %v", c.filter, ids)
+		}
+		if query := backend.query(t, "GET", "/v1/agents/connections"); !reflect.DeepEqual(query, c.query) {
+			t.Errorf("%+v asked %v", c.filter, query)
+		}
+		pages := (len(c.want) + standInConnectionsPage - 1) / standInConnectionsPage
+		if acting := backend.actingFor("GET", "/v1/agents/connections"); !slices.Equal(acting, slices.Repeat([]string{c.acting}, pages)) {
+			t.Errorf("%+v acted for %q", c.filter, acting)
+		}
+	}
+}
+
+// Catches a delete that is not sent, is sent as somebody else, or reports success for a refusal.
+func TestDeletingAConnectionRemovesIt(t *testing.T) {
+	backend := newRouter(t)
+	connections := backend.client(t).Connections()
+	created := connectFor(t, connections, "linear", "anya")
+
+	if err := connections.Delete(t.Context(), *created.Id, "anya"); err != nil {
+		t.Fatal(err)
+	}
+
+	path := "/v1/agents/connections/" + *created.Id
+	if acting := backend.actingFor("DELETE", path); !slices.Equal(acting, []string{"anya"}) {
+		t.Errorf("the delete acted for %q", acting)
+	}
+	if query := backend.query(t, "DELETE", path); len(query) != 0 {
+		t.Errorf("the delete asked %v", query)
+	}
+	var refused *stream.RouterError
+	if _, err := connections.Get(t.Context(), *created.Id, "anya"); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
+		t.Errorf("the deleted connection was read: %v", err)
+	}
+	if err := connections.Delete(t.Context(), *created.Id, "anya"); !errors.As(err, &refused) || refused.Code != "connection_not_found" {
+		t.Errorf("deleting it again answered %v", err)
+	}
+}
+
+// Catches an empty connection id sent to the router, as /v1/agents/connections/.
+func TestAConnectionWithNoIDIsRefusedBeforeTheRouter(t *testing.T) {
+	backend := newRouter(t)
+	connections := backend.client(t).Connections()
+
+	if _, err := connections.Get(t.Context(), "", "anya"); err == nil {
+		t.Error("a connection with no id was read")
+	}
+	if _, err := connections.Authorize(t.Context(), "", AuthorizeOptions{User: "anya"}); err == nil {
+		t.Error("a connection with no id was authorized")
+	}
+	if err := connections.Delete(t.Context(), "", "anya"); err == nil {
+		t.Error("a connection with no id was deleted")
+	}
+	if len(backend.asked) != 0 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
