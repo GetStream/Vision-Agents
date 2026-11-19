@@ -29,6 +29,9 @@ class Router:
         self.asked: list[str] = []
         self.queries: dict[str, dict[str, str]] = {}
         self.bodies: dict[str, dict[str, Any]] = {}
+        # headers holds the router's own headers (X-...) each request carried, the latest
+        # against the same key.
+        self.headers: dict[str, dict[str, str]] = {}
 
         self.configs: list[dict[str, Any]] = []
         self.sessions: list[dict[str, Any]] = []
@@ -422,6 +425,11 @@ class Router:
         line = f"{request.method} {request.path}"
         self.asked.append(line)
         self.queries[line] = dict(request.query)
+        self.headers[line] = {
+            name: value
+            for name, value in request.headers.items()
+            if name.lower().startswith("x-")
+        }
         if request.can_read_body:
             self.bodies[line] = await request.json()
 
@@ -1738,6 +1746,70 @@ class TestUpdate:
         assert updated.title == "Pricing"
         body = router.body("PATCH", "/v1/agents/sessions/session-9")
         assert body == {"title": "Pricing", "custom": {"ticket": "4721"}}
+
+
+class TestActingForAUser:
+    async def test_an_agent_for_a_user_names_them_on_every_request(
+        self, api: stream.Client, router: Router
+    ):
+        docs = api.agent("docs", user_id="alice")
+
+        session = await docs.sessions.create(stream.SessionOptions(title="Pricing"))
+        await docs.sessions.get(session.id)
+        await session.close()
+
+        assert router.headers["POST /v1/agents/sessions"]["X-Stream-User-Id"] == "alice"
+        get = f"GET /v1/agents/sessions/{session.id}"
+        assert router.headers[get]["X-Stream-User-Id"] == "alice"
+        # The client's own agent stays the client's.
+        assert api.backend.acting_for == ""
+
+    async def test_an_agent_without_a_user_sends_what_it_sent_before(
+        self, api: stream.Client, router: Router
+    ):
+        docs = api.agent("docs")
+
+        session = await docs.sessions.create(stream.SessionOptions(title="Pricing"))
+        await docs.sessions.get(session.id)
+        await session.close()
+
+        # Probed on fa2a6a66d, before agent() took a user.
+        assert router.asked == [
+            "POST /v1/agents/sessions",
+            "GET /v1/agents/sessions/session-1",
+        ]
+        assert router.bodies == {
+            "POST /v1/agents/sessions": {
+                "agent": "docs",
+                "backchannel": False,
+                "incognito": False,
+                "navigating": False,
+                "start_voice": False,
+                "title": "Pricing",
+                "user_id": "vision-agent",
+                "user_name": "Vision Agent",
+            }
+        }
+        assert router.headers == {
+            "POST /v1/agents/sessions": {
+                "X-Customer-Id": "acme",
+                "X-Stream-Client": "sdk",
+            },
+            "GET /v1/agents/sessions/session-1": {
+                "X-Customer-Id": "acme",
+                "X-Stream-Client": "sdk",
+            },
+        }
+
+    def test_a_device_cannot_name_a_user(self, router: Router):
+        device = stream.Client(url=router.url, api_key="key", token="jean-token")
+
+        with pytest.raises(ValueError, match="only a backend"):
+            device.agent("docs", user_id="alice")
+        with pytest.raises(ValueError, match="only a backend"):
+            device.router("clinic", user_id="alice")
+        # Without a user a device's router is its own, as before.
+        assert device.router("clinic").backend is device.backend
 
 
 class TestMemories:

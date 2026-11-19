@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Python SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections, each call naming the user as `user_id` (the owner and `X-Stream-User-Id`; none is the app's). `api.agent(name, user_id=...)` and `api.router(config, user_id=...)` run work for a user on the app's credential; `api.for_user` is deprecated and still works.
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).

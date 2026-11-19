@@ -411,8 +411,9 @@ team. A token's team always wins, then the session's, then the agent's tag.
   user of the organization. Keys go the same way, and `level=` overrides it. A team or a
   category with `app_id` is the one within that app.
 - **A team has no members list.** A user is in the team its token names, from
-  `create_user_token` or `for_user`, fixed when the token is signed. A client's own work is
-  counted the same way: `stream.Client(team="finance", usage_categories=["project:x"])`.
+  `create_user_token`, fixed when the token is signed. A client's own work is counted the
+  same way: `stream.Client(team="finance", usage_categories=["project:x"])`, and so is the
+  work it runs for a user, `user_id=` on `agent` or `router` (`for_user` is deprecated).
   A team is 1 to 59 characters of `A-Z a-z 0-9 _ . -`; a category 1 to 64 of
   `A-Z a-z 0-9 _ . : -`, never starting `team:`; at most 10 together. Anything else raises
   `ValueError` before a token is signed.
@@ -424,6 +425,35 @@ team. A token's team always wins, then the session's, then the agent's tag.
 - **Spend over time:** `await api.usage.spend(start=..., end=..., group_by="who:team")`.
 - **Refusals** carry `code`: `limit_above_parent`, `limit_exists`, `no_limit`, `use_team`,
   `invalid_expiry`, `too_many_grants` and `server_side_only`.
+
+## A user's own accounts
+
+`api.connections` holds the accounts the app and its users have at connectors, such as a
+user's Linear, which an agent's tools reach that account through. Server side only. Each
+call names the user as `user_id`, sent as the owner and as `X-Stream-User-Id`; without one
+it is the app's own connection.
+
+```python
+api = stream.Client()
+
+connection = await api.connections.create("linear", user_id="alice")
+consent = await api.connections.authorize(
+    connection.id, return_url="https://app.example.com/connected", user_id="alice"
+)
+# Open consent.launch_url in a popup from that origin, post it consent.handoff_token,
+# and finish before consent.expires_at.
+
+connection = await api.connections.get(connection.id, user_id="alice")
+mine = await api.connections.list(connector="linear", user_id="alice")  # every page
+await api.connections.delete(connection.id, user_id="alice")
+```
+
+A call naming a user still reaches the app's connections; a list naming a user holds only
+that user's. Another user's connection is not found. A refusal raises `RouterError`.
+
+The same `user_id` runs other work for a user on the app's credential: `api.agent("docs",
+user_id="alice")` opens sessions that are theirs, and `api.router("clinic", user_id="alice")`
+counts what it routes against their spend limits. `api.for_user` still works, and warns.
 
 ## Tools hosted for an agent
 
