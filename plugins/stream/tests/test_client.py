@@ -1801,6 +1801,27 @@ class TestActingForAUser:
             },
         }
 
+    async def test_an_agent_without_a_user_keeps_the_user_the_client_was_built_for(
+        self, router: Router
+    ):
+        api = stream.Client(
+            url=router.url,
+            api_key="key",
+            api_secret="secret",
+            user_id="jean",
+            authenticate=False,
+        )
+        docs = api.agent("docs")
+
+        session = await docs.sessions.create(stream.SessionOptions(title="Pricing"))
+        await docs.sessions.get(session.id)
+        await session.close()
+
+        assert len(router.headers) == 3
+        for line, sent in router.headers.items():
+            assert sent["X-Stream-User-Id"] == "jean", line
+            assert sent["X-Api-Key"] == "key", line
+
     def test_a_device_cannot_name_a_user(self, router: Router):
         device = stream.Client(url=router.url, api_key="key", token="jean-token")
 
@@ -1810,6 +1831,9 @@ class TestActingForAUser:
             device.router("clinic", user_id="alice")
         # Without a user a device's router is its own, as before.
         assert device.router("clinic").backend is device.backend
+        # An empty user is no user: a device may pass one along unset.
+        assert device.router("clinic", user_id="").backend is device.backend
+        assert device.agent("docs", user_id="")._backend is device.backend
 
 
 class TestMemories:

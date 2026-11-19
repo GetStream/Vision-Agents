@@ -277,8 +277,12 @@ class TestTeamsAndCategories:
             url="http://router", api_key="key", api_secret="secret", team="ops"
         )
 
-        with pytest.warns(DeprecationWarning, match="user_id"):
+        with pytest.warns(DeprecationWarning, match="user_id") as caught:
             alice = api.for_user("user-42", team="finance")
+
+        # Attributed to the caller: the default filters show a DeprecationWarning only
+        # when it points at the code that called, not at the SDK.
+        assert caught[0].filename == __file__
 
         assert alice.server_side
         headers = alice.backend.headers
@@ -294,6 +298,21 @@ class TestTeamsAndCategories:
         bob = api.for_user("bob")
         assert bob.backend.team is None
         assert USAGE_CATEGORIES_HEADER not in bob.backend.headers
+
+    def test_agent_and_router_without_a_user_keep_the_proxy_token_user_of_the_client(
+        self,
+    ):
+        api = stream.Client(
+            url="http://router",
+            api_key="key",
+            api_secret="secret",
+            user_id="jean",
+            authenticate=True,
+        )
+
+        for backend in (api.router("clinic").backend, api.agent("docs")._backend):
+            claims = _claims(backend.headers["Authorization"].removeprefix("Bearer "))
+            assert claims["user_id"] == "jean"
 
     def test_for_user_behind_the_proxy_is_a_server_token_naming_the_user(self):
         api = stream.Client(
