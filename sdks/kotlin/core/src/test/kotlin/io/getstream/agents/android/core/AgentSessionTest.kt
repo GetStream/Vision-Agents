@@ -376,6 +376,48 @@ class AgentSessionTest {
         chat.close()
     }
 
+    @Test
+    fun `an incognito session's reply shows from its socket, and its call asks the signed-in person on its step`() = runBlocking {
+        agents.setUser(User("jlahey"), "token")
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(incognito = true, tools = listOf(refund(ran))))
+        chat.responses.create("Refund A-1042, it arrived unopened")
+
+        router.script.send(Script.Send("""{"type":"responding","turn_id":"t1"}"""))
+        router.script.send(Script.Send("""{"type":"reasoning_delta","turn_id":"t1","text":"They want a refund."}"""))
+        router.script.send(
+            Script.Send("""{"type":"tool_started","tool_call_id":"c1","tool":"issue_refund","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}"""),
+        )
+        router.script.send(Script.Send(refundCall))
+        val asking = chat.turnMessages.first { it.lastOrNull()?.steps?.lastOrNull()?.fields?.get("status") == "awaiting_approval" }
+
+        assertEquals(listOf(false, true), asking.map { it.isAgentReply })
+        assertEquals("Refund A-1042, it arrived unopened", asking.first().text)
+        val reply = asking.last()
+        assertTrue(reply.isGenerating)
+        assertEquals(listOf("ai_reasoning", "ai_tool_call"), reply.steps.map { it.type })
+        assertEquals(mapOf("r1" to "They want a refund."), reply.reasoning)
+        val step = reply.steps.last().fields
+        // The person signed in here, whom Stream's approver matches, not the agent on the session.
+        assertEquals("jlahey", step["target_user_id"])
+        assertEquals(
+            mapOf("title" to "Refund order A-1042?", "reason" to "it arrived unopened", "allow_title" to "Refund"),
+            step["approval"],
+        )
+
+        chat.decide("c1", allowed = true)
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(JsonPrimitive("tool_result"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        val answered = chat.turnMessages.first()
+        assertEquals("running", answered.last().steps.last().fields["status"], "no longer waiting once answered")
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
     /** A tool that asks first, so whether a call of it is answered here shows in [AgentSession.approvals] at once. */
     private fun reserve(title: String) = AgentTool("reserve_table", "Reserve a table.", approval = AgentTool.Approval(title)) { "Reserved." }
 
