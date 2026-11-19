@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::backend::{Backend, ClientOptions, checked_categories, sign_for, with_usage};
+use crate::dispatch::Dispatch;
 use crate::error::{Error, Result};
 use crate::limits::SpendLimits;
 use crate::router::Router;
@@ -15,6 +16,7 @@ use crate::sessions::{AgentRef, Memories};
 use crate::simulations::Simulations;
 use crate::socket::Socket;
 use crate::teams::Teams;
+use crate::tools::Tools;
 use crate::types;
 
 /// The router, held once: where it is and who is calling it.
@@ -31,10 +33,15 @@ pub struct Client {
 struct Inner {
     backend: Backend,
     http: reqwest::Client,
+    tools: Tools,
 }
 
 impl Client {
     pub fn new(options: ClientOptions) -> Result<Self> {
+        Client::with_tools(options, Tools::new())
+    }
+
+    fn with_tools(options: ClientOptions, tools: Tools) -> Result<Self> {
         let backend = Backend::new(&options)?;
         let http = match options.http {
             Some(http) => http,
@@ -48,7 +55,11 @@ impl Client {
                 })?,
         };
         Ok(Client {
-            inner: Arc::new(Inner { backend, http }),
+            inner: Arc::new(Inner {
+                backend,
+                http,
+                tools,
+            }),
         })
     }
 
@@ -85,20 +96,23 @@ impl Client {
             )));
         }
         let backend = &self.inner.backend;
-        Client::new(ClientOptions {
-            url: Some(backend.url.clone()),
-            region: None,
-            customer_id: Some(backend.customer_id.clone()),
-            api_key: Some(backend.api_key.clone()),
-            // A token is the whole credential, so holding one stops this being a backend.
-            api_secret: Some(String::new()),
-            token: Some(token.to_string()),
-            user_id: Some(user_id.to_string()),
-            authenticate: Some(backend.authenticate),
-            team: None,
-            usage_categories: Vec::new(),
-            http: Some(self.inner.http.clone()),
-        })
+        Client::with_tools(
+            ClientOptions {
+                url: Some(backend.url.clone()),
+                region: None,
+                customer_id: Some(backend.customer_id.clone()),
+                api_key: Some(backend.api_key.clone()),
+                // A token is the whole credential, so holding one stops this being a backend.
+                api_secret: Some(String::new()),
+                token: Some(token.to_string()),
+                user_id: Some(user_id.to_string()),
+                authenticate: Some(backend.authenticate),
+                team: None,
+                usage_categories: Vec::new(),
+                http: Some(self.inner.http.clone()),
+            },
+            self.inner.tools.clone(),
+        )
     }
 
     /// A token for one end user to hold, naming their team and usage categories, valid for
@@ -157,6 +171,7 @@ impl Client {
             inner: Arc::new(Inner {
                 backend,
                 http: self.inner.http.clone(),
+                tools: self.inner.tools.clone(),
             }),
         }
     }
@@ -172,6 +187,35 @@ impl Client {
     /// opened rather than here.
     pub fn agent(&self, name: &str) -> AgentRef {
         AgentRef::new(self.clone(), name)
+    }
+
+    /// The app's tools, registered once for every agent and run by
+    /// [`run_dispatch`](Client::run_dispatch). An agent is offered one only where a tool group
+    /// of its agent.yaml names it.
+    pub fn tools(&self) -> &Tools {
+        &self.inner.tools
+    }
+
+    /// Runs the app's [`tools`](Client::tools) for every session they are offered to, whoever
+    /// opened it, until the router closes the connection. A tool's own timeout is how long the
+    /// router waits for one of its calls; without one it waits 30 seconds. A worker that also
+    /// answers calls or messages hosts the tools with [`Dispatch::host`] instead.
+    ///
+    /// ```no_run
+    /// # async fn example(client: vision_agents::Client) -> vision_agents::Result<()> {
+    /// client.tools().register(
+    ///     "get_weather",
+    ///     "The weather in a city",
+    ///     serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}}),
+    ///     async |arguments| Ok::<_, String>(format!("sunny in {}", arguments["city"])),
+    /// );
+    /// client.run_dispatch().await
+    /// # }
+    /// ```
+    pub async fn run_dispatch(&self) -> Result<()> {
+        let dispatch = Dispatch::new(self.clone());
+        dispatch.host(self, None);
+        dispatch.run().await
     }
 
     /// The router, routing through the stored router config named `config` (by name or id),
