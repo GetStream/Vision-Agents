@@ -28,6 +28,8 @@ github.com/GetStream/getstream-go/v5 v5.2.0 h1:nrZkIL0mzHtByMeAeNFD4jpGIT5XPa0P3
 github.com/GetStream/getstream-go/v5 v5.2.0/go.mod h1:qnod4MVOSwxfpqtXLpxjbMo7lDcepOlg8X2GrpBs/cw=
 github.com/GetStream/goaec3 v0.0.0-20261118221413-2a3ef861560b h1:GqR5A1EcLx8Q3LpqpF7wdC9RvuXJXcQkn35ZzaxBUlo=
 github.com/GetStream/goaec3 v0.0.0-20261118221413-2a3ef861560b/go.mod h1:l0nwpf068reylNG59pTtn27CWLoFhFRfGdPHfvq89Q4=
+github.com/GetStream/goaec3 v0.0.0-20261119022939-35b98ab00004 h1:MGitcKTjg5YWMM7DFVO+rQUhkidRmjgCL1lNnEe/waA=
+github.com/GetStream/goaec3 v0.0.0-20261119022939-35b98ab00004/go.mod h1:l0nwpf068reylNG59pTtn27CWLoFhFRfGdPHfvq89Q4=
 github.com/GetStream/protocol v1.49.0 h1:AzTRH6+PRNHjFjBlcymbjZsVE+wZBp/wPG6w+/9FCw4=
 github.com/GetStream/protocol v1.49.0/go.mod h1:jZALur2IoWnpcLnFzLtnFomgItt4SBHj+U1TjPYC114=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 h1:l7+6kwRMJNwdCvYdDl7Eax+wzEYHSnNY7zrrfbhDdTA=
