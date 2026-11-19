@@ -4,7 +4,7 @@
 
 ### The Go SDK deprecates `Backend.ActingFor`
 
-Name the user on each call, as the `UserID` of the call's options (`client.ConnectionFilter{UserID: "alice"}`), as the other server SDKs now do. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
+Name the user on the call where it takes one: the `UserID` of a `client.Connections()` call's options (`client.ConnectionFilter{UserID: "alice"}`), the `XStreamUserId` of `acceleration.CreateScheduledTaskParams`, or, for another generated call, an `X-Stream-User-Id` set on that request with a per-call `acceleration.RequestEditorFn`. `client.Agent(...)` calls take no per-call user yet, so `ActingFor` is still how they act for one. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
 
 ### The Go SDK connects a user's own accounts
 
