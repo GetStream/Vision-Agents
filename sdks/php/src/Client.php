@@ -33,6 +33,7 @@ use Psr\Http\Message\StreamFactoryInterface;
 final readonly class Client
 {
     public Backend $backend;
+    public Connections $connections;
     public Memories $memories;
     public Simulations $simulations;
     public SpendLimits $spendLimits;
@@ -51,6 +52,7 @@ final readonly class Client
         $this->requests = $requests ?? Http::requests();
         $this->streams = $streams ?? Http::streams();
         $this->http = $http ?? Http::client();
+        $this->connections = new Connections($this);
         $this->memories = new Memories($this);
         $this->simulations = new Simulations($this);
         $this->spendLimits = new SpendLimits($this);

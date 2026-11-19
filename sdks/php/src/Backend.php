@@ -160,6 +160,9 @@ final readonly class Backend
      * acts for. Unlike `actingFor`, nothing is signed for that user in any mode, so what it
      * writes is the server's: the router answers it with the model rather than handing it to a
      * dispatch worker.
+     *
+     * @deprecated pass the user to the call instead, as its optional `userId` parameter, such as
+     *     `$client->connections->get($id, userId: 'ada')`
      */
     public function onBehalfOf(string $userId): self
     {
@@ -167,6 +170,21 @@ final readonly class Backend
             throw new ConfigurationException('only a server-side backend can act on behalf of a user');
         }
         return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $this->userId, $this->authenticate, $userId, team: $this->team, usageCategories: $this->usageCategories);
+    }
+
+    /**
+     * The same server credential, naming `$userId` in `X-Stream-User-Id`, or nobody when it is
+     * empty, whoever this backend otherwise acts for. What a call with a `userId` parameter is
+     * sent with.
+     *
+     * @internal
+     */
+    public function speakingFor(string $userId): self
+    {
+        if (!$this->serverSide()) {
+            throw new ConfigurationException('only a server-side backend can act on behalf of a user');
+        }
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, '', $this->authenticate, $userId, team: $this->team, usageCategories: $this->usageCategories);
     }
 
     /**
