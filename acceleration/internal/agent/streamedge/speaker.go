@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel"
 )
 
 const (
@@ -49,6 +50,8 @@ const (
 	// first silent frame still decodes the tail of the speech before it, and a decoder fills
 	// the gap that follows from the last frame it had.
 	silenceLeadFrames = 2
+	// echoFrameSamples is one Opus frame of the agent's voice as echo cancellation takes it.
+	echoFrameSamples = echocancel.SampleRate * int(opusFrameDuration) / int(time.Second)
 )
 
 // silenceFrame is the canonical Opus silence packet. The track is published for the whole
@@ -96,6 +99,26 @@ type speaker struct {
 	quiet    int
 	speaking bool
 	closed   bool
+
+	// echo is told of the agent's voice as the track takes it, the reference the call's echo
+	// cancellation takes out of what callers send back; nil when the call has none.
+	echo *echocancel.Call
+	// voice is the speech queued, as echo takes it, from voiceAt on: one frame of it goes with
+	// each frame the track takes. toEcho resamples the speech to it as it is written: a
+	// band-limited stream resampler, as a reference resampled a chunk at a time, each
+	// chunk's length rounded on its own, wanders against its echo by more than AEC3 follows.
+	voice   []int16
+	voiceAt int
+	toEcho  *webrtcaudio.StreamResampler
+	// keeping is whether the voice of the utterance going out is kept. It is decided as an
+	// utterance starts, from whether the call has a line to cancel it from, or somebody who
+	// will have one: resampling costs
+	// about twice what encoding does, which a call with nobody on a phone has no use for, and
+	// voice kept from partway through an utterance would no longer line up with its frames.
+	keeping bool
+	// sent is the voice of the frame the track took last, or silence. Only the track's
+	// goroutine touches it.
+	sent [echoFrameSamples]int16
 }
 
 // armedMark is a reply waiting on the track, with the number of the frame to report it at. The
@@ -106,11 +129,15 @@ type armedMark struct {
 	seq   uint64
 }
 
-func newSpeaker(logger *slog.Logger) *speaker {
+// newSpeaker returns a speaker that tells echo of the voice it sends, when echo is not nil.
+func newSpeaker(logger *slog.Logger, echo *echocancel.Call) *speaker {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	talker := &speaker{logger: logger, now: time.Now}
+	talker := &speaker{logger: logger, now: time.Now, echo: echo}
+	if echo != nil {
+		talker.toEcho = webrtcaudio.NewStreamResampler(webrtcaudio.FormatS16, echocancel.SampleRate, 1, 0)
+	}
 	talker.drained = sync.NewCond(&talker.mu)
 	return talker
 }
@@ -174,6 +201,9 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 		s.encoder = encoder
 	}
 
+	// Nothing queued and nothing held in the encoder: this chunk starts an utterance.
+	starting := len(s.frames) == 0 && !s.unflushed
+
 	// A chunk can open with silence, so the first frame to be heard is not always its first.
 	// What comes before the first piece with speech in it is encoded on its own, which makes
 	// the frame that follows the one to report. The encoder takes audio in whatever pieces it
@@ -200,6 +230,7 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 	}
 	s.enqueue(packets)
 	s.unflushed = true
+	s.queueVoice(pcm, starting)
 	if lead >= 0 {
 		s.armed = append(s.armed, armedMark{marks: marks, seq: seq})
 	}
@@ -207,6 +238,102 @@ func (s *speaker) queue(pcm audio.PcmData, marks agent.PlayoutMarks) (time.Time,
 		return time.Time{}, nil
 	}
 	return s.now(), nil
+}
+
+// queueVoice keeps the speech just queued as echo takes it, starting an utterance when nothing
+// was queued before it. The caller must hold the lock.
+func (s *speaker) queueVoice(pcm audio.PcmData, starting bool) {
+	if s.echo == nil {
+		return
+	}
+	if starting {
+		s.keeping = s.echo.Wanted()
+		if s.keeping {
+			// The resampler holds back the end of what it is given until it has seen what
+			// follows. The voice starts that much late, all through the utterance, so a frame
+			// taken right after its speech was written never runs short and shifts what follows.
+			s.voice = append(s.voice[:0], make([]int16, resamplerLead(pcm.SampleRate))...)
+			s.voiceAt = 0
+		}
+	}
+	if !s.keeping {
+		return
+	}
+	resampled, err := s.toEcho.Write(webrtcaudio.FromInt16(pcm.Samples, pcm.SampleRate, 1))
+	if err != nil {
+		// Only the echo's reference is lost: the speech itself was encoded and goes out.
+		s.logger.Debug("could not resample speech for echo cancellation", "error", err)
+		return
+	}
+	s.appendVoice(resampled)
+}
+
+// appendVoice adds resampled speech to the voice queued. The caller must hold the lock.
+func (s *speaker) appendVoice(resampled []webrtcaudio.PCM) {
+	if s.voiceAt > 0 {
+		s.voice = s.voice[:copy(s.voice, s.voice[s.voiceAt:])]
+		s.voiceAt = 0
+	}
+	for _, pcm := range resampled {
+		s.voice = append(s.voice, pcm.ToInt16().Int16()...)
+	}
+}
+
+// resamplerLeads are how many 16 kHz samples a stream resampler holds back, for the rates a
+// voice provider sends at. Another rate is measured each time: kept for every rate a stream
+// ever came at, the map would have no bound.
+var resamplerLeads = sync.OnceValue(func() map[int]int {
+	leads := map[int]int{}
+	for _, rate := range []int{8_000, 16_000, 22_050, 24_000, 44_100, 48_000} {
+		leads[rate] = measureResamplerLead(rate)
+	}
+	return leads
+})
+
+// resamplerLead is how many 16 kHz samples a stream resampler from rate holds back, and one
+// more for its rounding.
+func resamplerLead(rate int) int {
+	if lead, ok := resamplerLeads()[rate]; ok {
+		return lead
+	}
+	return measureResamplerLead(rate)
+}
+
+// measureResamplerLead reads resamplerLead off a resampler that is given a second of silence.
+func measureResamplerLead(rate int) int {
+	probe := webrtcaudio.NewStreamResampler(webrtcaudio.FormatS16, echocancel.SampleRate, 1, 0)
+	out, err := probe.Write(webrtcaudio.FromInt16(make([]int16, rate), rate, 1))
+	if err != nil {
+		return 0
+	}
+	produced := 0
+	for _, pcm := range out {
+		produced += pcm.Len()
+	}
+	return max(0, echocancel.SampleRate-produced) + 1
+}
+
+// takeVoice moves the voice of the frame the track is taking into sent, silence for what the
+// queue holds none of. The caller must hold the lock.
+func (s *speaker) takeVoice() {
+	if !s.keeping {
+		clear(s.sent[:])
+		return
+	}
+	n := copy(s.sent[:], s.voice[s.voiceAt:])
+	clear(s.sent[n:])
+	s.voiceAt += n
+}
+
+// forgetVoice throws the voice queued away. The caller must hold the lock.
+func (s *speaker) forgetVoice() {
+	if !s.keeping {
+		return
+	}
+	s.keeping = false
+	s.voice, s.voiceAt = s.voice[:0], 0
+	// Flushing is also what resets the resampler; its tail belongs to speech never sent.
+	_, _ = s.toEcho.Flush()
 }
 
 // enqueue puts frames at the back of the queue. The caller must hold the lock.
@@ -284,6 +411,9 @@ func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 	if marks != nil {
 		marks.FirstAudiblePulled(at)
 	}
+	if s.echo != nil {
+		s.echo.Played(s.sent[:])
+	}
 	return sample, nil
 }
 
@@ -302,6 +432,11 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 	}
 	if len(s.frames) == 0 {
 		s.speaking = false
+		// The encoder and the resampler are flushed, so what voice is left is no more than
+		// the rounding of the frames: it went out with the last of them, and the utterance
+		// is over.
+		s.voice, s.voiceAt, s.keeping = s.voice[:0], 0, false
+		clear(s.sent[:])
 		sample := webrtcmedia.Sample{Duration: opusFrameDuration}
 		if s.quiet < silenceLeadFrames || s.quiet%silenceRefreshFrames == 0 {
 			sample.Data = silenceFrame
@@ -316,6 +451,7 @@ func (s *speaker) next() (webrtcmedia.Sample, agent.PlayoutMarks, time.Time) {
 		frame = nil
 	}
 	s.frames = s.frames[1:]
+	s.takeVoice()
 	seq := s.head
 	s.head++
 	s.speaking = true
@@ -354,6 +490,11 @@ func (s *speaker) flush() {
 	s.unflushed = false
 
 	packets, err := s.encoder.Flush()
+	if s.keeping {
+		if tail, err := s.toEcho.Flush(); err == nil {
+			s.appendVoice(tail)
+		}
+	}
 	if err != nil {
 		s.logger.Debug("could not flush the end of an utterance", "error", err)
 		return
@@ -376,6 +517,7 @@ func (s *speaker) drop() {
 	}
 	s.unflushed = false
 	s.forgetFramesLocked()
+	s.forgetVoice()
 	s.speaking = false
 	s.drained.Broadcast()
 }
@@ -445,6 +587,7 @@ func (s *speaker) Close() error {
 	}
 	s.closed = true
 	s.forgetFramesLocked()
+	s.forgetVoice()
 	s.drained.Broadcast()
 	s.encoder = nil
 	return nil

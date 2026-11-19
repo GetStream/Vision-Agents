@@ -22,7 +22,7 @@ func (s *StreamEdgeSuite) sent(talker *speaker, n int) [][]byte {
 // scenario plays one run through a speaker and returns what it sent. When counted, it reads
 // the stats between the steps, as the agent does around an utterance.
 func (s *StreamEdgeSuite) scenario(counted bool) [][]byte {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	read := func() {
 		if counted {
@@ -83,7 +83,7 @@ func (s *StreamEdgeSuite) TestTheEdgeCountsItsQueue() {
 }
 
 func (s *StreamEdgeSuite) TestTheQueueCountsWhatWentInWhatWentOutAndWhatWasDropped() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 200)))
 	s.sent(talker, 3)
@@ -94,7 +94,7 @@ func (s *StreamEdgeSuite) TestTheQueueCountsWhatWentInWhatWentOutAndWhatWasDropp
 }
 
 func (s *StreamEdgeSuite) TestSpeechStillQueuedIsWaiting() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 200)))
 	s.sent(talker, 6)
@@ -107,7 +107,7 @@ func (s *StreamEdgeSuite) TestSpeechStillQueuedIsWaiting() {
 }
 
 func (s *StreamEdgeSuite) TestChunksQueuedBeforeAnyIsTakenStackInThePeak() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
@@ -116,7 +116,7 @@ func (s *StreamEdgeSuite) TestChunksQueuedBeforeAnyIsTakenStackInThePeak() {
 }
 
 func (s *StreamEdgeSuite) TestReadingTheStatsStartsTheNextPeakFromWhatIsQueued() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 200)))
 	s.sent(talker, 6)
@@ -126,7 +126,7 @@ func (s *StreamEdgeSuite) TestReadingTheStatsStartsTheNextPeakFromWhatIsQueued()
 }
 
 func (s *StreamEdgeSuite) TestTheTailFlushedOutOfTheEncoderCountsTowardsThePeak() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	// Less than a frame: the encoder holds all of it until the track finds the queue empty.
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 10)))
@@ -140,7 +140,7 @@ func (s *StreamEdgeSuite) TestTheTailFlushedOutOfTheEncoderCountsTowardsThePeak(
 }
 
 func (s *StreamEdgeSuite) TestSpeechQueuedWhenTheCallIsLeftIsCountedAsDropped() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
 
 	s.Require().NoError(talker.Close())

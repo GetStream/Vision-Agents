@@ -107,10 +107,10 @@ jobs:
           GOEXPERIMENT: simd
           ROUTER_REDIS_ADDR: localhost:${{ job.services.redis.ports['6379'] }}
 
-      # Without the experiment the Opus codec runs its scalar code, which must still build
-      # and pass.
+      # Without the experiment the Opus codec and the echo canceller run their scalar code,
+      # which must still build and pass.
       - name: Test the audio without SIMD
-        run: go build ./... && go test ./internal/audio/... ./internal/audiofloor/... ./internal/agent/streamedge/...
+        run: go build ./... && go test ./internal/audio/... ./internal/audiofloor/... ./internal/agent/streamedge/... ./internal/echocancel/...
         working-directory: acceleration
 
       - name: Vet phonecheck

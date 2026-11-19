@@ -33,6 +33,7 @@ import (
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel/echodelay"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
@@ -471,6 +472,17 @@ type Phone struct {
 	// call with only the person in it is ended. Zero turns the check off. One setting for the
 	// whole router.
 	AgentJoinTimeout time.Duration `koanf:"agent_join_timeout"`
+	// EchoCancellation takes the agent's voice out of what a phone caller's line sends back
+	// (internal/echocancel), before anything of the agent's hears it: a phone with no echo
+	// cancellation of its own sends it back, and the agent hears its own words as the
+	// caller's. Off by default: a router built without GOEXPERIMENT=simd runs AEC3 in pure Go,
+	// which took 0.46 ms of a core per 10 ms of every phone caller on an Apple M4 Max (not
+	// measured on production hardware), so each environment turns it on for itself.
+	EchoCancellation bool `koanf:"echo_cancellation"`
+	// EchoMaxDelay is the longest an echo is looked for after the agent's voice went out, from
+	// echodelay.Min to echodelay.Max. 1s by default. Each 96 ms more is another
+	// of AEC3's matched filters, the costliest part of cancelling a line.
+	EchoMaxDelay time.Duration `koanf:"echo_max_delay"`
 }
 
 // maxEpisodeIdle bounds IdleAfter from above. It is the only external bound: WhatsApp's
@@ -636,6 +648,8 @@ var variables = map[string]string{
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 	"phone.agent_join_timeout":  "ROUTER_PHONE_AGENT_JOIN_TIMEOUT",
+	"phone.echo_cancellation":   "ROUTER_PHONE_ECHO_CANCELLATION",
+	"phone.echo_max_delay":      "ROUTER_PHONE_ECHO_MAX_DELAY",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
 	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
@@ -711,7 +725,7 @@ func Defaults() Config {
 		Episodes: Episodes{IdleAfter: time.Hour},
 		// Provisional, not a measurement: staging measures how long sessions.Create takes for
 		// campaign and scheduled calls, and this is set above the longest (AI-800).
-		Phone:       Phone{AgentJoinTimeout: 10 * time.Second},
+		Phone:       Phone{AgentJoinTimeout: 10 * time.Second, EchoMaxDelay: echodelay.Default},
 		Sandbox:     Sandbox{Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30},
 		CodeSandbox: CodeSandbox{Broker: CodeSandboxBrokerDaytona, IdleStop: 15 * time.Minute, StoppedDelete: time.Hour},
 		// Slack's rate limits page (https://docs.slack.dev/apis/web-api/rate-limits, opened
@@ -931,6 +945,9 @@ func (c Config) validate() error {
 	}
 	if c.Phone.AgentJoinTimeout < 0 {
 		return fmt.Errorf("config: phone.agent_join_timeout cannot be negative, got %s", c.Phone.AgentJoinTimeout)
+	}
+	if err := echodelay.Check(c.Phone.EchoMaxDelay); err != nil {
+		return fmt.Errorf("config: phone.echo_max_delay %s: %w", c.Phone.EchoMaxDelay, err)
 	}
 	if c.Agent.ReplyHedge < 0 {
 		return fmt.Errorf("config: agent.reply_hedge cannot be negative, got %s", c.Agent.ReplyHedge)
@@ -1218,6 +1235,8 @@ func (c Config) export() error {
 		"connectors.enabled":            fmt.Sprint(c.Connectors.Enabled),
 		"episodes.idle_after":           c.Episodes.IdleAfter.String(),
 		"phone.agent_join_timeout":      c.Phone.AgentJoinTimeout.String(),
+		"phone.echo_cancellation":       fmt.Sprint(c.Phone.EchoCancellation),
+		"phone.echo_max_delay":          c.Phone.EchoMaxDelay.String(),
 		"sandbox.enabled":               fmt.Sprint(c.Sandbox.Enabled),
 		"sandbox.recipients":            fmt.Sprint(c.Sandbox.Recipients),
 		"sandbox.messages_per_day":      fmt.Sprint(c.Sandbox.MessagesPerDay),

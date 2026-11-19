@@ -141,7 +141,7 @@ func (s *StreamEdgeSuite) TestADemoLinkNeedsASecretToSignAToken() {
 func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 	// This is the outbound path: the voice's PCM becomes the 20 ms Opus frames the track
 	// sends.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
@@ -157,7 +157,7 @@ func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 func (s *StreamEdgeSuite) TestSilenceIsSentWhenThereIsNothingToSay() {
 	// The track is published for the whole call, so something has to go out even when the
 	// agent is listening rather than talking.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	sample, err := talker.NextSample(s.ctx)
@@ -171,7 +171,7 @@ func (s *StreamEdgeSuite) TestSilenceIsSentWhenThereIsNothingToSay() {
 func (s *StreamEdgeSuite) TestALongSilenceIsMostlyNotSent() {
 	// An agent listens for most of a call, and a packet every 20 ms of that is work for the
 	// router and the SFU that nobody hears. Opus's DTX sends one every 400 ms instead.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	var sent []int
@@ -191,7 +191,7 @@ func (s *StreamEdgeSuite) TestALongSilenceIsMostlyNotSent() {
 func (s *StreamEdgeSuite) TestSilenceAfterAReplyIsSentRightAway() {
 	// The last frame a caller's decoder got is what it conceals a missing one with, so what
 	// follows a reply has to be silence rather than nothing.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	for range 3 {
 		_, err := talker.NextSample(s.ctx)
@@ -203,7 +203,7 @@ func (s *StreamEdgeSuite) TestSilenceAfterAReplyIsSentRightAway() {
 }
 
 func (s *StreamEdgeSuite) TestTheAudioLevelSaysWhoIsTalking() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(48_000, 40)))
 
@@ -230,7 +230,7 @@ func (s *StreamEdgeSuite) TestTheEndOfAnUtteranceReachesTheCall() {
 	// Which rate the voice speaks at is its own business, and a failover mid-call can change
 	// it, so no rate may be the one that loses the end of a reply.
 	for _, rate := range []int{16_000, 22_050, 24_000, 44_100, 48_000} {
-		talker := newSpeaker(slog.New(slog.DiscardHandler))
+		talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 
 		spokenMs := 0
 		for _, chunkMs := range replyChunks {
@@ -249,7 +249,7 @@ func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsThrownAwayOnBargeIn() {
 	// When the caller takes the floor the agent has to stop being heard, and cancelling the
 	// voice only stops what it has not synthesised yet. What it already sent is queued here,
 	// and the caller is talked over for as long as that queue is deep.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(24_000, 200)))
 	_, err := talker.NextSample(s.ctx)
@@ -269,7 +269,7 @@ func (s *StreamEdgeSuite) TestTheTailOfAnAbandonedReplyIsNotHeardOnTheNextOne() 
 	// Emptying the queue is not enough on its own: what the encoder is holding belongs to
 	// the reply being abandoned too, and would otherwise be the first thing the caller hears
 	// of the next one.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	_, err := talker.NextSample(s.ctx)
 	s.Require().NoError(err)
@@ -289,7 +289,7 @@ func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsReportedAsWaiting() {
 	// has finished, most of the reply is still queued here. Leaving the call throws that
 	// queue away, so whoever is about to leave has to be able to ask whether it is empty:
 	// without this the caller hears the agent stop short of its last words.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	// Until the track asks for a frame nothing is draining the queue, so what is held is
@@ -308,7 +308,7 @@ func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsReportedAsWaiting() {
 func (s *StreamEdgeSuite) TestLeavingWhileSpeakingIsNotReportedAsWaiting() {
 	// Leaving discards the queue, so a caller waiting for it to empty would wait for
 	// something that is never going to happen.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 
 	_, err := talker.NextSample(s.ctx)
 	s.Require().NoError(err)
@@ -324,7 +324,7 @@ func (s *StreamEdgeSuite) TestAnyInputRateIsResampled() {
 	// A voice provider's rate is its own business, and a failover mid-call can change it.
 	// The resampler holds the first chunk back by design, so speech is written twice here
 	// the way a stream of chunks would arrive.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	for _, rate := range []int{16_000, 24_000} {
@@ -339,7 +339,7 @@ func (s *StreamEdgeSuite) TestPublishingIsPacedByWhatIsHeard() {
 	// A voice provider streams an utterance far faster than it is spoken. Without this the
 	// whole reply would be queued in a moment, and barge-in would arrive too late to stop
 	// it.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	written := make(chan error, 1)
@@ -417,7 +417,7 @@ func silence(sampleRate int, durationMs int) audio.PcmData {
 
 // timedSpeaker is a speaker whose milestones are read from a clock the test moves.
 func (s *StreamEdgeSuite) timedSpeaker() (*speaker, *fakeClock) {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 	clock := newFakeClock()
 	talker.now = clock.Now
@@ -604,7 +604,7 @@ func (s *StreamEdgeSuite) TestPullingAFrameAllocatesNothing() {
 }
 
 func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	err := talker.Write(audio.PcmData{Samples: make([]int16, 100), SampleRate: 48_000, Channels: 2})
@@ -613,7 +613,7 @@ func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {
 }
 
 func (s *StreamEdgeSuite) TestEmptySpeechIsIgnored() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	s.NoError(talker.Write(audio.PcmData{SampleRate: 48_000, Channels: 1}))
@@ -624,7 +624,7 @@ func (s *StreamEdgeSuite) TestLeavingPartWayThroughAFrameIsNotAFailure() {
 	// The queue is thrown away on leaving, so the part-frame the encoder is still holding
 	// was never going to be heard. The encoder only takes whole frames and says so, and
 	// reporting that as a failure makes every call look like it ended badly.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 
 	// 33 ms is not a whole number of 20 ms frames, at either rate.
 	s.Require().NoError(talker.Write(speech(24_000, 33)))
@@ -633,7 +633,7 @@ func (s *StreamEdgeSuite) TestLeavingPartWayThroughAFrameIsNotAFailure() {
 }
 
 func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	talker := newSpeaker(slog.New(slog.DiscardHandler), nil)
 
 	s.Require().NoError(talker.Close())
 

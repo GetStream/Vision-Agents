@@ -53,7 +53,12 @@ var echoes = promauto.NewCounterVec(prometheus.CounterOpts{
 // echoDelay after the agent's last audible sample went out has none of its voice in it, and a
 // caller who repeats the agent then said the words. The same goes for
 // another transcriber's words of an utterance chorus-asr's floor ended (stt.Transcript.Floor),
-// timed by the floor's clock. Other transcribers are left as they are.
+// timed by the floor's clock. Other transcribers are left as they are. With
+// phone.echo_cancellation on, the edge takes the echo out of a phone caller's audio first,
+// before the agent hears it (internal/echocancel), and this drops what is left of it in a
+// transcript of chorus-asr's or its floor's, as while the canceller converges: a run of at
+// least echoWords of the agent's words, so a shorter echo stays. With it off, this is the
+// only thing that drops the echo, and only from those transcripts.
 func (a *Agent) withoutEcho(transcript stt.Transcript) (string, int) {
 	if transcript.Provider != audiofloor.ProviderName && !transcript.Floor {
 		return transcript.Text, 0

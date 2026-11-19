@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/kms v1.26.0
 	github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09
 	github.com/GetStream/getstream-go/v5 v5.2.0
+	github.com/GetStream/goaec3 v0.0.0-20261119022939-35b98ab00004
 	github.com/GetStream/protocol v1.49.0
 	github.com/anthropics/anthropic-sdk-go v1.79.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
@@ -203,7 +204,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20260316180232-0b37fe3546d5 // indirect

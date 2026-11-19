@@ -32,13 +32,17 @@ VERSION=vX.Y.Z
 mkdir -p /tmp/router-release
 docker run --rm --platform linux/arm64 \
   -v "$PWD":/src:ro -v "$(go env GOMODCACHE)":/go/pkg/mod -v /tmp/router-release:/out \
-  -e GOWORK=off -e GOPROXY=off -e GOTOOLCHAIN=local -e VERSION="$VERSION" \
+  -e GOWORK=off -e GOPROXY=off -e GOTOOLCHAIN=local -e GOEXPERIMENT=simd -e VERSION="$VERSION" \
   -w /src/acceleration golang:1.27-bookworm bash -c '
     apt-get -qq update && apt-get -qq install -y --no-install-recommends \
       pkg-config libopus-dev libopusfile-dev libsoxr-dev >/dev/null
     CGO_ENABLED=1 go build -trimpath -ldflags="-s -w -X main.release=$VERSION" \
       -o /out/router-linux-arm64 ./cmd/router'
 ```
+
+`GOEXPERIMENT=simd` builds the vector kernels of the Opus codec and of the echo canceller,
+as CI and `acceleration/Dockerfile` do; without it phone echo cancellation runs in pure Go at
+about five times the cost.
 
 `GOWORK=off` because `go.work` otherwise puts the module in workspace mode, which the build
 refuses; `GOPROXY=off` builds from the host module cache, so the container uses exactly the

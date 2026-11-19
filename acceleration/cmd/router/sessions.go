@@ -9,6 +9,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/echocancel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -23,8 +26,24 @@ const agentTokenValidity = 12 * time.Hour
 
 // edgeFor joins a session's call in the Stream app the session is pinned to, with that
 // app's own credential. Nothing is read from the environment: the identity is the whole
-// answer, so a customer's call is never joined in whichever app the deployment names.
-func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
+// answer, so a customer's call is never joined in whichever app the deployment names. With
+// phone.echo_cancellation on, a phone caller's audio has the agent's voice taken out of it;
+// a config the canceller refuses is refused here, at start, rather than on every call.
+func edgeFor(clients *streamapp.Clients, phoneSettings config.Phone) (session.EdgeFactory, error) {
+	var echo *streamedge.EchoCancellation
+	if phoneSettings.EchoCancellation {
+		cancelling := echocancel.Config{MaxDelay: phoneSettings.EchoMaxDelay}
+		if err := echocancel.Check(cancelling); err != nil {
+			return nil, err
+		}
+		echo = &streamedge.EchoCancellation{
+			Config: cancelling,
+			From: func(userID string) bool {
+				_, caller := phone.CallerNumber(userID)
+				return caller
+			},
+		}
+	}
 	return func(ctx context.Context, spec session.Spec, stream streamapp.Bound, logger *slog.Logger) (agent.Edge, error) {
 		identity := stream.Identity
 		if identity.APIKey == "" {
@@ -51,8 +70,10 @@ func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
 			BaseURL:    identity.BaseURL,
 			HTTPClient: clients.HTTPClient(),
 			Logger:     logger,
+
+			EchoCancellation: echo,
 		})
-	}
+	}, nil
 }
 
 // transcriptFor writes a session's transcript in the Stream app it is pinned to, with the
