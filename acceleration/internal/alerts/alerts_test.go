@@ -333,6 +333,20 @@ func (s *AlertsSuite) TestAnItemIsDescribedInTheMessageAndNowhereElse() {
 	s.Equal(map[string]string{"usage_alert": "missing", "source": "usage/test", "shard": "here", "item": "b"}, events[1].Tags)
 }
 
+func (s *AlertsSuite) TestASummaryFollowsTheNameInTheMessageAndNowhereElse() {
+	summarized := Condition{Name: "lost", Level: Warn, Summary: "rows were dropped",
+		Check: func(time.Time) (bool, map[string]any) { return true, nil }}
+
+	s.run(s.loop(time.Hour, time.Hour, summarized), 50*time.Millisecond)
+
+	events := s.sent()
+	s.Require().Len(events, 1)
+	s.Equal("usage alert: lost: rows were dropped", events[0].Message)
+	s.Equal(sentry.LevelError, events[0].Level, "a summary keeps the level")
+	s.Equal([]string{"usage_alert:lost"}, events[0].Fingerprint, "the alert keeps its Sentry issue")
+	s.Equal(map[string]string{"usage_alert": "lost", "source": "usage/test", "shard": "here"}, events[0].Tags)
+}
+
 // What a message was before a condition could describe its items.
 func (s *AlertsSuite) TestWithoutADescriptionTheMessagesAreAsTheyWere() {
 	missing := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_plain_total"}, []string{"model"})
