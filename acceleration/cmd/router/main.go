@@ -1361,10 +1361,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 
 	// A worker waits on whichever node its socket landed on, and a session needing it may be
-	// running on any other.
+	// running on any other. They are held against the process, as the relay is, not against
+	// ctx: a draining router's sessions still wait on calls they carried to other nodes.
 	var everyWorker *node.Workers
 	if workBus != nil && directory != nil {
-		everyWorker, err = node.NewWorkers(ctx, workers, directory, workBus, logger)
+		everyWorker, err = node.NewWorkers(context.WithoutCancel(ctx), workers, directory, workBus, logger)
 		if err != nil {
 			return err
 		}
