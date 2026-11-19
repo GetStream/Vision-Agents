@@ -49,12 +49,27 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 		wanted.Skills = &named
 	}
 
-	config, err := defineAgent(ctx, client, wanted)
+	stored, err := storedConfig(ctx, client, a.options.Name)
 	if err != nil {
 		return nil, err
 	}
-	// A skill belongs to a config, so it is stored once the config has an id to name.
-	if len(skills) > 0 {
+	// A config with a sandbox takes any skill, and an edit that drops the sandbox is refused
+	// while a skill it names still has scripts. So the skills of a config with a sandbox are
+	// written first, and a skill can lose its scripts in the sync that drops the sandbox.
+	skillsFirst := stored != nil && deref(stored.Sandbox) != ""
+	if skillsFirst && len(skills) > 0 {
+		if err := defineSkills(ctx, client, stored.Id, skills); err != nil {
+			return nil, err
+		}
+	}
+	config, err := putConfig(ctx, client, stored, wanted)
+	if err != nil {
+		return nil, err
+	}
+	// A skill belongs to a config, so it is stored once the config has an id to name. Without
+	// a sandbox stored, the config goes first too, so a skill with scripts finds the sandbox
+	// that this sync adds.
+	if !skillsFirst && len(skills) > 0 {
 		if err := defineSkills(ctx, client, config.Id, skills); err != nil {
 			return nil, err
 		}
@@ -549,6 +564,9 @@ func appConnections(ctx context.Context, client *acceleration.ClientWithResponse
 
 // storedConfig is the config stored under a name, or nil when there is none.
 func storedConfig(ctx context.Context, client *acceleration.ClientWithResponses, name string) (*acceleration.AgentConfig, error) {
+	// Narrowed to the name rather than read whole and filtered here: names are unique per
+	// customer, so this asks the router the question instead of downloading every config an
+	// app has to answer it locally.
 	listed, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
 	if err != nil {
 		return nil, fmt.Errorf("agents: listing configs: %w", err)
@@ -596,26 +614,24 @@ func defineAgent(
 	client *acceleration.ClientWithResponses,
 	wanted acceleration.AgentConfigRequest,
 ) (*acceleration.AgentConfig, error) {
-	// Narrowed to the name rather than read whole and filtered here: names are unique per
-	// customer, so this asks the router the question instead of downloading every config an
-	// app has to answer it locally.
-	listed, err := client.ListAgentConfigsWithResponse(ctx,
-		&acceleration.ListAgentConfigsParams{Name: &wanted.Name})
-	if err != nil {
-		return nil, fmt.Errorf("agents: listing configs: %w", err)
-	}
-	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
+	stored, err := storedConfig(ctx, client, wanted.Name)
 	if err != nil {
 		return nil, err
 	}
+	return putConfig(ctx, client, stored, wanted)
+}
 
-	for _, config := range *stored {
-		if config.Name != wanted.Name {
-			continue
-		}
-		updated, err := client.UpdateAgentConfigWithResponse(ctx, config.Id, wanted)
+// putConfig edits stored to be wanted, or creates wanted when nothing is stored.
+func putConfig(
+	ctx context.Context,
+	client *acceleration.ClientWithResponses,
+	stored *acceleration.AgentConfig,
+	wanted acceleration.AgentConfigRequest,
+) (*acceleration.AgentConfig, error) {
+	if stored != nil {
+		updated, err := client.UpdateAgentConfigWithResponse(ctx, stored.Id, wanted)
 		if err != nil {
-			return nil, fmt.Errorf("agents: updating config %s: %w", config.Id, err)
+			return nil, fmt.Errorf("agents: updating config %s: %w", stored.Id, err)
 		}
 		return answer(updated.JSON200, updated.HTTPResponse, updated.Body)
 	}
