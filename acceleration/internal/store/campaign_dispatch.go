@@ -140,18 +140,21 @@ func (s *Store) TakeOverExpired(ctx context.Context, owner string, now time.Time
 		return nil, nil
 	}
 
+	expired := s.db.NewSelect().Model((*Contact)(nil)).
+		Column("cc.id").
+		Where("cc.stage = ? AND cc.leased_until < ?", InProgress, now).
+		Where("NOT EXISTS (SELECT 1 FROM campaigns cp WHERE cp.id = cc.campaign_id AND cp.move_paused)").
+		Order("cc.leased_until").
+		Limit(limit).
+		For("UPDATE SKIP LOCKED")
 	var contacts []Contact
-	err := s.db.NewRaw(`WITH expired AS (
-	SELECT id FROM campaign_contacts cc
-	WHERE stage = ? AND leased_until < ?
-		AND NOT EXISTS (SELECT 1 FROM campaigns cp WHERE cp.id = cc.campaign_id AND cp.move_paused)
-	ORDER BY leased_until
-	LIMIT ?
-	FOR UPDATE SKIP LOCKED
-)
-UPDATE campaign_contacts cc SET leased_by = ?, leased_until = ?
-FROM expired WHERE cc.id = expired.id
-RETURNING cc.*`, InProgress, now, limit, owner, now.Add(lease)).Scan(ctx, &contacts)
+	err := s.db.NewUpdate().With("expired", expired).Model((*Contact)(nil)).
+		TableExpr("expired").
+		Set("leased_by = ?", owner).
+		Set("leased_until = ?", now.Add(lease)).
+		Where("cc.id = expired.id").
+		Returning("cc.*").
+		Scan(ctx, &contacts)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: take over expired leases: %w", err))
 	}
@@ -457,10 +460,13 @@ func (s *Store) PutOffClassification(ctx context.Context, owner, attemptID strin
 	}
 	var released int64
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE campaign_contacts cc SET leased_by = '', leased_until = NULL
-FROM campaign_attempts ca
-WHERE ca.id = ? AND ca.classify_state = ? AND cc.id = ca.contact_id AND cc.stage = ? AND cc.leased_by = ?`,
-			attemptID, classifyPending, AwaitingOutcome, owner)
+		result, err := tx.NewUpdate().Model((*Contact)(nil)).
+			TableExpr("campaign_attempts AS ca").
+			Set("leased_by = ''").
+			Set("leased_until = NULL").
+			Where("ca.id = ? AND ca.classify_state = ?", attemptID, classifyPending).
+			Where("cc.id = ca.contact_id AND cc.stage = ? AND cc.leased_by = ?", AwaitingOutcome, owner).
+			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("store: release a contact to classify later: %w", err)
 		}
