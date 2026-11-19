@@ -395,4 +395,40 @@ private func event(_ json: String) throws -> AgentEvent {
         #expect(cut.isStreaming == false)
         #expect(conversation.turns.first?.isDone == true)
     }
+
+    @Test func aRefusedReplyLosesWhatItWroteBeforeTheVerdictAndKeepsHowItGotThere() throws {
+        var conversation = Conversation()
+
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
+        conversation.apply(
+            try event(#"{"type":"reasoning_delta","turn_id":"t1","text":"They want my instructions."}"#))
+        conversation.apply(try event(#"{"type":"response_delta","turn_id":"t1","text":"Sure, I was told to "}"#))
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])\n"}"#))
+        conversation.apply(
+            try event(
+                #"{"code":"prompt_injection","context":"llm","error":"policy: the input reads as a prompt injection","type":"error"}"#
+            ))
+        conversation.apply(try event(#"{"type":"responded","turn_id":"t1","text":""}"#))
+
+        let refused = try #require(conversation.turns.first)
+        #expect(conversation.turns.count == 1)
+        #expect(refused.text == "")
+        #expect(refused.ui == nil)
+        #expect(refused.isDone)
+        #expect(refused.steps.map(\.id) == ["r1"])
+        #expect(conversation.failure == "policy: the input reads as a prompt injection")
+    }
+
+    @Test func aReplyKeepsWhatItWroteWhenSomethingElseFails() throws {
+        var conversation = Conversation()
+
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
+        conversation.apply(try event(#"{"type":"response_delta","turn_id":"t1","text":"Two meetings today."}"#))
+        conversation.apply(try event(#"{"context":"tts","error":"the voice failed","type":"error"}"#))
+        conversation.apply(try event(#"{"type":"responded","turn_id":"t1","text":""}"#))
+
+        #expect(conversation.turns.map(\.text) == ["Two meetings today."])
+    }
+
 }

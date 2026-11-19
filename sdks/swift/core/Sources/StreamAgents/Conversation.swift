@@ -238,6 +238,9 @@ public struct Conversation: Sendable, Hashable {
             state = .idle
 
         case .error:
+            if event.string("code") == "prompt_injection" {
+                refuseReplyInFlight()
+            }
             failure = event.errorText
 
         case .left:
@@ -256,6 +259,16 @@ public struct Conversation: Sendable, Hashable {
     private func matchesLastParticipantTurn(_ text: String) -> Bool {
         guard case .participant = turns.last?.speaker else { return false }
         return turns.last?.text == text
+    }
+
+    /// The prompt injection screen refused the reply being written. What it streamed before the
+    /// verdict is not the answer, so its text and UI go, as they do from the kept conversation;
+    /// its thinking and tool calls stay.
+    private mutating func refuseReplyInFlight() {
+        guard let index = turns.lastIndex(where: { $0.speaker.isAgent }), !turns[index].isDone else { return }
+        uiWritten[turns[index].id] = nil
+        turns[index].text = ""
+        turns[index].ui = nil
     }
 
     /// Applies a change to the agent turn this event belongs to, starting one if the router
