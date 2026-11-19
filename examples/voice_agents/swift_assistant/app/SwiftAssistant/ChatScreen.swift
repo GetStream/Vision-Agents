@@ -10,6 +10,8 @@ import StreamAgents
 struct ChatScreen: View {
     /// The conversation to carry on, or nil for a new one.
     let sessionID: String?
+    /// Whether a new conversation keeps nothing, so it never joins the list.
+    let isIncognito: Bool
     /// Says which session a new conversation became, once it is first written or talked to.
     let onStarted: (String) -> Void
 
@@ -32,12 +34,13 @@ struct ChatScreen: View {
         "What should I cook tonight?",
     ]
 
-    init(sessionID: String?, onStarted: @escaping (String) -> Void) {
+    init(sessionID: String?, isIncognito: Bool = false, onStarted: @escaping (String) -> Void) {
         self.sessionID = sessionID
+        self.isIncognito = isIncognito
         self.onStarted = onStarted
         // SwiftUI keeps the first of each for as long as the screen shows, so the conversation
         // kept goes through the chat kept.
-        let chat = AgentChat(sessionID: sessionID)
+        let chat = AgentChat(sessionID: sessionID, isIncognito: isIncognito)
         _chat = State(initialValue: chat)
         _conversation = StateObject(
             wrappedValue: AIConversation(
@@ -60,7 +63,7 @@ struct ChatScreen: View {
                 }
             },
             emptyContent: {
-                Welcome()
+                Welcome(isIncognito: isIncognito)
             })
         .environment(\.brand, brand)
         .environment(chat)
@@ -84,8 +87,9 @@ struct ChatScreen: View {
             Task { await open() }
         }
         .onChange(of: chat.usedSessionID) { _, used in
-            // A new conversation joins the list once it is written or talked to.
-            guard sessionID == nil, let used else { return }
+            // A new conversation joins the list once it is written or talked to, unless it is
+            // incognito.
+            guard sessionID == nil, !isIncognito, let used else { return }
             onStarted(used)
         }
         .onDisappear {
@@ -234,14 +238,19 @@ private struct Floating<S: Shape>: ViewModifier {
 
 /// What a new conversation shows before anything is said.
 private struct Welcome: View {
+    let isIncognito: Bool
+
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "sparkles")
+            Image(systemName: isIncognito ? "circle.dashed" : "sparkles")
                 .font(.system(size: 44))
                 .foregroundStyle(.tint)
-            Text(greeting)
+            Text(isIncognito ? "Incognito chat" : greeting)
                 .font(.title2.weight(.semibold))
-            Text("Ask me anything, show me a photo, or tap the waveform to talk.")
+            Text(
+                isIncognito
+                    ? "This chat won't be saved or listed, and Juno won't remember anything from it."
+                    : "Ask me anything, show me a photo, or tap the waveform to talk.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
