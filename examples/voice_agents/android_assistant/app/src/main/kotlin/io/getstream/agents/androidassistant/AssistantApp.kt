@@ -14,14 +14,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -44,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -89,7 +94,8 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
     val selected by chat.selected.collectAsStateWithLifecycle()
     val screen by chat.screen.collectAsStateWithLifecycle()
     val items by conversations.items.collectAsStateWithLifecycle()
-    val title = items.firstOrNull { it.id == selected }?.displayTitle ?: "Juno"
+    val isIncognito by chat.isIncognito.collectAsStateWithLifecycle()
+    val title = if (isIncognito) "Incognito chat" else items.firstOrNull { it.id == selected }?.displayTitle ?: "Juno"
 
     LaunchedEffect(drawer) {
         // The router titles a conversation as it goes, so the list is read again each time it is
@@ -158,6 +164,21 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawer.open() } }) {
                             Icon(Icons.Outlined.Menu, contentDescription = "Conversations")
+                        }
+                    },
+                    actions = {
+                        // Only a new chat can be incognito: one in the list is kept already.
+                        if (selected == null) {
+                            IconToggleButton(
+                                checked = isIncognito,
+                                onCheckedChange = { chat.toggleIncognito() },
+                                modifier = Modifier.semantics { contentDescription = "Incognito chat" },
+                            ) {
+                                Icon(
+                                    if (isIncognito) Icons.Filled.VisibilityOff else Icons.Outlined.VisibilityOff,
+                                    contentDescription = null,
+                                )
+                            }
                         }
                     },
                 )
