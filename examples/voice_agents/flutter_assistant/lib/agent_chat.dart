@@ -103,17 +103,17 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick.
   final liveUI = LiveUI();
 
-  /// The tables each seat selector in the conversation offers, oldest first, by the reply it
-  /// is in: the same card shown again is the same offer, and two venues' tables of the same ids
-  /// are two.
+  /// The tables each seat selector shown in this conversation offers, oldest first, by the
+  /// reply it is in: the same card shown again is the same offer, and two venues' tables of the
+  /// same ids are two. A reply here is never deleted or written again, so neither is its offer.
   final _offers = <String, List<DiningTableItem>>{};
 
   /// The bookings made from the seat selectors, by the offer each was made from.
   ValueListenable<Map<String, Reservation>> get reservations => _reservations;
   final _reservations = ValueNotifier<Map<String, Reservation>>(const {});
 
-  /// The tool a card brings while it is being added, which a question waits for, so the reply
-  /// it asks for can call it.
+  /// The card's tool being added or taken back, which a question and a card's action wait for,
+  /// so the reply they ask for has the tools the cards on the screen need.
   Future<void>? _adding;
 
   /// The tools the cards in the conversation brought to its session, by name, so a card shown
@@ -397,13 +397,20 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     _checkNotStopped(stops, request);
     // Only now, so a new conversation whose first question was never asked is not listed.
     _usedSessionId.value = session.id;
-    // A question of their own is not about the tables they tapped before it, once it is asked.
+    // A question of their own is not about the tables they tapped before it, once it is asked:
+    // one the router refused leaves them as they were.
+    final chosen = Map.of(_chosen);
     _chosen.clear();
-    await session.responses.create(
-      request.text,
-      images: images,
-      reasoningEffort: reasoningEffortOf(request.chatOption),
-    );
+    try {
+      await session.responses.create(
+        request.text,
+        images: images,
+        reasoningEffort: reasoningEffortOf(request.chatOption),
+      );
+    } on Object {
+      _chosen.addAll(chosen);
+      rethrow;
+    }
     // Stopped while the router took the question: its reply starts only now, so stop it.
     if (stops != _stops) await stop();
   }
@@ -491,7 +498,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// added is added again the next time a card brings it.
   Future<void> bring(AgentTool tool) {
     final session = _session;
-    if (session == null || _closed || !_brought.add(tool.name)) return _adding ?? Future.value();
+    if (session == null || _closed) return Future.value();
+    if (!_brought.add(tool.name)) return _adding ?? Future.value();
     return _adding = _add(session, tool);
   }
 
@@ -522,13 +530,13 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       return;
     }
     // A card shown while the tool was taken back still offers tables to book.
-    if (_offers.keys.any((offer) => !_reservations.value.containsKey(offer))) {
+    if (!_closed && _offers.keys.any((offer) => !_reservations.value.containsKey(offer))) {
       await bring(SeatSelectorComponent.reserveTable(reserve));
     }
   }
 
   /// The offer the person last tapped each table on, by the table's id, which a booking of that
-  /// table comes from when more than one offer has it, until they next ask something.
+  /// table comes from, until they next ask something or a newer card is shown.
   final _chosen = <String, String>{};
 
   /// Notes that the person tapped table [tableId] on the seat selector of reply [offer].
@@ -538,16 +546,19 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// the agent the tool to book them while the offer is not booked.
   void offer(String offer, List<DiningTableItem> tables) {
     if (_closed) return;
+    // A newer card is a newer answer, which the tables tapped on before it are not about.
+    if (!_offers.containsKey(offer)) _chosen.clear();
     _offers[offer] = tables;
     if (_reservations.value.containsKey(offer)) return;
     unawaited(bring(SeatSelectorComponent.reserveTable(reserve)));
   }
 
-  /// Books table [tableId] for [when] from the newest offer that has it free and is not booked,
-  /// and takes the tool back once every offer is booked. The tool's answer does not wait for
-  /// that, since the router takes the tool back only once the call that booked has finished.
+  /// Books table [tableId] for [when] from the offer the person tapped it on, or else from the
+  /// newest offer that has it free and is not booked, and takes the tool back once every offer
+  /// is booked. The tool's answer does not wait for that, since the router takes the tool back
+  /// only once the call that booked has finished.
   ///
-  /// Throws a [ToolFailure] naming the free tables when no offer has it.
+  /// Throws a [ToolFailure] naming the free tables of the offers it looked at when none has it.
   Reservation reserve(String tableId, String when) {
     if (_closed) throw const ToolFailure('The conversation has closed.');
     final booked = _reservations.value;
@@ -571,13 +582,15 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       return reservation;
     }
     final free = [
-      for (final MapEntry(key: offer, value: tables) in _offers.entries)
+      for (final MapEntry(key: offer, value: tables) in candidates)
         if (!booked.containsKey(offer))
           for (final table in tables)
             if (table.available) table.id,
     ];
     throw ToolFailure(
-      '$tableId is not a free table on a seat selector. The free ones are ${free.join(', ')}.',
+      free.isEmpty
+          ? '$tableId is not a free table on a seat selector, and none is free.'
+          : '$tableId is not a free table on a seat selector. The free ones are ${free.join(', ')}.',
     );
   }
 

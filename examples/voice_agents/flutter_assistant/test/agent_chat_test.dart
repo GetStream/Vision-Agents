@@ -716,6 +716,77 @@ void main() {
         expect(chat.reservations.value['m2']?.table.zone, 'Garden');
       });
 
+      test('a newer card is booked once the tapped table it shares an id with is booked', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', terrace)
+          ..choose('m1', 'T1');
+        await until(() => sessions.routes.contains(tools));
+        await call(chat, 'T1');
+
+        // The agent shows another venue with a T1, and books it without a tap, as on a call.
+        chat.offer('m2', garden);
+        await until(() => sessions.routes.where((r) => r == tools).length == 2);
+        final result = await call(chat, 'T1', id: 'c2');
+
+        expect(result['output'], contains('Reserved table T1'));
+        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
+      });
+
+      test('a question that could not be asked keeps the table tapped before it', () async {
+        final composer = ChatComposerController();
+        addTearDown(composer.dispose);
+        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+        await chat.open();
+        final conversation = conversationOf(chat, composer: composer);
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden)
+          ..choose('m1', 'T1');
+        await until(() => sessions.routes.contains(tools));
+        sessions.answer('POST /v1/agents/sessions/s1/responses', 500);
+
+        conversation.send('Something else');
+        await until(() => conversation.error != null);
+        await call(chat, 'T1');
+
+        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
+        expect(chat.reservations.value['m2'], isNull);
+      });
+
+      test(
+        'a card\'s action waiting while the tool is taken back ends once the chat closes',
+        () async {
+          const removal = 'DELETE /v1/agents/sessions/s1/tools/reserve_table';
+          final taken = Completer<void>();
+          sessions.holdRoute(removal, taken.future);
+          final chat = AgentChat('s1', sessions: sessions);
+          await chat.open();
+          await offer(chat);
+          await call(chat, 'T4');
+          await until(() => sessions.routes.contains(removal));
+          chat.offer('m2', [(id: 'K3', zone: 'Garden', seats: 4, available: true)]);
+          final sent = chat.ui.send(
+            AIUIAction(
+              messageId: 'm2',
+              format: AIUIFormat.openUI,
+              name: 'select_table',
+              label: 'Reserve table K3',
+              payload: const {'id': 'K3'},
+            ),
+          );
+          await pumpEventQueue();
+
+          final closed = chat.close();
+          taken.complete();
+
+          await sent.timeout(const Duration(seconds: 5));
+          await closed;
+          chat.dispose();
+        },
+      );
+
       test('reserves a free table, keeps the booking and takes its tool back', () async {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();

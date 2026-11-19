@@ -70,6 +70,15 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       expect(chip.onSelected, isNull);
     });
 
+    testWidgets('starts with no table chosen', (tester) async {
+      final chat = AgentChat(null);
+      addTearDown(chat.dispose);
+      await show(tester, chat, [UIMessage('m1', offered)]);
+
+      final chips = tester.widgetList<ChoiceChip>(find.byType(ChoiceChip));
+      expect(chips.where((chip) => chip.selected), isEmpty);
+    });
+
     testWidgets('shows the booking of one of its tables in place of the tables', (tester) async {
       final chat = AgentChat(null);
       addTearDown(chat.dispose);

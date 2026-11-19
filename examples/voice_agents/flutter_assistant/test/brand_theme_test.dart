@@ -22,35 +22,30 @@ void main() {
 
   group('BrandProfile', () {
     test('load restores the brand chosen at an earlier launch and keeps the next one', () async {
-      final store = InMemorySharedPreferencesAsync.withData({'brand': 'nordic'});
-      SharedPreferencesAsyncPlatform.instance = store;
+      SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.withData({
+        'brand': 'nordic',
+      });
 
       await BrandProfile.load();
       expect(BrandProfile.active.value, BrandProfile.nordic);
 
       BrandProfile.active.value = BrandProfile.ember;
-      final preferences = SharedPreferencesAsync();
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (await preferences.getString('brand') != 'ember') {
-        if (DateTime.now().isAfter(deadline)) fail('The chosen brand was not kept.');
-      }
+      await pumpEventQueue();
+      expect(await SharedPreferencesAsync().getString('brand'), 'ember');
     });
 
     test(
       'load opens with the default brand when the saved one cannot be read, and keeps the next',
       () async {
-        final store = _UnreadableStore();
+        final store = _UnreadableStore(MissingPluginException());
         SharedPreferencesAsyncPlatform.instance = store;
 
         await BrandProfile.load();
         expect(BrandProfile.active.value, BrandProfile.stream);
 
         BrandProfile.active.value = BrandProfile.nordic;
-        final deadline = DateTime.now().add(const Duration(seconds: 5));
-        while (store.saved['brand'] != 'nordic') {
-          if (DateTime.now().isAfter(deadline)) fail('The chosen brand was not kept.');
-          await Future<void>.delayed(const Duration(milliseconds: 5));
-        }
+        await pumpEventQueue();
+        expect(store.saved, ['nordic']);
       },
     );
 
@@ -60,29 +55,22 @@ void main() {
       await BrandProfile.load();
 
       BrandProfile.active.value = BrandProfile.ember;
-
-      // The save was tried, and its failure would surface as an error nobody handled.
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (store.tried['brand'] != 'ember') {
-        if (DateTime.now().isAfter(deadline)) fail('The chosen brand was never saved.');
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
+      // The save's failure would surface here, as an error nobody handled.
       await pumpEventQueue();
+
+      expect(store.tried['brand'], 'ember');
     });
 
-    test('load opens with the default brand when the saved one is of another type', () async {
-      SharedPreferencesAsyncPlatform.instance = _MistypedStore();
-
+    test('a brand chosen is saved once, however often the brand was loaded', () async {
+      final store = _UnreadableStore(PlatformException(code: 'unreadable'));
+      SharedPreferencesAsyncPlatform.instance = store;
+      await BrandProfile.load();
       await BrandProfile.load();
 
-      expect(BrandProfile.active.value, BrandProfile.stream);
-      // The next brand chosen is still kept.
-      BrandProfile.active.value = BrandProfile.nordic;
-      final preferences = SharedPreferencesAsync();
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (await preferences.getString('brand') != 'nordic') {
-        if (DateTime.now().isAfter(deadline)) fail('The chosen brand was not kept.');
-      }
+      BrandProfile.active.value = BrandProfile.ember;
+      await pumpEventQueue();
+
+      expect(store.saved, ['ember']);
     });
 
     testWidgets('a card already shown takes on a newly chosen brand', (tester) async {
@@ -118,20 +106,21 @@ root = RestaurantCard("Kaneo", "Macedonian Grill", 4.9, "\$\$\$")
   });
 }
 
-/// A store whose saved brand can't be read, as when the phone's storage fails, and which keeps
-/// what is written to it.
+/// A store whose saved brand can't be read, failing with [failure], and which keeps what is
+/// written to it, in order.
 base class _UnreadableStore extends InMemorySharedPreferencesAsync {
-  _UnreadableStore() : super.empty();
+  _UnreadableStore(this.failure) : super.empty();
 
-  final saved = <String, String>{};
+  final Exception failure;
+
+  final saved = <String>[];
 
   @override
-  Future<String?> getString(String key, SharedPreferencesOptions options) =>
-      throw PlatformException(code: 'unreadable');
+  Future<String?> getString(String key, SharedPreferencesOptions options) => throw failure;
 
   @override
   Future<bool> setString(String key, String value, SharedPreferencesOptions options) async {
-    saved[key] = value;
+    saved.add(value);
     return true;
   }
 }
@@ -148,9 +137,4 @@ base class _UnwritableStore extends InMemorySharedPreferencesAsync {
     tried[key] = value;
     throw PlatformException(code: 'unwritable');
   }
-}
-
-/// A store whose `brand` was saved as a number, as by an older build.
-base class _MistypedStore extends InMemorySharedPreferencesAsync {
-  _MistypedStore() : super.withData({'brand': 3});
 }

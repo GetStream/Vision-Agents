@@ -674,7 +674,6 @@ class _GaugePainter extends CustomPainter {
 
 typedef DiningTableItem = ({String id, String zone, int seats, bool available});
 
-/// A booking the seat selector's tool made, and the tables of the card it was made from.
 /// A booking a seat selector's tool made, and the offer, the reply whose card it was made
 /// from.
 typedef Reservation = ({DiningTableItem table, String when, String code, String offer});
@@ -790,7 +789,8 @@ class _SeatSelectorView extends StatefulWidget {
 }
 
 class _SeatSelectorViewState extends State<_SeatSelectorView> {
-  late String? _selected = widget.tables.where((t) => t.available).firstOrNull?.id;
+  /// The table tapped last, which is outlined. None until one is tapped.
+  String? _selected;
 
   /// The conversation the card is shown in, which holds the session its tool is given to.
   /// Null where the card is shown outside one.

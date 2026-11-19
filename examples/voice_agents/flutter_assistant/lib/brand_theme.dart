@@ -1,6 +1,5 @@
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 
@@ -56,23 +55,26 @@ enum BrandProfile {
   ///
   /// A brand that can't be read leaves the default in place: the app opens all the same.
   static Future<void> load() async {
-    final preferences = SharedPreferencesAsync();
     try {
-      final stored = await preferences.getString(_storageKey);
+      final stored = await SharedPreferencesAsync().getString(_storageKey);
       active.value = values.asNameMap()[stored] ?? active.value;
-    } on PlatformException catch (error) {
+    } on Exception catch (error) {
       debugPrint('Reading the chosen brand failed: $error');
-    } on TypeError catch (error) {
-      // Saved by an older build as something other than a name.
-      debugPrint('The saved brand was not a name: $error');
     }
-    active.addListener(() async {
-      try {
-        await preferences.setString(_storageKey, active.value.name);
-      } on PlatformException catch (error) {
-        debugPrint('Saving the chosen brand failed: $error');
-      }
-    });
+    if (_keeping) return;
+    _keeping = true;
+    active.addListener(_save);
+  }
+
+  /// Whether [active] is saved as it changes, which it is once [load] has run.
+  static bool _keeping = false;
+
+  static Future<void> _save() async {
+    try {
+      await SharedPreferencesAsync().setString(_storageKey, active.value.name);
+    } on Exception catch (error) {
+      debugPrint('Saving the chosen brand failed: $error');
+    }
   }
 }
 
