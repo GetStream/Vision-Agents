@@ -169,6 +169,9 @@ A release is a tagged build, published once, then deployed per shard:
 - `rocky launch upload` both architectures once; the binary is shared by every shard.
 - `rocky launch deploy --shard <cluster> --env prod` per shard. The registry lock is global,
   so the three pointer moves run one after another; the restarts they trigger run in parallel.
+  Run it from inside the private repo, or set `ROCKY_DIR` to that repo's `infra/` directory (a
+  checkout of its `master` branch). Without either, it stops with "could not locate infra/ directory"
+  before it takes the lock, so nothing moves.
 - Migrations run on start and take an advisory lock, so shards starting together are safe.
   A migration has to be right for both databases: the global tables and the shard tables
   share one migration set.

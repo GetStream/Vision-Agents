@@ -56,7 +56,7 @@ Models public, operations not:
 
 Known gaps, generated only (docs on getstream.io call some of them raw today): simulations and
 their runs, voices, knowledge documents and URLs beyond ingest and add, scheduled tasks,
-campaigns, channels, connectors and connections, SIP trunks, 10DLC and opt-outs, phone
+campaigns, channels, connectors, a connection's credentials and tools, SIP trunks, 10DLC and opt-outs, phone
 transfer, digits and release, account, credits, spend limits, usage events, teams, prices,
 stats, policies, provider keys, runs, OCR and classify. Folder sync does not read
 `resume_history:` from agent.yaml yet, so one that names it is refused.
