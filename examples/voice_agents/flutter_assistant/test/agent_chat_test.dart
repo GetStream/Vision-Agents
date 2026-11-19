@@ -721,6 +721,37 @@ void main() {
         expect(chat.reservations.value['m1'], isNull);
       });
 
+      test('books the newest reply\'s card when two offer the same table', () async {
+        sessions.history = [
+          _question('q1'),
+          _agentReply(id: 'm1', text: 'Terrace tonight'),
+          _question('q2'),
+          _agentReply(id: 'm2', text: 'Terrace again'),
+        ];
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          // An opened conversation builds its newest replies first.
+          ..offer('m2', terrace)
+          ..offer('m1', terrace);
+        await until(() => sessions.routes.contains(tools));
+
+        await call(chat, 'T1', 'Terrace');
+
+        expect(chat.reservations.value.keys, ['m2']);
+      });
+
+      test('books a table whose zone the card wrote with spaces around it', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat.offer('m1', [(id: 'T1', zone: ' Terrace ', seats: 2, available: true)]);
+        await until(() => sessions.routes.contains(tools));
+
+        final result = await call(chat, 'T1', ' Terrace ');
+
+        expect(result['output'], contains('Reserved table T1'));
+      });
+
       test('books another venue\'s table of the same id once one is booked', () async {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();

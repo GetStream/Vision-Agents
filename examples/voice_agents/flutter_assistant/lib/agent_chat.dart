@@ -504,8 +504,18 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     if (_closed) throw const ToolFailure('The conversation has closed.');
     final booked = _reservations.value;
     bool matches(DiningTableItem table) =>
-        table.id == tableId && table.zone.toLowerCase() == zone.trim().toLowerCase();
-    for (final MapEntry(key: offer, value: tables) in _offers.entries.toList().reversed) {
+        table.id == tableId && table.zone.trim().toLowerCase() == zone.trim().toLowerCase();
+    // Newest reply first: a card is not offered in the order its reply was written, as an
+    // opened conversation builds its newest replies first.
+    final written = [for (final message in listMessages) message.id];
+    final offered = _offers.keys.toList();
+    int newer(String a, String b) {
+      final byReply = written.indexOf(b).compareTo(written.indexOf(a));
+      return byReply != 0 ? byReply : offered.indexOf(b).compareTo(offered.indexOf(a));
+    }
+
+    final newestFirst = _offers.entries.toList()..sort((a, b) => newer(a.key, b.key));
+    for (final MapEntry(key: offer, value: tables) in newestFirst) {
       if (booked.containsKey(offer)) continue;
       final table = tables.where((table) => matches(table) && table.available).firstOrNull;
       if (table == null) continue;
