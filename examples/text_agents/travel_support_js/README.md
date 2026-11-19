@@ -17,9 +17,9 @@ it as a custom connector, `custom_tablejourney`, with an app connection labelled
 only its read-only tools.
 
 `lookup_booking` in `index.mjs` is a function the agent calls, run by this process. After
-syncing, the script keeps running as a worker that hosts it (`new Dispatch().host(...)`), so the
-router offers it to every conversation with the agent, the ones the dashboard opens included,
-and sends each call here.
+syncing, the script keeps running as a worker that hosts it (`client.runDispatch()`), so the
+router offers it to every conversation whose agent.yaml names it, the ones the dashboard opens
+included, and sends each call here.
 
 ## Run it
 

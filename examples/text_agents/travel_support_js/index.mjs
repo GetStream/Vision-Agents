@@ -13,7 +13,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { Agent, Dispatch } from "@stream-io/stream-agents";
+import { Agent } from "@stream-io/stream-agents";
 import { loadFolder } from "@stream-io/stream-agents/node";
 
 const FOLDER = fileURLToPath(new URL(".", import.meta.url));
@@ -45,8 +45,7 @@ const url = `${process.env.DASHBOARD_BASE_URL.replace(/\/$/, "")}/${synced.confi
 console.log(`Chat with travel_support: ${url}`);
 openInBrowser(url);
 
-const hosted = agent.client.agent("travel_support");
-hosted.tools.register({
+agent.client.tools.register({
   name: "lookup_booking",
   description: "Look up a booking by its six-character booking reference, such as WF7K2Q.",
   parameters: { type: "object", properties: { reference: { type: "string" } }, required: ["reference"] },
@@ -60,7 +59,7 @@ hosted.tools.register({
 const stop = new AbortController();
 process.on("SIGINT", () => stop.abort());
 console.log("Hosting lookup_booking; ctrl-c to stop.");
-await new Dispatch().host(hosted).run(stop.signal);
+await agent.client.runDispatch(stop.signal);
 
 /** Creates the TableJourney connector and the app's connection to it, once. */
 async function ensureTablejourney(client) {
