@@ -97,6 +97,24 @@ func (s *UsageAlertsSuite) TestUnownedWarnsFromTheFifteenthMinuteOn() {
 	s.NotContains(held, "almost")
 }
 
+// An app with many keys or models keeps a small event: the groups with most rows, and a count
+// of the rest.
+func (s *UsageAlertsSuite) TestUnownedSendsTheTenGroupsWithMostRowsAndSumsTheRest() {
+	now := time.Now()
+	var groups []store.UnownedGroup
+	for i := range 13 {
+		groups = append(groups, store.UnownedGroup{APIKey: fmt.Sprintf("key-%d", i), Modality: "llm", Provider: "openai",
+			Model: "gpt", Rows: int64(20 - i), CostMicros: 5})
+	}
+	s.counted(store.UnownedApp{App: "busy", Rows: 221, CostMicros: 65, OldestStartedAt: now.Add(-time.Hour), Groups: groups})
+
+	held := s.named("unowned").Items(now)["busy"]
+
+	s.Equal(groups[:10], held["written_by"])
+	s.Equal(3, held["other_groups"])
+	s.Equal(int64(10+9+8), held["other_rows"])
+}
+
 // A sweeper registers before its first count, which may fail: the alerts loop must not stop.
 func (s *UsageAlertsSuite) TestUnownedReadsNothingFromASweeperNotYetCounted() {
 	sweeper := &Sweeper{}

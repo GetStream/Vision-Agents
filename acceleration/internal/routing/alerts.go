@@ -23,6 +23,9 @@ const (
 	// started to warn: an app's membership is normally written within seconds of its first
 	// request, before any of its rows is written.
 	unownedFor = 15 * time.Minute
+	// unownedGroupsSent is how many of an app's groups of waiting rows an alert lists, the ones
+	// with most rows, so an app with many keys or models keeps its event small.
+	unownedGroupsSent = 10
 	// pendingSlowSeconds is how long a row may wait to be written before Postgres is too slow.
 	pendingSlowSeconds = 60
 	// holdsUnflushedSeconds is how long a change to a hold may wait to be shared with the other
@@ -108,13 +111,23 @@ func unownedApps(span time.Duration) alerts.ItemCheck {
 				if waited < span {
 					continue
 				}
-				held[app.App] = map[string]any{
+				extra := map[string]any{
 					"waiting_rows":      app.Rows,
 					"cost_micros":       app.CostMicros,
 					"oldest_started_at": app.OldestStartedAt.UTC().Format(time.RFC3339),
 					"oldest_waiting":    waited.Round(time.Second).String(),
 					"written_by":        app.Groups,
 				}
+				if len(app.Groups) > unownedGroupsSent {
+					extra["written_by"] = app.Groups[:unownedGroupsSent]
+					var rows int64
+					for _, group := range app.Groups[unownedGroupsSent:] {
+						rows += group.Rows
+					}
+					extra["other_groups"] = len(app.Groups) - unownedGroupsSent
+					extra["other_rows"] = rows
+				}
+				held[app.App] = extra
 			}
 			return true
 		})
