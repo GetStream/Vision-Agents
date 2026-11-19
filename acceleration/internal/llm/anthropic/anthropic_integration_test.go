@@ -5,6 +5,7 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -49,8 +50,10 @@ func TestAnthropicIntegrationSuite(t *testing.T) {
 
 // TestTheNextRoundReadsThePrefixFromTheCache asks twice with the same long instructions and
 // a conversation one round longer, and expects the second to be served mostly from cache.
+// The instructions end on a random text, so the first round writes a prefix no earlier test
+// or run has cached.
 func (s *AnthropicIntegrationSuite) TestTheNextRoundReadsThePrefixFromTheCache() {
-	instructions := "Answer in one word. " + strings.Repeat("The webhook retries a failed delivery three times, a minute apart. ", 300)
+	instructions := "Answer in one word. " + strings.Repeat("The webhook retries a failed delivery three times, a minute apart. ", 300) + rand.Text()
 	first := llm.ResponseParams{Instructions: instructions, Input: []llm.Message{{Role: llm.User, Content: "How many retries?"}}}
 	answer, _ := s.Ask(first)
 	s.Positive(answer.Usage.InputTokensDetails.CacheWriteTokens, "the first round writes the prefix")
