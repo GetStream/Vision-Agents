@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -376,10 +377,20 @@ func TestDeletingAConnectionRemovesIt(t *testing.T) {
 	}
 }
 
-// Catches an empty connection id sent to the router, as /v1/agents/connections/.
+// Catches an empty connection id sent to the router, as /v1/agents/connections/. Counted at the
+// server, since no route of the stand-in router matches that path to record it.
 func TestAConnectionWithNoIDIsRefusedBeforeTheRouter(t *testing.T) {
-	backend := newRouter(t)
-	connections := backend.client(t).Connections()
+	var arrived atomic.Int32
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		arrived.Add(1)
+		connectionNotFound(w)
+	}))
+	t.Cleanup(counting.Close)
+	api, err := New(stream.Backend{URL: counting.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := api.Connections()
 
 	if _, err := connections.Get(t.Context(), "", "anya"); err == nil {
 		t.Error("a connection with no id was read")
@@ -390,8 +401,8 @@ func TestAConnectionWithNoIDIsRefusedBeforeTheRouter(t *testing.T) {
 	if err := connections.Delete(t.Context(), "", "anya"); err == nil {
 		t.Error("a connection with no id was deleted")
 	}
-	if len(backend.asked) != 0 {
-		t.Errorf("the router was asked %v", backend.asked)
+	if got := arrived.Load(); got != 0 {
+		t.Errorf("the router was asked %d times", got)
 	}
 }
 
