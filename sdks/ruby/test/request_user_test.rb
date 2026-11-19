@@ -81,6 +81,10 @@ class TestRequestUser < LocalRouterTest
     end
   end
 
+  def test_a_user_that_is_not_text_is_sent_as_text
+    assert_equal "42", calls(clients[:customer], user_id: 42)[:get].call.headers["x-stream-user-id"]
+  end
+
   # Expected values are the base sha's (fa2a6a66d), probed with the same calls before this change.
   AUTH = {
     customer: [{ "x-customer-id" => "acme" }, nil],

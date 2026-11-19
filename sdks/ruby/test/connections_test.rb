@@ -53,6 +53,30 @@ class TestConnections < LocalRouterTest
     refute @router.last(:get, "#{CONNECTIONS}/conn_1").headers.key?("x-stream-user-id")
   end
 
+  def test_authorize_without_a_user_on_an_acting_client_names_nobody
+    @router.on(:post, "#{CONNECTIONS}/conn_1/authorizations", status: 201, body: {})
+    acting_for_bob.connections.authorize("conn_1")
+    refute @router.last(:post, "#{CONNECTIONS}/conn_1/authorizations").headers.key?("x-stream-user-id")
+  end
+
+  def test_list_without_a_user_on_an_acting_client_names_nobody
+    @router.on(:get, CONNECTIONS, body: { "items" => [], "has_more" => false })
+    acting_for_bob.connections.list
+    refute @router.last(:get, CONNECTIONS).headers.key?("x-stream-user-id")
+  end
+
+  def test_delete_without_a_user_on_an_acting_client_names_nobody
+    @router.on(:delete, "#{CONNECTIONS}/conn_1", status: 204)
+    acting_for_bob.connections.delete("conn_1")
+    refute @router.last(:delete, "#{CONNECTIONS}/conn_1").headers.key?("x-stream-user-id")
+  end
+
+  def test_create_sends_the_connector_given
+    @router.on(:post, CONNECTIONS, status: 201, body: {})
+    server.connections.create("github")
+    assert_equal "github", @router.last(:post, CONNECTIONS).json["connector_id"]
+  end
+
   def test_authorize_sends_the_return_url_and_answers_the_consent
     consent = { "launch_url" => "https://router/consent", "handoff_token" => "tok",
                 "expires_at" => "2026-11-19T12:00:00Z" }
