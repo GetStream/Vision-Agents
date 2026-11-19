@@ -515,28 +515,26 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("times a round of thinking from when the model was asked, not from its first words", async () => {
-    const [session, connection] = await opened();
+  it("times a round of thinking from when the model was asked, not from its first words", () => {
+    const conversation = new Conversation(true);
 
-    connection.send({ type: "responding", turn_id: "t1" });
-    for await (const event of session.events()) {
-      if (event.kind === "responding") {
-        break;
-      }
-    }
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1_000);
     // A model that thinks a while and then streams its reasoning all at once, as Grok does.
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "Lisbon, this weekend." });
-    connection.send({ type: "response_delta", turn_id: "t1", text: "Sunny." });
-    for await (const event of session.events()) {
-      if (event.kind === "response_delta") {
-        break;
-      }
-    }
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "Lisbon, " }, 4_000);
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "this weekend." }, 4_001);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Let me look. " }, 4_002);
+    // Taken up again after writing, it thinks from there.
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "The weather tool knows." }, 6_000);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Sunny." }, 6_500);
 
-    const round = session.conversation.get().turns[0]?.steps?.[0];
-    assert.ok(round?.kind === "reasoning" && (round.durationMs ?? 0) >= 50, `thought for ${round?.durationMs} ms`);
-    await session.close();
+    const steps = conversation.get().turns[0]?.steps ?? [];
+    assert.deepEqual(
+      steps.map((step) => step.kind === "reasoning" && [step.id, step.durationMs]),
+      [
+        ["r1", 3_002],
+        ["r2", 2_498],
+      ],
+    );
   });
 
   it("keeps a tool call whose id is a round of thinking's, and each call once", () => {
