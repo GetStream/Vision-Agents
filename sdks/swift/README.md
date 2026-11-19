@@ -105,6 +105,23 @@ reply and its id: every reply numbers its steps from `r1`. The same events contr
 Ask with `session.responses.create`, from `AIComposerView`'s send; its stop button is
 `session.interrupt()`. Start the session first, so its socket runs this phone's tools.
 
+An incognito session has no channel, so `chat()` throws. Show it from its socket instead:
+`session.turnMessages` is the conversation in the same shape, one reply per question with its
+steps as attachment payloads and the whole of each round of thinking. A call waiting in
+`approvals` shows its question on its step, for the session's user:
+
+```swift
+var options = SessionOptions(agent: "juno")
+options.incognito = true
+let session = try await agents.chat(options)
+await session.start()
+
+for message in session.turnMessages {
+    let parts = AIMessagePart.parts(from: message.steps.map { ($0.type, $0.payload) })
+    // StreamingReasoningView(part: step, text: message.reasoning[step.id]) for each round of thinking
+}
+```
+
 ### A tool that runs on the phone
 
 The agent runs in the backend; a tool you give it runs here. That is the point — it can read
