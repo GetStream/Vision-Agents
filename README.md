@@ -87,6 +87,15 @@ getstream agents test my-agent
 
 Note that you can also configure agents through the SDKs or dashboard.
 
+### Simulations
+
+Simulations play scripted callers against your agent so you can catch regressions before you ship.
+
+
+https://github.com/user-attachments/assets/8b294cc6-e7cf-45c0-a2c9-122d91e131b5
+
+
+
 
 ## Client Side/ Browser & App
 
