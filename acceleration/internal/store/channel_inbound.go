@@ -215,12 +215,28 @@ func queueChannelInbound(ctx context.Context, tx bun.Tx, message ChannelInbound)
 	if _, err := tx.NewRaw("SELECT 1 FROM channel_threads WHERE channel_id = ? FOR NO KEY UPDATE", message.ChannelID).Exec(ctx); err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: queue channel inbound: %w", err))
 	}
-	message.NextAttemptAt = message.NextAttemptAt.UTC()
-	result, err := tx.NewInsert().Model(&message).
-		Column("channel_id", "provider_message_id", "customer_id", "connector_id", "provider_unit_id", "thread_key",
-			"config_id", "config_name", "author_id", "text", "media", "raw", "forward", "next_attempt_at").
-		On("CONFLICT (channel_id, provider_message_id) DO NOTHING").
-		Exec(ctx)
+	// Not the insert builder: bun writes a JSON \u0000 as the text \\u0000, and a delivery jsonb
+	// cannot hold must fail here, so it stays unclaimed and the provider's retry takes it again.
+	media, err := json.Marshal(message.Media)
+	if err != nil {
+		return false, stack.Wrap(err)
+	}
+	var forward *string
+	if message.Forward != nil {
+		encoded, err := json.Marshal(message.Forward)
+		if err != nil {
+			return false, stack.Wrap(err)
+		}
+		forward = new(string(encoded))
+	}
+	result, err := tx.NewRaw(`
+INSERT INTO channel_thread_inbound (channel_id, provider_message_id, customer_id, connector_id, provider_unit_id, thread_key,
+    config_id, config_name, author_id, text, media, raw, forward, next_attempt_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb, ?)
+ON CONFLICT (channel_id, provider_message_id) DO NOTHING`,
+		message.ChannelID, message.ProviderMessageID, message.CustomerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey,
+		message.ConfigID, message.ConfigName, message.AuthorID, message.Text, string(media), message.Raw, forward,
+		message.NextAttemptAt.UTC()).Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: queue channel inbound: %w", err))
 	}
