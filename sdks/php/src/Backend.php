@@ -166,6 +166,17 @@ final readonly class Backend
      */
     public function onBehalfOf(string $userId): self
     {
+        return $this->writingFor($userId);
+    }
+
+    /**
+     * What `onBehalfOf` did before it was deprecated, for the dispatch worker: the backend's own
+     * user stays when `$userId` is empty.
+     *
+     * @internal
+     */
+    public function writingFor(string $userId): self
+    {
         if (!$this->serverSide()) {
             throw new ConfigurationException('only a server-side backend can act on behalf of a user');
         }
