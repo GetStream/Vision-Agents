@@ -92,6 +92,28 @@ included. The channel from `chat(context)` is what Stream Chat's AI components s
 streaming in, its reasoning and tool calls, and the approvals waiting on the person. On a call,
 `voice.call` is the Stream `Call` that Stream Video's Compose views render.
 
+An `incognito` session has no channel, so `chat(context)` throws. Show it from its socket
+instead: `chat.turnMessages` is a `Flow` of the conversation in the same shape, one
+`TurnMessage` per question and reply, each reply's rounds of thinking and tool calls as steps
+for `AIMessagePart.parts`, rounds numbered `r1`, `r2` across the reply, the whole of each round
+in `reasoning`, its UI under `customData["ai_ui"]`, and a call waiting in `approvals` shown
+`awaiting_approval` for the user `setUser` named:
+
+```kotlin
+val chat = agents.agent("docs").chat(SessionOptions(incognito = true))
+chat.turnMessages.collect { messages ->
+    for (message in messages) {
+        val parts = AIMessagePart.parts(message.steps.map { it.type to it.fields })
+        // reasoningText(step) is message.reasoning[step.id]
+    }
+}
+```
+
+`chat.conversation`'s turns hold the same as `Turn.steps` (`TurnStep.Reasoning`,
+`TurnStep.ToolCall`) and `Turn.isDone`, folded from the socket's `reasoning_delta`,
+`tool_started`, `tool_updated` and `tool_ran`. A round of thinking is timed from when the model
+was asked or went on after writing, not from its first words.
+
 `say(text)` has the agent speak words as written, without the model; `say(text, interrupt = true)`
 stops what it is saying first rather than waiting for it to finish.
 

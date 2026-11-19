@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Kotlin SDK shows an incognito session
+
+An incognito session has no Stream Chat channel, so `chat(context)` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (`TurnStep.Reasoning` and `TurnStep.ToolCall`, in order) and `isDone`, timing a round of reasoning from when the model was asked or went on, not from its first words, and `AgentEvent.Kind` has `ReasoningDelta` and `ToolUpdated`. `AgentSession.turnMessages`, a `Flow` of `TurnMessage.messages(conversation, approvals, userId, isConnected)`, is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as `ai_reasoning` and `ai_tool_call` types and fields for Stream Chat's `AIMessagePart.parts`, rounds numbered `r1`, `r2` across the reply, the whole of each round of thinking, the reply's UI under `ai_ui`, and an approval card (`awaiting_approval`) for the user `setUser` named. Deploy the router from #2090 first: an older one sends no reasoning, and a reply shows only its tool calls (AND-1984).
+
 ### The JavaScript SDK shows an incognito session in the Chat UI
 
 An incognito session has no Stream Chat channel, so `AgentChat` used to show it with no messages. It now builds the conversation from the session's socket: one reply per question, with its rounds of reasoning, its tool calls with their durations and summaries, an approval card for a call that asks first, and the generated UI, in the same shape stream-chat-react's AI components read from a kept conversation. The router sends a written reply's reasoning on the session socket as `reasoning_delta` (`turn_id`, `text`), and `session.conversation` keeps each turn's `steps` (reasoning and tool calls, in order) and whether it is `done`. A round of reasoning is timed from when the model was asked or took the reply up again, as the router times a kept one. Edit and regenerate stay off, and the router's `visible_tools` does not apply, so every tool call shows. Deploy the router before releasing this SDK: an older one sends no reasoning, and the reply shows only its tool calls. `react_assistant` has an incognito toggle at the top right of a new chat (#2090).
@@ -620,6 +624,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
 
 `ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
+
+### Kotlin: `Turn` has `steps` and `isDone`
+
+`Turn` takes two new last parameters, `steps` and `isDone`, both with defaults, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change. `AgentEvent.Kind` gains `ReasoningDelta` and `ToolUpdated`, so a `when` over it with no `else` needs the two cases (AND-1984).
 
 ### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
 
