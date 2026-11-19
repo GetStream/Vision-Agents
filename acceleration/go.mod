@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/kms v1.26.0
 	github.com/GetStream/getstream-go-webrtc v0.0.0-20261015135610-e1adb0e63b09
 	github.com/GetStream/getstream-go/v5 v5.2.0
-	github.com/GetStream/goaec3 v0.0.0-20261119022939-35b98ab00004
+	github.com/GetStream/goaec3 v0.0.0-20261119123730-ad188ca95b57
 	github.com/GetStream/protocol v1.49.0
 	github.com/anthropics/anthropic-sdk-go v1.79.0
 	github.com/danielgtaylor/huma/v2 v2.39.1
