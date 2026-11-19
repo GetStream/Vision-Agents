@@ -15,10 +15,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
-// Versions either side of 20270102090000_agent_config_tool_groups.sql.
+// Versions either side of 20270103090000_agent_config_tool_groups.sql.
 const (
-	schemaBeforeToolGroups int64 = 20270101090000
-	toolGroupsVersion      int64 = 20270102090000
+	schemaBeforeToolGroups int64 = 20270102090000
+	toolGroupsVersion      int64 = 20270103090000
 )
 
 // ToolGroupsMigrationSuite stops a database of its own short of tool groups, writes configs
