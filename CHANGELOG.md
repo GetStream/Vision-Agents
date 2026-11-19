@@ -2,6 +2,14 @@
 
 ## Features
 
+### The Swift SDK shows an incognito session
+
+An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat (#2091).
+
+### The JavaScript SDK shows an incognito session in the Chat UI
+
+An incognito session has no Stream Chat channel, so `AgentChat` used to show it with no messages. It now builds the conversation from the session's socket: one reply per question, with its rounds of reasoning, its tool calls with their durations and summaries, an approval card for a call that asks first, and the generated UI, in the same shape stream-chat-react's AI components read from a kept conversation. The router sends a written reply's reasoning on the session socket as `reasoning_delta` (`turn_id`, `text`), and `session.conversation` keeps each turn's `steps` (reasoning and tool calls, in order) and whether it is `done`. A round of reasoning is timed from when the model was asked or took the reply up again, as the router times a kept one. Edit and regenerate stay off, and the router's `visible_tools` does not apply, so every tool call shows. Deploy the router before releasing this SDK: an older one sends no reasoning, and the reply shows only its tool calls. `react_assistant` has an incognito toggle at the top right of a new chat (#2090).
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
@@ -12,6 +20,7 @@
 ### A session can turn an agent's generative UI off
 
 An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go SDK now syncs agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing this Go SDK: an older router drops `ui_instructions`, so the agent is taught no UI until the router is upgraded, when the next start syncs it again and the router writes it. A config saved without the field keeps the UI it has, and a sync of a folder without `ui:` removes it. Swift and Kotlin send it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui` (#2076). Kotlin's `SessionOptions` takes `ui` as a new last parameter, so code compiled against its old constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change (AND-1981, #2096).
+An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go and JavaScript SDKs now sync agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing these SDKs: an older router drops `ui_instructions`. A Go-synced agent is then taught no UI until the router is upgraded, when the next start syncs it again and the router writes it; JavaScript keeps the UI in `instructions` meanwhile. A config saved without the field keeps the UI it has. Removing `ui:` from a synced folder removes the UI on the next start, since the folder's fingerprint changes; a folder that never had `ui:` is not synced again, so UI added to its config by hand stays until a PATCH with `"ui_instructions": ""` clears it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui`; `swift_assistant` and `react_assistant` have an Interactive UI switch in their settings that sets it (#2076).
 
 ### Claude's thinking survives a round trip through the language-model socket
 
@@ -724,6 +733,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### One `Sync` drops an agent's sandbox and a skill's scripts together
+
+The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 

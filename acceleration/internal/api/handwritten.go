@@ -37,7 +37,8 @@ func documentHandWritten(api huma.API) {
 		Description: "A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects " +
 			"carrying a `type` and the fields of that event.\n" +
 			"The server sends what the conversation did: `joined`, `heard`, `responding`, " +
-			"`response_delta`, `responded` (pending_work remains true while tools or delegated work " +
+			"`response_delta`, `reasoning_delta` (turn_id and text: the next piece of the model's thinking " +
+			"on a written reply, never spoken), `responded` (pending_work remains true while tools or delegated work " +
 			"are outstanding), `said` (a line the agent says as written rather than asking the model, " +
 			"such as its greeting, with the purpose it has), `speaking` (an utterance started being heard: " +
 			"turn_id, synthesis_id, the text the voice had been sent for it by then, at, when the call's " +
