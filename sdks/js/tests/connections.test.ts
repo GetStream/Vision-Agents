@@ -379,6 +379,15 @@ describe("Connections", () => {
     assert.equal(router.received.length, 0);
   });
 
+  it("lets a server reached by customer id name a user, since it holds no user's token", async () => {
+    const server = new Client({ url: router.url, customerId: "local" });
+
+    const created = await server.connections.create("linear", { userId: "anya" });
+
+    assert.equal(created.owner.user_id, "anya");
+    assert.deepEqual(usersSent(router), ["anya"]);
+  });
+
   it("drops the deprecated actingFor user on a call naming none, so the call is the app's", async () => {
     const bobs = await api.connections.create("linear", { userId: "bob" });
     const bob = new Client(api.backend.actingFor("bob"));
