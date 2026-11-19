@@ -696,6 +696,11 @@ func frameOf(event session.Event) (frame, bool) {
 	case agent.ResponseDelta:
 		return frame{"type": "response_delta", "turn_id": typed.TurnID, "text": typed.Text}, true
 
+	case agent.ReasoningDelta:
+		// The only way a written session with no conversation, an incognito one, shows its
+		// reply's thinking: a kept one also streams it into the reply's Chat message.
+		return frame{"type": "reasoning_delta", "turn_id": typed.TurnID, "text": typed.Text}, true
+
 	case agent.UIDelta:
 		out := frame{
 			"type":    "ui_delta",
