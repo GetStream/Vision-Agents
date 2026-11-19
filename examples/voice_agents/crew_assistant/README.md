@@ -23,6 +23,9 @@ app/                 the React Native app the team member talks to it from
 It runs on Stream's hosted Agents, and is synced and tested with the beta Stream CLI
 (`getstream agents`).
 
+[USE_CASES.md](USE_CASES.md) walks through the nine things a team member does with it, and for
+each, what Stream gives you and what your own backend adds.
+
 ## What it does
 
 - **Tools on the backend.** The backend stands in for the restaurant's own systems, and hosts
@@ -60,6 +63,13 @@ It runs on Stream's hosted Agents, and is synced and tested with the beta Stream
   notes, swap requests, drafted tickets and check-ins, each with who sent it, and the pulse of
   end-of-shift reflections, kept without names. It answers only a user whose `crew_role` is
   `leader`; the app's view signs in as one.
+- **The owner approves tickets.** `create_support_ticket` drafts a ticket that waits for the owner
+  (`waiting_for` in the inbox), with the conversation it came from and the phone's timezone, and
+  its call ends there. `POST /crew/tickets/{id}/decision` with `{"approve": true}`, and the
+  owner's edits to `title` or `details` if any, answers only the user it waits for. Approving
+  submits it to repairs. Either way the backend has the agent tell the team member in that
+  conversation, through the same scheduled task as speaking first, so a decision hours later
+  still reaches them.
 
 Everything lives in memory and starts from the same restaurant each time the backend starts.
 
@@ -83,7 +93,10 @@ no file in the folder holds. A sync over them, which the CLI asks for once `conf
 
 The backend listens on `:8097` and connects out to the router to host the tools, so it needs no
 public address for them. The phone reaches it for its token, events, the asked-first tools and the
-leaders' inbox, so a deployed app needs it somewhere public. Run one backend per agent: the router
+leaders' inbox, so a deployed app needs it somewhere public. Its `POST /stream-token` signs a
+token for any user it's asked for, so anyone who can reach it can act as anyone, the owner
+approving tickets included: replace it with your own sign-in before it's reachable outside a
+demo. Run one backend per agent: the router
 shares an agent's tool calls between every process hosting them. `GOWORK=off go test ./...` in
 `backend/` checks the tokens, the leaders' inbox, enrolment and that each person only acts on their
 own shifts.

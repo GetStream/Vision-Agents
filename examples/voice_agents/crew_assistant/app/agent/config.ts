@@ -12,6 +12,12 @@ if (!streamApiKey) {
   );
 }
 
+// The owner by default, named; another leader the env names, by their id.
+function leaderOf(id: string | undefined) {
+  if (!id || id === 'crew-taylor') return { id: 'crew-taylor', name: 'Taylor Morgan', title: 'owner' };
+  return { id, name: id, title: 'leader' };
+}
+
 export const AgentConfig = {
   /** The Stream app the router runs in. Its channels hold the conversations. */
   streamApiKey,
@@ -30,9 +36,9 @@ export const AgentConfig = {
     id: process.env.EXPO_PUBLIC_AGENT_USER_ID || 'crew-jordan',
     name: 'Jordan Lee',
   },
-  /** Who the team lead view signs in as: a user whose crew role on the backend is leader. */
-  leader: {
-    id: process.env.EXPO_PUBLIC_AGENT_LEADER_ID || 'crew-maya',
-    name: 'Maya Chen',
-  },
+  /**
+   * Who the team lead view signs in as: a user whose crew role on the backend is leader. The owner
+   * by default, who approves the repair tickets.
+   */
+  leader: leaderOf(process.env.EXPO_PUBLIC_AGENT_LEADER_ID),
 } as const;

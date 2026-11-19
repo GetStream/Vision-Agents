@@ -31,7 +31,14 @@ describe("loadFolder ui", () => {
 
     const folder = await loadFolder(join(FIXTURE, "concierge"));
 
-    assert.equal(`${folder.instructions}\n`, golden);
+    assert.equal(`${folder.instructions}\n\n${folder.uiInstructions}\n`, golden);
+  });
+
+  it("keeps the UI apart from instructions.md, so a session opened with ui false is not told it", async () => {
+    const folder = await loadFolder(join(FIXTURE, "concierge"));
+
+    assert.equal(folder.instructions, "You are Juno, a hospitality concierge.");
+    assert.match(folder.uiInstructions!, /^## Interactive UI Generation\n/);
   });
 
   it("appends nothing for a bare ui:, which YAML reads as null", async () => {
@@ -44,6 +51,8 @@ describe("loadFolder ui", () => {
 
     assert.equal(bare.instructions, "You are Juno.");
     assert.equal(commented.instructions, "You are Juno.");
+    assert.equal(bare.uiInstructions, undefined);
+    assert.equal(commented.uiInstructions, undefined);
   });
 
   it("offers the whole catalog for ui: {}", async () => {
@@ -51,8 +60,9 @@ describe("loadFolder ui", () => {
       await agentDir({ "agent.yaml": "name: concierge\nui: {}\n", "instructions.md": "You are Juno." }),
     );
 
-    assert.match(folder.instructions, /^You are Juno\.\n\n## Interactive UI Generation\n/);
-    assert.match(folder.instructions, /\n- BarChart\(/);
+    assert.equal(folder.instructions, "You are Juno.");
+    assert.match(folder.uiInstructions!, /^## Interactive UI Generation\n/);
+    assert.match(folder.uiInstructions!, /\n- BarChart\(/);
   });
 
   it("compiles the shared A2UI fixture to the same instructions the Go SDK writes", async () => {
@@ -60,7 +70,7 @@ describe("loadFolder ui", () => {
 
     const folder = await loadFolder(join(FIXTURE, "concierge-a2ui"));
 
-    assert.equal(`${folder.instructions}\n`, golden);
+    assert.equal(`${folder.instructions}\n\n${folder.uiInstructions}\n`, golden);
   });
 
   it("carries the A2UI catalog, protocol and writing rules Go's generate.sh last wrote", async () => {
@@ -100,7 +110,7 @@ describe("loadFolder ui", () => {
 
     // The separator as the six characters \u2028, the surrogate as the character U+FFFD.
     assert.ok(
-      folder.instructions.includes(
+      folder.uiInstructions!.includes(
         '"LoyaltyBadge":{"description":"Tier\\u2028shown.","properties":{"component":{"const":"LoyaltyBadge"},"tier":{"description":"Lone \uFFFD half","type":"string"}}',
       ),
     );
@@ -128,7 +138,7 @@ describe("loadFolder ui", () => {
     );
     const a2ui = await agentDir({ "agent.yaml": "name: concierge\nui:\n  format: a2ui\n", "ui/components.json": column });
 
-    assert.match(openui.instructions, /\n- Column\(\) — A brand column\.$/);
+    assert.match(openui.uiInstructions!, /\n- Column\(\) — A brand column\.$/);
     await assert.rejects(
       () => loadFolder(a2ui),
       (error: unknown) =>
@@ -150,7 +160,7 @@ describe("loadFolder ui", () => {
     );
     const a2ui = await agentDir({ "agent.yaml": "name: concierge\nui:\n  format: a2ui\n", "ui/components.json": badge });
 
-    assert.match(openui.instructions, /LoyaltyBadge\(tier-name\?: string\)/);
+    assert.match(openui.uiInstructions!, /LoyaltyBadge\(tier-name\?: string\)/);
     await assert.rejects(
       () => loadFolder(a2ui),
       (error: unknown) =>
@@ -174,7 +184,7 @@ describe("loadFolder ui", () => {
     );
 
     assert.ok(
-      folder.instructions.includes(
+      folder.uiInstructions!.includes(
         `"LoyaltyBadge":{"description":"The guest's loyalty tier. Tapping it redeems points.","properties":{"component":{"const":"LoyaltyBadge"},"tier":{"type":"string"}},"required":["component","tier"],"type":"object"}`,
       ),
     );
@@ -217,7 +227,7 @@ describe("loadFolder ui", () => {
       "ui/blueprints.yaml": blueprints,
     });
 
-    assert.match(kept.instructions, /- \*\*booking\*\* \(when booking a table\): a Column of `Text -> Button`/);
+    assert.match(kept.uiInstructions!, /- \*\*booking\*\* \(when booking a table\): a Column of `Text -> Button`/);
     await assert.rejects(
       () => loadFolder(left),
       (error: unknown) =>

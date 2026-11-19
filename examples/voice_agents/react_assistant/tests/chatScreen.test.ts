@@ -1,9 +1,10 @@
 import { StateStore } from "@stream-io/state-store";
-import type { Session } from "@stream-io/stream-agents";
+import type { Session, Tools } from "@stream-io/stream-agents";
 import type { VoiceSession } from "@stream-io/stream-agents/video";
 import { describe, expect, it } from "vitest";
 
 import { ChatScreen, THINK_HARDER_ID, type ChatScreenDeps } from "../src/chatScreen";
+import { offerOf, RESERVE_TABLE, reserveTable, type DiningTable } from "../src/reserveTable";
 
 type Message = { id: string; text: string; custom: Record<string, unknown> };
 
@@ -70,6 +71,22 @@ class FakeSession {
     start: async () => void (this.voiceStarted = true),
     stop: async () => void (this.voiceStarted = false),
   };
+  /** The tools given to the session since it opened, by name, as the router holds them. */
+  readonly added = new Map<string, Tools>();
+  /** Why the router refuses the next tools given, once. */
+  refuseNext: string | undefined;
+
+  async addTools(tools: Tools) {
+    const refused = this.refuseNext;
+    this.refuseNext = undefined;
+    if (refused) throw new Error(refused);
+    const names = tools.declared().map(({ name }) => name);
+    if (names.some((name) => this.added.has(name))) throw new Error("409: the session has a tool by that name");
+    for (const name of names) this.added.set(name, tools);
+  }
+  async removeTool(name: string) {
+    if (!this.added.delete(name)) throw new Error(`404: no tool named ${name}`);
+  }
 
   constructor(
     readonly id: string,
@@ -270,5 +287,123 @@ describe("ChatScreen", () => {
 
     expect(screen.chat.isClosed).toBe(true);
     expect(asked).toEqual([]);
+  });
+});
+
+describe("a card's own tool", () => {
+  const tables: DiningTable[] = [
+    { id: "T1", zone: "Terrace", seats: 2, available: false },
+    { id: "T4", zone: "Terrace", seats: 4, available: true },
+  ];
+
+  /** A carried-on conversation whose session is open. */
+  async function opened() {
+    const { deps, sessions, open } = router();
+    const screen = new ChatScreen("session-1", deps, () => undefined);
+    open();
+    await settle();
+    return { screen, session: sessions[0]! };
+  }
+
+  it("is given to the session once, however often its card shows", async () => {
+    const { screen, session } = await opened();
+    const tool = () => reserveTable(tables, "Alex", (made) => screen.reserved(made));
+
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
+
+    expect([...session.added.keys()]).toEqual([RESERVE_TABLE]);
+    expect(screen.get().failure).toBeUndefined();
+  });
+
+  it("can be given again once the router refused it, and says why it was refused", async () => {
+    const { screen, session } = await opened();
+    const tool = () => reserveTable(tables, "Alex", (made) => screen.reserved(made));
+    session.refuseNext = "a tool by that name is the agent's own";
+
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
+    expect(screen.get().failure).toContain("the agent's own");
+    expect(session.added.size).toBe(0);
+
+    await screen.bring(RESERVE_TABLE, offerOf(tables), tool());
+    expect([...session.added.keys()]).toEqual([RESERVE_TABLE]);
+  });
+
+  it("keeps the booking it made and is taken back from the session", async () => {
+    const { screen, session } = await opened();
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+
+    const tools = session.added.get(RESERVE_TABLE)!;
+    await tools.call(
+      RESERVE_TABLE,
+      JSON.stringify({ table_id: "T4", when: "tonight at 8pm", summary: "Terrace, for 4, tonight at 8pm" }),
+      new AbortController().signal,
+    );
+    await settle();
+
+    expect(screen.get().reservations.map((each) => each.table.id)).toEqual(["T4"]);
+    expect(screen.get().reservations[0]?.when).toBe("tonight at 8pm");
+    expect(session.added.size).toBe(0);
+    expect(screen.get().failure).toBeUndefined();
+  });
+
+  /** Books `table` with whichever tool the session has now, as the agent would. */
+  async function book(session: FakeSession, table: string) {
+    await session.added.get(RESERVE_TABLE)!.call(
+      RESERVE_TABLE,
+      JSON.stringify({ table_id: table, when: "tonight at 8pm", summary: `${table}, tonight at 8pm` }),
+      new AbortController().signal,
+    );
+    await settle();
+  }
+
+  const courtyard: DiningTable[] = [
+    { id: "C1", zone: "Courtyard", seats: 6, available: true },
+    { id: "C2", zone: "Courtyard", seats: 2, available: false },
+  ];
+
+  it("is taken over by a second card, for that card's tables", async () => {
+    const { screen, session } = await opened();
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+
+    await screen.bring(RESERVE_TABLE, offerOf(courtyard), reserveTable(courtyard, "Alex", (made) => screen.reserved(made)));
+    await book(session, "C1");
+
+    expect(screen.get().failure).toBeUndefined();
+    expect(screen.get().reservations.map((each) => each.table.id)).toEqual(["C1"]);
+  });
+
+  it("is taken over by the same tables once others are free", async () => {
+    const { screen, session } = await opened();
+    const freed = tables.map((each) => ({ ...each, available: true }));
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+
+    await screen.bring(RESERVE_TABLE, offerOf(freed), reserveTable(freed, "Alex", (made) => screen.reserved(made)));
+    await book(session, "T1");
+
+    expect(screen.get().reservations.map((each) => each.table.id)).toEqual(["T1"]);
+  });
+
+  it("keeps each card's booking when a later card books too", async () => {
+    const { screen, session } = await opened();
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", (made) => screen.reserved(made)));
+    await book(session, "T4");
+
+    await screen.bring(RESERVE_TABLE, offerOf(courtyard), reserveTable(courtyard, "Alex", (made) => screen.reserved(made)));
+    await book(session, "C1");
+
+    expect(screen.get().reservations.map((each) => each.tables)).toEqual([["T1", "T4"], ["C1", "C2"]]);
+    expect(session.added.size).toBe(0);
+    expect(screen.get().failure).toBeUndefined();
+  });
+
+  it("is not given before the conversation has a session", async () => {
+    const { deps } = router();
+    const screen = new ChatScreen(undefined, deps, () => undefined);
+
+    await screen.bring(RESERVE_TABLE, offerOf(tables), reserveTable(tables, "Alex", () => undefined));
+
+    expect(screen.get().failure).toBeUndefined();
+    expect(screen.get().session).toBeUndefined();
   });
 });

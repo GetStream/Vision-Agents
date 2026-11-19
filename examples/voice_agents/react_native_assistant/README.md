@@ -79,8 +79,8 @@ The app talks to the router through
   `AIConversationController` that `contexts/AppContext.tsx` builds from the SDK's `AgentChat` and
   `agentChatTransport` (`@stream-io/stream-agents/chat`). `AgentChat` watches the channel, loads
   older pages, keeps each reply's full reasoning from its live updates, and follows what the agent
-  is doing on the session's socket. The controller offers no edit or regenerate: the router can't
-  rewind a conversation.
+  is doing on the session's socket. Any reply can be regenerated and any question edited: the
+  router keeps the earlier versions, and a ‹ i/n › switcher under each shows them.
 - Asking goes through the session, not the chat composer. The router writes the question and the
   streamed reply into the channel, the reply's steps as `ai_reasoning` and `ai_tool_call`
   attachments, and titles the conversation itself. Photos go as data URIs, and "Think harder" as

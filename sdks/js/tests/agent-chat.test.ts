@@ -941,7 +941,7 @@ describe("AgentChat over an incognito session", () => {
     connection.send({ type: "responding", turn_id: "t2" });
     connection.send({ type: "reasoning_delta", turn_id: "t2", text: "Sunny, " });
     connection.send({ type: "reasoning_delta", turn_id: "t2", text: "24." });
-    await until(() => shown().at(-1)?.steps.length === 3, "the second turn's thinking never showed");
+    await until(() => shown().at(-1)?.thinking("r2") === "Sunny, 24.", "the second turn's thinking never showed");
 
     const writing = shown().at(-1);
     assert.equal(writing?.generating, true, "still writing after its tools ran");
