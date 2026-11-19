@@ -10559,6 +10559,9 @@ type ToolCallState struct {
 	// ApprovedAt When a person allowed the call.
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 
+	// DisplayTitle What the call is doing, in words for the people in the conversation, such as "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's own search. Absent when the tool declared none.
+	DisplayTitle *string `json:"display_title,omitempty"`
+
 	// DurationMs From started_at to this change; on tool_call.finished, how long the call took.
 	DurationMs int64 `json:"duration_ms"`
 

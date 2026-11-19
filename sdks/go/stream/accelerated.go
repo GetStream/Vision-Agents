@@ -893,6 +893,10 @@ func declarationsOf(registered []*tools.Function) []acceleration.SessionTool {
 			parameters := function.Parameters
 			tool.Parameters = &parameters
 		}
+		if function.DisplayTitle != "" {
+			title := function.DisplayTitle
+			tool.DisplayTitle = &title
+		}
 		if function.Interruptible {
 			interruptible := true
 			tool.Interruptible = &interruptible

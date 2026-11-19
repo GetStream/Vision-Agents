@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 )
 
 type ToolCallStateSuite struct {
@@ -148,4 +149,20 @@ func (s *ToolCallStateSuite) TestAConnectorCallHeldBeforeItsStartCameThroughStar
 
 	s.Equal(ToolCallWaiting, started.State.Status)
 	s.Equal("Allow github to run merge?", started.State.Progress)
+}
+
+func (s *ToolCallStateSuite) TestACallIsShownDoingWhatItsToolWasDeclaredWith() {
+	session := &Session{
+		spec:       Spec{Tools: []harness.Tool{{Name: "get_location", DisplayTitle: "Checking where you are"}}},
+		otherTools: []harness.Tool{{Name: "weather_lookup", DisplayTitle: "Checking the weather"}, {Name: "lookup_order"}},
+	}
+	s.calls.titles = session.toolTitle
+
+	s.Equal("Checking where you are", s.start("call-1", "get_location").State.DisplayTitle)
+	s.Equal("Checking the weather", s.start("call-2", "weather_lookup").State.DisplayTitle, "a hosted tool's title")
+	s.Equal("Searching the web", s.start("call-3", "web_search").State.DisplayTitle)
+	s.Empty(s.start("call-4", "lookup_order").State.DisplayTitle, "a tool that declared no title")
+	finished, ok := s.apply(agent.ToolRan{ID: "call-2", Tool: "weather_lookup", Result: "Sunny"})
+	s.Require().True(ok)
+	s.Equal("Checking the weather", finished.State.DisplayTitle, "the title stays on the finished call")
 }

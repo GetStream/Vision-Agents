@@ -179,9 +179,10 @@ def sync_detailed(
     task_settled.
     `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
     state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
-    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
-    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
-    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
+    waiting for a person's approval, success, failed or cancelled), display_title (what the call is
+    doing, as its tool was declared with), progress (the last `tool_update`, the binding's pre_speech or
+    the approval question), started_at, duration_ms, approved_at, rejected_at and error. Each carries
+    the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -399,9 +400,10 @@ def sync(
     task_settled.
     `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
     state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
-    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
-    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
-    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
+    waiting for a person's approval, success, failed or cancelled), display_title (what the call is
+    doing, as its tool was declared with), progress (the last `tool_update`, the binding's pre_speech or
+    the approval question), started_at, duration_ms, approved_at, rejected_at and error. Each carries
+    the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -614,9 +616,10 @@ async def asyncio_detailed(
     task_settled.
     `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
     state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
-    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
-    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
-    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
+    waiting for a person's approval, success, failed or cancelled), display_title (what the call is
+    doing, as its tool was declared with), progress (the last `tool_update`, the binding's pre_speech or
+    the approval question), started_at, duration_ms, approved_at, rejected_at and error. Each carries
+    the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without
@@ -832,9 +835,10 @@ async def asyncio(
     task_settled.
     `tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a call's
     state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status (in_progress,
-    waiting for a person's approval, success, failed or cancelled), progress (the last `tool_update`,
-    the binding's pre_speech or the approval question), started_at, duration_ms, approved_at,
-    rejected_at and error. Each carries the whole state: keep the last per tool_call_id.
+    waiting for a person's approval, success, failed or cancelled), display_title (what the call is
+    doing, as its tool was declared with), progress (the last `tool_update`, the binding's pre_speech or
+    the approval question), started_at, duration_ms, approved_at, rejected_at and error. Each carries
+    the whole state: keep the last per tool_call_id.
     A respond command carrying request_id emits command_accepted with a nested command receipt
     (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
     sessions require this ID. A retry with the same text and images returns the existing IDs without

@@ -37,6 +37,9 @@ class ToolCallState:
             progress (str | Unset): The last thing said about the call while it runs, such as "Searching for flights": a
                 tool_update, the connector binding's pre_speech, or the question it waits on.
             rejected_at (datetime.datetime | Unset): When a person declined the call, or its wait for them passed.
+            display_title (str | Unset): What the call is doing, in words for the people in the conversation, such as
+                "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's
+                own search. Absent when the tool declared none.
     """
 
     duration_ms: int
@@ -50,6 +53,7 @@ class ToolCallState:
     error: str | Unset = UNSET
     progress: str | Unset = UNSET
     rejected_at: datetime.datetime | Unset = UNSET
+    display_title: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +83,8 @@ class ToolCallState:
         if not isinstance(self.rejected_at, Unset):
             rejected_at = self.rejected_at.isoformat()
 
+        display_title = self.display_title
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -100,6 +106,8 @@ class ToolCallState:
             field_dict["progress"] = progress
         if rejected_at is not UNSET:
             field_dict["rejected_at"] = rejected_at
+        if display_title is not UNSET:
+            field_dict["display_title"] = display_title
 
         return field_dict
 
@@ -138,6 +146,8 @@ class ToolCallState:
         else:
             rejected_at = datetime.datetime.fromisoformat(_rejected_at)
 
+        display_title = d.pop("display_title", UNSET)
+
         tool_call_state = cls(
             duration_ms=duration_ms,
             started_at=started_at,
@@ -150,6 +160,7 @@ class ToolCallState:
             error=error,
             progress=progress,
             rejected_at=rejected_at,
+            display_title=display_title,
         )
 
         tool_call_state.additional_properties = d

@@ -126,7 +126,8 @@ func documentHandWritten(api huma.API) {
 			"tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.\n" +
 			"`tool_call.started`, `tool_call.progress` and `tool_call.finished` (`ToolCallState`) are a " +
 			"call's state as a client shows it, whoever runs the call: tool_call_id, tool, turn_id, status " +
-			"(in_progress, waiting for a person's approval, success, failed or cancelled), progress (the last " +
+			"(in_progress, waiting for a person's approval, success, failed or cancelled), display_title (what " +
+			"the call is doing, as its tool was declared with), progress (the last " +
 			"`tool_update`, the binding's pre_speech or the approval question), started_at, duration_ms, " +
 			"approved_at, rejected_at and error. Each carries the whole state: keep the last per tool_call_id.\n" +
 			"A respond command carrying request_id emits command_accepted with a nested command " +

@@ -221,6 +221,21 @@ foreach ($watch as $event) {
 }
 ```
 
+When every argument is a string, `Tools::strings` writes the schema, from each argument's
+description by its name. Every argument is required unless you pass the list that is (the mobile
+SDKs' `AgentTool.strings` requires none by default):
+
+```php
+use GetStream\VisionAgents\Tools;
+
+$client->tools->register(
+    name: 'weather_lookup',
+    description: 'Look up the current weather for a location',
+    parameters: Tools::strings(['location' => 'a city or region']),
+    run: fn (array $args): string => weatherIn($args['location']),
+);
+```
+
 A tool runs while the session is watched, in its own fiber. What it throws is sent to the
 model as the tool's error. `register` also takes `displayTitle:`, what the reply's tool call
 shows, and `executor: 'client'` for a tool a person's device runs instead.

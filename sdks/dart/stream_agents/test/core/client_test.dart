@@ -445,6 +445,44 @@ void main() {
       ]);
     });
 
+    test(
+      'declares a typed tool with the schema it was given, not one read from its type',
+      () async {
+        router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+        await agents.sessions.create(
+          SessionOptions(
+            tools: [
+              AgentTool.typed<String>(
+                name: 'weather_lookup',
+                description: 'Look up the weather.',
+                parameters: AgentTool.strings({'location': 'a city'}, required: ['location']),
+                fromJson: (json) => json['location']! as String,
+                displayTitle: 'Checking the weather',
+                executor: ToolExecutor.client,
+                approval: const ToolApproval(title: 'Share your city?'),
+                run: (location) async => location,
+              ),
+            ],
+          ),
+        );
+
+        final [tool as Map] =
+            (router.last('POST /v1/agents/sessions').json as Map)['tools'] as List;
+        expect(tool['name'], 'weather_lookup');
+        expect(tool['display_title'], 'Checking the weather');
+        expect(tool['executor'], 'client');
+        expect(tool['approval'], {'title': 'Share your city?'});
+        expect(tool['parameters'], {
+          'type': 'object',
+          'properties': {
+            'location': {'type': 'string', 'description': 'a city'},
+          },
+          'required': ['location'],
+        });
+      },
+    );
+
     test('naming a config by id does not also send the agent it is scoped to', () async {
       router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
 

@@ -24,6 +24,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -31,6 +32,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 private const val SESSION = """{"id":"s1","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"live","modality":"text","created_at":"2026-09-24T04:03:19Z","text":true}"""
+@Serializable
+private data class WeatherLookup(val location: String)
+
 private const val ASKED = """{"id":"r1","session_id":"s1","status":"running","created_at":"2026-09-24T04:03:19Z"}"""
 
 /** Socket tests run in real time, because what they wait for is a real connection. */
@@ -183,6 +187,26 @@ class AgentSessionTest {
         val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
         assertEquals(JsonPrimitive("the orders database is down"), answer["error"])
         assertEquals(JsonPrimitive(""), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `a typed tool called without a required argument tells the model which one`() = runBlocking {
+        val ran = AtomicBoolean(false)
+        val weather = AgentTool.typed<WeatherLookup>("weather_lookup", "Look up the weather.") {
+            ran.set(true)
+            "sunny in ${it.location}"
+        }
+        val chat = agents.chat(SessionOptions(tools = listOf(weather)))
+
+        router.script.send(
+            Script.Send("""{"type":"tool_call","id":"c1","name":"weather_lookup","arguments":"{\"city\":\"Boulder\"}","request_id":"","turn_id":""}"""),
+        )
+
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertTrue("'location'" in answer["error"]!!.jsonPrimitive.content, answer.toString())
+        assertEquals(JsonPrimitive(""), answer["output"])
+        assertFalse(ran.get())
         chat.close()
     }
 

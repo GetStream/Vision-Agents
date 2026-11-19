@@ -1307,6 +1307,105 @@ fn a_policy_that_cannot_work_is_refused_when_it_is_registered() {
     assert!(tools.has("refund"));
 }
 
+#[derive(serde::Deserialize, vision_agents::schemars::JsonSchema)]
+#[schemars(crate = "vision_agents::schemars")]
+struct WeatherLookup {
+    /// a city or region
+    location: String,
+    /// how many days ahead
+    days: Option<u32>,
+    near: Option<Place>,
+}
+
+#[derive(serde::Deserialize, vision_agents::schemars::JsonSchema)]
+#[schemars(crate = "vision_agents::schemars")]
+struct Place {
+    /// how far from the location, in km
+    km: f64,
+}
+
+fn typed_weather() -> Tools {
+    let tools = Tools::new();
+    tools.register_typed(
+        "weather_lookup",
+        "Look up the current weather for a location",
+        async |args: WeatherLookup| {
+            let near = args.near.map_or(0.0, |place| place.km);
+            Ok::<_, String>(format!(
+                "sunny in {} for {} days, {near} km out",
+                args.location,
+                args.days.unwrap_or(1)
+            ))
+        },
+    );
+    tools
+}
+
+#[test]
+fn a_typed_tool_is_offered_its_types_schema_as_a_plain_object() {
+    let declared = typed_weather().declared();
+    let parameters = Value::Object(declared[0].parameters.clone());
+
+    assert_eq!(parameters["type"], "object");
+    assert_eq!(parameters["required"], json!(["location"]));
+    assert_eq!(
+        parameters["properties"]["location"],
+        json!({"type": "string", "description": "a city or region"})
+    );
+    assert_eq!(
+        parameters["properties"]["days"]["description"],
+        "how many days ahead"
+    );
+    assert_eq!(
+        parameters["properties"]["near"]["properties"]["km"]["description"],
+        "how far from the location, in km",
+        "the nested type is not inline: {parameters}"
+    );
+    for absent in ["$schema", "title", "$defs"] {
+        assert!(parameters.get(absent).is_none(), "{absent} in {parameters}");
+    }
+}
+
+#[tokio::test]
+async fn a_typed_tool_is_handed_its_arguments_decoded() {
+    let tools = typed_weather();
+
+    assert_eq!(
+        tools
+            .call(
+                "weather_lookup",
+                r#"{"location": "Oslo", "days": 3, "near": {"km": 2.5}}"#
+            )
+            .await,
+        Ok(json!("sunny in Oslo for 3 days, 2.5 km out"))
+    );
+    assert_eq!(
+        tools
+            .call("weather_lookup", r#"{"location": "Lima"}"#)
+            .await,
+        Ok(json!("sunny in Lima for 1 days, 0 km out"))
+    );
+}
+
+#[tokio::test]
+async fn arguments_that_do_not_fit_a_typed_tool_are_the_models_error() {
+    let tools = typed_weather();
+
+    assert_eq!(
+        tools.call("weather_lookup", r#"{"days": 3}"#).await,
+        Err("the arguments do not fit the parameters: missing field `location`".to_string())
+    );
+    assert_eq!(
+        tools
+            .call("weather_lookup", r#"{"location": "Oslo", "days": "soon"}"#)
+            .await,
+        Err(
+            "the arguments do not fit the parameters: invalid type: string \"soon\", expected u32"
+                .to_string()
+        )
+    );
+}
+
 const SESSION_TOOLS: &str = "/v1/agents/sessions/s1/tools";
 const RESERVE_TABLE: &str = "/v1/agents/sessions/s1/tools/reserve_table";
 

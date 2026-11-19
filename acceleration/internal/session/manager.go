@@ -708,6 +708,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.Close()
 	}
 	created.toolCalls.approves = created.approves
+	created.toolCalls.titles = created.toolTitle
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
 		spec.Tools,

@@ -61,7 +61,7 @@ func (m *Manager) hostedTools(spec Spec, loading toolLoading, sessionID string, 
 		hosted[tool.Name] = agentID
 		offered := harness.Tool{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
-			Interruptible: tool.Interruptible, Timeout: tool.Timeout,
+			DisplayTitle: tool.DisplayTitle, Interruptible: tool.Interruptible, Timeout: tool.Timeout,
 		}
 		if tool.Approval != "" {
 			offered.Approval = &harness.ToolApproval{Title: tool.Approval}

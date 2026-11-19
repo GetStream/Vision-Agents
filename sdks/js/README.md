@@ -409,6 +409,29 @@ and an add or a removal whose answer was lost, or was a failure other than a 4xx
 the function running until the name is added or removed again. `session.fork()` runs the
 functions the session runs when it forks, which are the tools the router copies to the fork.
 
+In React, `useTool` from `@stream-io/stream-agents/react` offers a component's own function
+while it is mounted, and withdraws it when it unmounts or the session or name changes:
+
+```tsx
+import { useTool } from "@stream-io/stream-agents/react";
+
+function CheckoutPage({ session }: { session: Session | undefined }) {
+  const [cart] = useCart();
+  const failure = useTool(session, {
+    name: "read_cart",
+    description: "What is in the person's cart right now",
+    parameters: z.object({}),
+    run: async () => JSON.stringify(cart),
+  });
+  // ...
+}
+```
+
+What the model is told of the tool is sent once per session and name; each call runs the latest
+`run`, so a re-render with new state sends nothing. A removal waits for the add before it, and
+an add that was refused, such as the 409 for a name the session already has, is not followed by
+one. The hook answers the last add or removal that failed, or undefined.
+
 ## Agent dispatch
 
 A caller reached a Stream call over SIP, or somebody wrote in a channel, and the router

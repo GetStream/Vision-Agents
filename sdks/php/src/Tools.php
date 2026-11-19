@@ -86,6 +86,26 @@ final class Tools
     }
 
     /**
+     * A JSON Schema for arguments that are all strings, to pass as `register`'s `$parameters`.
+     *
+     *     $tools->register('weather_lookup', 'The weather somewhere', Tools::strings(['location' => 'a city or region']), $run);
+     *
+     * @param array<string, string> $properties each argument's description, by its name
+     * @param ?list<string> $required the arguments the model must send; every one when null,
+     *     unlike the mobile SDKs' `AgentTool.strings`, which require none
+     * @return array<string, mixed>
+     */
+    public static function strings(array $properties, ?array $required = null): array
+    {
+        $schema = [];
+        foreach ($properties as $name => $description) {
+            $schema[$name] = ['type' => 'string', 'description' => $description];
+        }
+        // Some models refuse a tool whose parameters have no `properties` object.
+        return ['type' => 'object', 'properties' => Json::objectValue($schema), 'required' => $required ?? array_keys($properties)];
+    }
+
+    /**
      * What the session is opened with.
      *
      * @return list<SessionTool>

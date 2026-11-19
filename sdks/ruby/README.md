@@ -57,6 +57,17 @@ the conversation on in writing again; `session.voice.started?` says which.
 agent.chat { |session| session.responses.create("What changed in v3?") }
 ```
 
+`params:` is the short form for string arguments: each name is required, and its value says
+what it is for. A block that takes keywords is handed the arguments it names, and a call
+missing a required one fails with an error the model is told:
+
+```ruby
+agent.tools.register("weather_lookup", description: "Look up the current weather for a location",
+                     params: { location: "a city or region" }) do |location:|
+  weather_in(location)
+end
+```
+
 A tool can say how the backend treats its calls, and its block can take the call it runs for
 as its first argument, ahead of the arguments:
 

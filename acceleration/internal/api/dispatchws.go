@@ -380,9 +380,10 @@ type hostedTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
-	// Interruptible and TimeoutMs mean what they do on a session's own tool.
-	Interruptible bool `json:"interruptible"`
-	TimeoutMs     int  `json:"timeout_ms"`
+	// DisplayTitle, Interruptible and TimeoutMs mean what they do on a session's own tool.
+	DisplayTitle  string `json:"display_title"`
+	Interruptible bool   `json:"interruptible"`
+	TimeoutMs     int    `json:"timeout_ms"`
 	// Approval is the question a voice caller is asked before each call runs, as on a
 	// session's own tool. Only its title is asked.
 	Approval *hostedApproval `json:"approval"`
@@ -423,6 +424,7 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, everyAgent b
 		}
 		hosted := dispatch.Tool{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			DisplayTitle:  strings.TrimSpace(tool.DisplayTitle),
 			Interruptible: tool.Interruptible, Timeout: time.Duration(tool.TimeoutMs) * time.Millisecond,
 		}
 		if tool.Approval != nil {

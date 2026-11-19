@@ -6,7 +6,10 @@ use std::time::Duration;
 
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use schemars::JsonSchema;
+use schemars::generate::SchemaSettings;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::error::{Error, Result as CrateResult};
@@ -66,6 +69,30 @@ impl Tools {
             ..Default::default()
         };
         self.register_tool(declaration, run)
+    }
+
+    /// [`Tools::register`] for a function whose arguments are a type: the model is offered
+    /// its JSON Schema, doc comments as descriptions, and the function is handed the arguments
+    /// decoded. Arguments that do not decode are sent back as the tool's error, so the model
+    /// can try again.
+    pub fn register_typed<T, F, Fut, O, E>(&self, name: &str, description: &str, run: F) -> &Self
+    where
+        T: DeserializeOwned + JsonSchema + 'static,
+        F: Fn(T) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<O, E>> + Send + 'static,
+        O: Serialize,
+        E: Display,
+    {
+        let parameters = Value::Object(parameters_of::<T>());
+        self.register(name, description, parameters, move |arguments| {
+            let running = serde_json::from_value::<T>(arguments).map(&run);
+            async move {
+                match running {
+                    Ok(running) => running.await.map_err(|error| error.to_string()),
+                    Err(error) => Err(format!("the arguments do not fit the parameters: {error}")),
+                }
+            }
+        })
     }
 
     /// [`Tools::register`], declared whole: for a `display_title` shown on the reply, or an
@@ -197,6 +224,19 @@ impl Tools {
             other => Ok(Value::String(other.to_string())),
         }
     }
+}
+
+/// `T`'s JSON Schema as a plain object, every subschema inline, as the other SDKs send it.
+fn parameters_of<T: JsonSchema>() -> Map<String, Value> {
+    let mut settings = SchemaSettings::draft2020_12();
+    settings.inline_subschemas = true;
+    let schema = settings.into_generator().into_root_schema_for::<T>();
+    let Value::Object(mut parameters) = Value::from(schema) else {
+        return Map::new();
+    };
+    parameters.remove("$schema");
+    parameters.remove("title");
+    parameters
 }
 
 /// Refuses a declaration whose policies cannot work, before any session is offered it.
