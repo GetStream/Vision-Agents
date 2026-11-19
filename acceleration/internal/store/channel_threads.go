@@ -99,11 +99,48 @@ func (s *Store) ReleaseChannelThreadTurn(ctx context.Context, channelID, holder 
 	return stack.Wrap(err)
 }
 
+// channelThreadMessage is one claimed message of a thread channel (ClaimChannelThreadMessage).
+type channelThreadMessage struct {
+	bun.BaseModel `bun:"table:channel_thread_messages,alias:ctmsg"`
+
+	ChannelID string    `bun:"channel_id,pk"`
+	Kind      string    `bun:"kind,pk"`
+	MessageID string    `bun:"message_id,pk"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+}
+
+// channelThreadPerson is the one person a thread channel's chat is with
+// (SetChannelThreadChatPerson).
+type channelThreadPerson struct {
+	bun.BaseModel `bun:"table:channel_thread_people,alias:ctp"`
+
+	ChannelID  string `bun:"channel_id,pk"`
+	ChatPerson string `bun:"chat_person,notnull"`
+}
+
+// channelThreadMember is a person a thread channel's chat reaches (AddChannelThreadMember).
+type channelThreadMember struct {
+	bun.BaseModel `bun:"table:channel_thread_members,alias:ctm"`
+
+	ChannelID string `bun:"channel_id,pk"`
+	Member    string `bun:"member,pk"`
+}
+
+// channelThreadStarter is the person who started a thread channel's chat
+// (SetChannelThreadStarter).
+type channelThreadStarter struct {
+	bun.BaseModel `bun:"table:channel_thread_starters,alias:cts"`
+
+	ChannelID string `bun:"channel_id,pk"`
+	Starter   string `bun:"starter,notnull"`
+}
+
 // ReleaseChannelThreadMessage forgets a claim, so the step that took it can take it again:
 // a reply whose send failed is sent on a later attempt.
 func (s *Store) ReleaseChannelThreadMessage(ctx context.Context, channelID, kind, messageID string) error {
-	_, err := s.db.NewRaw("DELETE FROM channel_thread_messages WHERE channel_id = ? AND kind = ? AND message_id = ?",
-		channelID, kind, messageID).Exec(ctx)
+	_, err := s.db.NewDelete().Model((*channelThreadMessage)(nil)).
+		Where("channel_id = ? AND kind = ? AND message_id = ?", channelID, kind, messageID).
+		Exec(ctx)
 	return stack.Wrap(err)
 }
 
@@ -143,10 +180,12 @@ func (s *Store) SetChannelThreadChatPerson(ctx context.Context, channelID, perso
 	}
 	var err error
 	if person == "" {
-		_, err = s.db.NewRaw("DELETE FROM channel_thread_people WHERE channel_id = ?", channelID).Exec(ctx)
+		_, err = s.db.NewDelete().Model((*channelThreadPerson)(nil)).Where("channel_id = ?", channelID).Exec(ctx)
 	} else {
-		_, err = s.db.NewRaw("INSERT INTO channel_thread_people (channel_id, chat_person) VALUES (?, ?) "+
-			"ON CONFLICT (channel_id) DO UPDATE SET chat_person = EXCLUDED.chat_person", channelID, person).Exec(ctx)
+		_, err = s.db.NewInsert().Model(&channelThreadPerson{ChannelID: channelID, ChatPerson: person}).
+			On("CONFLICT (channel_id) DO UPDATE").
+			Set("chat_person = EXCLUDED.chat_person").
+			Exec(ctx)
 	}
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: set channel thread chat person: %w", err))
@@ -161,8 +200,9 @@ func (s *Store) AddChannelThreadMember(ctx context.Context, channelID, member st
 	if channelID == "" || member == "" {
 		return stack.Wrap(errors.New("store: a channel id and a member are required"))
 	}
-	_, err := s.db.NewRaw("INSERT INTO channel_thread_members (channel_id, member) VALUES (?, ?) ON CONFLICT DO NOTHING",
-		channelID, member).Exec(ctx)
+	_, err := s.db.NewInsert().Model(&channelThreadMember{ChannelID: channelID, Member: member}).
+		On("CONFLICT DO NOTHING").
+		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: add channel thread member: %w", err))
 	}
@@ -177,8 +217,9 @@ func (s *Store) SetChannelThreadStarter(ctx context.Context, channelID, starter 
 	if channelID == "" || starter == "" {
 		return stack.Wrap(errors.New("store: a channel id and a starter are required"))
 	}
-	_, err := s.db.NewRaw("INSERT INTO channel_thread_starters (channel_id, starter) VALUES (?, ?) ON CONFLICT DO NOTHING",
-		channelID, starter).Exec(ctx)
+	_, err := s.db.NewInsert().Model(&channelThreadStarter{ChannelID: channelID, Starter: starter}).
+		On("CONFLICT DO NOTHING").
+		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: set channel thread starter: %w", err))
 	}
@@ -189,7 +230,10 @@ func (s *Store) SetChannelThreadStarter(ctx context.Context, channelID, starter 
 // (SetChannelThreadStarter), or "" when none is recorded.
 func (s *Store) ChannelThreadStarter(ctx context.Context, channelID string) (string, error) {
 	var starter string
-	err := s.db.NewRaw("SELECT starter FROM channel_thread_starters WHERE channel_id = ?", channelID).Scan(ctx, &starter)
+	err := s.db.NewSelect().Model((*channelThreadStarter)(nil)).
+		Column("starter").
+		Where("channel_id = ?", channelID).
+		Scan(ctx, &starter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -252,14 +296,17 @@ func (s *Store) ChannelThread(ctx context.Context, channelID string) (ChannelThr
 
 // waitingMessage is one row of channel_thread_waiting (20261011220000_channel_thread_waiting.sql).
 type waitingMessage struct {
-	ConnectorID       string    `bun:"connector_id"`
-	ProviderUnitID    string    `bun:"provider_unit_id"`
-	ThreadKey         string    `bun:"thread_key"`
-	ProviderMessageID string    `bun:"provider_message_id"`
-	AuthorID          string    `bun:"author_id"`
-	Text              string    `bun:"text"`
-	Raw               []byte    `bun:"raw"`
-	CreatedAt         time.Time `bun:"created_at"`
+	bun.BaseModel `bun:"table:channel_thread_waiting,alias:ctw"`
+
+	CustomerID        string    `bun:"customer_id,pk"`
+	ConnectorID       string    `bun:"connector_id,pk"`
+	ProviderUnitID    string    `bun:"provider_unit_id,pk"`
+	ThreadKey         string    `bun:"thread_key,pk"`
+	ProviderMessageID string    `bun:"provider_message_id,pk"`
+	AuthorID          string    `bun:"author_id,notnull"`
+	Text              string    `bun:"text,notnull"`
+	Raw               []byte    `bun:"raw,notnull"`
+	CreatedAt         time.Time `bun:"created_at,notnull"`
 }
 
 // WaitChannelThreadMessage keeps a customer's message on an external thread no thread channel
@@ -271,14 +318,15 @@ func (s *Store) WaitChannelThreadMessage(ctx context.Context, customerID string,
 		return false, stack.Wrap(errors.New("store: a customer, a connector, a thread key and a message id are required"))
 	}
 	now := time.Now().UTC()
-	if _, err := s.db.NewRaw("DELETE FROM channel_thread_waiting WHERE created_at < ?", now.Add(-channelWaitingKeep)).Exec(ctx); err != nil {
+	_, err := s.db.NewDelete().Model((*waitingMessage)(nil)).Where("created_at < ?", now.Add(-channelWaitingKeep)).Exec(ctx)
+	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: wait channel thread message: %w", err))
 	}
-	result, err := s.db.NewRaw(
-		"INSERT INTO channel_thread_waiting (customer_id, connector_id, provider_unit_id, thread_key, provider_message_id, author_id, text, raw, created_at) "+
-			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-		customerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey, message.ProviderMessageID,
-		message.AuthorID, message.Text, message.Raw, now).Exec(ctx)
+	result, err := s.db.NewInsert().Model(&waitingMessage{
+		CustomerID: customerID, ConnectorID: message.ConnectorID, ProviderUnitID: message.ProviderUnitID,
+		ThreadKey: message.ThreadKey, ProviderMessageID: message.ProviderMessageID,
+		AuthorID: message.AuthorID, Text: message.Text, Raw: message.Raw, CreatedAt: now,
+	}).On("CONFLICT DO NOTHING").Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: wait channel thread message: %w", err))
 	}
@@ -292,9 +340,11 @@ func (s *Store) WaitChannelThreadMessage(ctx context.Context, customerID string,
 // UnwaitChannelThreadMessage takes one waiting message back. False is one that is not waiting:
 // the message that linked its thread took it first, or it was never kept.
 func (s *Store) UnwaitChannelThreadMessage(ctx context.Context, customerID string, message core.InboundMessage) (bool, error) {
-	result, err := s.db.NewRaw(
-		"DELETE FROM channel_thread_waiting WHERE customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ? AND provider_message_id = ?",
-		customerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey, message.ProviderMessageID).Exec(ctx)
+	result, err := s.db.NewDelete().Model((*waitingMessage)(nil)).
+		Where("customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ?",
+			customerID, message.ConnectorID, message.ProviderUnitID, message.ThreadKey).
+		Where("provider_message_id = ?", message.ProviderMessageID).
+		Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: unwait channel thread message: %w", err))
 	}
@@ -311,10 +361,12 @@ func (s *Store) UnwaitChannelThreadMessage(ctx context.Context, customerID strin
 // (UnwaitChannelThreadMessage) gets it, or this does.
 func takeWaitingChannelThreadMessages(ctx context.Context, db bun.IDB, customerID, connectorID, providerUnitID, threadKey string) ([]core.InboundMessage, error) {
 	var rows []waitingMessage
-	err := db.NewRaw(
-		"DELETE FROM channel_thread_waiting WHERE customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ? AND created_at >= ? "+
-			"RETURNING connector_id, provider_unit_id, thread_key, provider_message_id, author_id, text, raw, created_at",
-		customerID, connectorID, providerUnitID, threadKey, time.Now().UTC().Add(-channelWaitingKeep)).Scan(ctx, &rows)
+	err := db.NewDelete().Model((*waitingMessage)(nil)).
+		Where("customer_id = ? AND connector_id = ? AND provider_unit_id = ? AND thread_key = ?",
+			customerID, connectorID, providerUnitID, threadKey).
+		Where("created_at >= ?", time.Now().UTC().Add(-channelWaitingKeep)).
+		Returning("connector_id, provider_unit_id, thread_key, provider_message_id, author_id, text, raw, created_at").
+		Scan(ctx, &rows)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: take waiting channel thread messages: %w", err))
 	}
@@ -355,15 +407,15 @@ func claimChannelThreadMessage(ctx context.Context, db bun.IDB, channelID, kind,
 		return false, stack.Wrap(errors.New("store: a channel, a kind and a message id are required"))
 	}
 	now := time.Now().UTC()
-	if _, err := db.NewRaw(
-		"DELETE FROM channel_thread_messages WHERE channel_id = ? AND created_at < ?",
-		channelID, now.Add(-channelMessageKeep)).Exec(ctx); err != nil {
+	_, err := db.NewDelete().Model((*channelThreadMessage)(nil)).
+		Where("channel_id = ? AND created_at < ?", channelID, now.Add(-channelMessageKeep)).
+		Exec(ctx)
+	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: claim channel thread message: %w", err))
 	}
-	result, err := db.NewRaw(
-		"INSERT INTO channel_thread_messages (channel_id, kind, message_id, created_at) "+
-			"VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
-		channelID, kind, messageID, now).Exec(ctx)
+	result, err := db.NewInsert().Model(&channelThreadMessage{ChannelID: channelID, Kind: kind, MessageID: messageID, CreatedAt: now}).
+		On("CONFLICT DO NOTHING").
+		Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: claim channel thread message: %w", err))
 	}
