@@ -167,7 +167,7 @@ type Participant struct {
 // Event is one thing the conversation did.
 //
 // Kind is the backend's own name for it: joined, heard, responding, response_delta,
-// responded, spoke, turn, delegated, task_settled, task_cancelled, tool_ran, transferred,
+// reasoning_delta (the model's thinking on a written reply), responded, spoke, turn, delegated, task_settled, task_cancelled, tool_ran, transferred,
 // pressed, looked_up, backchannel, interrupted, overlap_decided, conversation_compacted,
 // error and left. The fields below are filled from whichever of those carry them, and Frame
 // is the whole thing for anything they do not cover.

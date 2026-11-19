@@ -169,7 +169,10 @@ export {
   Conversation,
   mergeOpenUIStatements,
   type ConversationRecord,
+  type ReasoningStep,
+  type ToolStep,
   type Turn,
+  type TurnStep,
   type TurnUI,
 } from "./conversation.js";
 
