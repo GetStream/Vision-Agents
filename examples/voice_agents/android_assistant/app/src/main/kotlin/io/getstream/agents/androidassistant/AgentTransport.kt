@@ -12,6 +12,7 @@ import io.getstream.chat.android.ai.compose.conversation.AIMessageRole
 import io.getstream.chat.android.ai.compose.generativeui.AIUIDocument
 import io.getstream.chat.android.ai.compose.parts.AIMessagePart
 import io.getstream.chat.android.ai.compose.parts.AIReasoningPart
+import io.getstream.chat.android.ai.compose.parts.AIToolCallPart
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.api.state.loadOlderMessages
 import io.getstream.chat.android.client.channel.state.ChannelState
@@ -26,6 +27,7 @@ import io.getstream.agents.android.core.AgentSession
 import io.getstream.agents.android.core.Conversation
 import io.getstream.agents.android.core.LiveReasoning
 import io.getstream.agents.android.core.LiveUI
+import io.getstream.agents.android.core.ShownToolCall
 import io.getstream.agents.android.core.channelState
 import io.getstream.agents.android.core.chat
 import io.getstream.agents.android.core.overlay
@@ -148,6 +150,35 @@ class AgentTransport(
 
     override suspend fun stop() {
         opened.value?.session?.interrupt()
+    }
+
+    /**
+     * Answers a tool call's question from the card that shows it. A card restored from the
+     * channel, after the conversation was carried on or the app restarted, names a call this
+     * session's socket was never asked, so the answer carries what the reply shows of it, and the
+     * request and turn the reply was written for. Throws when no loaded reply shows the call and
+     * the session holds none by its id, so the card can be answered again.
+     */
+    suspend fun decide(call: AIToolCallPart, allowed: Boolean) {
+        val session = open()
+        val reply = opened.value?.channel?.value?.messages?.value?.lastOrNull { message ->
+            message.attachments.any { it.type == "ai_tool_call" && it.extraData["id"] == call.id }
+        }
+        if (reply == null) {
+            check(session.approvals.value.any { it.id == call.id }) { "No reply shows the tool call ${call.id}" }
+            return session.decide(call.id, allowed)
+        }
+        val runtime = reply.extraData["support_runtime"] as? Map<*, *>
+        session.decide(
+            ShownToolCall(
+                call.id,
+                call.name,
+                call.arguments,
+                requestId = runtime?.get("command_id") as? String ?: "",
+                turnId = runtime?.get("turn_id") as? String ?: "",
+            ),
+            allowed,
+        )
     }
 
     override suspend fun loadOlderMessages() {
