@@ -208,7 +208,7 @@ async function rewound(channel: unknown, event: Record<string, unknown>): Promis
   if (typeof messageId !== "string" || !messageId) {
     return;
   }
-  const made = typeof createdAt === "string" ? Date.parse(createdAt) : NaN;
+  const made = millisecondsOf(createdAt);
   const known = rewoundFrom.get(channel as object)?.get(messageId);
   const hidden: Hidden = {
     messageId,

@@ -67,6 +67,11 @@ type InboxItem struct {
 	Details string    `json:"details"`
 	Status  string    `json:"status"`
 	At      time.Time `json:"at"`
+	// WaitingFor is who must approve a drafted ticket, by Stream user id, until they decide.
+	WaitingFor string `json:"waiting_for,omitempty"`
+	// drafter, session and timezone are who drafted a ticket, the conversation they drafted it in,
+	// where they hear what was decided, and their phone's timezone.
+	drafter, session, timezone string
 }
 
 // Reflection is an end-of-shift reflection, kept without who wrote it.
@@ -353,8 +358,10 @@ func (r *restaurant) swap(userID, shiftID, teammateID, note string) (any, error)
 	if err != nil || teammateID == userID {
 		return nil, refuse(404, "no teammate %s to swap with", teammateID)
 	}
-	item := r.add(from, "swap", fmt.Sprintf("Swap: %s → %s", shift.Station+" "+shift.Start.Format("Mon 15:04"), teammate.Name),
-		strings.TrimSpace("Asked "+teammate.Name+" to take the shift. "+note), "Waiting for "+teammate.Name)
+	item := r.add(from, InboxItem{
+		Kind: "swap", Title: fmt.Sprintf("Swap: %s → %s", shift.Station+" "+shift.Start.Format("Mon 15:04"), teammate.Name),
+		Details: strings.TrimSpace("Asked " + teammate.Name + " to take the shift. " + note), Status: "Waiting for " + teammate.Name,
+	})
 	return map[string]any{"request_id": item.ID, "status": "sent to " + teammate.Name + "; the shift leader sees it too"}, nil
 }
 
@@ -388,7 +395,7 @@ func (r *restaurant) leaderNote(userID, reason, shiftID string, coverAsked bool)
 		cover = "They asked a teammate to cover."
 	}
 	message := from.Name + " " + out + which + ". " + cover
-	item := r.add(from, "alert", "Note for "+to, message, "Sent")
+	item := r.add(from, InboxItem{Kind: "alert", Title: "Note for " + to, Details: message, Status: "Sent"})
 	return map[string]any{"id": item.ID, "sent_to": to, "note": message}, nil
 }
 
@@ -458,7 +465,10 @@ func (r *restaurant) equipment(asset, code string) any {
 	return map[string]any{"found": false, "known_codes": known}
 }
 
-func (r *restaurant) ticket(userID, asset, summary, details, priority string) (any, error) {
+// ticket drafts a repair ticket for the owner to approve, from the conversation sessionID, where
+// the person hears what the owner decided, in their phone's timezone. The call that drafted it
+// ends here: the decision can take hours, and nothing waits for it.
+func (r *restaurant) ticket(userID, asset, summary, details, priority, sessionID, timezone string) (any, error) {
 	from, err := r.member(userID)
 	if err != nil {
 		return nil, err
@@ -476,8 +486,52 @@ func (r *restaurant) ticket(userID, asset, summary, details, priority string) (a
 	r.mu.Lock()
 	reviewer := r.people[owner].Name
 	r.mu.Unlock()
-	item := r.add(from, "ticket", title, details, "Draft, waiting for "+reviewer)
-	return map[string]any{"ticket_id": item.ID, "status": "drafted for the owner to review and submit"}, nil
+	item := r.add(from, InboxItem{
+		Kind: "ticket", Title: title, Details: details, Status: "Draft, waiting for " + reviewer,
+		WaitingFor: owner, drafter: userID, session: sessionID, timezone: timezone,
+	})
+	status := "sent to " + reviewer + ", the owner, to approve"
+	if sessionID != "" {
+		// Only a ticket from a conversation can be answered in it.
+		status += "; they hear here once it's decided"
+	}
+	return map[string]any{"ticket_id": item.ID, "status": status}, nil
+}
+
+// decide approves or rejects a drafted ticket as userID, who must be the one it waits for, with
+// their edits to its title and details. Approving submits it to repairs. It answers the ticket as
+// decided.
+func (r *restaurant) decide(userID, ticketID string, approve bool, title, details string) (InboxItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.inbox {
+		item := &r.inbox[i]
+		if item.ID != ticketID {
+			continue
+		}
+		if item.WaitingFor == "" {
+			return InboxItem{}, refuse(409, "%s waits for no decision", ticketID)
+		}
+		if item.WaitingFor != userID {
+			return InboxItem{}, refuse(403, "%s is for %s to decide", ticketID, r.people[item.WaitingFor].Name)
+		}
+		if title != "" {
+			item.Title = title
+		}
+		if details != "" {
+			item.Details = details
+		}
+		reviewer := r.people[userID].Name
+		if approve {
+			r.nextID++
+			item.Status = fmt.Sprintf("Approved by %s, submitted to repairs as REP-%d", reviewer, r.nextID)
+		} else {
+			item.Status = "Not approved by " + reviewer
+		}
+		item.WaitingFor = ""
+		return *item, nil
+	}
+	return InboxItem{}, refuse(404, "no ticket %s", ticketID)
 }
 
 // leadership is who leads and trains the team, and the buddy who helps new team members.
@@ -523,7 +577,7 @@ func (r *restaurant) checkIn(userID, with, when, topic string) (any, error) {
 	if p, ok := r.find(with); ok {
 		name, email = p.Name, p.Email
 	}
-	item := r.add(from, "check_in", "1-on-1 with "+name, strings.TrimSpace(when+". "+topic), "Booked")
+	item := r.add(from, InboxItem{Kind: "check_in", Title: "1-on-1 with " + name, Details: strings.TrimSpace(when + ". " + topic), Status: "Booked"})
 	return map[string]any{"id": item.ID, "booked_with": name, "email": email, "when": when}, nil
 }
 
@@ -583,14 +637,11 @@ func (r *restaurant) leaderView() any {
 	return map[string]any{"inbox": inbox, "pulse": pulse}
 }
 
-func (r *restaurant) add(from Person, kind, title, details, status string) InboxItem {
+func (r *restaurant) add(from Person, item InboxItem) InboxItem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.nextID++
-	item := InboxItem{
-		ID: fmt.Sprintf("%s-%d", kind, r.nextID), Kind: kind, From: from.Name,
-		Title: title, Details: details, Status: status, At: time.Now(),
-	}
+	item.ID, item.From, item.At = fmt.Sprintf("%s-%d", item.Kind, r.nextID), from.Name, time.Now()
 	r.inbox = append(r.inbox, item)
 	return item
 }

@@ -55,6 +55,10 @@ type Condition struct {
 	// refused. It follows the item in the alert's message; the fingerprint and the tags do not
 	// have it. A nil Describe, or an empty answer, leaves the message as it is.
 	Describe func(item string) string
+	// Summary, with Check, says in plain words what the alert means and what it costs, for
+	// whoever reads it in Slack. It follows the name in the alert's message; the fingerprint and
+	// the tags do not have it, so a new summary keeps the alert's Sentry issue.
+	Summary string
 }
 
 // Options configure a Loop.
@@ -138,7 +142,7 @@ func (l *Loop) check() {
 			continue
 		}
 		l.sent[condition.Name] = now
-		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, "", "", condition.Level, extra)
+		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, "", condition.Summary, condition.Level, extra)
 	}
 }
 
@@ -173,7 +177,7 @@ func SendItem(name, item string, level Level, extra map[string]any) {
 }
 
 // send sends one alert, of one item of the condition when item is not empty, and with the
-// item's description after it in the message when there is one.
+// description (the item's, or the condition's summary) after it in the message when there is one.
 func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]string, name, item, description string, level Level, extra map[string]any) {
 	fields := []any{"alert", name, "level", level, "source", source, "extra", extra}
 	if item != "" {
@@ -190,11 +194,11 @@ func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]s
 	}
 	if item != "" {
 		event.Message += " " + item
-		if description != "" {
-			event.Message += ": " + description
-		}
 		event.Fingerprint = []string{"usage_" + name + ":" + item}
 		event.Tags["item"] = item
+	}
+	if description != "" {
+		event.Message += ": " + description
 	}
 	event.Tags["usage_alert"] = name
 	event.Tags["source"] = source

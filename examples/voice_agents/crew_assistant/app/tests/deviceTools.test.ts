@@ -1,6 +1,7 @@
 import { ToolCallContext } from '@stream-io/stream-agents';
 
 import { crewBackend } from '../agent/agents';
+import { currentConversation, phoneTimezone } from '../agent/crewTools';
 import { createDeviceTools } from '../agent/deviceTools';
 
 jest.mock('stream-chat-expo/ai-components', () => jest.requireActual('./sdkMock').aiComponentsMock());
@@ -9,6 +10,26 @@ jest.mock('../agent/agents', () => ({ crewBackend: jest.fn(async () => ({ id: 't
 const call = (id: string) => new ToolCallContext({ id });
 const signal = () => new AbortController().signal;
 const create = () => createDeviceTools({ clientId: 'install', userId: 'crew-jordan' });
+
+describe('phoneTimezone', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("falls back to the phone's offset when Hermes can't name the zone", () => {
+    jest
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({ timeZone: '' } as Intl.ResolvedDateTimeFormatOptions);
+    jest.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-60);
+    expect(phoneTimezone()).toBe('Etc/GMT-1');
+  });
+
+  it('falls back to UTC at a half-hour offset, which no Etc zone has', () => {
+    jest
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({ timeZone: '' } as Intl.ResolvedDateTimeFormatOptions);
+    jest.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-330);
+    expect(phoneTimezone()).toBe('UTC');
+  });
+});
 
 describe('createDeviceTools', () => {
   it('asks the person first for every tool that acts in their name, and only for those', () => {
@@ -28,12 +49,23 @@ describe('createDeviceTools', () => {
   });
 
   it('drafts a ticket through the backend with the arguments the agent wrote', async () => {
+    currentConversation.sessionId = 'session-1';
+    // A phone two hours ahead of UTC whose zone Hermes can't name.
+    jest
+      .spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({ timeZone: '' } as Intl.ResolvedDateTimeFormatOptions);
+    jest.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-120);
     const args = { asset: 'FRY-02', details: 'E-41 after a reset', summary: 'Fryer down' };
     const output = await create()
       .sessionTools()
       .call('create_support_ticket', JSON.stringify(args), signal(), call('c1'));
-    expect(crewBackend).toHaveBeenCalledWith('crew/tickets', { body: args });
+    // The conversation and timezone it came from, where the person hears what the owner decided.
+    expect(crewBackend).toHaveBeenCalledWith('crew/tickets', {
+      body: { ...args, session_id: 'session-1', timezone: 'Etc/GMT-2' },
+    });
     expect(JSON.parse(output as string)).toEqual({ id: 'ticket-308' });
+    jest.restoreAllMocks();
+    currentConversation.sessionId = undefined;
   });
 
   it('answers an addressed call with what the runner reported', async () => {

@@ -158,10 +158,29 @@ func (s *AnthropicSuite) TestHaikuTakesAnEffortToo() {
 	s.Equal(map[string]any{"effort": "low"}, s.sent()[0].body["output_config"])
 }
 
-func (s *AnthropicSuite) TestAnEffortOutsideTheThreeLevelsIsRefused() {
-	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{
+func (s *AnthropicSuite) TestXhighGoesOutOnSonnet55() {
+	_, err := s.collect(s.provider(Options{Model: "claude-sonnet-5-5"}), llm.ResponseParams{
+		Input:     []llm.Message{{Role: llm.User, Content: "think harder"}},
+		Reasoning: llm.ReasoningParams{Effort: "xhigh"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]any{"effort": "xhigh"}, s.sent()[0].body["output_config"])
+}
+
+func (s *AnthropicSuite) TestEffortLevelsFollowTheModel() {
+	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-opus-5-5"))
+	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-opus-4-7-20260416"))
+	s.Equal([]string{"low", "medium", "high", "max"}, efforts("claude-sonnet-4-6"))
+	s.Equal([]string{"low", "medium", "high"}, efforts("claude-opus-4-5-20251101"))
+	s.Equal([]string{"low", "medium", "high"}, efforts("claude-haiku-4-5"))
+	s.Nil(efforts("gpt-5"))
+}
+
+func (s *AnthropicSuite) TestAnEffortTheModelLacksIsRefused() {
+	_, err := s.collect(s.provider(Options{Model: "claude-sonnet-4-6"}), llm.ResponseParams{
 		Input:     []llm.Message{{Role: llm.User, Content: "think hardest"}},
-		Reasoning: llm.ReasoningParams{Effort: "max"},
+		Reasoning: llm.ReasoningParams{Effort: "xhigh"},
 	})
 
 	s.ErrorContains(err, "is not one of")
