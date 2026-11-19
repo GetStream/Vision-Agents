@@ -96,3 +96,10 @@ export const HangUpIcon = () => (
     <path d="M3.5 14.5c-.6-.6-.6-1.6 0-2.2C5.9 9.9 8.9 8.7 12 8.7s6.1 1.2 8.5 3.6c.6.6.6 1.6 0 2.2l-1.6 1.6a1.2 1.2 0 0 1-1.6.1l-2-1.6a1.2 1.2 0 0 1-.4-1v-1.8a10 10 0 0 0-5.8 0v1.8c0 .4-.2.8-.5 1l-2 1.6a1.2 1.2 0 0 1-1.6-.1z" />
   </Icon>
 );
+
+/** A chat bubble drawn in dashes: a conversation that is not kept. */
+export const IncognitoIcon = () => (
+  <Icon strokeDasharray="2.6 2.6">
+    <path d="M12 4c4.4 0 8 3 8 6.8s-3.6 6.7-8 6.7c-1 0-2-.1-2.9-.4L5 19.5l1.1-3.7C4.8 14.6 4 12.8 4 10.8 4 7 7.6 4 12 4z" />
+  </Icon>
+);
