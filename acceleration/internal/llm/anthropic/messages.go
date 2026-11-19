@@ -86,10 +86,23 @@ func newMessages(options Options) (*LLM, error) {
 		client: anthropic.NewClient(clientOptions...),
 		// Every current Claude model reads images. High is the API's own default effort,
 		// so naming it changes nothing for a request that names none.
-		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model)},
+		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model), ToolChoices: toolChoices(options.Model)},
 		systemTurns:  takesSystemTurns(options.Model),
 		inFlight:     map[uint64]context.CancelFunc{},
 	}, nil
+}
+
+// unforcedToolModels answer tool_choice any or tool with a 400, so a request that needs a
+// tool called is refused before it goes out rather than halfway through a call. Checked live
+// on 19 November 2026; Haiku 5.5 still takes both.
+var unforcedToolModels = []string{"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"}
+
+// toolChoices are the tool choices a model honours, or nil for all of them.
+func toolChoices(model string) []string {
+	if slices.Contains(unforcedToolModels, datedModel.ReplaceAllString(model, "")) {
+		return []string{"auto", "none"}
+	}
+	return nil
 }
 
 // systemTurnModels take a system message after a user turn mid-conversation and follow it,
@@ -515,8 +528,8 @@ func (l *LLM) params(request llm.ResponseParams) anthropic.MessageNewParams {
 	case "none":
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}
 	case "required":
-		// Claude Opus 5.5 and Sonnet 5.5 answer this with a 400, which is still better than
-		// answering it as auto.
+		// The unforcedToolModels never get here: Validate refuses required for them, which is
+		// still better than answering it as auto.
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}
 	}
 

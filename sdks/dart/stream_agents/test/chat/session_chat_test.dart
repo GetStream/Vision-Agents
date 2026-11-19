@@ -174,7 +174,7 @@ void main() {
           .apply(
             AgentEvent.tryParse(
               '{"type":"ui_delta","turn_id":"t1","format":"openui",'
-              r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}',
+              r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")\n"}',
             )!,
           );
 
@@ -252,7 +252,7 @@ void main() {
       conversation = conversation.apply(
         event(
           '{"type":"ui_delta","turn_id":"t2","format":"openui",'
-          r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Booked\")"}',
+          r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Booked\")\n"}',
         ),
       );
       liveUI.observe(conversation);
@@ -281,6 +281,55 @@ void main() {
       // without it.
       final refused = reply('r1', {'generating': false, 'support_runtime': turn});
       expect(identical(liveUI.overlay([refused]).single, refused), isTrue);
+    });
+
+    test('leaves a reply its text while none of its UI\'s statements is finished', () {
+      final liveUI = LiveUI();
+      final conversation = const Conversation()
+          .apply(event('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            event('{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card(["}'),
+          );
+      liveUI.observe(conversation);
+
+      final named = reply('r1', {
+        'generating': true,
+        'support_runtime': {'role': 'assistant', 'turn_id': 't1'},
+      });
+      final unnamed = reply('r1', {'generating': true});
+      expect(identical(liveUI.overlay([named]).single, named), isTrue);
+      expect(identical(liveUI.overlay([unnamed]).single, unnamed), isTrue);
+    });
+
+    test('reports no change for a delta that finishes no statement', () {
+      final liveUI = LiveUI();
+      var conversation = const Conversation()
+          .apply(event('{"type":"responding","turn_id":"t1"}'))
+          .apply(event('{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"$card\\n"}'));
+      liveUI.observe(conversation);
+
+      conversation = conversation.apply(
+        event(
+          r'{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"tip = Callout(\"info\""}',
+        ),
+      );
+      final unfinished = liveUI.observe(conversation);
+      final shownWhileUnfinished = liveUI.latest?.content;
+      conversation = conversation.apply(
+        event(
+          '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+          r'"delta":", \"Book\", \"Terrace\")\n"}',
+        ),
+      );
+      final finished = liveUI.observe(conversation);
+
+      expect(unfinished, isFalse);
+      expect(shownWhileUnfinished, 'root = Card([hdr])\nhdr = CardHeader("Kaneo")');
+      expect(finished, isTrue);
+      expect(
+        liveUI.latest?.content,
+        'root = Card([hdr])\nhdr = CardHeader("Kaneo")\ntip = Callout("info", "Book", "Terrace")',
+      );
     });
   });
 }

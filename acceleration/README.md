@@ -754,11 +754,11 @@ pick rather than a list of their own to keep:
 
 | Group                | What it is                                                                      |
 | -------------------- | ------------------------------------------------------------------------------- |
-| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B and GPT-5.6 Luna, pinned to Gemma 4 26B |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B, Muse Ember and GPT-5.6 Luna, pinned to Gemma 4 26B |
 | `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
-| `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
-| `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
-| `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
+| `llm-smart`          | The high-quality tier, pinned to GPT-6.2 Astra                                  |
+| `stt-fast`           | Flux, AssemblyAI 3.7 Realtime-Agent, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en` |
+| `stt-accurate`       | Scribe v3 Live, MAI-Transcribe-2, Muse, Ink 2 and Nemotron, pinned to Scribe v3 Live |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
 | `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
 | `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
@@ -784,7 +784,7 @@ Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
 is what the skills run on: the part of a turn the talking model could not answer itself, which
 the conversation carries on without. Both name the model this deployment wants rather than
-leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
+leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.2-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
 Which models those shortcuts reach for LLM, and what each costs per million tokens (the
@@ -804,7 +804,9 @@ vendor rates in `prices/vendor.json`; customers are charged each entry's price, 
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
+| `openai/gpt-6.2-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
 | `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
+| `openai/gpt-6.2-astra`            | high-quality | $8.00  | $0.40   | $40.00  |
 | `gemini/gemini-4-argon`          | high-quality | $2.00  | $0.10   | $10.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
@@ -900,7 +902,8 @@ Google reports it as a token count rather than streaming it, so there are no
 | `cartesia/ink-2`                                           | en        | ~$0.54         |
 | `deepgram/flux-general-en`                                 | en        | $0.276         |
 | `deepgram/flux-general-multi`                              | 12        | $0.276         |
-| `elevenlabs/scribe_v2_realtime`                            | 57        | $0.39          |
+| `elevenlabs/scribe_v2_realtime`                            | 57        | $0.22          |
+| `elevenlabs/scribe_v3_live`                                | 57        | $0.22          |
 | `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
 | `grok/grok-stt`                                            | 25        | $0.20          |
 | `inworld/inworld-stt-1`                                    | 30        | $0.15          |

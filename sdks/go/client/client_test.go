@@ -35,6 +35,8 @@ type router struct {
 	mu sync.Mutex
 	// asked is every request that arrived, as "METHOD /path?query", in order.
 	asked []string
+	// heard are the headers of each request in asked, at the same index.
+	heard []http.Header
 	// bodies are the decoded JSON bodies, keyed by "METHOD /path".
 	bodies map[string]map[string]any
 
@@ -48,6 +50,8 @@ type router struct {
 	frames []map[string]any
 	// calls are the tool calls a session's socket sends once it opens, by session id.
 	calls map[string][]map[string]any
+	// connections are the stored connections, oldest first.
+	connections []acceleration.Connection
 }
 
 func newRouter(t *testing.T) *router {
@@ -417,6 +421,8 @@ func newRouter(t *testing.T) *router {
 		}
 	})
 
+	backend.serveConnections(mux)
+
 	backend.Server = httptest.NewServer(mux)
 	t.Cleanup(backend.Close)
 	return backend
@@ -442,6 +448,7 @@ func (r *router) record(request *http.Request) {
 	} else {
 		r.asked = append(r.asked, line)
 	}
+	r.heard = append(r.heard, request.Header.Clone())
 
 	if request.Body != nil {
 		var body map[string]any
