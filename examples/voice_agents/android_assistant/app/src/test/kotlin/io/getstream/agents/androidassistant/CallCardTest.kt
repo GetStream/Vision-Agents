@@ -86,4 +86,25 @@ class CallCardTest {
 
         assertNull(callCard(conversation, emptySet()) { stored })
     }
+
+    @Test
+    fun `a change Stream Chat stored that empties the root is no card`() {
+        // The router stores the patch as written when the card under it is not OpenUI, so a patch
+        // that sets the root to null must not hide the older card Stream Chat has.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"responded","turn_id":"t2","text":"Kaneo has a table."}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"root = null"}""",
+        )
+        val card = TurnUI("openui", isStreaming = false, content = "root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")")
+        val patch = TurnUI("openui", isStreaming = false, content = "root = null")
+        val storedCard = assertNotNull(AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to card.customData)))
+        val storedPatch = assertNotNull(AIUIDocument.from(mapOf(AIUIDocument.CUSTOM_DATA_KEY to patch.customData)))
+
+        assertNull(callCard(conversation, setOf("t2")) { storedPatch })
+        val shown = assertNotNull(callCard(conversation, emptySet()) { turnId -> if (turnId == "t2") storedCard else storedPatch })
+        assertEquals("t2", shown.turn.id)
+        assertSame(storedCard, shown.document)
+    }
 }
