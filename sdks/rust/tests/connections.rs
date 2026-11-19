@@ -202,7 +202,11 @@ async fn authorizing_answers_where_and_how_long_the_consent_runs() {
     let connections = server.backend().connections();
 
     let consent = connections
-        .authorize("conn_1", Some("https://app.example.com/connected"), Some("ada"))
+        .authorize(
+            "conn_1",
+            Some("https://app.example.com/connected"),
+            Some("ada"),
+        )
         .await
         .unwrap();
     connections.authorize("conn_1", None, None).await.unwrap();
@@ -357,7 +361,10 @@ async fn a_connection_with_no_id_is_refused_before_the_router() {
     ];
 
     for refused in refused {
-        assert!(matches!(refused, Err(Error::Configuration(_))), "{refused:?}");
+        assert!(
+            matches!(refused, Err(Error::Configuration(_))),
+            "{refused:?}"
+        );
     }
     assert!(server.seen().is_empty());
 }
