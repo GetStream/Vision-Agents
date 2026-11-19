@@ -210,7 +210,8 @@ type Options struct {
 	// tokens of the replies a ruling throws away. Off by default.
 	SpeculativeReplies bool
 	// UnifiedReplies has the reply to a settled turn on a quiet floor open with a tag
-	// ruling on it, in place of the flow controller.
+	// ruling on it, in place of the flow controller. Acting on chorus-asr, its floor rules
+	// instead.
 	UnifiedReplies bool
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.

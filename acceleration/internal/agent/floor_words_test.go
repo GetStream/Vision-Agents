@@ -10,11 +10,15 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // endsAtOnce is a chorus-asr server's ruling that the turn has ended, at the first check.
 const endsAtOnce = `{"answer":"respond","answer_probability":0.99,"p_eot":0.999,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"continue"}}`
+
+// ignoresAtOnce is a chorus-asr server's ruling that the turn has ended and is none for the agent.
+const ignoresAtOnce = `{"answer":"ignore","answer_probability":0.99,"p_eot":0.999,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
 
 // floorRules has the agent joined next act on chorus-asr at a server ruling every check as
 // decision, while the stub transcriber, another than chorus-asr's, writes its callers' words. It
@@ -189,6 +193,26 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberAServerThatCantRuleLeavesTh
 
 	s.transcriberWrites(caller, 2, stt.ModeFinal, "What time do you open?")
 	s.heardOnly("What time do you open?")
+}
+
+// Acting on chorus-asr, its floor rules on the turn with unified replies on as well: words it
+// ruled ignored, a radio's "thank you so much", are never answered by a reply that rules on
+// the words alone.
+func (s *AgentSuite) TestActingOnChorusASRAUnifiedReplyNeverAnswersWordsItIgnored() {
+	s.floorRules(ignoresAtOnce)
+	s.unified = true
+	s.join(true)
+	s.model.reply = []string{"[respond] You're welcome."}
+	caller := stt.Participant{ID: "alice"}
+	s.asksOverTheFloor(caller, "Thank you so much.")
+	// Heard as an aside is the floor's ignore applied.
+	s.eventually(func() bool { return slices.Equal(s.heardLines(), []string{"Thank you so much."}) }, "the words were never ruled on")
+
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"words chorus-asr ruled ignored were answered")
+	s.Empty(s.model.requests(), "no reply was asked for")
+	s.Empty(harness.WithoutNotes(s.agent.History()))
 }
 
 // Non-chorus agents hear the transcriber as they always have: no floor of chorus-asr's, and its

@@ -725,6 +725,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
+
+With `unified_replies` on, an agent acting on chorus-asr let the reply model rule on each turn from its words alone, and chorus-asr's ruling, made from the audio, was dropped: a radio's "Thank you so much" it ruled ignored was answered "You're welcome." Chorus-asr now rules on every turn whenever it acts, and unified replies apply only without it. A run of hums ("hum humm", "hmm hmm") is now noise like a cough, so it is no longer written into the transcript or shown to the next reply; assent written apart ("uh huh", "mm hm") is still assent.
+
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 
 `Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
