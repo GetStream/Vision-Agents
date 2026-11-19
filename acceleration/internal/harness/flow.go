@@ -72,8 +72,10 @@ type FlowTurn struct {
 	Text         string
 	Speaking     bool
 	// Reply is what the agent is currently saying, so the controller can tell a cough
-	// overlapping a read-back from a caller who is correcting it.
-	Reply string
+	// overlapping a read-back from a caller who is correcting it, and ReplyID the turn it is
+	// saying it for, which a check over it is about.
+	Reply   string
+	ReplyID string
 	// Heard is how much of Reply the caller has heard by now, as the agent's voice has played
 	// it, when Measured says the agent could tell; otherwise Reply stands for it.
 	Heard    string

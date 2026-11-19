@@ -115,12 +115,13 @@ export function update(chat: TestChat, message: Record<string, unknown>): void {
   chat.dispatchEvent({ type: "message.updated", cid: CID, channel_type: "agent", channel_id: "support-1", message, user: message["user"] });
 }
 
-/** A rewind of the channel to `messageId`, made at `second` seconds into 2026. */
+/** A rewind of the channel to `messageId`, made at `second` seconds into 2026, timed as `chatMessage`. */
 export function rewind(chat: TestChat, messageId: string, inclusive: boolean, second: number, cid = CID): void {
+  const ms = Date.UTC(2026, 0, 1, 0, 0, second);
   chat.dispatchEvent({
     type: "channel.rewound",
     cid,
-    rewind: { id: "rw_1", message_id: messageId, inclusive, created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString() },
+    rewind: { id: "rw_1", message_id: messageId, inclusive, created_at: chat10 ? ms * 1e6 : new Date(ms).toISOString() },
   });
 }
 

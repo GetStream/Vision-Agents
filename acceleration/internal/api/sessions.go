@@ -739,6 +739,7 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	spec.ConnectorSelections = selectionsOf(*row)
 	// And so do their consents, back to the page the chat was opened with.
 	spec.ReturnURL = row.ReturnURL
+	spec.NoUI = row.NoUI
 	// Its usage stays under the key and categories it was opened with. The user is the one
 	// asking, who is the row's own; the organization and its tier are as they are now.
 	if row.APIKey != "" {
@@ -844,6 +845,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if value(request.Instructions) != "" {
 		spec.Instructions = *request.Instructions
 	}
+	spec.NoUI = request.Ui != nil && !*request.Ui
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
 	spec.Project = override(spec.Project, request.ProjectId)
@@ -1251,6 +1253,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 		spec.Custom, spec.ModelOverwrites = row.Custom, row.ModelOverwrites
 		spec.ConnectorSelections = selectionsOf(*row)
 		spec.ReturnURL = row.ReturnURL
+		spec.NoUI = row.NoUI
 		parentID = row.ID
 		if row.ConversationID != "" {
 			recall = &session.Recall{AgentID: row.AgentID, ConversationID: row.ConversationID}
@@ -1276,6 +1279,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.ConnectorSelections = spec.ConnectorSelections
 		fresh.ReturnURL = spec.ReturnURL
+		fresh.NoUI = spec.NoUI
 		fresh.ToolTimeoutMs = spec.ToolTimeoutMs
 		spec = fresh
 	}

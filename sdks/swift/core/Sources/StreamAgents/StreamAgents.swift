@@ -62,6 +62,11 @@ public struct SessionOptions: Sendable {
     /// carried on later goes back there too. Nil sends the sign-in back to the dashboard, which a
     /// phone cannot open.
     public var returnURL: URL?
+    /// Whether the model is told its config's UI instructions in this session. False is for an
+    /// app that shows no UI: they are left out and prose is the expected answer, but it does not
+    /// prevent the model from writing UI, and a block it writes still reaches the reply. Nil
+    /// leaves them in. Reopening the session keeps it.
+    public var ui: Bool?
 
     public init(agent: String? = nil) {
         self.init(agent: agent, deviceZone: TimeZone.current.identifier)
@@ -254,6 +259,7 @@ public struct StreamAgents: Sendable {
             title: options.title,
             tools: options.tools.map(\.schema),
             tts: options.tts,
+            ui: options.ui,
             voice: options.voice)
 
         return Session(try await call { try await $0.createSession(createSessionRequest: body) })

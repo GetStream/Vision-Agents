@@ -309,6 +309,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
 	config.ToolOutputRetention = outputRetentionOf(existing.ToolOutputRetention, request.Body.Tools)
 	config.ReviewInstructions = reviewOf(existing.ReviewInstructions, request.Body.Review)
+	config.UIInstructions = override(existing.UIInstructions, request.Body.UiInstructions)
 	// Field by field, as the doc says of an update: a block naming only the limit keeps
 	// enabled and the zone.
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
@@ -1628,6 +1629,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config.ResumeHistory = resumeHistoryOr(store.ResumeHistory{}, request.ResumeHistory)
 	config.FloorControl = floorControlOr(store.FloorControl{}, request.FloorControl)
 	config.ReviewInstructions = reviewOf("", request.Review)
+	config.UIInstructions = value(request.UiInstructions)
 	return config
 }
 
@@ -1703,6 +1705,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if config.ReviewInstructions != "" {
 		rendered.Review = &AgentReview{Instructions: optional(config.ReviewInstructions)}
 	}
+	rendered.UiInstructions = optional(config.UIInstructions)
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)
 	if config.Sandbox != "" {
 		box := Sandbox(config.Sandbox)
@@ -2023,6 +2026,7 @@ type AgentConfigRequest struct {
 	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
+	UiInstructions     *string                  `json:"ui_instructions,omitempty" doc:"What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay."`
 	Video              *SessionVideo            `json:"video,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[{\"id\",\"title\",\"url\",\"citation\"}]} also adds those citations to the reply's sources. Empty shows search and web_search." maxItems:"64"`
 	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI."`
@@ -2068,6 +2072,7 @@ type AgentConfig struct {
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Subagent           *string                  `json:"subagent,omitempty"`
 	Tts                *string                  `json:"tts,omitempty"`
+	UiInstructions     *string                  `json:"ui_instructions,omitempty" doc:"Absent when the agent is taught no UI."`
 	UpdatedAt          time.Time                `json:"updated_at"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty"`

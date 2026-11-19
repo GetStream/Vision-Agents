@@ -2,6 +2,17 @@
 
 ## Features
 
+### The Go SDK reads a session's tokens, timeline and decisions
+
+`client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).
+
+### The Go SDK compiles `ui.format: a2ui`
+
+`agents.LoadFolder` accepts `format: a2ui` in agent.yaml's `ui:` and writes the A2UI 1.0 prompt in a ```` ```ui:a2ui@1.0 ```` block with the catalog `getstream.io:app-catalog`, the one stream-chat-swift's renderer draws. The JavaScript SDK writes the same prompt, and both are held to one fixture (#2028).
+### A session can turn an agent's generative UI off
+
+An agent's UI instructions are kept apart from its instructions, in `ui_instructions` on the agent config, and every session is told them after the instructions unless it is opened with `ui: false`. A device may send `ui`, so an app that shows no UI, or a voice-only client, leaves the UI catalog out of every turn and can expect prose from the same agent; it does not prevent the model from writing UI. Reopening or forking the session keeps the choice. The Go SDK now syncs agent.yaml's `ui:` as `ui_instructions` instead of appending it to `instructions.md`; an agent folder with `ui:` is synced once more after upgrading to move it. Deploy the router before releasing this Go SDK: an older router drops `ui_instructions`, so the agent is taught no UI until the router is upgraded, when the next start syncs it again and the router writes it. A config saved without the field keeps the UI it has, and a sync of a folder without `ui:` removes it. Swift sends it as `SessionOptions.ui`, and JavaScript's `sessions.create` takes `ui` (#2076).
+
 ### Claude's thinking survives a round trip through the language-model socket
 
 An Anthropic model's signed thinking now reaches a socket client: a `reasoning` frame `{id, block}` as each block finishes, between the `delta`s of the text around it, for display, and the list to replay as `reasoning` on `complete` (not on a failed one). An assistant message in a `respond` frame may send that list back unchanged, and the Anthropic driver replays each block as `thinking` (with its signature) or `redacted_thinking` exactly where the model wrote it: after `after_tool_calls` of the turn's calls and, before the first, after `after_text` bytes of its text, splitting the text back into the blocks it came as. Claude may refuse a turn whose thinking was moved or whose prefix changed, or answer with the block's stale reasoning, so a position the turn does not have is refused, and `complete` leaves out every block a replay could not put back exactly: those after a call once text follows a call, those after a call dropped for arguments that do not parse, those after two texts in a row, and any after them. A model on a tool loop picks up its reasoning where it left off instead of thinking from scratch every round. Unsigned blocks are never sent, a call that takes no arguments now reports `{}`, other providers ignore the field, and a request without it is unchanged (#2069).
@@ -598,6 +609,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### `agents.DefineSkills` takes the id of the agent config the skills belong to
+
+`agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
+
 ### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
 
 `ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
@@ -713,6 +728,18 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### The JavaScript SDK's channel stops the agent's reply from the default stop button
 
 The default stop button of stream-chat-react's composer, `StopAIGenerationButton`, calls the channel's `stopAIResponse()`, as React Native's composer does, which only sent `ai_indicator.stop`, an event the agent does not act on, so the reply went on and apps replaced the button with one calling `session.interrupt()`. On the channel `session.chat()` opens, `stopAIResponse()` now interrupts the session's reply first and still sends the event, so the default button works and the override can go. The channel gets Stream Chat's own back when the session is closed.
+
+### The Go SDK's `Agent.Sync` works for an agent with skills
+
+`Agent.Sync` stored the agent's skills before its config, with no config to name, and the router answered "a skill belongs to an agent config, so one has to be named". It now stores the config first and its skills under the config's id, as the Python SDK does, so a second `Sync` still edits the config and each skill rather than adding copies. An agent read from a directory was not affected (#2074).
+
+### The JavaScript SDK keeps an edited question with stream-chat 10
+
+stream-chat 10 times a `channel.rewound` event's `rewind.created_at` in unix nanoseconds, and the SDK read only a string. Without the moment of the rewind, the re-read that follows the event dropped every message after the rewound one, so the question an edit had just written disappeared from the device that sent it, and a reply to an edited first question was never shown as answered. The rewind's time is now read as a message's is, from a string, a `Date` or nanoseconds (AI-3198, #2057).
+
+### The JavaScript SDK edits a question while another version of its reply is shown
+
+With a reply's earlier version shown (‹ 1/2 ›), editing the question above it was refused with a 409 and nothing changed. The router reads a reply's other versions back without the question they share, so the question was the channel's own while the reply that answers it on screen, which an edit goes through, was the version's, not the conversation's. `agentChatTransport` now brings that version back first, as asking anything on it already does, and the edit goes through (AI-3198, #2084).
 
 ### A customer's refused key no longer raises the operator's key_refused alert
 

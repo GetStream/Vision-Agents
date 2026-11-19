@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   StatusBar,
@@ -29,11 +30,12 @@ import { AIConversation } from 'stream-chat-expo/ai-components/conversation';
 
 import { type Chat, type ChatState, chatStore, keyOf } from '../agent/conversation';
 import { chatOptions, STARTERS } from '../chatOptions';
-import { tripComponents } from '../components/TripComponents';
+import { AnsweringContext, tripComponents } from '../components/TripComponents';
 import { VoiceMode } from '../components/VoiceMode';
 import { useAppContext } from '../contexts/AppContext';
 
 const errorSelector = ({ error }: AIConversationControllerState) => ({ error });
+const statusSelector = ({ status }: AIConversationControllerState) => ({ status });
 
 /**
  * The composer, with what rides the keyboard above it: why something failed, with a way to try
@@ -144,8 +146,12 @@ const Conversation = ({
           const custom = { uiAction: aiUIActionJSON(action) };
           conversation.send({ custom, text: action.label });
         },
+        // What the person did didn't reach the agent, so they can do it again.
+        onError: (error) =>
+          Alert.alert("Couldn't send that", error instanceof Error ? error.message : String(error)),
       }),
   );
+  const { status } = useAIConversationState(conversation, statusSelector);
 
   // What the agent is doing while it runs skills, under the latest turn.
   const footer =
@@ -156,12 +162,14 @@ const Conversation = ({
     ) : undefined;
 
   return (
-    <AIConversation
-      conversation={conversation}
-      emptyContent={isLoaded ? <EmptyState /> : <ActivityIndicator />}
-      footer={footer}
-      ui={ui}
-    />
+    <AnsweringContext.Provider value={isAIConversationAnswering(status)}>
+      <AIConversation
+        conversation={conversation}
+        emptyContent={isLoaded ? <EmptyState /> : <ActivityIndicator />}
+        footer={footer}
+        ui={ui}
+      />
+    </AnsweringContext.Provider>
   );
 };
 

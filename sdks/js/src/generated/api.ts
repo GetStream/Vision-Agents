@@ -4906,6 +4906,8 @@ export type components = {
             };
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description Absent when the agent is taught no UI. */
+            readonly ui_instructions?: string;
             /** Format: date-time */
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
@@ -4984,6 +4986,8 @@ export type components = {
             };
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description What teaches the agent's model to answer with UI. An empty string removes them. */
+            readonly ui_instructions?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
             readonly visible_tools?: readonly string[];
@@ -5074,6 +5078,8 @@ export type components = {
             /** @description How the agent is offered its connector tools. Left out on an update, the stored settings stay. */
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay. */
+            readonly ui_instructions?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
             readonly visible_tools?: readonly string[];
@@ -7042,6 +7048,8 @@ export type components = {
             readonly tools?: readonly components["schemas"]["SessionTool"][];
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly tts?: string;
+            /** @description Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote. */
+            readonly ui?: boolean;
             /**
              * @description The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
              * @default vision-agent
@@ -7432,6 +7440,36 @@ export type components = {
             /** @description Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
             readonly url: string;
         };
+        readonly FloorCheck: {
+            /** @description Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced. */
+            readonly acted: boolean;
+            /**
+             * Format: date-time
+             * @description When the check was asked.
+             */
+            readonly at: string;
+            readonly kind: components["schemas"]["FloorCheckKind"];
+            /**
+             * Format: double
+             * @description The round trip to the chorus-asr server.
+             */
+            readonly latency_ms: number;
+            /** @description The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them. */
+            readonly options?: readonly components["schemas"]["FloorOption"][];
+            /**
+             * Format: double
+             * @description How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
+             */
+            readonly paused_ms?: number;
+            /** @description The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar. */
+            readonly point?: string;
+            readonly ruling: components["schemas"]["FloorRuling"];
+        };
+        /**
+         * @description What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
+         * @enum {string}
+         */
+        readonly FloorCheckKind: "pause" | "over_agent";
         /** @description The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole. */
         readonly FloorControl: {
             /**
@@ -7445,6 +7483,21 @@ export type components = {
              * @example stream/chorus-asr
              */
             readonly model?: string;
+        };
+        readonly FloorOption: {
+            readonly option: string;
+            /** Format: double */
+            readonly probability: number;
+        };
+        readonly FloorRuling: {
+            /** @description The caller wants something none of the agent's tools can do. */
+            readonly cannot?: boolean;
+            /** @description respond, wait, clarify or ignore. */
+            readonly disposition: string;
+            /** @description stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended. */
+            readonly floor: string;
+            /** @description The tool the caller wants. */
+            readonly tool?: string;
         };
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
@@ -10630,6 +10683,8 @@ export type components = {
             /** @description How connector tools are offered. A setting left out keeps what is stored. */
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none. */
+            readonly ui_instructions?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
@@ -10773,6 +10828,8 @@ export type components = {
              * @description Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
              */
             readonly first_frame_queued_ms?: number | null;
+            /** @description The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control. */
+            readonly floor_checks?: readonly components["schemas"]["FloorCheck"][];
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */
