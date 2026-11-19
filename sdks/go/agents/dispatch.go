@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/client"
-	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -239,7 +238,9 @@ func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
 	if message.SessionID == "" {
 		return errors.New("agents: no session is holding this message; open one with Conversation")
 	}
-	api, err := client.New(d.backend.Acting(acting.User(message.UserID)))
+	backend := d.backend
+	backend.ActingFor = message.UserID //nolint:staticcheck // SA1019: the one way to answer as the writer on a client.Agent call, which takes no per-call user yet
+	api, err := client.New(backend)
 	if err != nil {
 		return err
 	}

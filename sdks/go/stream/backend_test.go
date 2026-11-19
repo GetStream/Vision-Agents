@@ -12,8 +12,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-
-	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 )
 
 // admit reads a request the way the authenticating proxy in front of a hosted router does:
@@ -695,41 +693,10 @@ func TestABackendBuiltWithActingForSendsWhatItAlwaysDid(t *testing.T) {
 	}
 }
 
-// Catches Acting that names no user, that leaves the user the backend spoke for before, or
-// that changes the backend it was called on.
-func TestActingSpeaksForOneUserAndLeavesTheBackendAlone(t *testing.T) {
-	app := Backend{CustomerID: "acme"}
-	anya := app.Acting(acting.User("anya"))
-	nobody := anya.Acting(acting.User(""))
-
-	for name, c := range map[string]struct {
-		backend Backend
-		want    string
-	}{
-		"naming a user":                 {anya, "anya"},
-		"naming nobody after one":       {nobody, ""},
-		"the backend it was called on":  {app, ""},
-		"naming nobody after ActingFor": {Backend{CustomerID: "acme", ActingFor: "bob"}.Acting(acting.User("")), ""},
-		"another user after ActingFor":  {Backend{CustomerID: "acme", ActingFor: "bob"}.Acting(acting.User("anya")), "anya"},
-		"the zero Who":                  {app.Acting(acting.Who{}), ""},
-	} {
-		t.Run(name, func(t *testing.T) {
-			credentials, err := c.backend.Credentials()
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, named := credentials[UserHeader]
-			if named != (c.want != "") || (named && got[0] != c.want) {
-				t.Errorf("%s was %q, want %q (empty for the header absent)", UserHeader, got, c.want)
-			}
-		})
-	}
-}
-
-// Catches a user named through Acting that is signed into the token: the request is still the
+// Catches a user named through ActingFor that is signed into the token: the request is still the
 // server's, so the proxy must read a token naming nobody.
 func TestActingForAUserKeepsTheServersToken(t *testing.T) {
-	credentials, err := Backend{Authenticate: true, APIKey: "ntv9", APISecret: "shh"}.Acting(acting.User("anya")).Credentials()
+	credentials, err := Backend{Authenticate: true, APIKey: "ntv9", APISecret: "shh", ActingFor: "anya"}.Credentials()
 	if err != nil {
 		t.Fatal(err)
 	}

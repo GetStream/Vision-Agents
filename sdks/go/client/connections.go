@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
-	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 )
 
 // connectionsPage is the page size List reads in, the most the router answers.
@@ -186,5 +185,7 @@ func (c *Connections) reach(id, userID string) (*acceleration.ClientWithResponse
 // api is the generated client acting for userID, or for nobody when userID is empty, whoever this
 // client acts for otherwise.
 func (c *Connections) api(userID string) (*acceleration.ClientWithResponses, error) {
-	return c.client.backend.Acting(acting.User(userID)).Client()
+	backend := c.client.backend
+	backend.ActingFor = userID //nolint:staticcheck // SA1019: a call names its user here, replacing the one the client acts for
+	return backend.Client()
 }

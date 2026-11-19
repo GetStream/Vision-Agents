@@ -16,7 +16,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
-	"github.com/GetStream/Vision-Agents/sdks/go/internal/acting"
 )
 
 const (
@@ -228,13 +227,6 @@ func (b Backend) Resolve() (Backend, error) {
 		}
 	}
 	return b, nil
-}
-
-// Acting is this backend speaking for who, and for nobody when who names nobody, whoever it
-// spoke for before. It is how the packages of this module act for a user without ActingFor.
-func (b Backend) Acting(who acting.Who) Backend {
-	b.ActingFor = who.ID()
-	return b
 }
 
 // token mints what the proxy verifies: a token signed with the app's secret, naming a user
