@@ -35,9 +35,8 @@ unless the session was opened with `ui: false`, which a device may send. The rou
 `ui_instructions`, so an app that shows no UI leaves the catalog out of every turn and can expect
 prose; this does not prevent the model from producing UI blocks, which are still split off the
 reply. The session row keeps the choice (`agent_sessions.no_ui`), so a reopened or forked
-conversation is not told them either. Go writes
-`ui_instructions`; JavaScript still appends the section to `instructions`, where no session can
-turn it off. A renderer's own prompt pasted into `instructions.md` (`stream-chat-react`'s
+conversation is not told them either. Go and JavaScript write
+`ui_instructions`. A renderer's own prompt pasted into `instructions.md` (`stream-chat-react`'s
 `openUIInstructions` is OpenUI's, 53 KB, and says the entire reply must be openui-lang) can't be
 turned off either and contradicts prose plus one block: use `ui:` instead.
 
