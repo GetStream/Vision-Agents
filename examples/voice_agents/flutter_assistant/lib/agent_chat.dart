@@ -401,6 +401,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     // one the router refused leaves them as they were.
     final chosen = Map.of(_chosen);
     _chosen.clear();
+    final choices = ++_choices;
     try {
       await session.responses.create(
         request.text,
@@ -408,7 +409,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
         reasoningEffort: reasoningEffortOf(request.chatOption),
       );
     } on Object {
-      _chosen.addAll(chosen);
+      // Unless a table was tapped, or a newer card shown, while it was on its way.
+      if (choices == _choices) _chosen.addAll(chosen);
       rethrow;
     }
     // Stopped while the router took the question: its reply starts only now, so stop it.
@@ -539,15 +541,25 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// table comes from, until they next ask something or a newer card is shown.
   final _chosen = <String, String>{};
 
+  /// How many times the choices in [_chosen] changed, so a question that could not be asked
+  /// puts back only the ones nothing replaced while it was on its way.
+  var _choices = 0;
+
   /// Notes that the person tapped table [tableId] on the seat selector of reply [offer].
-  void choose(String offer, String tableId) => _chosen[tableId] = offer;
+  void choose(String offer, String tableId) {
+    _chosen[tableId] = offer;
+    _choices++;
+  }
 
   /// Offers [tables] from the seat selector of reply [offer], or its newer version, and gives
   /// the agent the tool to book them while the offer is not booked.
   void offer(String offer, List<DiningTableItem> tables) {
     if (_closed) return;
     // A newer card is a newer answer, which the tables tapped on before it are not about.
-    if (!_offers.containsKey(offer)) _chosen.clear();
+    if (!_offers.containsKey(offer)) {
+      _chosen.clear();
+      _choices++;
+    }
     _offers[offer] = tables;
     if (_reservations.value.containsKey(offer)) return;
     unawaited(bring(SeatSelectorComponent.reserveTable(reserve)));

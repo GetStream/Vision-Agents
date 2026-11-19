@@ -75,7 +75,10 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       addTearDown(chat.dispose);
       await show(tester, chat, [UIMessage('m1', offered)]);
 
-      final chips = tester.widgetList<ChoiceChip>(find.byType(ChoiceChip));
+      final chips = tester.widgetList<ChoiceChip>(find.byType(ChoiceChip)).toList();
+      expect(find.textContaining('T1 · Cliff Terrace'), findsOneWidget);
+      expect(find.textContaining('T4 · Harbor Window'), findsOneWidget);
+      expect(chips, hasLength(2));
       expect(chips.where((chip) => chip.selected), isEmpty);
     });
 

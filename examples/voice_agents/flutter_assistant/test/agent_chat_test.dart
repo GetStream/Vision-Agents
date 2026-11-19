@@ -787,6 +787,35 @@ void main() {
         },
       );
 
+      test('a question that could not be asked keeps a table tapped while it was sent', () async {
+        final composer = ChatComposerController();
+        addTearDown(composer.dispose);
+        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+        await chat.open();
+        final conversation = conversationOf(chat, composer: composer);
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden)
+          ..choose('m1', 'T1');
+        await until(() => sessions.routes.contains(tools));
+        const asking = 'POST /v1/agents/sessions/s1/responses';
+        final refused = Completer<void>();
+        sessions
+          ..holdRoute(asking, refused.future)
+          ..answer(asking, 500);
+
+        conversation.send('Something else');
+        await until(() => sessions.routes.contains(asking));
+        // Garden's T1 is tapped while the question is on its way, and the question fails.
+        chat.choose('m2', 'T1');
+        refused.complete();
+        await until(() => conversation.error != null);
+        await call(chat, 'T1');
+
+        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
+        expect(chat.reservations.value['m1'], isNull);
+      });
+
       test('reserves a free table, keeps the booking and takes its tool back', () async {
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
