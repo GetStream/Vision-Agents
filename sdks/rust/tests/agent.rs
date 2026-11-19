@@ -605,14 +605,15 @@ async fn an_agent_named_after_a_directory_syncs_that_directory() {
     synced(&server);
     let root = tempfile::tempdir().unwrap();
     jean(root.path());
-    let agent = Agent::new(root.path().to_str().unwrap()).client(server.client());
+    let path = root.path().to_str().unwrap();
+    let agent = Agent::new(path).client(server.client());
 
     agent.sync().await.unwrap();
 
     let body = server.request(Method::POST, "/v1/agents/sync").body;
     assert_eq!(
         (body["name"].as_str(), body["instructions"].as_str()),
-        (Some("jean"), Some("You are Jean."))
+        (Some(path), Some("You are Jean."))
     );
 }
 
