@@ -1,7 +1,7 @@
 # Travel support chat agent (Node)
 
 A customer support chatbot for a travel agency, set up from this directory and tested in the
-dashboard's chat. [`../travel_support`](../travel_support) is the same agent in Python.
+dashboard's chat. [`../travel_support_py`](../travel_support_py) is the same agent in Python.
 
 | File                         | What it is                                                     |
 | ---------------------------- | -------------------------------------------------------------- |
