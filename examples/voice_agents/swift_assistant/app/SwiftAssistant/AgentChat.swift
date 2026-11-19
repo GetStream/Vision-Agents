@@ -240,13 +240,19 @@ final class AgentChat: AIConversationTransport {
             session = try await Assistant.agents.sessions.create(options)
         }
         if !isIncognito {
-            let channel = try await session.chat()
-            try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
-                channel.synchronize { error in
-                    if let error { done.resume(throwing: error) } else { done.resume() }
+            do {
+                let channel = try await session.chat()
+                try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+                    channel.synchronize { error in
+                        if let error { done.resume(throwing: error) } else { done.resume() }
+                    }
                 }
+                read(channel)
+            } catch {
+                // A session opened just now has nobody else to stop it.
+                if sessionID == nil { await session.close() }
+                throw error
             }
-            read(channel)
         }
         follow(session)
         self.session = session

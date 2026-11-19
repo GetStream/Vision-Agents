@@ -36,7 +36,12 @@ struct ChatView: View {
                 options.llm = "xai/grok-4.7"
                 options.tools = Demo.tools
                 let session = try await Demo.agents.agent(agent).sessions.create(options)
-                chat = try await AgentChat.open(session)
+                do {
+                    chat = try await AgentChat.open(session)
+                } catch {
+                    await session.close()
+                    throw error
+                }
             } catch is CancellationError {
                 return
             } catch {

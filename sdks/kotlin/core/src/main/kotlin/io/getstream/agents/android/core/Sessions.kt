@@ -35,7 +35,8 @@ public class Sessions internal constructor(
      * no tools, and its turns go through [AgentSession.responses].
      */
     public suspend fun create(options: SessionOptions = SessionOptions()): AgentSession {
-        val tools = if (options.watch) options.tools else emptyList()
+        // A copy, so what is declared is what is answered here even if the caller's list changes.
+        val tools = if (options.watch) options.tools.toList() else emptyList()
         val duplicate = tools.groupBy { it.name }.entries.firstOrNull { it.value.size > 1 }
         if (duplicate != null) {
             throw AgentsException.Configuration("${duplicate.key} is declared twice")

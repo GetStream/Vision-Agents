@@ -60,6 +60,8 @@ public final class AgentSession: ObservableObject {
     private var changingTools = false
     private var waitingToChangeTools: [CheckedContinuation<Void, Never>] = []
     private var pump: Task<Void, Never>?
+    /// The one `start()` under way or done, which a second `start()` waits for.
+    private var starting: Task<Void, Never>?
     /// Whoever is reading `events()`, each with a stream of their own, or nil once the session
     /// has stopped and there is nothing more to read.
     private var subscribers: [UUID: AsyncStream<AgentEvent>.Continuation]? = [:]
@@ -94,16 +96,26 @@ public final class AgentSession: ObservableObject {
     /// `sessions.create` has started already. Doing this twice does nothing, and so does doing
     /// it on a session opened with `watch: false`.
     public func start() async {
-        guard watched, pump == nil else { return }
+        guard watched else { return }
+        if let starting { return await starting.value }
+        let starting = Task { await connect() }
+        self.starting = starting
+        await starting.value
+        // One that never got as far as the socket can be started again.
+        if pump == nil { self.starting = nil }
+    }
+
+    private func connect() async {
         let headers: [String: String]
         do {
             headers = try await backend.headers()
+        } catch is CancellationError {
+            return
         } catch let error as AgentsError {
             return stopped(error)
         } catch {
             return stopped(.transport(error))
         }
-        guard pump == nil else { return }
         let stream = await socket.open(headers: headers)
         isConnected = true
         pump = Task { [weak self] in
@@ -342,6 +354,7 @@ public final class AgentSession: ObservableObject {
         await socket.close()
         pump?.cancel()
         pump = nil
+        starting = nil
         isConnected = false
         approvals = []
         conversation.state = .ended

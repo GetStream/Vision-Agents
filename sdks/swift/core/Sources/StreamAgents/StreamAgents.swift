@@ -252,6 +252,10 @@ public struct StreamAgents: Sendable {
             backend: backend, session: try await createSession(options), tools: options.tools)
         guard start else { return session }
         await session.start()
+        if Task.isCancelled {
+            await session.close()
+            throw CancellationError()
+        }
         if let failure = await session.failure {
             try? await close(sessionID: session.id)
             throw failure

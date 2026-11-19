@@ -162,6 +162,8 @@ final class Sessions {
   Responses responses(String id) => Responses._(_operations, id);
 
   Future<AgentSession> _open(SessionOptions options, {required bool voice}) async {
+    // Taken before the request, so what is declared is what is answered here.
+    final tools = options.watch ? List.of(options.tools) : const <AgentTool>[];
     final request = createRequestOf(
       options,
       startVoice: voice,
@@ -172,7 +174,7 @@ final class Sessions {
       sessionOf(await _operations.createSession(body: request)),
       backend: _backend,
       sessions: this,
-      tools: options.watch ? options.tools : const [],
+      tools: tools,
       watch: options.watch,
     );
     if (!options.watch) {
