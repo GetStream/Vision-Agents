@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 import 'package:stream_agents/stream_agents.dart';
 
 import 'assistant.dart';
+import 'device_tools.dart';
 import 'openui_renderer.dart';
 import 'photos.dart';
 import 'trip_components.dart';
@@ -99,6 +102,22 @@ class AgentChat with AIConversationTransport<AgentMessage> {
 
   /// Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick.
   final liveUI = LiveUI();
+
+  /// The tables each seat selector shown in this conversation offers, by the reply it is in, in
+  /// the order the cards were first shown: the same card shown again is the same offer. A reply
+  /// here is never deleted or written again, so neither is its offer.
+  final _offers = <String, List<DiningTableItem>>{};
+
+  /// The bookings made from the seat selectors, by the offer each was made from.
+  ValueListenable<Map<String, Reservation>> get reservations => _reservations;
+  final _reservations = ValueNotifier<Map<String, Reservation>>(const {});
+
+  /// The changes of the session's `reserve_table`, one at a time, which a question and a card's
+  /// action wait for, so the reply they ask for has the tool when there is a table to book.
+  Future<void> _tools = Future.value();
+
+  /// Whether the session has `reserve_table`.
+  var _reserving = false;
 
   /// The composer option that asks for more reasoning.
   static const thinkHarder = 'think_harder';
@@ -372,6 +391,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       _failure.value = '$failure';
       throw const AIConversationCancelledException();
     }
+    // A card's tool still being added is waited for, so the reply can call it.
+    await _tools;
     _checkNotStopped(stops, request);
     // Only now, so a new conversation whose first question was never asked is not listed.
     _usedSessionId.value = session.id;
@@ -416,6 +437,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     _failure.value = null;
     try {
       final session = await use();
+      await _tools;
+      if (_closed) return;
       await session.responses.create(action.label, uiAction: action.toJson());
     } on Object catch (error) {
       if (_closed) return;
@@ -458,6 +481,93 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     } on SocketClosedException {
       // Nothing is answering: the reply in flight stopped with the socket.
     }
+  }
+
+  /// Offers [tables] from the seat selector of reply [offer], or its newer version, which the
+  /// agent can book with `reserve_table` while a table a card offers is free and not booked.
+  ///
+  /// A card also offers its tables again when one is tapped, which adds the tool again if adding
+  /// it failed.
+  void offer(String offer, List<DiningTableItem> tables) {
+    if (_closed) return;
+    _offers[offer] = tables;
+    _updateTool();
+  }
+
+  /// Books table [tableId] in [zone] for [when], from the newest card that offers it free and is
+  /// not booked, and takes the tool back once no table is left to book. The tool's answer does
+  /// not wait for that, since the router takes the tool back only once the call that booked has
+  /// finished.
+  ///
+  /// Throws a [ToolFailure] naming the free tables when no card offers it.
+  Reservation reserve(String tableId, String zone, String when) {
+    if (_closed) throw const ToolFailure('The conversation has closed.');
+    final booked = _reservations.value;
+    bool matches(DiningTableItem table) =>
+        table.id == tableId && table.zone.trim().toLowerCase() == zone.trim().toLowerCase();
+    // Newest reply first: a card is not offered in the order its reply was written, as an
+    // opened conversation builds its newest replies first.
+    final written = [for (final message in listMessages) message.id];
+    final offered = _offers.keys.toList();
+    int newer(String a, String b) {
+      final byReply = written.indexOf(b).compareTo(written.indexOf(a));
+      return byReply != 0 ? byReply : offered.indexOf(b).compareTo(offered.indexOf(a));
+    }
+
+    final newestFirst = _offers.entries.toList()..sort((a, b) => newer(a.key, b.key));
+    for (final MapEntry(key: offer, value: tables) in newestFirst) {
+      if (booked.containsKey(offer)) continue;
+      final table = tables.where((table) => matches(table) && table.available).firstOrNull;
+      if (table == null) continue;
+      final reservation = (table: table, when: when, code: _confirmationCode());
+      _reservations.value = {...booked, offer: reservation};
+      _updateTool();
+      return reservation;
+    }
+    final free = [
+      for (final MapEntry(key: offer, value: tables) in _offers.entries)
+        if (!booked.containsKey(offer))
+          for (final table in tables)
+            if (table.available) '${table.id} (${table.zone})',
+    ];
+    throw ToolFailure(
+      free.isEmpty
+          ? '$tableId in $zone is not a free table on a seat selector, and none is free.'
+          : '$tableId in $zone is not a free table on a seat selector. The free ones are '
+                '${free.join(', ')}.',
+    );
+  }
+
+  /// Whether a card offers a table that is free and not booked.
+  bool get _bookable => _offers.entries.any(
+    (offer) =>
+        !_reservations.value.containsKey(offer.key) && offer.value.any((table) => table.available),
+  );
+
+  /// Gives the session `reserve_table` while a table is left to book, and takes it back once
+  /// none is, after the changes before it.
+  void _updateTool() => _tools = _tools.then((_) => _syncTool());
+
+  Future<void> _syncTool() async {
+    final session = _session;
+    final wanted = _bookable;
+    if (session == null || _closed || wanted == _reserving) return;
+    try {
+      if (wanted) {
+        await session.addTools([SeatSelectorComponent.reserveTable(reserve)]);
+      } else {
+        await session.removeTool(SeatSelectorComponent.reserveTableTool);
+      }
+      _reserving = wanted;
+    } on Object catch (error) {
+      // Tried again the next time a card offers its tables, such as when a table is tapped.
+      if (!_closed) _failure.value = '$error';
+    }
+  }
+
+  static String _confirmationCode() {
+    final random = math.Random.secure();
+    return [for (var i = 0; i < 6; i++) '0123456789ABCDEF'[random.nextInt(16)]].join();
   }
 
   /// Loads the messages before the oldest one loaded.
@@ -515,10 +625,26 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// Releases what the chat holds, once [close] has completed.
   void dispose() {
     ui.dispose();
+    _reservations.dispose();
     _usedSessionId.dispose();
     _sessionFailure.dispose();
     _failure.dispose();
   }
+}
+
+/// Makes [chat] the conversation the cards below it are shown in, which a card that brings its
+/// own tool, such as the seat selector, gives it to.
+class AgentChatScope extends InheritedWidget {
+  const AgentChatScope({super.key, required this.chat, required super.child});
+
+  final AgentChat chat;
+
+  /// The conversation above [context], or null where a card is shown outside one.
+  static AgentChat? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<AgentChatScope>()?.chat;
+
+  @override
+  bool updateShouldNotify(AgentChatScope oldWidget) => oldWidget.chat != chat;
 }
 
 extension on List<stream.Message> {

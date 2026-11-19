@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'assistant.dart';
 import 'chat_screen.dart';
+import 'brand_theme.dart';
 import 'conversations.dart';
 import 'notice.dart';
 import 'settings.dart';
@@ -15,6 +16,7 @@ import 'trip_components.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await TripComponents.load();
+  await BrandProfile.load();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const AssistantApp());
 }
