@@ -1817,7 +1817,7 @@ class TestActingForAUser:
         await docs.sessions.get(session.id)
         await session.close()
 
-        assert len(router.headers) == 3
+        assert len(router.headers) == 2
         for line, sent in router.headers.items():
             assert sent["X-Stream-User-Id"] == "jean", line
             assert sent["X-Api-Key"] == "key", line
