@@ -525,6 +525,27 @@ func (s *WriterSuite) TestTheUnownedAlertNamesTheAppWhoseRowsWaitUntilItJoinsOne
 	s.NotContains(unowned.Items(time.Now()), s.customer)
 }
 
+func (s *WriterSuite) TestACountThatFailsKeepsTheAppsTheLastOneFound() {
+	service := s.usageService()
+	writer := s.shippingWriter(service, nil)
+	writer.enqueue(s.row(nil))
+	s.written(1)
+	sweeper := s.sweeper(service.Client)
+	s.Require().NoError(sweeper.count(s.ctx))
+	s.Require().Len(*sweeper.unowned.Load(), 1)
+	// Reading the memberships fails while the table is gone.
+	_, err := s.store.DB().ExecContext(s.ctx, "ALTER TABLE app_organizations RENAME TO app_organizations_gone")
+	s.Require().NoError(err)
+	defer func() {
+		_, err := s.store.DB().ExecContext(s.ctx, "ALTER TABLE app_organizations_gone RENAME TO app_organizations")
+		s.Require().NoError(err)
+	}()
+
+	s.Error(sweeper.count(s.ctx))
+
+	s.Len(*sweeper.unowned.Load(), 1)
+}
+
 func (s *WriterSuite) TestARowWithNoOrganizationWaitsForOne() {
 	before := testutil.ToFloat64(usageUnowned)
 	service := s.usageService()

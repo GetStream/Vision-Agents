@@ -194,14 +194,18 @@ GROUP BY 1, 2, 3, 4, 5 ORDER BY customer_id, rows DESC, api_key, modality, provi
 	for _, group := range groups {
 		apps = append(apps, group.App)
 	}
-	var joined []string
+	var memberships []string
 	if err := s.db.NewSelect().Model((*AppOrganization)(nil)).Column("app_id").Where("app_id IN (?)", bun.In(apps)).
-		Scan(ctx, &joined); err != nil {
+		Scan(ctx, &memberships); err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: unowned usage: %w", err))
+	}
+	joined := make(map[string]bool, len(memberships))
+	for _, app := range memberships {
+		joined[app] = true
 	}
 	var unowned []UnownedApp
 	for _, group := range groups {
-		if slices.Contains(joined, group.App) {
+		if joined[group.App] {
 			continue
 		}
 		if len(unowned) == 0 || unowned[len(unowned)-1].App != group.App {

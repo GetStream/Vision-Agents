@@ -94,3 +94,17 @@ func (s *StoreSuite) TestUnownedUsageIsTheWaitingRowsOfAppsWithNoOrganization() 
 		{APIKey: "key-1", Modality: "llm", Provider: "openai", Model: "gpt", Rows: 1, CostMicros: 7},
 	}, unowned[0].Groups)
 }
+
+// The groups are ordered by rows, so the oldest row can be in any of them.
+func (s *StoreSuite) TestUnownedUsageStartsAtTheOldestRowOfAnyGroup() {
+	s.waiting("app", s.base, nil)
+	s.waiting("app", s.base, nil)
+	s.waiting("app", s.base.Add(-time.Minute), func(r *Request) { r.APIKey = "key-1" })
+
+	unowned, err := s.store.UnownedUsage(s.ctx)
+
+	s.Require().NoError(err)
+	s.Require().Len(unowned, 1)
+	s.Equal("job:crawler", unowned[0].Groups[0].APIKey, "most rows first")
+	s.True(s.base.Add(-time.Minute).Equal(unowned[0].OldestStartedAt), "%v", unowned[0].OldestStartedAt)
+}

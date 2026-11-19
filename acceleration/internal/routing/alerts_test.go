@@ -84,6 +84,28 @@ func (s *UsageAlertsSuite) TestUnownedNamesEachAppWhoseRowsWaitedFifteenMinutes(
 	}}, held, "an app is warned about once its oldest row has waited 15 minutes")
 }
 
+func (s *UsageAlertsSuite) TestUnownedWarnsFromTheFifteenthMinuteOn() {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	s.counted(
+		store.UnownedApp{App: "fifteen", Rows: 1, OldestStartedAt: now.Add(-15 * time.Minute)},
+		store.UnownedApp{App: "almost", Rows: 1, OldestStartedAt: now.Add(-15*time.Minute + time.Second)},
+	)
+
+	held := s.named("unowned").Items(now)
+
+	s.Contains(held, "fifteen")
+	s.NotContains(held, "almost")
+}
+
+// A sweeper registers before its first count, which may fail: the alerts loop must not stop.
+func (s *UsageAlertsSuite) TestUnownedReadsNothingFromASweeperNotYetCounted() {
+	sweeper := &Sweeper{}
+	sweepers.Store(sweeper, struct{}{})
+	s.T().Cleanup(func() { sweepers.Delete(sweeper) })
+
+	s.Empty(s.named("unowned").Items(time.Now()))
+}
+
 // What a person who opens the alert checks first: the app's membership, then what wrote its rows.
 func (s *UsageAlertsSuite) TestUnownedSaysWhyTheRowsWaitAndWhatToCheck() {
 	described := s.named("unowned").Describe("app")
