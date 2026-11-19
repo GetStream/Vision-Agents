@@ -55,10 +55,10 @@ An agent, once the router is up:
 
 ```bash
 cd examples/voice_agents/simple_voice_ai
-uv sync && uv run simple_voice_ai.py run
+uv sync && uv run simple_voice_ai.py
 ```
 
-It prints a call URL on the dashboard; open it and talk.
+It stores the agent's directory on the router, then opens a demo call in the browser; talk into it.
 
 The client generators (`plugins/stream/generate.py`, `sdks/swift/generate.py`) are standalone uv scripts with inline metadata: `uv run <script>` does not resolve the workspace.
 

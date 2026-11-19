@@ -12,8 +12,8 @@ load_dotenv()
 
 """
 A customer support agent whose skills, knowledge and instructions live in this
-directory, next to the agent.yaml that names it. Joining pushes them to the
-acceleration server; a second run with the same files does nothing.
+directory, next to the agent.yaml that names it. `agent.sync()` stores them on the
+acceleration server before the call; a second run with the same files changes nothing.
 
 Gemini transcribes and holds the conversation, Inworld TTS-2 Flash speaks it,
 and refunds are handed to Sol.
@@ -30,6 +30,7 @@ async def main() -> None:
             model="gemini/gemini-3.8-flash",
         ),
     )
+    await agent.sync()
     call = await agent.create_call("default", "customer-support")
     async with agent.join(call):
         await agent.responses.create(
