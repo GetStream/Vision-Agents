@@ -21,6 +21,9 @@ on:
       - '.github/workflows/integration.yml'
   pull_request:
     branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'acceleration/**'
       - '!**/*.md'
@@ -37,6 +40,7 @@ permissions:
 
 jobs:
   integration:
+    if: github.event.pull_request.draft != true
     name: integration (${{ matrix.group }})
     runs-on: ubuntu-latest
     # MEM0_API_KEY lives in this environment, which a pull request's code never enters.

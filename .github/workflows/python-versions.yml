@@ -9,6 +9,9 @@ on:
       - '.github/workflows/python-versions.yml'
   pull_request:
     branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - '**/pyproject.toml'
       - 'uv.lock'
@@ -29,6 +32,7 @@ jobs:
   # into its own log so their output does not interleave. Every version is checked even after
   # one fails, and the job fails at the end, naming the versions that did not resolve.
   resolve:
+    if: github.event.pull_request.draft != true
     name: Resolve on Python 3.10–3.14
     runs-on: ubuntu-latest
     env:
