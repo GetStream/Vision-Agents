@@ -100,7 +100,10 @@ api.CreateSessionRequest createRequestOf(
   custom: options.custom,
   incognito: options.incognito,
   modelOverwrites: overwritesOf(options.modelOverwrites),
-  tools: options.tools.isEmpty ? null : [for (final tool in options.tools) sessionToolOf(tool)],
+  // Unwatched, nothing here answers a call, so no tool is declared.
+  tools: !options.watch || options.tools.isEmpty
+      ? null
+      : [for (final tool in options.tools) sessionToolOf(tool)],
   tags: options.tags.isEmpty ? null : options.tags,
   returnUrl: _set(options.returnUrl),
   // The router remembers only for a user id, and a device only ever means its own user.

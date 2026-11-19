@@ -73,6 +73,7 @@ final class AgentSession {
     required this._sessions,
     List<AgentTool> tools = const [],
     this.interim = false,
+    this._watch = true,
   }) : _session = session,
        _tools = {for (final tool in tools.reversed) tool.name: tool};
 
@@ -104,6 +105,10 @@ final class AgentSession {
 
   final Backend _backend;
   final Sessions _sessions;
+
+  /// Whether the conversation is followed over a socket. False is `SessionOptions.watch`
+  /// false: read and written over HTTP, with nothing here to send to.
+  final bool _watch;
 
   /// The tools whose calls are answered here, by name.
   final Map<String, AgentTool> _tools;
@@ -160,8 +165,12 @@ final class AgentSession {
   /// Opens the socket and starts following the conversation. Calling it again, even while it
   /// is opening, opens nothing more, and after [close] it opens nothing at all.
   ///
-  /// Throws, and reports it on [connection], when the socket cannot be opened.
-  Future<void> start() => _starting ??= _start();
+  /// Throws, and reports it on [connection], when the socket cannot be opened, and throws a
+  /// [StateError] for a session opened with `watch: false`.
+  Future<void> start() {
+    _watched();
+    return _starting ??= _start();
+  }
 
   Future<void> _start() async {
     final Uri uri;
@@ -207,6 +216,7 @@ final class AgentSession {
   /// Each call is a stream of its own, so two listeners each see every event. A listener
   /// more than 256 events behind is finished rather than buffered without bound.
   Stream<AgentEvent> events() {
+    _watched();
     final subscriber = _Subscriber();
     if (_connection.value is Disconnected) {
       subscriber.controller.close();
@@ -300,6 +310,8 @@ final class AgentSession {
   /// under each. Only a session this device opened takes tools from it, and a name the agent
   /// has of its own, such as a connector's tool, is refused.
   Future<void> addTools(List<AgentTool> tools) async {
+    // A conversation nothing is watching has nowhere to be asked for a call.
+    _watched();
     if (tools.isEmpty) {
       return;
     }
@@ -398,6 +410,7 @@ final class AgentSession {
       sessions: _sessions,
       tools: _tools.values.toList(),
       interim: interim,
+      watch: _watch,
     ).._unsettled.addAll(_unsettled),
   );
 
@@ -502,7 +515,18 @@ final class AgentSession {
     return () => _conversation.value = _conversation.value.withoutTurn(id);
   }
 
+  void _watched() {
+    if (!_watch) {
+      throw StateError(
+        'this conversation is not being watched, so there is nothing to send to: open it '
+        'without watch: false, or use responses.create() and read the turn back through '
+        'responses.items()',
+      );
+    }
+  }
+
   SessionSocket _held() {
+    _watched();
     final socket = _socket;
     if (socket == null) {
       throw StateError('start() the session before talking to it');

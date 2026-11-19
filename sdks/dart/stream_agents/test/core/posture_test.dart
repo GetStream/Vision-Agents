@@ -74,7 +74,7 @@ void main() {
       ..answer('GET $t/t1/runs', Answer(200, pageJson([])));
     final sessions = agents.sessions;
 
-    await sessions.create();
+    await (await sessions.create()).close();
     await sessions.query();
     await sessions.search('billing');
     await sessions.get('s1');

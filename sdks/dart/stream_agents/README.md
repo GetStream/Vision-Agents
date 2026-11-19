@@ -83,9 +83,18 @@ final agents = StreamAgents(
 ### Start a conversation
 
 ```dart
-final session = await agents.agent('support').chat();
+final session = await agents.agent('support').sessions.create();
 await session.responses.create('What are your opening hours?');
 ```
+
+`sessions.create` opens the session and follows it: it returns once the socket is open, so the
+device's tools are answered from the first turn. `SessionOptions(startVoice: true)` puts the agent
+on the session's call instead of holding it in writing. `chat()` and `voice()` are the same call
+with `startVoice` false and true.
+
+`SessionOptions(watch: false)` opens it without a socket, for a caller reading and writing turns
+over HTTP alone: no tool is declared, turns go in through `responses.create` and are read back
+from `responses.items`, and `say`, `interrupt`, `events` and `addTools` throw a `StateError`.
 
 `session.conversation` is a `LiveValue<Conversation>`: the current transcript and what the
 agent is doing, plus a stream of every change. A widget renders it with a `StreamBuilder`:
@@ -111,7 +120,7 @@ final lookup = AgentTool(
   run: (arguments) async => orders.find('${arguments['order_id']}'),
 );
 
-final session = await agents.agent('support').chat(SessionOptions(tools: [lookup]));
+final session = await agents.agent('support').sessions.create(SessionOptions(tools: [lookup]));
 ```
 
 The agent only sees what the tool returns.
