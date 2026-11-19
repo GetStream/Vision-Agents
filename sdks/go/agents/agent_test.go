@@ -624,19 +624,24 @@ func TestSyncSaysWhyTheRouterRefusedASkill(t *testing.T) {
 }
 
 func TestSyncSaysWhyTheRouterRefusedASkillEdit(t *testing.T) {
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Skills: []Skill{
-		{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
-	}}})
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	router.mu.Lock()
-	router.refuseSkillEdits = "a skill may bring at most 64 files"
-	router.mu.Unlock()
-	_, err := agent.Sync(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
-		t.Errorf("an edit the router refused came back as %v", err)
+	// With a sandbox stored the skills are edited before the config, without one after it.
+	for name, sandbox := range map[string]*Sandbox{"without a sandbox": nil, "with a sandbox": Daytona()} {
+		t.Run(name, func(t *testing.T) {
+			router := newBackend(t)
+			agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Sandbox: sandbox, Skills: []Skill{
+				{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
+			}}})
+			if _, err := agent.Sync(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			router.mu.Lock()
+			router.refuseSkillEdits = "a skill may bring at most 64 files"
+			router.mu.Unlock()
+			_, err := agent.Sync(t.Context())
+			if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
+				t.Errorf("an edit the router refused came back as %v", err)
+			}
+		})
 	}
 }
 
