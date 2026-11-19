@@ -3,12 +3,46 @@ using GetStream.VisionAgents.Models;
 
 namespace GetStream.VisionAgents;
 
+/// <summary>What <see cref="Connections.CreateAsync"/> asks beside the connector.</summary>
+public sealed record NewConnectionOptions
+{
+    /// <summary>Tells the owner's connections to the same connector apart. Null is none.</summary>
+    public string? Label { get; init; }
+
+    /// <summary>The app's user the connection is for. Null is the app's own.</summary>
+    public string? UserId { get; init; }
+}
+
+/// <summary>What <see cref="Connections.AuthorizeAsync"/> asks beside the connection.</summary>
+public sealed record AuthorizeOptions
+{
+    /// <summary>
+    /// The app's page the browser goes back to when the consent ends, with <c>connection_id</c>
+    /// and <c>status</c> added to its query. Null goes back to the dashboard.
+    /// </summary>
+    public string? ReturnUrl { get; init; }
+
+    /// <summary>The user the connection belongs to. Null is an app connection.</summary>
+    public string? UserId { get; init; }
+}
+
+/// <summary>Which connections <see cref="Connections.ListAsync"/> reads.</summary>
+public sealed record ConnectionFilter
+{
+    /// <summary>Keeps one connector's. Null is every connector's.</summary>
+    public string? ConnectorId { get; init; }
+
+    /// <summary>Lists that user's connections. Null lists the app's own.</summary>
+    public string? UserId { get; init; }
+}
+
 /// <summary>
 /// The accounts the app and its users hold at connectors, such as a user's Linear: what an
 /// agent's tools reach that account through. Only a backend may ask.
 /// </summary>
 /// <remarks>
-/// Every method takes the user as a parameter, named once per call. A user given is sent as the
+/// Every method takes the user, named once per call: a <c>userId</c> parameter, or the
+/// <c>UserId</c> of the options. A user given is sent as the
 /// owner and as <c>X-Stream-User-Id</c> alike, so the two never differ. A user's connection is
 /// reached only by a call naming that user; the app's is reached by every call, one naming a
 /// user included. No user is the app's own connection.
@@ -24,16 +58,15 @@ public sealed class Connections
 
     /// <summary>Stores a pending connection to a connector, owned by the user or else by the app.</summary>
     /// <param name="connectorId">A built-in, such as <c>linear</c>, or one of the app's own.</param>
-    /// <param name="label">Tells the owner's connections to the same connector apart. Null is none.</param>
-    /// <param name="userId">The app's user the connection is for. Null is the app's own.</param>
+    /// <param name="options">The label, and the app's user the connection is for. Null is the app's own, with no label.</param>
     /// <param name="cancellationToken">Stops waiting.</param>
-    public Task<Connection> CreateAsync(string connectorId, string? label = null, string? userId = null, CancellationToken cancellationToken = default)
+    public Task<Connection> CreateAsync(string connectorId, NewConnectionOptions? options = null, CancellationToken cancellationToken = default)
     {
-        userId = VisionAgentsClient.Blank(userId);
+        var userId = VisionAgentsClient.Blank(options?.UserId);
         var request = new ConnectionRequest
         {
             ConnectorId = connectorId,
-            Label = VisionAgentsClient.Blank(label),
+            Label = VisionAgentsClient.Blank(options?.Label),
             Owner = userId is null ? new ConnectionOwner { Type = "app" } : new ConnectionOwner { Type = "user", UserId = userId },
         };
         return SendAsync(userId, client => client.PostAsync<Connection>("/v1/agents/connections", request, cancellationToken));
@@ -46,16 +79,12 @@ public sealed class Connections
     /// <c>ExpiresAt</c>.
     /// </summary>
     /// <param name="id">The connection.</param>
-    /// <param name="returnUrl">
-    /// The app's page the browser goes back to when the consent ends, with <c>connection_id</c>
-    /// and <c>status</c> added to its query. Null goes back to the dashboard.
-    /// </param>
-    /// <param name="userId">The user the connection belongs to. Null is an app connection.</param>
+    /// <param name="options">The return URL, and the user the connection belongs to. Null is an app connection going back to the dashboard.</param>
     /// <param name="cancellationToken">Stops waiting.</param>
     /// <exception cref="ConfigurationException">The id is empty.</exception>
-    public Task<Authorization> AuthorizeAsync(string id, string? returnUrl = null, string? userId = null, CancellationToken cancellationToken = default) =>
-        SendAsync(userId, client => client.PostAsync<Authorization>($"{Path(id)}/authorizations",
-            new AuthorizationRequest { ReturnUrl = VisionAgentsClient.Blank(returnUrl) }, cancellationToken));
+    public Task<Authorization> AuthorizeAsync(string id, AuthorizeOptions? options = null, CancellationToken cancellationToken = default) =>
+        SendAsync(options?.UserId, client => client.PostAsync<Authorization>($"{Path(id)}/authorizations",
+            new AuthorizationRequest { ReturnUrl = VisionAgentsClient.Blank(options?.ReturnUrl) }, cancellationToken));
 
     /// <summary>
     /// One connection of the user's, or of the app's when no user is given. Another user's is
@@ -69,18 +98,17 @@ public sealed class Connections
     /// Every connection of the user's, or of the app's when no user is given, newest first, read
     /// page by page. With a user it holds only that user's connections, not the app's.
     /// </summary>
-    /// <param name="connectorId">Keeps one connector's. Null is every connector's.</param>
-    /// <param name="userId">Lists that user's connections. Null lists the app's own.</param>
+    /// <param name="filter">The connector to keep, and the user to list. Null lists the app's own, of every connector.</param>
     /// <param name="cancellationToken">Stops waiting.</param>
-    public Task<List<Connection>> ListAsync(string? connectorId = null, string? userId = null, CancellationToken cancellationToken = default)
+    public Task<List<Connection>> ListAsync(ConnectionFilter? filter = null, CancellationToken cancellationToken = default)
     {
-        userId = VisionAgentsClient.Blank(userId);
+        var userId = VisionAgentsClient.Blank(filter?.UserId);
         return SendAsync(userId, async client =>
         {
             var query = new Dictionary<string, string?>
             {
                 ["owner_type"] = userId is null ? "app" : "user",
-                ["connector_id"] = connectorId,
+                ["connector_id"] = filter?.ConnectorId,
                 ["limit"] = Page.ToString(CultureInfo.InvariantCulture),
             };
             var connections = new List<Connection>();

@@ -14,10 +14,10 @@ public sealed class ConnectionsTests
         var connections = client.Connections;
         var cancel = TestContext.Current.CancellationToken;
 
-        var created = await connections.CreateAsync("linear", "work", "alice", cancel);
-        var consent = await connections.AuthorizeAsync(created.Id, "https://app.example.com/settings", "alice", cancel);
+        var created = await connections.CreateAsync("linear", new NewConnectionOptions { Label = "work", UserId = "alice" }, cancel);
+        var consent = await connections.AuthorizeAsync(created.Id, new AuthorizeOptions { ReturnUrl = "https://app.example.com/settings", UserId = "alice" }, cancel);
         var got = await connections.GetAsync(created.Id, "alice", cancel);
-        var listed = await connections.ListAsync("linear", "alice", cancel);
+        var listed = await connections.ListAsync(new ConnectionFilter { ConnectorId = "linear", UserId = "alice" }, cancel);
         await connections.DeleteAsync(created.Id, "alice", cancel);
 
         Assert.Equal(("conn-1", "pending"), (got.Id, got.Status));
@@ -44,10 +44,10 @@ public sealed class ConnectionsTests
         var connections = client.Connections;
         var cancel = TestContext.Current.CancellationToken;
 
-        await connections.CreateAsync("linear", userId: userId, cancellationToken: cancel);
-        await connections.AuthorizeAsync("conn-1", userId: userId, cancellationToken: cancel);
+        await connections.CreateAsync("linear", new NewConnectionOptions { UserId = userId }, cancel);
+        await connections.AuthorizeAsync("conn-1", new AuthorizeOptions { UserId = userId }, cancel);
         await connections.GetAsync("conn-1", userId, cancel);
-        await connections.ListAsync(userId: userId, cancellationToken: cancel);
+        await connections.ListAsync(new ConnectionFilter { UserId = userId }, cancel);
         await connections.DeleteAsync("conn-1", userId, cancel);
 
         Assert.Equal(5, router.Requests.Count);
@@ -95,7 +95,7 @@ public sealed class ConnectionsTests
         });
         using var client = Fixtures.Client(router);
 
-        var listed = await client.Connections.ListAsync("linear", "alice", TestContext.Current.CancellationToken);
+        var listed = await client.Connections.ListAsync(new ConnectionFilter { ConnectorId = "linear", UserId = "alice" }, TestContext.Current.CancellationToken);
 
         Assert.Equal(["conn-3", "conn-2", "conn-1"], listed.Select(connection => connection.Id));
         var pages = router.To("GET", "/v1/agents/connections");
@@ -131,7 +131,7 @@ public sealed class ConnectionsTests
         var connections = client.Connections;
         var cancel = TestContext.Current.CancellationToken;
 
-        await Assert.ThrowsAsync<ConfigurationException>(() => connections.AuthorizeAsync("", userId: "alice", cancellationToken: cancel));
+        await Assert.ThrowsAsync<ConfigurationException>(() => connections.AuthorizeAsync("", new AuthorizeOptions { UserId = "alice" }, cancel));
         await Assert.ThrowsAsync<ConfigurationException>(() => connections.GetAsync("", "alice", cancel));
         await Assert.ThrowsAsync<ConfigurationException>(() => connections.DeleteAsync("", cancellationToken: cancel));
 
@@ -150,6 +150,33 @@ public sealed class ConnectionsTests
         await ada.Connections.GetAsync("conn-1", cancellationToken: cancel);
 
         Assert.Equal(["alice", "ada", "ada"], router.Requests.Select(seen => seen.Headers[Header]));
+    }
+
+    [Fact]
+    public async Task EmptyOptionalStringsAreLeftOutAndTheOwnerIsTheUserGiven()
+    {
+        await using var router = await Answering();
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+
+        await client.Connections.CreateAsync("linear", new NewConnectionOptions { Label = "", UserId = "bob" }, cancel);
+        await client.Connections.AuthorizeAsync("conn-1", new AuthorizeOptions { ReturnUrl = "", UserId = "bob" }, cancel);
+
+        Assert.Equal("""{"connector_id":"linear","owner":{"type":"user","user_id":"bob"}}""", router.Only("POST", "/v1/agents/connections").Body!.ToJsonString());
+        Assert.Equal("{}", router.Only("POST", "/v1/agents/connections/conn-1/authorizations").Body!.ToJsonString());
+    }
+
+    [Fact]
+    public async Task AFilterWithAConnectorAndNoUserListsTheAppsConnectionsOfThatConnector()
+    {
+        await using var router = await Answering();
+        using var client = Fixtures.Client(router);
+
+        await client.Connections.ListAsync(new ConnectionFilter { ConnectorId = "linear" }, TestContext.Current.CancellationToken);
+
+        var list = router.Only("GET", "/v1/agents/connections");
+        Assert.Equal(("app", "linear", "200"), Query(list));
+        Assert.False(list.Headers.ContainsKey(Header));
     }
 
     [Fact]
