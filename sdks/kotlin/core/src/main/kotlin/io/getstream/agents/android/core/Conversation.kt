@@ -362,23 +362,38 @@ public class Conversation private constructor(
                 copy(state = if (left.isEmpty()) State.Responding else State.Working(left))
             }
 
-            AgentEvent.Kind.Interrupted ->
-                settleUi(event.turnId, at)
-                    .resumed(event.turnId, null)
-                    .amend(event.turnId) { it.settled(at).copy(isDone = true) }
-                    .copy(state = State.Idle)
+            AgentEvent.Kind.Interrupted -> ended(event.turnId, at).copy(state = State.Idle)
 
             // The model writing the reply failing is the end of that reply, which may never be
-            // reported as responded. Anything else that fails, a tool, the voice or the
-            // transcriber, leaves the reply going, and the agent doing what it was doing.
-            AgentEvent.Kind.Error ->
+            // reported as responded, so it is done as an interrupted one is. Its error may not say
+            // which turn it ended, which is then the agent's latest one still going. Anything else
+            // that fails, a tool, the voice or the transcriber, leaves the reply going, and the
+            // agent doing what it was doing.
+            AgentEvent.Kind.Error -> {
+                val ends = endsTurn(event)
                 (if (event.string("code") == PROMPT_INJECTION) refused() else this)
-                    .copy(failure = event.errorText, state = if (endsTurn(event)) State.Idle else state)
+                    .let { conversation ->
+                        val turnId = event.turnId.ifEmpty {
+                            conversation.turns.lastOrNull { it.isAgent && !it.isDone }?.id.orEmpty()
+                        }
+                        if (ends && turnId.isNotEmpty()) conversation.ended(turnId, at) else conversation
+                    }
+                    .copy(failure = event.errorText, state = if (ends) State.Idle else state)
+            }
 
             AgentEvent.Kind.Left -> copy(state = State.Ended)
 
             else -> this
         }
+
+    /**
+     * Agent turn [turnId] with nothing more of it to come: its round of thinking and its UI
+     * settled, and the turn done.
+     */
+    private fun ended(turnId: String, at: Instant): Conversation =
+        settleUi(turnId, at)
+            .resumed(turnId, null)
+            .amend(turnId) { it.settled(at).copy(isDone = true) }
 
     private val working: List<String>
         get() = (state as? State.Working)?.skills.orEmpty()

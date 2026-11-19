@@ -24,6 +24,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -389,7 +390,9 @@ class AgentSessionTest {
             Script.Send("""{"type":"tool_started","tool_call_id":"c1","tool":"issue_refund","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}"""),
         )
         router.script.send(Script.Send(refundCall))
-        val asking = chat.turnMessages.first { it.lastOrNull()?.steps?.lastOrNull()?.fields?.get("status") == "awaiting_approval" }
+        val asking = withTimeout(5.seconds) {
+            chat.turnMessages.first { it.lastOrNull()?.steps?.lastOrNull()?.fields?.get("status") == "awaiting_approval" }
+        }
 
         assertEquals(listOf(false, true), asking.map { it.isAgentReply })
         assertEquals("Refund A-1042, it arrived unopened", asking.first().text)

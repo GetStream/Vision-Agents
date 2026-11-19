@@ -127,6 +127,23 @@ class ConversationTest {
         assertEquals(Conversation.State.Idle, conversation.state)
         assertEquals("the model is overloaded", conversation.failure)
         assertEquals(listOf("Let me"), conversation.turns.map { it.text })
+        assertTrue(conversation.turns.single().isDone)
+    }
+
+    @Test
+    fun `the model failing mid-thought is done as an interrupted turn is, whether or not it names the turn`() {
+        val thinking = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Hmm"}""",
+        )
+        val unnamed = thinking.after("""{"type":"error","context":"llm","error":"the model is overloaded"}""")
+        val named = thinking.after("""{"type":"error","context":"llm","turn_id":"t1","error":"the model is overloaded"}""")
+
+        for (conversation in listOf(unnamed, named)) {
+            val turn = conversation.turns.single()
+            assertTrue(turn.isDone)
+            assertEquals(false, assertIs<TurnStep.Reasoning>(turn.steps.single()).isStreaming)
+        }
     }
 
     @Test
@@ -163,6 +180,7 @@ class ConversationTest {
         )
 
         assertEquals(Conversation.State.Responding, responding.state)
+        assertEquals(false, responding.turns.single().isDone)
         assertEquals("the voice is unknown", responding.failure)
         assertEquals(Conversation.State.Working(listOf("think")), working.state)
     }
