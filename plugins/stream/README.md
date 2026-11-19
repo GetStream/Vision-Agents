@@ -209,9 +209,9 @@ again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenar
 config's simulations exactly, so an empty `simulations/` deletes them; without the
 directory the stored ones are left alone. Run them with `stream.Client().simulations.run(id)`.
 
-`.agent_sync` next to `agent.yaml` records the md5 of what was last stored, so a run that
-changed nothing costs a file read rather than a request. `sync_agent("customer_support")`
-is still there for storing a directory ahead of time, without joining anything.
+`agent.sync()` stores the directory, and `sync_agent("customer_support")` does the same
+without building an agent. Joining never syncs, so sync before the agent takes calls. A sync
+of the same files changes nothing on the router.
 
 `Agent(config=)` fills in the edge, the remote pipeline and a phone, so the Go
 backend handles routing. See `examples/voice_agents/` for customer support, an outbound

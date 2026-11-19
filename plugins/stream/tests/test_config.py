@@ -618,38 +618,24 @@ class TestSyncAgent:
 
         assert again.unchanged is True
         assert again.config.id == first.config.id
-        assert router.syncs == 2
+        assert router.syncs == 1, ".agent_sync should answer for an untouched directory"
         assert len(router.configs) == 1
 
-    async def test_a_launch_after_an_unchanged_launch_asks_the_router_nothing(
-        self, router: Router, launched_from
+    async def test_a_directory_the_router_no_longer_holds_is_stored_again(
+        self, router: Router, support_dir
     ):
-        stored = await stream.ensure_agent(
-            "support", url=router.url, customer_id="acme"
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+        router.configs.clear()
+
+        again = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert stored is not None
-        assert router.syncs == 1
-        assert (
-            await stream.ensure_agent("support", url=router.url, customer_id="acme")
-            is None
-        ), ".agent_sync should answer for a directory nothing has touched"
-        assert router.syncs == 1
-
-    async def test_a_launch_after_an_edit_stores_the_directory_again(
-        self, router: Router, launched_from
-    ):
-        await stream.ensure_agent("support", url=router.url, customer_id="acme")
-
-        (launched_from / "instructions.md").write_text("Be brief.\n")
-        stored = await stream.ensure_agent(
-            "support", url=router.url, customer_id="acme"
-        )
-
-        assert stored is not None
-        assert stored.unchanged is False
-        assert router.configs[stored.config.id]["instructions"] == "Be brief."
+        assert again.unchanged is False
         assert router.syncs == 2
+        assert [config["name"] for config in router.configs.values()] == ["support"]
 
     async def test_a_declaration_says_what_the_agent_runs_on(
         self, router: Router, support_dir
@@ -975,24 +961,14 @@ class TestSyncAgent:
     async def test_editing_a_model_stores_the_directory_again(
         self, router: Router, launched_from
     ):
-        first = await stream.ensure_agent("support", url=router.url, customer_id="acme")
-        assert first is not None
+        first = await stream.sync_agent("support", url=router.url, customer_id="acme")
 
         (launched_from / "agent.yaml").write_text("name: support\nllm: llm-smart\n")
-        again = await stream.ensure_agent("support", url=router.url, customer_id="acme")
+        again = await stream.sync_agent("support", url=router.url, customer_id="acme")
 
-        assert again is not None
+        assert again.unchanged is False
         assert again.config.id == first.config.id
         assert router.configs[again.config.id]["llm"] == "llm-smart"
-
-    async def test_a_name_with_no_directory_behind_it_is_left_alone(
-        self, router: Router, launched_from
-    ):
-        assert (
-            await stream.ensure_agent("nowhere", url=router.url, customer_id="acme")
-            is None
-        )
-        assert router.syncs == 0
 
     @pytest.fixture
     def bare_dir(self, tmp_path):
