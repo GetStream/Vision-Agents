@@ -300,6 +300,7 @@ void main() {
           projectId: 'Health',
           modelOverwrites: ModelOverwrites(thinking: Thinking.high),
           returnUrl: 'com.example.app:/connected',
+          ui: false,
         ),
       );
 
@@ -311,6 +312,7 @@ void main() {
         'project_id': 'Health',
         'model_overwrites': {'thinking': 'high'},
         'return_url': 'com.example.app:/connected',
+        'ui': false,
       });
       expect(session.id, 's1');
       expect(session.isText, isTrue);

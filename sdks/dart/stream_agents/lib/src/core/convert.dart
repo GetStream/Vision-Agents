@@ -111,6 +111,7 @@ api.CreateSessionRequest createRequestOf(
     ),
   },
   timezone: _set(options.timezone),
+  ui: options.ui,
 );
 
 api.ForkSessionRequest forkRequestOf(ForkOptions options) => api.ForkSessionRequest(
