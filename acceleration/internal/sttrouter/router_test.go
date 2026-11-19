@@ -90,6 +90,7 @@ func (s *STTRouterSuite) TestTheModelsLeftOutOfTheEnglishShortcutAreStillReachab
 		"cartesia/ink-2",
 		"inworld/inworld-stt-1",
 		"elevenlabs/scribe_v2_realtime",
+		"elevenlabs/scribe_v3_live",
 		"assemblyai/universal-3-6-pro",
 		"fish/transcribe-stream-1",
 	} {
