@@ -12,6 +12,7 @@ import 'agent_chat.dart';
 import 'assistant.dart';
 import 'brand_theme.dart';
 import 'sign_in.dart';
+import 'smooth_size.dart';
 import 'voice_screen.dart';
 
 /// One conversation: the messages, the composer, and the way into voice mode.
@@ -120,6 +121,22 @@ class _ChatScreenState extends State<ChatScreen> {
         onPressed: _talk,
         // Core has no waveform glyph.
         icon: const Icon(Icons.graphic_eq),
+      ),
+      // A reply's text gives way to its UI as the UI arrives, rather than jumping. Only then:
+      // a reply that is only text grows as it streams, which an animation would hold back.
+      assistantMessage: (context, props) => SmoothSize(
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+        animates: props.message.uiDocument != null,
+        child: AIAssistantMessageView(
+          text: props.text,
+          isGenerating: props.isGenerating,
+          parts: props.parts,
+          attachments: props.attachments,
+          approver: props.approver,
+          reasoningText: props.message.reasoningText,
+          onAttachmentTap: props.onAttachmentTap,
+        ),
       ),
     ),
   );
@@ -246,18 +263,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     }
                     return false;
                   },
-                  child: BrandThemeScope(
-                    child: AIConversationView.conversation(
-                      conversation: _conversation,
-                      ui: _chat.ui,
-                      footer: _conversation.status.isAnswering && activity?.text != null
-                          ? AITypingIndicatorView(text: activity!.text!)
-                          : null,
-                      emptyContent: Padding(
-                        padding: EdgeInsets.only(bottom: _barHeight),
-                        child: const _Welcome(),
+                  child: AgentChatScope(
+                    chat: _chat,
+                    child: BrandThemeScope(
+                      child: AIConversationView.conversation(
+                        conversation: _conversation,
+                        ui: _chat.ui,
+                        footer: _conversation.status.isAnswering && activity?.text != null
+                            ? AITypingIndicatorView(text: activity!.text!)
+                            : null,
+                        emptyContent: Padding(
+                          padding: EdgeInsets.only(bottom: _barHeight),
+                          child: const _Welcome(),
+                        ),
+                        padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
                       ),
-                      padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
                     ),
                   ),
                 ),

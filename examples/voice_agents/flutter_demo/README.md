@@ -30,8 +30,8 @@ The iOS simulator reaches your Mac's localhost, and the Android emulator reaches
 `http://192.168.1.20:8080` and `http://192.168.1.20:8099`.
 
 The app depends on `sdks/dart/stream_agents` by path, so a change to the SDK shows up in the
-app without publishing it. Stream Chat's AI components come from `stream-chat-flutter-ai`'s
-`main`, pinned to a commit, until they are released. To try the app against a branch of them,
+app without publishing it. Stream Chat's AI components are `stream_chat_flutter_ai` 0.2.0 from
+pub.dev. To try the app against a branch of them,
 point it at a local checkout in a `pubspec_overrides.yaml` next to `pubspec.yaml`, which git
 ignores:
 
