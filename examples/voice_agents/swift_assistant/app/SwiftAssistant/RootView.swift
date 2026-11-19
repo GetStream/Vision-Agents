@@ -10,6 +10,8 @@ struct RootView: View {
     /// Which conversation the screen was opened for. It changes only when the person picks
     /// one, so a new conversation getting its session keeps the screen it was started on.
     @State private var screen = UUID()
+    /// Whether the new conversation open keeps nothing. Leaving it ends it for good.
+    @State private var isIncognito = false
 
     var body: some View {
         if Assistant.streamAPIKey.isEmpty {
@@ -30,7 +32,7 @@ struct RootView: View {
                 onNew: { show(nil) }, onOpen: { show($0.id) })
         } content: {
             NavigationStack {
-                ChatScreen(sessionID: selected) { started in
+                ChatScreen(sessionID: selected, isIncognito: isIncognito) { started in
                     selected = started
                 }
                 .id(screen)
@@ -44,6 +46,16 @@ struct RootView: View {
                             Image(systemName: "line.3.horizontal")
                         }
                         .accessibilityLabel("Conversations")
+                    }
+                    // Only a new chat can be incognito: one in the list is kept already.
+                    if selected == nil {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button(action: toggleIncognito) {
+                                Image(systemName: isIncognito ? "circle.dashed.inset.filled" : "circle.dashed")
+                            }
+                            .accessibilityLabel("Incognito chat")
+                            .accessibilityAddTraits(isIncognito ? .isSelected : [])
+                        }
                     }
                 }
             }
@@ -60,12 +72,21 @@ struct RootView: View {
     }
 
     private var title: String {
-        conversations.items.first { $0.id == selected }?.displayTitle ?? "Juno"
+        if isIncognito { return "Incognito chat" }
+        return conversations.items.first { $0.id == selected }?.displayTitle ?? "Juno"
     }
 
     private func show(_ sessionID: String?) {
         selected = sessionID
         screen = UUID()
         isMenuOpen = false
+        isIncognito = false
+    }
+
+    /// Starts a new chat that keeps nothing, or a kept one in place of it, ending the chat open.
+    private func toggleIncognito() {
+        isIncognito.toggle()
+        selected = nil
+        screen = UUID()
     }
 }

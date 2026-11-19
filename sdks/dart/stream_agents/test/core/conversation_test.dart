@@ -131,7 +131,7 @@ void main() {
           );
 
       expect(conversation.turns.single.ui?.isStreaming, isTrue);
-      expect(conversation.turns.single.ui?.content, '\$party = 2\nroot = Card([hdr])\n');
+      expect(conversation.turns.single.ui?.content, '\$party = 2\nroot = Card([hdr])');
 
       conversation = conversation
           .apply(
@@ -204,7 +204,7 @@ void main() {
         r'{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"$party = 4"}',
         r'{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"\nslot"}',
         '{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch",'
-            r'"delta":" = TextContent(\"19:30\")"}',
+            r'"delta":" = TextContent(\"19:30\")\n"}',
       ]) {
         live.value = live.value.apply(frame(json));
       }
@@ -213,6 +213,126 @@ void main() {
         live.value.turns.last.ui?.content,
         '\$party = 4\nslot = TextContent("19:30")\nroot = Card([slot])',
       );
+    });
+
+    test('a value shows once its line ends, never a gauge reading 8 before 86', () {
+      var conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+              r'"delta":"root = Card([gauge])\ngauge = Gauge(8"}',
+            ),
+          );
+      expect(conversation.turns.single.ui?.content, 'root = Card([gauge])');
+
+      conversation = conversation.apply(
+        frame('{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"6)"}'),
+      );
+      expect(conversation.turns.single.ui?.content, 'root = Card([gauge])');
+
+      conversation = conversation.apply(
+        frame(r'{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"\n"}'),
+      );
+      expect(conversation.turns.single.ui?.content, 'root = Card([gauge])\ngauge = Gauge(86)');
+      expect(conversation.turns.single.ui?.isStreaming, isTrue);
+    });
+
+    test('a statement over several lines shows once it closes', () {
+      var conversation = const Conversation().apply(
+        frame(
+          '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+          r'"delta":"root = Card([map])\n\n// the stops\nmap = TripMap([\n  {name: \"Kaneo\"},\n"}',
+        ),
+      );
+      expect(conversation.turns.single.ui?.content, 'root = Card([map])');
+
+      conversation = conversation.apply(
+        frame(r'{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"])\n"}'),
+      );
+      expect(
+        conversation.turns.single.ui?.content,
+        'root = Card([map])\nmap = TripMap([\n  {name: "Kaneo"},\n])',
+      );
+    });
+
+    test('a turn has no UI until one of its statements is finished', () {
+      var conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            frame('{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card(["}'),
+          );
+      expect(conversation.turns.single.ui, isNull);
+
+      conversation = conversation.apply(
+        frame(r'{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"hdr])\n"}'),
+      );
+      expect(conversation.turns.single.ui?.content, 'root = Card([hdr])');
+    });
+
+    test('a streaming patch merges only its finished statements onto the card before it', () {
+      var conversation = const Conversation()
+          .apply(
+            frame(
+              '{"type":"ui_completed","turn_id":"t1","format":"openui",'
+              r'"content":"$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}',
+            ),
+          )
+          .apply(frame('{"type":"responding","turn_id":"t2"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch",'
+              r'"delta":"$party = 4"}',
+            ),
+          );
+      // Nothing of the patch is finished: the new turn shows no UI, not the card before it.
+      expect(conversation.turns.last.ui, isNull);
+
+      conversation = conversation.apply(
+        frame(
+          '{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch",'
+          r'"delta":"\nhdr = CardHeader(\"Ka"}',
+        ),
+      );
+      expect(
+        conversation.turns.last.ui?.content,
+        '\$party = 4\nroot = Card([hdr])\nhdr = CardHeader("Kaneo")',
+      );
+    });
+
+    test('an interrupted turn settles its UI, its last statement shown once it closed', () {
+      // An interrupted reply never gets ui_completed: the router drops the block with the turn.
+      var conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+              r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}',
+            ),
+          );
+      expect(conversation.turns.single.ui?.content, 'root = Card([hdr])');
+
+      conversation = conversation.apply(frame('{"type":"interrupted","turn_id":"t1"}'));
+      expect(conversation.turns.single.ui?.status, 'complete');
+      expect(
+        conversation.turns.single.ui?.content,
+        'root = Card([hdr])\nhdr = CardHeader("Kaneo")',
+      );
+    });
+
+    test('a turn that ends in the middle of a statement settles without it', () {
+      final conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+              r'"delta":"root = Card([hdr, tip])\nhdr = CardHeader(\"Ka"}',
+            ),
+          )
+          .apply(frame('{"type":"responded","turn_id":"t1","text":""}'));
+
+      expect(conversation.turns.single.ui?.status, 'complete');
+      expect(conversation.turns.single.ui?.content, 'root = Card([hdr, tip])');
     });
 
     test('a task settling after the agent left keeps the conversation over', () {

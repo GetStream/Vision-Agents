@@ -121,6 +121,22 @@ func (s *OpenAISuite) TestGPT61SolRefusesMax() {
 	s.ErrorContains(err, "low, medium, high, xhigh")
 }
 
+func (s *OpenAISuite) TestGPT62SolAndAstraThinkFromLowToMax() {
+	for _, model := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
+		for _, effort := range []string{"none", "minimal"} {
+			_, err := New(Options{APIKey: "k", Model: model, ReasoningEffort: effort})
+			s.ErrorContains(err, "low, medium, high, xhigh, max", model)
+		}
+
+		provider, err := New(Options{APIKey: "k", Model: model})
+		s.Require().NoError(err)
+		s.Equal("low", provider.Capabilities().DefaultEffort,
+			"%s: a request naming no effort must not be sent the none it rejects", model)
+		s.Contains(provider.Capabilities().ReasoningEfforts, "max", model)
+		s.Contains(provider.Capabilities().InputModalities, "image", model)
+	}
+}
+
 func (s *OpenAISuite) TestAnImagePartIsSentAsInputImage() {
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)
