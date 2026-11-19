@@ -2555,7 +2555,7 @@ llm:
     # Index at 58 - at max effort. The provider sends no effort, so it thinks at the medium
     # effort it defaults to, where that index puts it at 51. Thinking is adaptive and cannot
     # be switched off, and it counts against max_output_tokens. Forced tool use is a 400 on
-    # this model, so a request with tool_choice required fails if it is routed here.
+    # this model, so the provider refuses tool_choice required before it goes out.
     #
     # Cache reads are 5% of input rather than the usual 10%, and five-minute cache writes
     # 125% (https://platform.claude.com/docs/en/about-claude/pricing).
@@ -2609,8 +2609,8 @@ llm:
     # Anthropic's middle model, second on the Artificial Analysis Intelligence Index at 56 -
     # at max effort. The provider sends no effort, so it thinks at the high effort it
     # defaults to, where that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.
-    # Forced tool use is a 400 on this model, so a request with tool_choice required fails
-    # if it is routed here.
+    # Forced tool use is a 400 on this model, so the provider refuses tool_choice required
+    # before it goes out.
     #
     # Cache reads are 5% of input since Anthropic halved them on 7 October 2026, and
     # five-minute cache writes 125%.

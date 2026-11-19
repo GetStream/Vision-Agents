@@ -93,8 +93,9 @@ func newMessages(options Options) (*LLM, error) {
 }
 
 // unforcedToolModels answer tool_choice any or tool with a 400, so a request that needs a
-// tool called is refused before it goes out rather than halfway through a call.
-var unforcedToolModels = []string{"claude-fable-5-2"}
+// tool called is refused before it goes out rather than halfway through a call. Checked live
+// on 19 November 2026; Haiku 5.5 still takes both.
+var unforcedToolModels = []string{"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"}
 
 // toolChoices are the tool choices a model honours, or nil for all of them.
 func toolChoices(model string) []string {
@@ -527,8 +528,8 @@ func (l *LLM) params(request llm.ResponseParams) anthropic.MessageNewParams {
 	case "none":
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}
 	case "required":
-		// Claude Opus 5.5 and Sonnet 5.5 answer this with a 400, which is still better than
-		// answering it as auto.
+		// The unforcedToolModels never get here: Validate refuses required for them, which is
+		// still better than answering it as auto.
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}
 	}
 
