@@ -15,42 +15,16 @@ const connectionsPage = 200
 // Connections are the accounts the app and its users hold at connectors, such as a user's
 // Linear: what an agent's tools reach that account through. Only a backend may ask.
 //
-// The user is named once, on the client: alice, err := api.ForUser("alice"), then
-// alice.Connections(). The user goes to the router as the owner and as X-Stream-User-Id alike,
-// so the two never differ. A user-owned connection is reached only while acting for that user;
-// an app-owned one is reached by every backend client, one acting for a user included. On a
-// client acting for nobody, Create and List are the app's own.
+// Every method takes the user as a parameter, named once per call. The user goes to the router
+// as the owner and as X-Stream-User-Id alike, so the two never differ. A user-owned connection
+// is reached only naming that user; an app-owned one is reached by every call of a backend,
+// one naming a user included. No user is the app's own connection.
 type Connections struct {
 	client *Client
 }
 
-// Connections is the connections resource of this client: Create and List are the user's this
-// client acts for (ForUser), or the app's own when it acts for nobody.
+// Connections is the app's and its users' connections.
 func (c *Client) Connections() *Connections { return &Connections{client: c} }
-
-// ForUser is a client that runs work for one end user while keeping the app's credential: a
-// backend's, so it is refused on a device client, which holds its user's token (SetUser).
-//
-// It returns a client rather than mutating this one, as SetUser does, so which user a request
-// was for never depends on when it happened to run. The new client carries none of this one's
-// team or usage categories: the user's work is not counted against them, as with SetUser.
-func (c *Client) ForUser(userID string) (*Client, error) {
-	if !c.ServerSide() {
-		return nil, errors.New("client: working for a user keeps the app's credential, which only a " +
-			"backend holds; a device holds its user's token (SetUser)")
-	}
-	if userID == "" {
-		return nil, errors.New("client: working for a user needs the user's id")
-	}
-	backend := c.backend
-	backend.ActingFor = userID
-	backend.Team, backend.UsageCategories = "", nil
-	resolved, err := backend.Resolve()
-	if err != nil {
-		return nil, err
-	}
-	return &Client{backend: resolved, watcher: c.watcher}, nil
-}
 
 // ConnectionRequest is a connection to create, pending until an account is connected.
 type ConnectionRequest struct {
@@ -58,16 +32,34 @@ type ConnectionRequest struct {
 	Connector string
 	// Label tells the owner's connections to the same connector apart. Empty is none.
 	Label string
+	// UserID is the app's user the connection is for. Empty is the app's own.
+	UserID string
 }
 
-// Create stores a pending connection to Connector, owned by the user this client acts for or
-// else by the app.
+// AuthorizeOptions is what starting a consent asks.
+type AuthorizeOptions struct {
+	// ReturnURL is the app's page the browser goes back to when the consent ends, with
+	// connection_id and status added to its query. Empty goes back to the dashboard.
+	ReturnURL string
+	// UserID is the user the connection belongs to. Empty is an app connection.
+	UserID string
+}
+
+// ConnectionFilter is which connections List reads.
+type ConnectionFilter struct {
+	// UserID reads that user's connections. Empty reads the app's own.
+	UserID string
+	// Connector keeps one connector's. Empty is every connector's.
+	Connector string
+}
+
+// Create stores a pending connection to Connector, owned by UserID or else by the app.
 func (c *Connections) Create(ctx context.Context, request ConnectionRequest) (acceleration.Connection, error) {
 	owner := acceleration.ConnectionOwner{Type: acceleration.ConnectionOwnerTypeApp}
-	if user := c.user(); user != "" {
-		owner = acceleration.ConnectionOwner{Type: acceleration.ConnectionOwnerTypeUser, UserId: &user}
+	if request.UserID != "" {
+		owner = acceleration.ConnectionOwner{Type: acceleration.ConnectionOwnerTypeUser, UserId: &request.UserID}
 	}
-	api, err := c.client.backend.Client()
+	api, err := c.api(request.UserID)
 	if err != nil {
 		return acceleration.Connection{}, err
 	}
@@ -85,18 +77,17 @@ func (c *Connections) Create(ctx context.Context, request ConnectionRequest) (ac
 }
 
 // Authorize starts the provider's consent for a connection: a first one for a pending
-// connection, a reconnect for one connected before. returnURL is the app's page the browser
-// goes back to when the consent ends, with connection_id and status added to its query; empty
-// goes back to the dashboard. Open the LaunchUrl it returns in a popup from a page of
-// returnURL's origin and post it the HandoffToken; the attempt ends at ExpiresAt.
-func (c *Connections) Authorize(ctx context.Context, id, returnURL string) (acceleration.Authorization, error) {
-	api, err := c.reach(id)
+// connection, a reconnect for one connected before. Open the LaunchUrl it returns in a popup
+// from a page of ReturnURL's origin and post it the HandoffToken; the attempt ends at
+// ExpiresAt.
+func (c *Connections) Authorize(ctx context.Context, id string, options AuthorizeOptions) (acceleration.Authorization, error) {
+	api, err := c.reach(id, options.UserID)
 	if err != nil {
 		return acceleration.Authorization{}, err
 	}
 	what := "authorizing the connection " + id
 	started, err := api.CreateAuthorizationWithResponse(ctx, id, acceleration.AuthorizationRequest{
-		ReturnUrl: pointer(returnURL),
+		ReturnUrl: pointer(options.ReturnURL),
 	})
 	if err != nil {
 		return acceleration.Authorization{}, fmt.Errorf("client: %s: %w", what, err)
@@ -107,11 +98,10 @@ func (c *Connections) Authorize(ctx context.Context, id, returnURL string) (acce
 	return *started.JSON201, nil
 }
 
-// Get is one connection. An app's is reached by every backend client; a user's only while
-// acting for that user, and for anybody else it is not found, the same as one that does not
-// exist.
-func (c *Connections) Get(ctx context.Context, id string) (acceleration.Connection, error) {
-	api, err := c.reach(id)
+// Get is one connection of userID's, or of the app's when userID is empty. Another user's is not
+// found, the same as one that does not exist. An app's is reached with any user named too.
+func (c *Connections) Get(ctx context.Context, id, userID string) (acceleration.Connection, error) {
+	api, err := c.reach(id, userID)
 	if err != nil {
 		return acceleration.Connection{}, err
 	}
@@ -126,18 +116,17 @@ func (c *Connections) Get(ctx context.Context, id string) (acceleration.Connecti
 	return *got.JSON200, nil
 }
 
-// List is every connection of the user this client acts for (only theirs, not the app's), or of
-// the app's when it acts for nobody, newest first,
-// read page by page. connector keeps one connector's; empty is every connector's.
-func (c *Connections) List(ctx context.Context, connector string) ([]acceleration.Connection, error) {
+// List is every connection the filter matches, newest first, read page by page. With a UserID it
+// holds only that user's connections, not the app's.
+func (c *Connections) List(ctx context.Context, filter ConnectionFilter) ([]acceleration.Connection, error) {
 	owner := acceleration.ConnectionOwnerTypeApp
-	if c.user() != "" {
+	if filter.UserID != "" {
 		owner = acceleration.ConnectionOwnerTypeUser
 	}
 	params := acceleration.ListConnectionsParams{
-		OwnerType: &owner, ConnectorId: pointer(connector), Limit: pointer(int64(connectionsPage)),
+		OwnerType: &owner, ConnectorId: pointer(filter.Connector), Limit: pointer(int64(connectionsPage)),
 	}
-	api, err := c.client.backend.Client()
+	api, err := c.api(filter.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,10 +149,10 @@ func (c *Connections) List(ctx context.Context, connector string) ([]acceleratio
 	}
 }
 
-// Delete disconnects a connection of the user this client acts for, or of the app's, and drops
+// Delete disconnects a connection of userID's, or of the app's when userID is empty, and drops
 // its credentials. One an agent config binds as its fixed connection is refused with a 409.
-func (c *Connections) Delete(ctx context.Context, id string) error {
-	api, err := c.reach(id)
+func (c *Connections) Delete(ctx context.Context, id, userID string) error {
+	api, err := c.reach(id, userID)
 	if err != nil {
 		return err
 	}
@@ -180,13 +169,17 @@ func (c *Connections) Delete(ctx context.Context, id string) error {
 
 // reach is the generated client for one connection's requests. An empty id is refused before
 // anything is sent: it would ask for /v1/agents/connections/, which names no connection.
-func (c *Connections) reach(id string) (*acceleration.ClientWithResponses, error) {
+func (c *Connections) reach(id, userID string) (*acceleration.ClientWithResponses, error) {
 	if id == "" {
 		return nil, errors.New("client: a connection needs its id")
 	}
-	return c.client.backend.Client()
+	return c.api(userID)
 }
 
-// user is who the connections are for, sent as X-Stream-User-Id by the generated client from
-// the same value: empty is the app.
-func (c *Connections) user() string { return c.client.backend.ActingFor }
+// api is the generated client acting for userID, or for nobody when userID is empty, whoever this
+// client acts for otherwise.
+func (c *Connections) api(userID string) (*acceleration.ClientWithResponses, error) {
+	backend := c.client.backend
+	backend.ActingFor = userID
+	return backend.Client()
+}
