@@ -28,7 +28,7 @@ func (s *HostedCallSuite) answer(photograph func(context.Context, struct{}) (any
 	functions := tools.NewRegistry()
 	s.Require().NoError(tools.Register(functions, "photograph_room", "Photograph the room", photograph))
 	worker := waiting(s.T(), router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 	ctx, cancel := context.WithCancel(s.T().Context())
 	stopped := run(s.T(), ctx, worker)
 	s.T().Cleanup(func() {
@@ -46,7 +46,7 @@ func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
 		tools.Interruptible(true), tools.Timeout(90*time.Second), tools.NeedsApproval("Read the SDK source?")))
 	s.Require().NoError(tools.Register(functions, "search_docs", "Search the docs", noop))
 	worker := waiting(s.T(), router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 	ctx, cancel := context.WithCancel(s.T().Context())
 	stopped := run(s.T(), ctx, worker)
 	defer func() {
@@ -69,7 +69,7 @@ func (s *HostedCallSuite) TestAWorkerDeclaresEachToolsPolicies() {
 	s.NotContains(byName["search_docs"], "approval")
 }
 
-func (s *HostedCallSuite) TestOneRegistryHostedForTwoAgentsIsDeclaredForEachAndAnswersBoth() {
+func (s *HostedCallSuite) TestTheAppsToolsAreHostedOnceForEveryAgentAndAnswerAnySession() {
 	router := newPool(s.T(), func(connection *websocket.Conn) {
 		_ = connection.WriteJSON(Frame{"type": "tool_call", "id": "call-1", "session_id": "sales-session", "name": "lookup_order", "arguments": "{}"})
 		_ = connection.WriteJSON(Frame{"type": "tool_call", "id": "call-2", "session_id": "support-session", "name": "lookup_order", "arguments": "{}"})
@@ -79,8 +79,7 @@ func (s *HostedCallSuite) TestOneRegistryHostedForTwoAgentsIsDeclaredForEachAndA
 		return "shipped for " + tools.ToolCallContextFrom(ctx).SessionID, nil
 	}))
 	worker := waiting(s.T(), router, DispatchOptions{})
-	worker.Host(hostedAgent{"sales", functions}, time.Minute)
-	worker.Host(hostedAgent{"support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 	ctx, cancel := context.WithCancel(s.T().Context())
 	stopped := run(s.T(), ctx, worker)
 	defer func() {
@@ -88,18 +87,15 @@ func (s *HostedCallSuite) TestOneRegistryHostedForTwoAgentsIsDeclaredForEachAndA
 		stopped()
 	}()
 
-	hostedFor := map[string]string{}
-	for range 2 {
-		declared := router.told(s.T(), "host_tools")
-		hostedFor[declared.String("agent_id")] = declared["tools"].([]any)[0].(map[string]any)["name"].(string)
-	}
+	declared := router.told(s.T(), "host_tools")
+	s.Equal(true, declared["every_agent"])
+	s.NotContains(declared, "agent_id")
 	answers := map[string]string{}
 	for range 2 {
 		answered := router.told(s.T(), "tool_result")
 		answers[answered.String("tool_call_id")] = answered.String("output")
 	}
 
-	s.Equal(map[string]string{"sales": "lookup_order", "support": "lookup_order"}, hostedFor)
 	s.Equal(map[string]string{"call-1": "shipped for sales-session", "call-2": "shipped for support-session"}, answers)
 }
 
@@ -118,7 +114,7 @@ func (s *HostedCallSuite) TestAFunctionReadsTheCallItIsRunningFor() {
 		return "the kitchen", nil
 	}))
 	worker := waiting(s.T(), router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 	ctx, cancel := context.WithCancel(s.T().Context())
 	stopped := run(s.T(), ctx, worker)
 	defer func() {
@@ -185,7 +181,7 @@ func (s *HostedCallSuite) TestAHostedFunctionHoldsItsWrite() {
 		return "rebooked", nil
 	}))
 	worker := waiting(s.T(), router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 	ctx, cancel := context.WithCancel(s.T().Context())
 	stopped := run(s.T(), ctx, worker)
 	defer func() {

@@ -81,8 +81,8 @@ type SessionOptions struct {
 	// leaves the user's stored zone, then the agent's default, to decide.
 	Timezone string
 
-	// Tools are the caller's own, for this conversation only. Nil uses the agent's, which is
-	// the usual arrangement.
+	// Tools are the caller's own, for this conversation only, run in this process. The app's
+	// tools (Client.Tools) reach a conversation through RunDispatch instead.
 	Tools *tools.Registry
 	// Logger is where the session reports what it could not do. Nil uses the default.
 	Logger *slog.Logger
@@ -162,9 +162,6 @@ type Sessions struct {
 // conversation somebody comes back to usually is.
 func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session, error) {
 	functions := options.Tools
-	if functions == nil {
-		functions = s.agent.tools
-	}
 
 	// The pipeline is what holds the socket and runs the caller's functions, so this builds
 	// one rather than opening a second socket of its own. What differs between the two
@@ -193,15 +190,14 @@ type ResumeOptions struct {
 
 // Resume carries on a conversation held in writing, by the id of the session it was held
 // in, and starts watching it. One that ended is reopened with what was said in it, the tools
-// its caller declared and the tool timeout it ran with. The agent's functions, when it has
-// any, are declared in place of those tools; a conversation still running keeps its tools
-// until it ends. At most one ResumeOptions is read.
+// its caller declared and the tool timeout it ran with; a conversation still running keeps
+// its tools until it ends. At most one ResumeOptions is read.
 func (s *Sessions) Resume(ctx context.Context, id string, options ...ResumeOptions) (*Session, error) {
 	var chosen ResumeOptions
 	if len(options) > 0 {
 		chosen = options[0]
 	}
-	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend, Functions: s.agent.tools})
+	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend})
 	got, err := pipeline.Resume(ctx, id, chosen.ToolTimeout)
 	if err != nil {
 		return nil, err

@@ -1955,29 +1955,6 @@ func TestAResumesToolTimeoutGoesOverInMilliseconds(t *testing.T) {
 	}
 }
 
-func TestAResumeDeclaresTheAgentsFunctions(t *testing.T) {
-	backend := newRouter(t)
-	agent := backend.client(t).Agent("docs")
-	if err := register(agent.Tools(), "get_weather"); err != nil {
-		t.Fatal(err)
-	}
-
-	resumed, err := agent.Sessions.Resume(t.Context(), "session-7")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resumed.Close(t.Context())
-
-	body := backend.body(t, "POST", "/v1/agents/sessions/session-7/resume")
-	declared, _ := body["tools"].([]any)
-	if len(declared) != 1 || declared[0].(map[string]any)["name"] != "get_weather" {
-		t.Errorf("tools went over as %v", body["tools"])
-	}
-	if _, sent := body["tool_timeout_ms"]; sent {
-		t.Errorf("tool_timeout_ms went over as %v though none was given", body["tool_timeout_ms"])
-	}
-}
-
 func TestAResumeWithNothingToSayReadsTheConversationAsItIs(t *testing.T) {
 	// A timeout under a millisecond would go over as zero, 30 seconds, not what it ran with.
 	backend := newRouter(t)
@@ -2015,11 +1992,12 @@ func TestForkingWithoutMessagesSaysSo(t *testing.T) {
 func TestAForkInheritsTheParentsFunctions(t *testing.T) {
 	backend := newRouter(t)
 	agent := backend.client(t).Agent("docs")
-	if err := register(agent.Tools(), "get_weather"); err != nil {
+	own := tools.NewRegistry()
+	if err := register(own, "get_weather"); err != nil {
 		t.Fatal(err)
 	}
 
-	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{Tools: own})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2060,12 +2038,13 @@ func (s *SessionToolsSuite) TestAForkRunsTheToolsTheSessionHasNow() {
 	}}
 	agent := s.backend.client(s.T()).Agent("docs")
 	var withdrawnRan atomic.Bool
-	s.Require().NoError(tools.Register(agent.Tools(), "get_weather", "What the weather is",
+	own := tools.NewRegistry()
+	s.Require().NoError(tools.Register(own, "get_weather", "What the weather is",
 		func(context.Context, struct{}) (any, error) {
 			withdrawnRan.Store(true)
 			return "raining", nil
 		}))
-	session, err := agent.Sessions.Create(s.T().Context(), SessionOptions{})
+	session, err := agent.Sessions.Create(s.T().Context(), SessionOptions{Tools: own})
 	s.Require().NoError(err)
 	defer session.Close(s.T().Context())
 	added := tools.NewRegistry()
@@ -2087,14 +2066,20 @@ func (s *SessionToolsSuite) TestAForkRunsTheToolsTheSessionHasNow() {
 	s.False(withdrawnRan.Load(), "the fork ran a tool the session had withdrawn")
 }
 
-func TestTheModelIsOfferedTheAgentsFunctions(t *testing.T) {
+func TestAConversationDeclaresItsOwnToolsAndNotTheApps(t *testing.T) {
+	// The app's tools are for every agent: declared on a session, the ones its agent's
+	// tool groups do not name would have the router refuse it.
 	backend := newRouter(t)
-	agent := backend.client(t).Agent("docs")
-	if err := register(agent.Tools(), "get_weather"); err != nil {
+	api := backend.client(t)
+	if err := register(api.Tools(), "get_weather"); err != nil {
+		t.Fatal(err)
+	}
+	own := tools.NewRegistry()
+	if err := register(own, "book_table"); err != nil {
 		t.Fatal(err)
 	}
 
-	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	session, err := api.Agent("docs").Sessions.Create(t.Context(), SessionOptions{Tools: own})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2104,7 +2089,7 @@ func TestTheModelIsOfferedTheAgentsFunctions(t *testing.T) {
 	if len(declared) != 1 {
 		t.Fatalf("the session declared %v", declared)
 	}
-	if tool, _ := declared[0].(map[string]any); tool["name"] != "get_weather" {
+	if tool, _ := declared[0].(map[string]any); tool["name"] != "book_table" {
 		t.Errorf("the declared tool is %v", declared[0])
 	}
 }

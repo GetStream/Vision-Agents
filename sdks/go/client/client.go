@@ -40,6 +40,8 @@ type Client struct {
 	backend stream.Backend
 	// watcher reads what every answer says about money (WithUsage, WithBalanceWarning).
 	watcher *watcher
+	// tools are the app's, registered once for every agent and run by RunDispatch.
+	tools *tools.Registry
 
 	// mu guards the Stream client, which is built on the first conversation that asks for
 	// chat or video and shared by every one after it.
@@ -71,10 +73,10 @@ func New(backend stream.Backend, options ...Option) (*Client, error) {
 	// Only the transport the first client set is recognised: one wrapped again around it,
 	// for tracing say, is read twice.
 	if heard := heardBy(resolved.HTTPClient); heard != nil && watching.usage == nil && watching.warned == nil {
-		return &Client{backend: resolved, watcher: heard}, nil
+		return &Client{backend: resolved, watcher: heard, tools: tools.NewRegistry()}, nil
 	}
 	resolved.HTTPClient = watching.transport(resolved.HTTPClient)
-	return &Client{backend: resolved, watcher: watching}, nil
+	return &Client{backend: resolved, watcher: watching, tools: tools.NewRegistry()}, nil
 }
 
 // SetUser says who this client is acting for, and hands over the token that proves it.
@@ -100,7 +102,7 @@ func (c *Client) SetUser(userID, token string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{backend: resolved, watcher: c.watcher}, nil
+	return &Client{backend: resolved, watcher: c.watcher, tools: c.tools}, nil
 }
 
 // ServerSide says whether this client speaks for the app itself rather than for one user.
@@ -115,13 +117,33 @@ func (c *Client) ServerSide() bool { return c.backend.UserID == "" }
 // No request is made: this is the name in a wrapper, and a name that matches nothing
 // configured is refused when a conversation is opened rather than here.
 func (c *Client) Agent(name string) *Agent {
-	agent := &Agent{client: c, name: name, tools: tools.NewRegistry()}
+	agent := &Agent{client: c, name: name}
 	agent.Sessions = &Sessions{client: c, agent: agent}
 	return agent
 }
 
 // Backend is where this client points, for the parts of the SDK that take one directly.
 func (c *Client) Backend() stream.Backend { return c.backend }
+
+// Tools are the app's tools, registered once for every agent. An agent is offered one only
+// when a tool group of its agent.yaml names it, and its calls run wherever RunDispatch is
+// running:
+//
+//	api.Tools().Add(GetWeather{})
+//	err := api.RunDispatch(ctx)
+func (c *Client) Tools() *tools.Registry { return c.tools }
+
+// RunDispatch runs the app's tools for every session they are offered to, whoever opened it,
+// until ctx is done. A tool's own timeout (tools.Timeout) is how long the router waits for
+// one of its calls; without one it waits 30 seconds.
+func (c *Client) RunDispatch(ctx context.Context) error {
+	dispatch, err := stream.NewDispatch(stream.DispatchOptions{Backend: c.backend})
+	if err != nil {
+		return err
+	}
+	dispatch.Host(c, 0)
+	return dispatch.Run(ctx)
+}
 
 // api is the generated client, carrying this client's credentials.
 func (c *Client) api() (*acceleration.ClientWithResponses, error) {
@@ -168,21 +190,10 @@ type Agent struct {
 
 	client *Client
 	name   string
-	// tools are the caller's own, offered by every conversation this agent opens. Held on
-	// the agent rather than per session because a tool added once should not have to be
-	// added again for the next conversation.
-	tools *tools.Registry
 }
 
 // Name is what the agent is called, which is what a caller knows it as.
 func (a *Agent) Name() string { return a.name }
-
-// Tools are the ones this agent's conversations offer the model, to add to, and what a
-// dispatch worker runs for every session of this agent once it hosts them with
-// dispatch.Host(agent, timeout):
-//
-//	agent.Tools().Add(GetWeather{})
-func (a *Agent) Tools() *tools.Registry { return a.tools }
 
 // Config is how the agent is configured, as the backend has it, or nil for a name nothing is
 // stored under.
