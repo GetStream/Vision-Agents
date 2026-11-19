@@ -37,10 +37,11 @@ Open `https://local.getstream.io:3011/organization/<orgId>/<appId>/agents/` (not
 the dev proxy sets, with Volt's
 CORS origin. Rebuild the router after pulling router changes.
 
-Set `ROUTER_AUTH_KEK` (single-quoted) and `ROUTER_PUBLIC_URL=http://localhost:8080` in the
+Set `ROUTER_DEV_KEK` (single-quoted) and `ROUTER_PUBLIC_URL=http://localhost:8080` in the
 repo-root `.env`, which compose hands the router. Without the KEK no plugin client secret can be
-saved, and changing it leaves the stored ones unreadable. Local dev keeps the plain KEK: Cloud KMS
-(`ROUTER_AUTH_KMS_KEY`) is for hosted deployments.
+saved, and changing it leaves the stored ones unreadable. Local dev keeps the plain KEK in
+`ROUTER_DEV_KEK`: Cloud KMS (`ROUTER_AUTH_KMS_KEY`) is for hosted deployments, and the router
+refuses the two together. An `.env` that still sets `ROUTER_AUTH_KEK` is refused: rename it.
 
 ## How Agents is wired
 

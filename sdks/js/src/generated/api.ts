@@ -149,7 +149,7 @@ export type paths = {
          * Route one modality over a socket, for a pipeline running elsewhere
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
-         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. A response the prompt injection screen refused fails with an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
+         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. A model that refuses the session part way through hands it to the next model routed for it, which is announced with another `started` frame naming its `provider` and `model`; what the refusing model had not transcribed yet is lost. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature, and may replay their thinking as `reasoning: [{text, signature, redacted, after_tool_calls, after_text}]`, the list a `complete` that did not fail reported, unchanged: a provider that signs its thinking (Anthropic) is sent each block again where it stood, after `after_tool_calls` of the turn's tool calls and, before the first of them, after `after_text` bytes (UTF-8) of its text; every other provider ignores it. A position the turn does not have, or out of order, is refused. Send the blocks with what came before them unchanged too (the same instructions, tools and earlier messages, new turns only appended): when that changed, Claude may refuse the request or answer with the block's stale reasoning. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields. A provider that signs its thinking also sends a `reasoning` frame `{id, block}` as each block finishes, between the `delta`s of the text around it, for display: replay only what `complete` reports, which leaves out a failed response's blocks and any block a replay could not put back exactly (one after a tool call when text follows a call, one after a call dropped for arguments that do not parse, one after two texts with no thinking between them, and every block after those). A `complete`'s incomplete status additionally reports `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. A response the prompt injection screen refused fails with an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
          *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`. A refusal about money also carries `code` and `error_type`, as an HTTP request is refused: `account_suspended` (`permission`) for any model, and `insufficient_credits`, `system_limit_reached` or `spend_limit_reached` (`payment_required`) for a model that costs money, while one that costs nothing is still served; the socket then closes with 1008.
          *     A server-side caller is told what each unit cost and when its organization's credit runs low; an end user's device is told neither. A settled `transcript`, a `synthesis_complete` and a `complete` carry `cost_micros`, what that turn, utterance or response cost in millionths of a dollar. What is recorded as the socket closes, such as a transcriber's last audio or a voice's failed utterance, comes on no frame. A `balance` frame, with `balance_micros` and `warning` (`low` or `exhausted`), says the organization's balance went down into that state while the socket was open, the values X-Stream-Balance-Micros and X-Stream-Balance-Warning carry on an answer: once per crossing, and at once after `started` when it already is.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
@@ -2091,7 +2091,7 @@ export type paths = {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a line the agent says as written rather than asking the model, such as its greeting, with the purpose it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for an utterance reported before the track got to it, how long after at it is expected to be heard, from the speech queued ahead of it, and message_start and message_end, where that text is in the reply's Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of and sentences held back are in one and not the other; a streaming voice's grows as it is sent more), `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `reasoning_delta` (turn_id and text: the next piece of the model's thinking on a written reply, never spoken), `responded` (pending_work remains true while tools or delegated work are outstanding), `said` (a line the agent says as written rather than asking the model, such as its greeting, with the purpose it has), `speaking` (an utterance started being heard: turn_id, synthesis_id, the text the voice had been sent for it by then, at, when the call's track took its first audible frame, and delay_ms, for an utterance reported before the track got to it, how long after at it is expected to be heard, from the speech queued ahead of it, and message_start and message_end, where that text is in the reply's Chat message, whose text is not the voice's: directions a voice acts, digits it is told the count of and sentences held back are in one and not the other; a streaming voice's grows as it is sent more), `spoke` (an utterance finished being synthesised: turn_id, synthesis_id, characters (Unicode code points, as every character count on this socket is), audio_duration_ms, time_to_first_byte_ms, and message_start and message_end for all of it; it follows the utterance's `speaking`), `turn`, `decision`, `delegated`, `task_settled` (files lists what the work's code handed back, each a name, mime_type, url and size, uploaded to a persistent conversation's channel and attached to the reply), `task_cancelled`, `tool_call`, `tool_held`, `tool_approval_ignored`, `tool_updated`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted` (turn_id; with synthesis_id, heard_ms, message_start and message_end, the utterance being heard when it was cut, how many milliseconds of it had been, and where all it had been sent is in the reply's message, when any of it had), `overlap_decided`, `conversation_compacted`, `models_changed`, `error` and `left`.
          *     An `error` frame for a turn the prompt injection screen refused carries `code` `prompt_injection`, and the turn's `responded` has empty text: what streamed before the verdict is not the answer.
          *     message_start and message_end are offsets in Unicode code points into the text of the Chat message the reply is written into, the one whose turn_id names the turn, from message_start up to message_end. They are left out where the router does not know them.
          *     `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
@@ -4906,6 +4906,8 @@ export type components = {
             };
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description Absent when the agent is taught no UI. */
+            readonly ui_instructions?: string;
             /** Format: date-time */
             readonly updated_at: string;
             readonly video?: components["schemas"]["SessionVideo"];
@@ -4984,6 +4986,8 @@ export type components = {
             };
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description What teaches the agent's model to answer with UI. An empty string removes them. */
+            readonly ui_instructions?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search. */
             readonly visible_tools?: readonly string[];
@@ -5074,6 +5078,8 @@ export type components = {
             /** @description How the agent is offered its connector tools. Left out on an update, the stored settings stay. */
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description What teaches the agent's model to answer with UI, such as the section the SDK compiles from agent.yaml's ui key. Every session is told them after the instructions, unless it was opened with ui false. Empty teaches none. Left out on an update, the stored ones stay. */
+            readonly ui_instructions?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {"status":"answered","citations":[{"id","title","url","citation"}]} also adds those citations to the reply's sources. Empty shows search and web_search. */
             readonly visible_tools?: readonly string[];
@@ -7042,6 +7048,8 @@ export type components = {
             readonly tools?: readonly components["schemas"]["SessionTool"][];
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             readonly tts?: string;
+            /** @description Whether the model is told its config's ui_instructions in this session. Left out or true, it is told them after the instructions; false leaves them out, for a client that shows no UI. It is no filter: instructions that teach UI themselves still do, and a UI block the model writes is still split off the reply. Reopening or forking the session keeps it. A device may send it, since it only chooses whether to use what the agent's owner wrote. */
+            readonly ui?: boolean;
             /**
              * @description The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
              * @default vision-agent
@@ -7432,6 +7440,36 @@ export type components = {
             /** @description Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
             readonly url: string;
         };
+        readonly FloorCheck: {
+            /** @description Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced. */
+            readonly acted: boolean;
+            /**
+             * Format: date-time
+             * @description When the check was asked.
+             */
+            readonly at: string;
+            readonly kind: components["schemas"]["FloorCheckKind"];
+            /**
+             * Format: double
+             * @description The round trip to the chorus-asr server.
+             */
+            readonly latency_ms: number;
+            /** @description The probability of each answer, in the order the model was offered them: respond, wait, clarify and ignore at a pause; stop, shorten, continue and ignore over the agent; then cannot and each of the agent's tools, those of at least 0.01. Absent from a server that does not report them. */
+            readonly options?: readonly components["schemas"]["FloorOption"][];
+            /**
+             * Format: double
+             * @description How far into the caller's pause the check was asked. Absent for a check asked while they talked on over the agent.
+             */
+            readonly paused_ms?: number;
+            /** @description The end-of-turn point or preset the check was read by. Absent over the agent, where there is no bar. */
+            readonly point?: string;
+            readonly ruling: components["schemas"]["FloorRuling"];
+        };
+        /**
+         * @description What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.
+         * @enum {string}
+         */
+        readonly FloorCheckKind: "pause" | "over_agent";
         /** @description The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole. */
         readonly FloorControl: {
             /**
@@ -7445,6 +7483,21 @@ export type components = {
              * @example stream/chorus-asr
              */
             readonly model?: string;
+        };
+        readonly FloorOption: {
+            readonly option: string;
+            /** Format: double */
+            readonly probability: number;
+        };
+        readonly FloorRuling: {
+            /** @description The caller wants something none of the agent's tools can do. */
+            readonly cannot?: boolean;
+            /** @description respond, wait, clarify or ignore. */
+            readonly disposition: string;
+            /** @description stop, shorten or continue over the agent; at a pause, who has the floor once the turn has ended. */
+            readonly floor: string;
+            /** @description The tool the caller wants. */
+            readonly tool?: string;
         };
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
@@ -10630,6 +10683,8 @@ export type components = {
             /** @description How connector tools are offered. A setting left out keeps what is stored. */
             readonly tools?: components["schemas"]["AgentTools"];
             readonly tts?: string;
+            /** @description What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none. */
+            readonly ui_instructions?: string;
             readonly video?: components["schemas"]["SessionVideo"];
             /** @description The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead. */
             readonly voice?: string;
@@ -10773,6 +10828,8 @@ export type components = {
              * @description Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it.
              */
             readonly first_frame_queued_ms?: number | null;
+            /** @description The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control. */
+            readonly floor_checks?: readonly components["schemas"]["FloorCheck"][];
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */

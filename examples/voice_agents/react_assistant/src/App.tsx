@@ -10,12 +10,13 @@ import { approverFor, ChatView } from "./ChatView";
 import { ConversationList, SidebarRail } from "./ConversationList";
 import { Conversations, displayTitle, type SessionRow } from "./conversations";
 import { messageOf } from "./errors";
-import { ReplyFormatMenu } from "./ReplyFormatMenu";
+import { cardsInNewConversations, ReplyFormatMenu } from "./ReplyFormatMenu";
 import { deviceTools } from "./deviceTools";
-import { MenuIcon, NewChatIcon } from "./icons";
+import { IncognitoIcon, MenuIcon, NewChatIcon } from "./icons";
 import { useMediaQuery, useStoredFlag, useTheme, WIDE } from "./layout";
 import { scheduleReminders } from "./reminders";
 import { useStore } from "./store";
+import { ChatScreenContext } from "./tripComponents";
 import { VoiceMode } from "./VoiceMode";
 
 /**
@@ -59,7 +60,11 @@ export function App() {
 
 function Assistant_() {
   const conversations = useMemo(() => new Conversations(), []);
-  const deps = useMemo(() => screenDeps(deviceTools()), []);
+  const tools = useMemo(() => deviceTools(), []);
+  const deps = useMemo(() => screenDeps(tools, false), [tools]);
+  // An incognito chat's session keeps nothing, so it is never listed, linked to or carried on.
+  const incognitoDeps = useMemo(() => screenDeps(tools, true), [tools]);
+  const [isIncognito, setIncognito] = useState(false);
   // A wide window keeps the conversations beside the chat, folded to a rail when the person
   // chooses; a narrow one slides them over it from the menu button, as the phones do.
   const isWide = useMediaQuery(WIDE);
@@ -133,9 +138,21 @@ function Assistant_() {
   const open = (sessionId: string | undefined) => {
     screen.leave();
     setSelected(sessionId);
+    setIncognito(false);
     const row = items.find((each) => each.id === sessionId);
     setScreen(new ChatScreen(sessionId, deps, started, row?.conversation_id ?? undefined));
     setMenuOpen(false);
+  };
+
+  /**
+   * Starts a new chat that is kept nowhere, or leaves one for a new ordinary chat. What the
+   * incognito chat said is gone once it is left.
+   */
+  const toggleIncognito = () => {
+    screen.leave();
+    const incognito = !isIncognito;
+    setIncognito(incognito);
+    setScreen(incognito ? new ChatScreen(undefined, incognitoDeps, () => undefined) : new ChatScreen(undefined, deps, started));
   };
 
   /**
@@ -211,19 +228,35 @@ function Assistant_() {
               <MenuIcon />
             </button>
           )}
-          <h1>{title ? displayTitle(title) : "Juno"}</h1>
+          <h1>{isIncognito ? "Incognito chat" : title ? displayTitle(title) : "Juno"}</h1>
           {!isWide && (
             <button aria-label="New chat" className="icon-button" onClick={() => show(undefined)} type="button">
               <NewChatIcon />
             </button>
           )}
+          {/* Offered on a new chat, as an incognito one is: a kept conversation can't become one. */}
+          {selected === undefined && (
+            <button
+              aria-label="Incognito chat"
+              aria-pressed={isIncognito}
+              className="icon-button"
+              onClick={toggleIncognito}
+              title={isIncognito ? "Leave incognito" : "Incognito chat: not saved, nothing remembered"}
+              type="button"
+            >
+              <IncognitoIcon />
+            </button>
+          )}
           <ReplyFormatMenu />
         </header>
         <main className="content">
-          <ChatView key={String(screenKey(screen))} screen={screen} />
-          {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
-              Picking another conversation in the sidebar hangs up, as leaving this one does. */}
-          {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
+          {/* A card the agent shows, in writing or on the call, can give the conversation's session a tool. */}
+          <ChatScreenContext value={screen}>
+            <ChatView incognito={isIncognito} key={String(screenKey(screen))} screen={screen} />
+            {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
+                Picking another conversation in the sidebar hangs up, as leaving this one does. */}
+            {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
+          </ChatScreenContext>
         </main>
       </div>
     </div>
@@ -233,8 +266,9 @@ function Assistant_() {
 /**
  * What every screen does with the router: carry a conversation on, or start one on the chat
  * model with sign-ins coming back here, with the page's tools; delete one; and join its call.
+ * An `incognito` one is started keeping nothing: no channel, no transcript, no memories.
  */
-function screenDeps(tools: Tools): ChatScreenDeps {
+function screenDeps(tools: Tools, incognito: boolean): ChatScreenDeps {
   // A conversation being opened is read from the router once, by whichever of carrying it on and
   // reading its messages asks first, and forgotten once it is open.
   const reading = new Map<string, Promise<SessionRow>>();
@@ -255,6 +289,9 @@ function screenDeps(tools: Tools): ChatScreenDeps {
           modelOverwrites: { llm: Assistant.chatModel },
           returnUrl: Assistant.returnUrl,
           tools,
+          ...(incognito ? { incognito } : {}),
+          // Off leaves the UI instructions the backend chose out of this conversation.
+          ...(cardsInNewConversations() ? {} : { ui: false }),
         });
       }
       try {

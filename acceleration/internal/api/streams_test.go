@@ -21,6 +21,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -1073,4 +1074,55 @@ func (s *StreamsSuite) until(connection *websocket.Conn, kind string) frame {
 	}
 	s.FailNow("no " + kind + " frame arrived")
 	return nil
+}
+
+// TestThinkingComesBackToTheModelWhereItWasWritten is the round trip a caller of a model that
+// signs its thinking makes: each block as it finishes and again on complete, then all of them
+// sent back with the turn, which the model is handed in place.
+func (s *StreamsSuite) TestThinkingComesBackToTheModelWhereItWasWritten() {
+	answering := s.start("/v1/llm/stream", frame{"target": "thinking/thinking-model"})
+	started := s.nextFrame(answering)
+	s.Require().Equal("started", started["type"], started)
+
+	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r1",
+		"messages": []frame{{"role": "user", "content": "find roses"}}}))
+	var order []any
+	var complete frame
+	for complete == nil {
+		switch got := s.nextFrame(answering); got["type"] {
+		case "delta":
+			order = append(order, got["text"])
+		case "reasoning":
+			s.Equal("r1", got["id"])
+			order = append(order, got["block"])
+		case "complete":
+			complete = got
+		}
+	}
+	s.Equal([]any{
+		map[string]any{"text": "plan", "signature": "sig-1"},
+		"Looking.",
+		map[string]any{"signature": "sig-2", "after_text": float64(len("Looking."))},
+		map[string]any{"redacted": "enc-1", "after_tool_calls": float64(1)},
+	}, order, "each block arrives where it was written")
+	s.Equal([]any{
+		map[string]any{"text": "plan", "signature": "sig-1"},
+		map[string]any{"signature": "sig-2", "after_text": float64(len("Looking."))},
+		map[string]any{"redacted": "enc-1", "after_tool_calls": float64(1)},
+	}, complete["reasoning"])
+
+	s.Require().NoError(answering.WriteJSON(frame{"type": "respond", "id": "r2",
+		"messages": []frame{
+			{"role": "user", "content": "find roses"},
+			{"role": "assistant", "content": complete["text"], "tool_calls": complete["tool_calls"], "reasoning": complete["reasoning"]},
+			{"role": "tool", "tool_call_id": "call-1", "content": "roses"},
+		}}))
+	s.Equal("complete", s.until(answering, "complete")["type"])
+
+	asked := s.thinker.requests()
+	s.Equal([]llm.ReasoningBlock{
+		{Text: "plan", Signature: "sig-1"},
+		{Signature: "sig-2", AfterText: len("Looking.")},
+		{Redacted: "enc-1", AfterToolCalls: 1},
+	}, asked[len(asked)-1].Input[1].ReasoningBlocks)
 }

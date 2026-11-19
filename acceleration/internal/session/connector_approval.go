@@ -160,6 +160,15 @@ func (d *dispatcher) answerApproval(callID, commandID string, may func(asked str
 	return nil
 }
 
+// ExpireApprovals has the reply being written, if it ends with a call still waiting for a
+// person, decline that call as expired and say so (persistent.Conversation.ExpireApprovals).
+// For a session about to close with its turn; a session with no conversation asks nobody.
+func (s *Session) ExpireApprovals() {
+	if s.persisted != nil {
+		s.persisted.ExpireApprovals()
+	}
+}
+
 // approvalText is what the model reads of a call that waited for approval and was not run.
 func approvalText(status, message string) []llm.ContentPart {
 	raw, _ := json.Marshal(struct {

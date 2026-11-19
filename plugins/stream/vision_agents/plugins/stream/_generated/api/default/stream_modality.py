@@ -97,16 +97,29 @@ def sync_detailed(
     response ended in, what it cost in tokens and how long the caller waited for the first of them.
     `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
     messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
-    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
-    correlate their content. Completed tool calls include the same replay fields; incomplete responses
-    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
-    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
-    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
-    models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. A response the prompt injection screen refused fails with
-    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    string and optional opaque signature, and may replay their thinking as `reasoning: [{text,
+    signature, redacted, after_tool_calls, after_text}]`, the list a `complete` that did not fail
+    reported, unchanged: a provider that signs its thinking (Anthropic) is sent each block again where
+    it stood, after `after_tool_calls` of the turn's tool calls and, before the first of them, after
+    `after_text` bytes (UTF-8) of its text; every other provider ignores it. A position the turn does
+    not have, or out of order, is refused. Send the blocks with what came before them unchanged too (the
+    same instructions, tools and earlier messages, new turns only appended): when that changed, Claude
+    may refuse the request or answer with the block's stale reasoning. Tool-result messages use `role:
+    tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay
+    fields. A provider that signs its thinking also sends a `reasoning` frame `{id, block}` as each
+    block finishes, between the `delta`s of the text around it, for display: replay only what `complete`
+    reports, which leaves out a failed response's blocks and any block a replay could not put back
+    exactly (one after a tool call when text follows a call, one after a call dropped for arguments that
+    do not parse, one after two texts with no thinking between them, and every block after those). A
+    `complete`'s incomplete status additionally reports `incomplete_reason` (such as
+    `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is
+    supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url,
+    detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused
+    with an `error` frame naming the model and the modality, before anything is billed. A response the
+    prompt injection screen refused fails with an `error` frame carrying `code` `prompt_injection`, and
+    its `complete` has status `failed`. An `interrupt` frame naming `response_ids` abandons responses
+    still being generated, which still settle and are still billed for what they produced before being
+    cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -193,16 +206,29 @@ def sync(
     response ended in, what it cost in tokens and how long the caller waited for the first of them.
     `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
     messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
-    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
-    correlate their content. Completed tool calls include the same replay fields; incomplete responses
-    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
-    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
-    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
-    models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. A response the prompt injection screen refused fails with
-    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    string and optional opaque signature, and may replay their thinking as `reasoning: [{text,
+    signature, redacted, after_tool_calls, after_text}]`, the list a `complete` that did not fail
+    reported, unchanged: a provider that signs its thinking (Anthropic) is sent each block again where
+    it stood, after `after_tool_calls` of the turn's tool calls and, before the first of them, after
+    `after_text` bytes (UTF-8) of its text; every other provider ignores it. A position the turn does
+    not have, or out of order, is refused. Send the blocks with what came before them unchanged too (the
+    same instructions, tools and earlier messages, new turns only appended): when that changed, Claude
+    may refuse the request or answer with the block's stale reasoning. Tool-result messages use `role:
+    tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay
+    fields. A provider that signs its thinking also sends a `reasoning` frame `{id, block}` as each
+    block finishes, between the `delta`s of the text around it, for display: replay only what `complete`
+    reports, which leaves out a failed response's blocks and any block a replay could not put back
+    exactly (one after a tool call when text follows a call, one after a call dropped for arguments that
+    do not parse, one after two texts with no thinking between them, and every block after those). A
+    `complete`'s incomplete status additionally reports `incomplete_reason` (such as
+    `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is
+    supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url,
+    detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused
+    with an `error` frame naming the model and the modality, before anything is billed. A response the
+    prompt injection screen refused fails with an `error` frame carrying `code` `prompt_injection`, and
+    its `complete` has status `failed`. An `interrupt` frame naming `response_ids` abandons responses
+    still being generated, which still settle and are still billed for what they produced before being
+    cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -284,16 +310,29 @@ async def asyncio_detailed(
     response ended in, what it cost in tokens and how long the caller waited for the first of them.
     `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
     messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
-    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
-    correlate their content. Completed tool calls include the same replay fields; incomplete responses
-    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
-    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
-    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
-    models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. A response the prompt injection screen refused fails with
-    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    string and optional opaque signature, and may replay their thinking as `reasoning: [{text,
+    signature, redacted, after_tool_calls, after_text}]`, the list a `complete` that did not fail
+    reported, unchanged: a provider that signs its thinking (Anthropic) is sent each block again where
+    it stood, after `after_tool_calls` of the turn's tool calls and, before the first of them, after
+    `after_text` bytes (UTF-8) of its text; every other provider ignores it. A position the turn does
+    not have, or out of order, is refused. Send the blocks with what came before them unchanged too (the
+    same instructions, tools and earlier messages, new turns only appended): when that changed, Claude
+    may refuse the request or answer with the block's stale reasoning. Tool-result messages use `role:
+    tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay
+    fields. A provider that signs its thinking also sends a `reasoning` frame `{id, block}` as each
+    block finishes, between the `delta`s of the text around it, for display: replay only what `complete`
+    reports, which leaves out a failed response's blocks and any block a replay could not put back
+    exactly (one after a tool call when text follows a call, one after a call dropped for arguments that
+    do not parse, one after two texts with no thinking between them, and every block after those). A
+    `complete`'s incomplete status additionally reports `incomplete_reason` (such as
+    `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is
+    supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url,
+    detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused
+    with an `error` frame naming the model and the modality, before anything is billed. A response the
+    prompt injection screen refused fails with an `error` frame carrying `code` `prompt_injection`, and
+    its `complete` has status `failed`. An `interrupt` frame naming `response_ids` abandons responses
+    still being generated, which still settle and are still billed for what they produced before being
+    cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,
@@ -378,16 +417,29 @@ async def asyncio(
     response ended in, what it cost in tokens and how long the caller waited for the first of them.
     `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant
     messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON
-    string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to
-    correlate their content. Completed tool calls include the same replay fields; incomplete responses
-    additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame
-    advertises `tool_history: true` when tool replay is supported. Content parts use `[{type:
-    text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable
-    models. A model that does not accept images is refused with an `error` frame naming the model and
-    the modality, before anything is billed. A response the prompt injection screen refused fails with
-    an `error` frame carrying `code` `prompt_injection`, and its `complete` has status `failed`. An
-    `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle
-    and are still billed for what they produced before being cut off.
+    string and optional opaque signature, and may replay their thinking as `reasoning: [{text,
+    signature, redacted, after_tool_calls, after_text}]`, the list a `complete` that did not fail
+    reported, unchanged: a provider that signs its thinking (Anthropic) is sent each block again where
+    it stood, after `after_tool_calls` of the turn's tool calls and, before the first of them, after
+    `after_text` bytes (UTF-8) of its text; every other provider ignores it. A position the turn does
+    not have, or out of order, is refused. Send the blocks with what came before them unchanged too (the
+    same instructions, tools and earlier messages, new turns only appended): when that changed, Claude
+    may refuse the request or answer with the block's stale reasoning. Tool-result messages use `role:
+    tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay
+    fields. A provider that signs its thinking also sends a `reasoning` frame `{id, block}` as each
+    block finishes, between the `delta`s of the text around it, for display: replay only what `complete`
+    reports, which leaves out a failed response's blocks and any block a replay could not put back
+    exactly (one after a tool call when text follows a call, one after a call dropped for arguments that
+    do not parse, one after two texts with no thinking between them, and every block after those). A
+    `complete`'s incomplete status additionally reports `incomplete_reason` (such as
+    `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is
+    supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url,
+    detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused
+    with an `error` frame naming the model and the modality, before anything is billed. A response the
+    prompt injection screen refused fails with an `error` frame carrying `code` `prompt_injection`, and
+    its `complete` has status `failed`. An `interrupt` frame naming `response_ids` abandons responses
+    still being generated, which still settle and are still billed for what they produced before being
+    cut off.
     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
     and `speech_stopped` when the model's own detector hears the caller begin and finish,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -378,6 +379,7 @@ type ResponseWriter struct {
 	firstTokenAt       time.Time
 	text               strings.Builder
 	reasoning          strings.Builder
+	reasoningBlocks    []ReasoningBlock
 	deltas             int
 	usage              Usage
 	usageReported      bool
@@ -436,6 +438,14 @@ func (w *ResponseWriter) ReasoningText(delta string) {
 	w.markFirstToken()
 	w.reasoning.WriteString(delta)
 	w.emit(ReasoningTextDelta{ResponseID: w.options.ResponseID, Index: w.next(), Delta: delta})
+}
+
+// ReasoningBlock records a finished block of thinking with what a replay needs, as soon as
+// it is finished, so a caller can put it in place among the text that follows. Its text was
+// already streamed through ReasoningText.
+func (w *ResponseWriter) ReasoningBlock(block ReasoningBlock) {
+	w.reasoningBlocks = append(w.reasoningBlocks, block)
+	w.emit(ReasoningBlockDone{ResponseID: w.options.ResponseID, Block: block})
 }
 
 // FunctionCall records a fragment of a call the model is asking for.
@@ -554,8 +564,17 @@ func (w *ResponseWriter) settle(failure error) {
 	// A failed response asks for nothing: refused by a screen or broken off by its provider,
 	// it is not an answer that stands, and a caller running its calls would act on it anyway.
 	calls, dropped := w.assembled(), []ToolCall(nil)
+	reasoning := w.reasoningBlocks
+	// A call dropped for arguments that do not parse is missing from the turn a caller sends
+	// back, so a block after it would stand after a different call or none: from the first
+	// one dropped, no block after a call is kept.
+	if kept := w.callsBeforeADrop(); kept < len(w.order) {
+		reasoning = slices.DeleteFunc(slices.Clone(reasoning), func(block ReasoningBlock) bool { return block.AfterToolCalls > kept })
+	}
 	if w.status == StatusFailed {
-		calls, dropped = nil, calls
+		// Its thinking goes with its calls: a block placed after a dropped call has nowhere
+		// to go back to.
+		calls, dropped, reasoning = nil, calls, nil
 	}
 
 	w.emit(ResponseCompleted{Response: Response{
@@ -565,6 +584,7 @@ func (w *ResponseWriter) settle(failure error) {
 		Model:              w.options.Model,
 		OutputText:         w.text.String(),
 		ReasoningText:      w.reasoning.String(),
+		ReasoningBlocks:    reasoning,
 		ToolCalls:          calls,
 		DroppedToolCalls:   dropped,
 		Usage:              w.usage,
@@ -577,6 +597,17 @@ func (w *ResponseWriter) settle(failure error) {
 		TimeToFirstTokenMs: timeToFirstToken,
 		DurationMs:         float64(time.Since(w.startedAt).Microseconds()) / 1000,
 	}})
+}
+
+// callsBeforeADrop is how many calls the response asked for before the first assembled
+// drops, or all of them.
+func (w *ResponseWriter) callsBeforeADrop() int {
+	for i, index := range w.order {
+		if arguments := w.calls[index].arguments.String(); arguments != "" && !json.Valid([]byte(arguments)) {
+			return i
+		}
+	}
+	return len(w.order)
 }
 
 // assembled returns the tool calls in the order the model asked for them.

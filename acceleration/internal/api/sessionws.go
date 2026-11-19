@@ -696,6 +696,11 @@ func frameOf(event session.Event) (frame, bool) {
 	case agent.ResponseDelta:
 		return frame{"type": "response_delta", "turn_id": typed.TurnID, "text": typed.Text}, true
 
+	case agent.ReasoningDelta:
+		// The only way a written session with no conversation, an incognito one, shows its
+		// reply's thinking: a kept one also streams it into the reply's Chat message.
+		return frame{"type": "reasoning_delta", "turn_id": typed.TurnID, "text": typed.Text}, true
+
 	case agent.UIDelta:
 		out := frame{
 			"type":    "ui_delta",
@@ -765,7 +770,7 @@ func frameOf(event session.Event) (frame, bool) {
 		}, typed.Message), true
 
 	case agent.Turn:
-		return frame{
+		measured := frame{
 			"type":                     "turn",
 			"turn_id":                  typed.TurnID,
 			"participant":              participantOf(typed.Participant),
@@ -785,7 +790,12 @@ func frameOf(event session.Event) (frame, bool) {
 			"speech_end_to_audible_ms": typed.SpeechEndToAudibleMs,
 			"audio_out_ms":             typed.AudioOutMs,
 			"interrupted":              typed.Interrupted,
-		}, true
+		}
+		// Only an agent with chorus-asr floor control adds them, as a timeline entry does.
+		if len(typed.FloorChecks) > 0 {
+			measured["floor_checks"] = floorChecksOf(typed.FloorChecks)
+		}
+		return measured, true
 
 	case agent.ModelCall:
 		called := frame{

@@ -682,6 +682,7 @@ final class CreateSessionRequest {
     this.toolTimeoutMs,
     this.tools,
     this.tts,
+    this.ui,
     this.userId,
     this.userName,
     this.video,
@@ -861,6 +862,10 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.tts'),
       },
+      ui: switch (json['ui']) {
+        null => null,
+        final Object value => _bool(value, 'CreateSessionRequest.ui'),
+      },
       userId: switch (json['user_id']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.user_id'),
@@ -919,6 +924,7 @@ final class CreateSessionRequest {
   final int? toolTimeoutMs;
   final List<SessionTool>? tools;
   final String? tts;
+  final bool? ui;
   final String? userId;
   final String? userName;
   final SessionVideo? video;
@@ -965,6 +971,7 @@ final class CreateSessionRequest {
     'tool_timeout_ms': ?toolTimeoutMs,
     if (tools case final value?) 'tools': [for (final item in value) item.toJson()],
     'tts': ?tts,
+    'ui': ?ui,
     'user_id': ?userId,
     'user_name': ?userName,
     if (video case final value?) 'video': value.toJson(),

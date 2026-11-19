@@ -552,6 +552,10 @@ type Folder struct {
 	Settings Settings
 	// Instructions is instructions.md, or empty if there is none.
 	Instructions string
+	// UIInstructions is agent.yaml's ui compiled into what teaches the model to answer with
+	// UI, or empty without one. It is synced apart from Instructions, so a session opened
+	// with ui false is not told it.
+	UIInstructions string
 	// Guardrail is guardrail.md, whole and unparsed, or empty if there is none. The
 	// backend parses it, so a policy this SDK has never heard of still reaches it.
 	Guardrail string
@@ -627,14 +631,8 @@ func Load(path string) (*Folder, error) {
 		return nil, err
 	}
 	if folder.Settings.UI != nil {
-		uiPrompt, err := loadUIPrompt(path, *folder.Settings.UI)
-		if err != nil {
+		if folder.UIInstructions, err = loadUIPrompt(path, *folder.Settings.UI); err != nil {
 			return nil, err
-		}
-		if folder.Instructions != "" {
-			folder.Instructions += "\n\n" + uiPrompt
-		} else {
-			folder.Instructions = uiPrompt
 		}
 	}
 	return folder, nil
@@ -681,7 +679,17 @@ func (f *Folder) KnowledgeNamespace() string {
 // Hash is a fingerprint of the directory. The same files produce the same hash, and the
 // Python SDK takes it the same way, so a stamp either one wrote is understood by both.
 func (f *Folder) Hash() string {
-	return fingerprint(f.Declaration, f.Instructions, f.Guardrail, f.Skills, f.Knowledge, f.KnowledgeURLs, f.Simulations)
+	return withUI(fingerprint(f.Declaration, f.Instructions, f.Guardrail, f.Skills, f.Knowledge, f.KnowledgeURLs, f.Simulations),
+		f.UIInstructions)
+}
+
+// withUI adds the compiled UI to a directory's hash. A directory without one keeps the hash
+// it had before UI was synced apart from the instructions, so it is not synced again.
+func withUI(hash, ui string) string {
+	if ui == "" {
+		return hash
+	}
+	return fingerprint(hash, ui, "", nil, nil, nil, nil)
 }
 
 func fingerprint(
