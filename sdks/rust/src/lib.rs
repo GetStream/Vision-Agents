@@ -9,6 +9,7 @@
 mod agent;
 mod backend;
 mod client;
+mod connections;
 mod dispatch;
 mod error;
 pub mod folder;
@@ -38,6 +39,7 @@ pub use backend::{
     USAGE_CATEGORIES_HEADER, region_url, sign, sign_for,
 };
 pub use client::{Client, segment};
+pub use connections::Connections;
 pub use dispatch::{Dispatch, InboundCall, InboundImage, InboundMessage};
 pub use error::{Error, Result, RouterFailure};
 pub use folder::Folder;

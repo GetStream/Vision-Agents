@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::backend::{Backend, ClientOptions, checked_categories, sign_for, with_usage};
+use crate::connections::Connections;
 use crate::error::{Error, Result};
 use crate::limits::SpendLimits;
 use crate::router::Router;
@@ -146,6 +147,11 @@ impl Client {
     /// The organization's teams and their spend limits. Server side only.
     pub fn teams(&self) -> Teams {
         Teams::new(self.spend_limits())
+    }
+
+    /// The app's and its users' connections to connectors. Server side only.
+    pub fn connections(&self) -> Connections {
+        Connections::new(self.clone())
     }
 
     /// This client's own credential, speaking for `user_id` without minting a token for them.
