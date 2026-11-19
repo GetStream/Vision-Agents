@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +66,7 @@ func newBackend(t *testing.T) *backend {
 		stored := acceleration.AgentConfig{
 			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
 			KnowledgeNamespace: request.KnowledgeNamespace, Skills: request.Skills,
-			Subagent: request.Subagent, Tags: request.Tags,
+			Subagent: request.Subagent, Tags: request.Tags, Sandbox: request.Sandbox,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		router.configs = append(router.configs, stored)
@@ -81,7 +83,22 @@ func newBackend(t *testing.T) *backend {
 			if config.Id != r.PathValue("id") {
 				continue
 			}
+			// As the router's storedSkillSandboxComplaint: a config left without a sandbox
+			// is refused while a skill it names, as stored, still has scripts.
+			if deref(request.Sandbox) == "" {
+				for _, skill := range router.skills {
+					if skill.ConfigId == config.Id && slices.Contains(deref(request.Skills), skill.Name) &&
+						len(scripts(deref(skill.FilePaths))) > 0 {
+						reply(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+							Message: fmt.Sprintf("skill %q runs scripts, so the agent needs a sandbox", skill.Name),
+						}})
+						return
+					}
+				}
+			}
 			router.configs[index].Instructions = request.Instructions
+			router.configs[index].Sandbox = request.Sandbox
+			router.configs[index].Skills = request.Skills
 			reply(w, http.StatusOK, router.configs[index])
 			return
 		}
@@ -122,7 +139,7 @@ func newBackend(t *testing.T) *backend {
 			Id: "skill-" + request.ConfigId + "-" + request.Name, ConfigId: request.ConfigId,
 			Name: request.Name, Description: request.Description,
 			Instructions: request.Instructions, DeadlineMs: request.DeadlineMs,
-			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			FilePaths: filePaths(request.Files), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
 		router.skills = append(router.skills, stored)
 		reply(w, http.StatusCreated, stored)
@@ -147,6 +164,7 @@ func newBackend(t *testing.T) *backend {
 			}
 			router.skills[index].Description = request.Description
 			router.skills[index].Instructions = request.Instructions
+			router.skills[index].FilePaths = filePaths(request.Files)
 			router.skills[index].UpdatedAt = time.Now()
 			reply(w, http.StatusOK, router.skills[index])
 			return
@@ -220,12 +238,41 @@ func (b *backend) skillAllowed(w http.ResponseWriter, request acceleration.Skill
 		return false
 	}
 	for _, config := range b.configs {
-		if config.Id == request.ConfigId {
-			return true
+		if config.Id != request.ConfigId {
+			continue
 		}
+		// As the router's skillSandboxComplaint: scripts need the config's sandbox.
+		if paths := filePaths(request.Files); deref(config.Sandbox) == "" && len(scripts(deref(paths))) > 0 {
+			reply(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: fmt.Sprintf("skill %q runs scripts, so the agent needs a sandbox", request.Name),
+			}})
+			return false
+		}
+		return true
 	}
 	reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such agent config"}})
 	return false
+}
+
+// filePaths are the paths of a skill's files, as the router lists them.
+func filePaths(files *map[string]string) *[]string {
+	if files == nil {
+		return nil
+	}
+	paths := slices.Sorted(maps.Keys(*files))
+	return &paths
+}
+
+// scripts are the paths the router's harness.Scripts runs rather than reads: any file that
+// is not .md, .mdx or .txt.
+func scripts(paths []string) []string {
+	var run []string
+	for _, file := range paths {
+		if ext := strings.ToLower(filepath.Ext(file)); ext != ".md" && ext != ".mdx" && ext != ".txt" {
+			run = append(run, file)
+		}
+	}
+	return run
 }
 
 func (b *backend) answerConnections(answer func(*http.Request) acceleration.ConnectionPage) {
@@ -577,19 +624,108 @@ func TestSyncSaysWhyTheRouterRefusedASkill(t *testing.T) {
 }
 
 func TestSyncSaysWhyTheRouterRefusedASkillEdit(t *testing.T) {
+	// With a sandbox stored the skills are edited before the config, without one after it.
+	for name, sandbox := range map[string]*Sandbox{"without a sandbox": nil, "with a sandbox": Daytona()} {
+		t.Run(name, func(t *testing.T) {
+			router := newBackend(t)
+			agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Sandbox: sandbox, Skills: []Skill{
+				{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
+			}}})
+			if _, err := agent.Sync(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			router.mu.Lock()
+			router.refuseSkillEdits = "a skill may bring at most 64 files"
+			router.mu.Unlock()
+			_, err := agent.Sync(t.Context())
+			if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
+				t.Errorf("an edit the router refused came back as %v", err)
+			}
+		})
+	}
+}
+
+func TestOneSyncDropsTheSandboxAndASkillsScriptsTogether(t *testing.T) {
 	router := newBackend(t)
-	agent := agentOn(t, router, Options{Name: "jean", Harness: &Harness{Skills: []Skill{
-		{Name: "think", Description: "Work it out", Instructions: "Reason it through."},
-	}}})
+	harness := &Harness{Sandbox: Daytona(), Skills: []Skill{{
+		Name: "forms", Description: "Fill a form", Instructions: "Fill it in.",
+		Files: map[string]string{"scripts/fill.py": "print(1)", "reference.md": "# Forms"},
+	}}}
+	agent := agentOn(t, router, Options{Name: "jean", Harness: harness})
 	if _, err := agent.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+
+	harness.Sandbox = nil
+	harness.Skills[0].Files = map[string]string{"reference.md": "# Forms"}
+	synced, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatalf("the sync that drops the sandbox with the scripts was refused: %v", err)
+	}
+
 	router.mu.Lock()
-	router.refuseSkillEdits = "a skill may bring at most 64 files"
-	router.mu.Unlock()
+	defer router.mu.Unlock()
+	if synced.Sandbox != nil || router.configs[0].Sandbox != nil {
+		t.Errorf("the config kept its sandbox: %v", router.configs[0].Sandbox)
+	}
+	if paths := deref(router.skills[0].FilePaths); !slices.Equal(paths, []string{"reference.md"}) {
+		t.Errorf("the skill holds %v", paths)
+	}
+	// Each written once: the skill while the sandbox is still stored, then the config.
+	if want := []string{"skill-config-jean-forms", "config-jean"}; !slices.Equal(router.updates, want) {
+		t.Errorf("the edits were %v, not %v", router.updates, want)
+	}
+}
+
+func TestOneSyncAddsTheSandboxAndASkillsScriptsTogether(t *testing.T) {
+	router := newBackend(t)
+	harness := &Harness{Skills: []Skill{{
+		Name: "forms", Description: "Fill a form", Instructions: "Fill it in.",
+		Files: map[string]string{"reference.md": "# Forms"},
+	}}}
+	agent := agentOn(t, router, Options{Name: "jean", Harness: harness})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	harness.Sandbox = Daytona()
+	harness.Skills[0].Files = map[string]string{"scripts/fill.py": "print(1)", "reference.md": "# Forms"}
+	synced, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatalf("the sync that adds the sandbox with the scripts was refused: %v", err)
+	}
+
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if deref(synced.Sandbox) != acceleration.Daytona {
+		t.Errorf("the config's sandbox is %v", synced.Sandbox)
+	}
+	if paths := deref(router.skills[0].FilePaths); !slices.Equal(paths, []string{"reference.md", "scripts/fill.py"}) {
+		t.Errorf("the skill holds %v", paths)
+	}
+}
+
+func TestASyncThatDropsTheSandboxButKeepsScriptsIsRefusedAndKeepsTheSandbox(t *testing.T) {
+	router := newBackend(t)
+	harness := &Harness{Sandbox: Daytona(), Skills: []Skill{{
+		Name: "forms", Description: "Fill a form", Instructions: "Fill it in.",
+		Files: map[string]string{"scripts/fill.py": "print(1)"},
+	}}}
+	agent := agentOn(t, router, Options{Name: "jean", Harness: harness})
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	harness.Sandbox = nil
 	_, err := agent.Sync(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "at most 64 files") {
-		t.Errorf("an edit the router refused came back as %v", err)
+
+	if err == nil || !strings.Contains(err.Error(), "needs a sandbox") {
+		t.Errorf("a config left with scripts and no sandbox came back as %v", err)
+	}
+	router.mu.Lock()
+	defer router.mu.Unlock()
+	if deref(router.configs[0].Sandbox) != acceleration.Daytona {
+		t.Errorf("the refused sync left the sandbox as %v", router.configs[0].Sandbox)
 	}
 }
 

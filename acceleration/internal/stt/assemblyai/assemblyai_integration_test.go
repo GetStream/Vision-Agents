@@ -23,20 +23,28 @@ import (
 // clock-time clip holds it to returning every word across however many turns it makes.
 type AssemblyAIIntegrationSuite struct {
 	sttsuite.Suite
+	// model is the speech_model every session in the suite asks for.
+	model string
 }
 
+// TestAssemblyAIIntegrationSuite runs the suite on each model router.yaml routes, since
+// they share this socket and protocol but not their turn detector.
 func TestAssemblyAIIntegrationSuite(t *testing.T) {
-	suite.Run(t, &AssemblyAIIntegrationSuite{Suite: sttsuite.Suite{
-		New: func() stt.STT {
-			provider, err := New(Options{})
-			require.NoError(t, err)
-			return provider
-		},
-		Requires:       []string{"ASSEMBLYAI_API_KEY"},
-		ChunkMs:        20,
-		SettlesOnClose: true,
-		ClockFixture:   "saturday_seven_thirty.wav",
-	}})
+	for _, model := range []string{DefaultModel, "assemblyai-stt-3-7-realtime-agent"} {
+		t.Run(model, func(t *testing.T) {
+			suite.Run(t, &AssemblyAIIntegrationSuite{model: model, Suite: sttsuite.Suite{
+				New: func() stt.STT {
+					provider, err := New(Options{Model: model})
+					require.NoError(t, err)
+					return provider
+				},
+				Requires:       []string{"ASSEMBLYAI_API_KEY"},
+				ChunkMs:        20,
+				SettlesOnClose: true,
+				ClockFixture:   "saturday_seven_thirty.wav",
+			}})
+		})
+	}
 }
 
 // TestAMisspeltModelIsRefusedRatherThanServedByTheDefault is the server's habit of
@@ -56,6 +64,7 @@ func (s *AssemblyAIIntegrationSuite) TestAMisspeltModelIsRefusedRatherThanServed
 // A 160 ms silence ends a turn at the fixture's pause after "a map.", so every turn counts.
 func (s *AssemblyAIIntegrationSuite) TestEverythingThisPackageSendsIsAccepted() {
 	provider, err := New(Options{
+		Model:            s.model,
 		Keyterms:         []string{"Mia", "hues of gold"},
 		LanguageHints:    []string{"en", "es"},
 		Mode:             ModeMinLatency,

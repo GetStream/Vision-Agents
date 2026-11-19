@@ -3,6 +3,7 @@
 package anthropic
 
 import (
+	"crypto/rand"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -41,8 +42,10 @@ func (s *AnthropicIntegrationSuite) TestAKeptSystemTurnBeforeTheAssistantsIsTake
 
 // TestANoteAfterTheCallerLeavesTheCachedPrefixToBeRead asks a round, then the next round with
 // a note after the caller's words, and expects the conversation before it read from cache.
+// The instructions end on a random text, so what is read is what this test's first round
+// wrote, not a prefix another test or run left behind.
 func (s *AnthropicIntegrationSuite) TestANoteAfterTheCallerLeavesTheCachedPrefixToBeRead() {
-	instructions := "Answer in one word. " + strings.Repeat("The webhook retries a failed delivery three times, a minute apart. ", 300)
+	instructions := "Answer in one word. " + strings.Repeat("The webhook retries a failed delivery three times, a minute apart. ", 300) + rand.Text()
 	first := llm.ResponseParams{Instructions: instructions, Input: []llm.Message{{Role: llm.User, Content: "How many retries?"}}}
 	answer, _ := s.Ask(first)
 

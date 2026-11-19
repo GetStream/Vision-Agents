@@ -1,13 +1,16 @@
 import 'dart:async';
-import 'dart:io' show WebSocket;
+import 'dart:convert';
 
 import 'package:flutter_assistant/agent_chat.dart';
+import 'package:flutter_assistant/device_tools.dart';
+import 'package:flutter_assistant/trip_components.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_agents/stream_agents.dart';
 
 import 'support/fake_router.dart';
+import 'support/fake_sessions.dart';
 
 void main() {
   test('AgentChat.workingOnSkills names a skill in words', () {
@@ -123,9 +126,9 @@ void main() {
   });
 
   group('AgentChat', () {
-    late _FakeSessions sessions;
+    late FakeSessions sessions;
 
-    setUp(() async => sessions = await _FakeSessions.onRouter());
+    setUp(() async => sessions = await FakeSessions.onRouter());
     tearDown(() => sessions.dispose());
 
     /// Closes [chat] once the test is over, before the router goes.
@@ -525,6 +528,312 @@ void main() {
       chat.dispose();
     });
 
+    group('a seat selector', () {
+      const tables = <DiningTableItem>[
+        (id: 'T1', zone: 'Cliff Terrace', seats: 2, available: false),
+        (id: 'T4', zone: 'Harbor Window', seats: 4, available: true),
+      ];
+      const terrace = <DiningTableItem>[(id: 'T1', zone: 'Terrace', seats: 2, available: true)];
+      const garden = <DiningTableItem>[(id: 'T1', zone: 'Garden', seats: 2, available: true)];
+
+      const tools = 'POST /v1/agents/sessions/s1/tools';
+      const removal = 'DELETE /v1/agents/sessions/s1/tools/reserve_table';
+
+      /// Offers [tables] from reply m1, as its card does once it is written, and waits for the
+      /// tool to be added.
+      Future<void> offer(AgentChat chat) async {
+        chat.offer('m1', tables);
+        await until(() => sessions.routes.contains(tools));
+      }
+
+      /// Has the router call `reserve_table` for [tableId] in [zone], allows it as the person
+      /// would, and returns the result sent back.
+      Future<Map<String, Object?>> call(
+        AgentChat chat,
+        String tableId,
+        String zone, {
+        String id = 'c1',
+      }) async {
+        bool answered(String m) => m.contains('"tool_result"') && m.contains('"$id"');
+        (await sessions.socket()).add(
+          jsonEncode({
+            'type': 'tool_call',
+            'id': id,
+            'name': SeatSelectorComponent.reserveTableTool,
+            'arguments': jsonEncode({
+              'table_id': tableId,
+              'zone': zone,
+              'when': 'tonight at 8pm',
+              'summary': '$tableId in $zone, for 4, tonight at 8pm',
+            }),
+          }),
+        );
+        final session = chat.session!;
+        await until(() => session.approvals.value.any((request) => request.call.id == id));
+        session.decide(id, allowed: true);
+        await until(() => sessions.said.any(answered));
+        return jsonDecode(sessions.said.lastWhere(answered)) as Map<String, Object?>;
+      }
+
+      test('brings its tool to the session once, however often it shows', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+
+        await offer(chat);
+        chat.offer('m1', tables);
+        // A booking's round trip comes after any change of the tool the second offer asked for.
+        await call(chat, 'T4', 'Harbor Window');
+
+        expect(sessions.routes.where((r) => r == tools), hasLength(1));
+      });
+
+      test('brings no tool for a card with no free table', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', [(id: 'T1', zone: 'Terrace', seats: 2, available: false)])
+          ..offer('m2', garden);
+        await until(() => sessions.routes.contains(tools));
+
+        // The tool was added for m2's free table only.
+        expect(sessions.routes.where((r) => r == tools), hasLength(1));
+        await call(chat, 'T1', 'Garden');
+        // Nothing is left to book: m1 has no free table.
+        await until(() => sessions.routes.contains(removal));
+      });
+
+      test(
+        'a question stopped while a card\'s tool is being added is not asked, and goes back',
+        () async {
+          final added = Completer<void>();
+          sessions.holdRoute(tools, added.future);
+          final composer = ChatComposerController();
+          addTearDown(composer.dispose);
+          final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+          await chat.open();
+          final conversation = conversationOf(chat, composer: composer);
+          chat.offer('m1', tables);
+          await until(() => sessions.routes.contains(tools));
+
+          conversation.send('Book T4');
+          await pumpEventQueue();
+          conversation.stop();
+          added.complete();
+          await until(() => conversation.pendingMessage == null);
+
+          expect(sessions.asked, 0);
+          expect(composer.text, 'Book T4');
+        },
+      );
+
+      test('a card\'s action waiting for its tool is not sent once the chat has closed', () async {
+        final added = Completer<void>();
+        sessions.holdRoute(tools, added.future);
+        final chat = AgentChat('s1', sessions: sessions);
+        await chat.open();
+        chat.offer('m1', tables);
+        await until(() => sessions.routes.contains(tools));
+
+        final sent = chat.ui.send(
+          AIUIAction(
+            messageId: 'm1',
+            format: AIUIFormat.openUI,
+            name: 'select_table',
+            label: 'Reserve table T4',
+            payload: const {'id': 'T4'},
+          ),
+        );
+        await pumpEventQueue();
+        final closed = chat.close();
+        added.complete();
+        await sent;
+        await closed;
+        chat.dispose();
+
+        expect(sessions.asked, 0);
+      });
+
+      test('a card shown while the tool is being taken back gets it again', () async {
+        final taken = Completer<void>();
+        sessions.holdRoute(removal, taken.future);
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        await offer(chat);
+        await call(chat, 'T4', 'Harbor Window');
+        await until(() => sessions.routes.contains(removal));
+
+        chat.offer('m2', [(id: 'K3', zone: 'Garden', seats: 4, available: true)]);
+        taken.complete();
+        await until(() => sessions.routes.where((r) => r == tools).length == 2);
+
+        expect(
+          (await call(chat, 'K3', 'Garden', id: 'c2'))['output'],
+          contains('Reserved table K3'),
+        );
+      });
+
+      test(
+        'a card\'s action waiting while the tool is taken back ends once the chat closes',
+        () async {
+          final taken = Completer<void>();
+          sessions.holdRoute(removal, taken.future);
+          final chat = AgentChat('s1', sessions: sessions);
+          await chat.open();
+          await offer(chat);
+          await call(chat, 'T4', 'Harbor Window');
+          await until(() => sessions.routes.contains(removal));
+          chat.offer('m2', [(id: 'K3', zone: 'Garden', seats: 4, available: true)]);
+          final sent = chat.ui.send(
+            AIUIAction(
+              messageId: 'm2',
+              format: AIUIFormat.openUI,
+              name: 'select_table',
+              label: 'Reserve table K3',
+              payload: const {'id': 'K3'},
+            ),
+          );
+          await pumpEventQueue();
+
+          final closed = chat.close();
+          taken.complete();
+
+          await sent.timeout(const Duration(seconds: 5));
+          await closed;
+          chat.dispose();
+          // Closed, the action is not asked and the tool is not added again.
+          expect(sessions.asked, 0);
+          expect(sessions.routes.where((r) => r == tools), hasLength(1));
+        },
+      );
+
+      test('books the venue whose zone is named when two cards offer the same id', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m2', garden)
+          // Cards are offered as they are built, which need not be the order they were written.
+          ..offer('m1', terrace);
+        await until(() => sessions.routes.contains(tools));
+
+        await call(chat, 'T1', 'Garden');
+
+        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
+        expect(chat.reservations.value['m1'], isNull);
+      });
+
+      test('books the newest reply\'s card when two offer the same table', () async {
+        sessions.history = [
+          _question('q1'),
+          _agentReply(id: 'm1', text: 'Terrace tonight'),
+          _question('q2'),
+          _agentReply(id: 'm2', text: 'Terrace again'),
+        ];
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          // An opened conversation builds its newest replies first.
+          ..offer('m2', terrace)
+          ..offer('m1', terrace);
+        await until(() => sessions.routes.contains(tools));
+
+        await call(chat, 'T1', 'Terrace');
+
+        expect(chat.reservations.value.keys, ['m2']);
+      });
+
+      test('books a table whose zone the card wrote with spaces around it', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat.offer('m1', [(id: 'T1', zone: ' Terrace ', seats: 2, available: true)]);
+        await until(() => sessions.routes.contains(tools));
+
+        final result = await call(chat, 'T1', ' Terrace ');
+
+        expect(result['output'], contains('Reserved table T1'));
+      });
+
+      test('books another venue\'s table of the same id once one is booked', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden);
+        await until(() => sessions.routes.contains(tools));
+        await call(chat, 'T1', 'Terrace');
+
+        final second = await call(chat, 'T1', 'Garden', id: 'c2');
+
+        expect(second['output'], contains('Reserved table T1'));
+        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
+        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
+      });
+
+      test('refuses a second booking of a booked card', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden);
+        await until(() => sessions.routes.contains(tools));
+        await call(chat, 'T1', 'Terrace');
+
+        final second = await call(chat, 'T1', 'Terrace', id: 'c2');
+
+        expect(second['error'], contains('T1 in Terrace is not a free table'));
+        expect(second['error'], contains('T1 (Garden)'));
+        expect(chat.reservations.value['m2'], isNull);
+      });
+
+      test('reserves a free table, keeps the booking and takes its tool back', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        await offer(chat);
+
+        final result = await call(chat, 'T4', 'Harbor Window');
+
+        expect(result['output'], contains('Reserved table T4'));
+        expect(result['error'], isEmpty);
+        expect(chat.reservations.value['m1']?.table.id, 'T4');
+        expect(chat.reservations.value['m1']?.when, 'tonight at 8pm');
+        await until(() => sessions.routes.contains(removal));
+      });
+
+      test('refuses a taken table, naming the free ones, and keeps its tool', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        await offer(chat);
+
+        final result = await call(chat, 'T1', 'Cliff Terrace');
+
+        expect(
+          result['error'],
+          allOf(
+            contains('T1 in Cliff Terrace is not a free table'),
+            contains('T4 (Harbor Window)'),
+          ),
+        );
+        expect(chat.reservations.value, isEmpty);
+        // The tool is still there to reserve a free table.
+        expect(
+          (await call(chat, 'T4', 'Harbor Window', id: 'c2'))['output'],
+          contains('Reserved table T4'),
+        );
+      });
+
+      // Booking on the chat let go of would throw from its disposed notifier instead.
+      test('refuses a booking that arrives after the chat was let go of', () async {
+        final chat = AgentChat('s1', sessions: sessions);
+        chat.offer('m1', tables);
+        await chat.close();
+        chat.dispose();
+
+        expect(
+          () => chat.reserve('T4', 'Harbor Window', 'tonight at 8pm'),
+          throwsA(isA<ToolFailure>()),
+        );
+      });
+    });
+
     test('opening twice at once starts one session', () async {
       final chat = closing(AgentChat(null, sessions: sessions));
 
@@ -578,88 +887,3 @@ stream.Message _agentReply({
 }) => stream.Message(id: id, text: text, extraData: {'ai_generated': true, ...extraData});
 
 stream.Message _question(String id) => stream.Message(id: id, text: 'Question $id');
-
-/// Sessions held by a router on this machine, each with a channel that is never fetched: what
-/// a test says arrives in it is all it holds.
-class _FakeSessions extends AgentSessions {
-  _FakeSessions._(this._router)
-    : _agents = StreamAgents(url: _router.url, customerId: 'acme', userId: 'ada');
-
-  static Future<_FakeSessions> onRouter() async => _FakeSessions._(await FakeRouter.start());
-
-  final FakeRouter _router;
-  final StreamAgents _agents;
-  final _client = stream.StreamChatClient('key');
-  stream.Channel? _channel;
-
-  /// The last channel a session was opened with.
-  stream.Channel? get opened => _channel;
-
-  /// What was said in the conversation before it is opened.
-  List<stream.Message> history = const [];
-
-  /// Holds the next session back until it completes.
-  Completer<void>? hold;
-
-  /// What starting a session fails with, or null.
-  Object? startFailure;
-
-  /// What opening a session's channel fails with, or null.
-  Object? channelFailure;
-
-  int started = 0;
-  final deleted = <String>[];
-
-  /// How many questions the router was asked.
-  int get asked => _router.arrived.where((route) => route.endsWith('/responses')).length;
-
-  /// How many times the router was told to stop a reply.
-  int get interrupts => _router.said.where((message) => message.contains('"interrupt"')).length;
-
-  /// Holds back the router's answer to the next question in session [id] until [until].
-  void holdQuestion(String id, Future<void> until) =>
-      _router.hold('POST /v1/agents/sessions/$id/responses', until);
-
-  /// The open session's socket, from the router's end.
-  Future<WebSocket> socket() => _router.socket();
-
-  /// A message arriving in the open session's channel.
-  void receive(stream.Message message) => _client.handleEvent(
-    stream.Event(type: stream.EventType.messageNew, cid: _channel!.cid, message: message),
-  );
-
-  /// A message of the open session's channel changing.
-  void update(stream.Message message) => _client.handleEvent(
-    stream.Event(type: stream.EventType.messageUpdated, cid: _channel!.cid, message: message),
-  );
-
-  @override
-  Future<AgentSession> start(String? sessionId) async {
-    started++;
-    await hold?.future;
-    if (startFailure case final failure?) throw failure;
-    final id = sessionId ?? 's$started';
-    _router
-      ..answer('POST /v1/agents/sessions', 201, sessionJson(id))
-      ..answer('GET /v1/agents/sessions/$id', 200, sessionJson(id))
-      ..answer('POST /v1/agents/sessions/$id/responses', 202, responseJson(id));
-    return sessionId != null ? _agents.attach(sessionId) : _agents.chat();
-  }
-
-  @override
-  Future<stream.Channel> channel(AgentSession session, {required int pageSize}) async {
-    if (channelFailure case final failure?) throw failure;
-    final channel = _channel = _client.channel('messaging', id: session.id);
-    channel.state = stream.ChannelClientState(channel, stream.ChannelState(messages: history));
-    return channel;
-  }
-
-  @override
-  Future<void> delete(String sessionId) async => deleted.add(sessionId);
-
-  Future<void> dispose() async {
-    _agents.close();
-    await _client.dispose();
-    await _router.close();
-  }
-}
