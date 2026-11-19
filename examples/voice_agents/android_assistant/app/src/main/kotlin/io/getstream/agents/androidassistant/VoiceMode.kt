@@ -274,14 +274,6 @@ private val AIUIDocument.isCard: Boolean
     get() = format != AIUIFormat.OpenUI ||
         text.orEmpty().lineSequence().any { it.trimStart().startsWith("root") && it.substringAfter("root").trimStart().startsWith("=") }
 
-/** The turn a reply in Stream Chat belongs to, as the router writes it on the message. */
-private val AgentMessage.turnId: String?
-    get() {
-        val custom = message.extraData
-        val runtime = custom["support_runtime"] as? Map<*, *>
-        return (custom["turn_id"] as? String ?: runtime?.get("turn_id") as? String)?.takeIf { it.isNotEmpty() }
-    }
-
 /**
  * The UI of one of Juno's turns on the call, as it streams, in a card that scrolls when it is
  * taller than the room under the glow.

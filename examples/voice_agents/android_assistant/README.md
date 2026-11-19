@@ -78,6 +78,11 @@ or newer, generated UI replies 7.18.0, and `AIConversationState` 7.19.0: `stream
   answer streaming in. Older messages load as you scroll up. Under a finished reply you can
   copy, share and rate it; ratings stay on the phone, as the router takes none yet. The composer
   floats over the bottom of the conversation, which fades away under it.
+- **Incognito chat** is the eye at the top right of a new chat. Its session is created with
+  `incognito = true`, so it has no channel, isn't listed, and Juno learns nothing from it;
+  `AgentTransport` shows it from the session's `turnMessages`, reasoning, tool calls and approval
+  cards included. Leaving it, or picking another conversation, ends it for good. The photos sent
+  with a question go to the agent but don't show on the question once it is sent.
 - **Interactive replies**: the gear at the top right of the drawer, beside New chat, opens
   Settings, where Reply format chooses how Juno answers: in Markdown, or with interactive UI in
   [A2UI](https://a2ui.org) or [OpenUI](https://openui.com). It is the agent's instructions, kept by
