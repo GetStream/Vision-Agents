@@ -410,6 +410,7 @@ final class SessionOptions {
     this.returnUrl,
     this.memory,
     this.timezone,
+    this.ui,
   });
 
   /// An id to hold the session by, for a caller that wants to know it before the session
@@ -476,6 +477,12 @@ final class SessionOptions {
   /// and it is remembered as the user's for the scheduled tasks that follow. Null sends none,
   /// and a zone the router does not know is refused.
   final String? timezone;
+
+  /// Whether the model is told its config's UI instructions in this session. False is for an
+  /// app that shows no UI: they are left out and prose is the expected answer, but it does not
+  /// prevent the model from writing UI, and a block it writes still reaches the reply. Null
+  /// leaves them in. Reopening or forking the session keeps it.
+  final bool? ui;
 }
 
 /// What a session remembers about the user [Backend.userId] names. It is always theirs: a
