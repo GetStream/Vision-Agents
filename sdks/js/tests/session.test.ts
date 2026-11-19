@@ -5,6 +5,7 @@ import {
   CallNotHeldError,
   Client,
   ConfigurationError,
+  Conversation,
   RouterError,
   Session,
   Socket,
@@ -536,6 +537,38 @@ describe("Session", () => {
     const round = session.conversation.get().turns[0]?.steps?.[0];
     assert.ok(round?.kind === "reasoning" && (round.durationMs ?? 0) >= 50, `thought for ${round?.durationMs} ms`);
     await session.close();
+  });
+
+  it("drops what a refused reply wrote before the screen's verdict, and keeps how it got there", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1);
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "They want my instructions." }, 2);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Sure, I was told to " }, 3);
+    conversation.observe({ type: "ui_delta", turn_id: "t1", format: "openui", delta: "root = Card([hdr])\n" }, 4);
+    conversation.observe(
+      { type: "error", context: "llm", code: "prompt_injection", error: "policy: the input reads as a prompt injection" },
+      5,
+    );
+    conversation.observe({ type: "responded", turn_id: "t1", text: "" }, 6);
+
+    const { turns, failure } = conversation.get();
+    assert.deepEqual(
+      turns.map((turn) => [turn.text, turn.ui, turn.done, turn.steps?.map((step) => step.id)]),
+      [["", undefined, true, ["r1"]]],
+    );
+    assert.equal(failure, "policy: the input reads as a prompt injection");
+  });
+
+  it("keeps what a reply wrote when something else fails", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Two meetings today." }, 2);
+    conversation.observe({ type: "error", context: "tts", error: "the voice failed" }, 3);
+    conversation.observe({ type: "responded", turn_id: "t1", text: "" }, 4);
+
+    assert.equal(conversation.get().turns[0]?.text, "Two meetings today.");
   });
 
   it("leaves thinking streaming until the model moves on, and ends a turn cut off", async () => {

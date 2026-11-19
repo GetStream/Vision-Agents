@@ -312,6 +312,9 @@ export class Conversation {
         return;
       }
       case "error":
+        if (text(frame, "code") === "prompt_injection") {
+          this.refused();
+        }
         this.change({ failure: text(frame, "error"), failureContext: text(frame, "context"), failureAt: now });
         return;
       default:
@@ -378,6 +381,28 @@ export class Conversation {
     const changed = turns.slice();
     changed[index] = next;
     this.turns(changed);
+  }
+
+  /**
+   * The prompt injection screen refused the reply being written. What it streamed before the
+   * verdict is not the answer, so its text and UI go, as they do from the kept conversation;
+   * its thinking and tool calls stay.
+   */
+  private refused(): void {
+    const turns = this.snapshot.turns;
+    const index = turns.findLastIndex((turn) => turn.speaker === "agent");
+    const turn = turns[index];
+    if (!turn || turn.done) {
+      return;
+    }
+    this.uiRawByTurn.delete(turn.id);
+    const { ui, ...kept } = turn;
+    if (!kept.text && !ui) {
+      return;
+    }
+    const next = turns.slice();
+    next[index] = Object.freeze({ ...kept, text: "" });
+    this.turns(next);
   }
 
   /**
