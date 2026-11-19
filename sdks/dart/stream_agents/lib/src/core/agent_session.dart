@@ -226,10 +226,23 @@ final class AgentSession {
       events().where((event) => event.kind == kind).listen(handler);
 
   /// Speaks this without going through the model.
-  void say(String text) => _held().send(SayCommand(text));
+  ///
+  /// [interrupt] stops what the agent is saying first, rather than waiting for it to finish.
+  void say(String text, {bool interrupt = false}) {
+    final socket = _held();
+    if (interrupt) {
+      socket.send(const InterruptCommand());
+    }
+    socket.send(SayCommand(text));
+  }
 
   /// Abandons the reply in flight.
-  void interrupt() => _held().send(const InterruptCommand());
+  ///
+  /// With [requestId], the `request_id` a reply answers (as `command_accepted` and its tool
+  /// calls carry it), only that reply is abandoned and the router reports `command_stopped`.
+  /// An id the router does not know, or any id on a conversation that keeps no commands,
+  /// comes back as an `error` event.
+  void interrupt({String requestId = ''}) => _held().send(InterruptCommand(requestId: requestId));
 
   /// Answers a call waiting in [approvals].
   ///

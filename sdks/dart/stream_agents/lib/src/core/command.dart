@@ -22,12 +22,19 @@ final class SayCommand extends Command {
   Map<String, Object?> toJson() => {'type': 'say', 'text': text};
 }
 
-/// Abandon the reply in flight.
+/// Abandon the reply in flight, or only the one answering [requestId].
 final class InterruptCommand extends Command {
-  const InterruptCommand();
+  const InterruptCommand({this.requestId = ''});
+
+  /// The `request_id` of the request the reply answers, as `command_accepted` and its tool calls
+  /// carry it. Empty abandons whichever reply is current.
+  final String requestId;
 
   @override
-  Map<String, Object?> toJson() => {'type': 'interrupt'};
+  Map<String, Object?> toJson() => {
+    'type': 'interrupt',
+    if (requestId.isNotEmpty) 'request_id': requestId,
+  };
 }
 
 /// Answer a tool call. One of [output] or [error] says how it went, and [images] are pictures

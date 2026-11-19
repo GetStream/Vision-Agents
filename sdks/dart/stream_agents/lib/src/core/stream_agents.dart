@@ -8,6 +8,7 @@ import 'generated/api.dart' as api;
 import 'guests.dart';
 import 'models.dart';
 import 'router.dart';
+import 'scheduled_tasks.dart';
 import 'sessions.dart';
 import 'tools.dart';
 import 'wire.dart';
@@ -50,6 +51,7 @@ final class StreamAgents {
       _ownsClient = httpClient == null {
     _operations = api.Operations(HttpWire(backend, _client));
     sessions = Sessions(_operations, userId: backend.userId);
+    scheduledTasks = ScheduledTasks(_operations);
   }
 
   final Backend backend;
@@ -59,6 +61,9 @@ final class StreamAgents {
 
   /// This caller's conversations, whichever agent held them.
   late final Sessions sessions;
+
+  /// What agents said they would do for this user later: reminders, check-ins, reports.
+  late final ScheduledTasks scheduledTasks;
 
   /// One agent, by the name its config was stored under.
   Agent agent(String name) => Agent._(this, name);
