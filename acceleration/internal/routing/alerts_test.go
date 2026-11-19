@@ -41,6 +41,13 @@ func (s *UsageAlertsSuite) TestTheRouterHasItsEightConditions() {
 	}, levels)
 }
 
+// The Slack message of an alert is its Sentry title: without a summary it names only the alert.
+func (s *UsageAlertsSuite) TestEveryConditionSaysWhatItMeans() {
+	for _, condition := range Alerts(time.Minute) {
+		s.NotEmpty(condition.Summary, condition.Name)
+	}
+}
+
 func (s *UsageAlertsSuite) TestHoldsFlushFailingPagesOncePastTenSeconds() {
 	var unflushed atomic.Int64
 	ReportUnflushedHolds(func() float64 { return float64(unflushed.Load()) })
