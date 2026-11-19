@@ -149,13 +149,14 @@ run code it writes, and needs `DAYTONA_API_KEY` on the backend. Only a voice age
 ## An agent as a directory
 
 `agents/customer_support/agent.yaml` is what makes a directory an agent, and
-`instructions.md`, `skills/*.md` and `knowledge/` are what it holds. Joining a call
-stores them on the backend, so naming the config is the whole of it:
+`instructions.md`, `skills/*.md` and `knowledge/` are what it holds. `agent.sync()` stores
+them on the backend; joining a call never does, so sync before the agent takes calls:
 
 ```python
 from vision_agents.core import Agent
 
 agent = Agent(config="customer_support")
+await agent.sync()
 ```
 
 `agent.yaml` also says what the agent runs on, so the models are decided on disk with
