@@ -118,8 +118,8 @@ func (s *StoreSuite) TearDownSuite() {
 	}
 }
 
-// storeTables is every table a store test writes. A table that references one of them is listed
-// too, as a DELETE does not cascade.
+// storeTables lists all tables that the store tests write to. The list also includes each table
+// that has a foreign key to a table in the list, because DELETE does not cascade.
 const storeTables = "requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity," +
 	" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks," +
 	" voices, agent_sessions, agent_responses, agent_response_items, conversation_documents, agent_branch_switches, agent_branch_messages, users," +
@@ -137,15 +137,18 @@ const storeTables = "requests, stats_hourly, stats_daily, stats_tags_hourly, sta
 	" connector_connection_validations, channel_thread_people, channel_thread_members, channel_thread_starters," +
 	" user_phone_history, api_keys"
 
-// emptyStoreTables deletes their rows rather than truncating them: TRUNCATE makes new files for
-// every table and index, which costs far more than deleting the few rows a test leaves. The
-// replica role turns foreign keys and row triggers off, as TRUNCATE does not run them either:
-// price_changes' guard refuses a DELETE.
+// emptyStoreTables deletes all rows in storeTables. It uses DELETE, not TRUNCATE. TRUNCATE makes
+// new files for each table and each index. This takes much more time than a DELETE of the few
+// rows that a test writes.
+//
+// The replica role stops foreign-key checks and row triggers during the DELETE. This gives the
+// same result as TRUNCATE, which does not run row triggers. Without the replica role, the
+// trigger on price_changes refuses the DELETE.
 var emptyStoreTables = "SET LOCAL session_replication_role = replica; DELETE FROM " +
 	strings.ReplaceAll(storeTables, ", ", "; DELETE FROM ")
 
-// SetupTest empties the tables once in each database: with one database, the shard's is the
-// shared one.
+// SetupTest empties the tables one time in each database. With one database, the shard database
+// and the shared database are the same database.
 func (s *StoreSuite) SetupTest() {
 	databases := s.store.shards()
 	if s.store.Sharded() {
