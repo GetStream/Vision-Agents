@@ -1155,6 +1155,7 @@ class TestAccelerated:
         assert router.created is not None
         assert router.created["config_id"] == "config-7"
 
+    @pytest.mark.usefixtures("stream_credentials")
     async def test_syncing_an_agent_stores_the_directory_its_config_is_named_after(
         self, router: Router, john_dir
     ):
