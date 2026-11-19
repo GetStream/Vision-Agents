@@ -145,6 +145,13 @@ func (s *GeminiSuite) TestHydrogenCanBeAskedForXhigh() {
 	s.Equal("xhigh", s.request["reasoning_effort"])
 }
 
+func (s *GeminiSuite) TestNeonCanBeAskedForXhigh() {
+	// Neon is a Gemini 4 model, and the family stops at high.
+	s.ask(Options{Model: "gemini-4-neon", ReasoningEffort: "xhigh"})
+
+	s.Equal("xhigh", s.request["reasoning_effort"])
+}
+
 func (s *GeminiSuite) TestXhighIsRefusedOnArgonBeforeItIsSent() {
 	// xhigh came with Hydrogen; Argon still stops at high.
 	_, err := New(Options{APIKey: "k", Model: "gemini-4-argon", ReasoningEffort: "xhigh"})

@@ -26,7 +26,7 @@ type MetaRouterIntegrationSuite struct {
 }
 
 func TestMetaRouterIntegrationSuite(t *testing.T) {
-	for _, model := range []string{meta.DefaultModel, "muse-wonder-1.0"} {
+	for _, model := range []string{meta.DefaultModel, "muse-wonder-1.0", "muse-ember-1.0"} {
 		t.Run(model, func(t *testing.T) {
 			suite.Run(t, &MetaRouterIntegrationSuite{model: model})
 		})

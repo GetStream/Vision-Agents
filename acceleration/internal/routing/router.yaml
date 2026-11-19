@@ -502,8 +502,8 @@ stt:
     # reason Nemotron's third tier is: a language the vendor's own figures say it
     # transcribes badly is not one to route a call to.
     #
-    # $0.39 an audio hour at the standard rate, before the $0.05 an hour keyterm prompting
-    # adds; an annual Business plan brings the base to $0.28.
+    # $0.22 an audio hour on every plan (repriced 2026-11-17, the same as Scribe v3 Live),
+    # before the $0.08 an hour keyterm prompting adds.
     - provider: elevenlabs
       model: scribe_v2_realtime
       description: "ElevenLabs' live Scribe, built for the 150 ms a live call needs."
@@ -585,6 +585,95 @@ stt:
         trains_on_data: "yes"
         retention: unspecified
 
+    # Scribe v3 Live, launched 2026-11-10 as the successor to Scribe v2 Realtime above: the
+    # same socket and frames, opened with model_id=scribe_v3_live, and ElevenLabs' migration
+    # note says an integration behaves the same until it asks for turn_prediction. They
+    # report a 44% lower WER than v2 across 73 FLEURS languages; Artificial Analysis'
+    # streaming board, read 2026-11-19, has it at 2.9% and 81 ms to the final transcript
+    # against v2's 3.6% and 141 ms.
+    #
+    # The languages are v2's list. ElevenLabs have not yet published per-language error
+    # rates for v3, only the average across 73, so nothing yet says which further languages
+    # it can be trusted with.
+    #
+    # $0.22 an audio hour, the rate ElevenLabs now publish for every plan
+    # (https://elevenlabs.io/pricing/api, read 2026-11-19), before the $0.08 an hour
+    # keyterm prompting adds, which nothing here meters yet.
+    - provider: elevenlabs
+      model: scribe_v3_live
+      description: "ElevenLabs' Scribe v3 Live: v2 Realtime's successor, more accurate and faster to the final word."
+      benchmark: { word_error_rate: 0.029, latency_ms: 81 }
+      languages:
+        [
+          az,
+          be,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gu,
+          hi,
+          hr,
+          hu,
+          hy,
+          id,
+          is,
+          it,
+          ja,
+          ka,
+          kk,
+          kn,
+          lt,
+          lv,
+          mk,
+          ml,
+          mr,
+          ms,
+          mt,
+          ne,
+          nl,
+          no,
+          or,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sr,
+          sv,
+          sw,
+          ta,
+          te,
+          tr,
+          uk,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # The same two as v2, because they are what this package sends. v3 also offers a
+      # turn_prediction commit strategy, multilang_mode, a 10,000-term keyterm library and
+      # realtime diarize, and declares none of them: nothing here sends them yet.
+      supports: [keyterms, endpointing]
+      # ElevenLabs' account, the same answer as v2 above.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
     # AssemblyAI's Universal-3.6 Pro Realtime, launched 2026-09-29 for voice agents. It
     # switches between its 32 languages mid-sentence and decides where a turn ended from
     # the words rather than from a silence alone. No benchmark line: Artificial Analysis
@@ -648,6 +737,65 @@ stt:
       # Self-serve accounts are in the model improvement program until an admin on a paid
       # plan opts out in Data Controls, and only an opted-out account gets zero retention
       # for streaming. Opting out makes this "no" and none.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+
+    # AssemblyAI-STT-3.7-Realtime-Agent, launched 2026-11-17 to replace Universal-3.6 Pro
+    # for voice agents, which stays above because AssemblyAI still fully support it. The
+    # same socket, protocol and parameters, so only speech_model differs; the same 32
+    # languages (assemblyai.com/llms/models.md, read 2026-11-19). Artificial Analysis
+    # measured 3.2% WER and 101 ms to the final transcript (read 2026-11-19), against
+    # 3.6% and 192 ms for Universal-3.6 Pro on its min_latency preset.
+    #
+    # $0.45 an hour, the same as Universal-3.6 Pro, billed by how long the socket is open,
+    # with keyterms included (assemblyai.com/pricing, read 2026-11-19). Speaker labels,
+    # Voice Focus, prompting and Medical Mode are add-ons this package never sends.
+    - provider: assemblyai
+      model: assemblyai-stt-3-7-realtime-agent
+      description: "AssemblyAI's STT 3.7 for voice agents: switches between 32 languages mid-sentence and finds the turn's end from the words."
+      benchmark: { word_error_rate: 0.032, latency_ms: 101 }
+      languages:
+        [
+          af,
+          ar,
+          ca,
+          da,
+          de,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fr,
+          gl,
+          he,
+          hi,
+          it,
+          ja,
+          ko,
+          mr,
+          nl,
+          nn,
+          no,
+          pt,
+          ro,
+          ru,
+          sv,
+          tr,
+          ur,
+          vi,
+          xh,
+          yue,
+          zh,
+          zu,
+        ]
+      realtime: true
+      tier: low-latency
+      # What universal-3-6-pro declares, for the same reason: keyterms_prompt and
+      # max_turn_silence are all this package sends of what the model can do.
+      supports: [keyterms, endpointing]
+      # The same account and the same model improvement program as universal-3-6-pro.
       data_policy:
         trains_on_data: "yes"
         retention: unspecified
@@ -916,7 +1064,7 @@ stt:
       prefer: muse/muse-voice-transcribe-1.0
       only:
         - muse/muse-voice-transcribe-1.0
-        - elevenlabs/scribe_v2_realtime
+        - elevenlabs/scribe_v3_live
         - cartesia/ink-2
         - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
 
@@ -2304,6 +2452,31 @@ sts:
         trains_on_data: "no"
         retention: 30d
 
+    # Phonic-1, over Phonic's own socket rather than OpenAI's events: its own package.
+    # Launched 2026-10-29 (per trackers; Phonic posted no dated announcement this could
+    # find), first on the Artificial Analysis speech-to-speech index at 87.1 as "Phonic 1
+    # (High)", at 0.61s to first audio; Phonic claim under 600 ms. It calls tools, takes
+    # typed turns and changes instructions and tools mid-session, but does not see, stops
+    # when the caller talks, and has no silence timer it documents as ending a turn. One
+    # price per conversation minute, no tokens: $0.07 on the Starter plan, which is what a
+    # new key is on, against $0.065 on Pro with a $200 monthly minimum
+    # (phonic.ai/pricing, read 2026-11-19). Phonic report no time, so the seconds are the
+    # router's from when Phonic took the config. 51 languages
+    # (docs.phonic.ai/docs/build/agents/supported_languages); the first asked for is the
+    # one the agent starts in. Phonic publish nothing about training on API traffic, and
+    # keep transcripts and audio indefinitely by default; zero retention is for Enterprise
+    # plans only, and refused on this key.
+    - provider: phonic
+      model: phonic-1
+      description: "Top of the Artificial Analysis speech-to-speech board and the quickest to first audio there. Calls tools, cannot see, priced per minute."
+      languages: [ar, az, bg, bn, cs, da, de, el, en, es, fa, fi, fil, fr, gu, he, hi, hu, id, it, ja, ka, km, kn, ko, lt, lv, ml, mr, ms, ne, nl, "no", pa, pl, pt, ro, ru, si, sk, sq, sv, sw, ta, te, th, tr, uk, ur, vi, yue, zh]
+      realtime: true
+      tier: low-latency
+      supports: [tools, text, input_transcript, output_transcript]
+      data_policy:
+        trains_on_data: unknown
+        retention: unspecified
+
     # Alibaba's Qwen 3.5 Omni, top of the Artificial Analysis quality board and by far the
     # cheapest, at $0.03 an hour of input on that board. It takes no tools and no typed
     # turns, and its session is configured once, before the first audio. Alibaba have
@@ -2407,10 +2580,11 @@ llm:
     # times input; a prompt over 272k tokens costs twice the input, cached and write rates
     # and 1.5 times the output for the whole request; and the tier OpenAI answer that they
     # served a request at multiplies every rate: flex and batch half, fast twice, and
-    # ultrafast, which only GPT-6 Astra and GPT-6.1 Sol offer, six times. Fast was called
-    # priority until July 2026, and GPT-5.6 and earlier still answer priority for a fast
-    # request, so priority is priced as fast. A tier not named here is priced at the
-    # default rates and logged.
+    # ultrafast, which only GPT-6 Astra, GPT-6.1 Sol and GPT-6.2 Sol and Astra offer, six
+    # times. GPT-6.2's ultrafast is three times until 2027-03-01, when it goes to six, and
+    # GPT-6.2 offers no flex. Fast was called priority until July 2026, and GPT-5.6 and
+    # earlier still answer priority for a fast request, so priority is priced as fast. A
+    # tier not named here is priced at the default rates and logged.
     - provider: openai
       model: gpt-5.6-luna
       description: "OpenAI's small, fast model. Reads images, and costs little."
@@ -2555,7 +2729,7 @@ llm:
     # Index at 58 - at max effort. The provider sends no effort, so it thinks at the medium
     # effort it defaults to, where that index puts it at 51. Thinking is adaptive and cannot
     # be switched off, and it counts against max_output_tokens. Forced tool use is a 400 on
-    # this model, so a request with tool_choice required fails if it is routed here.
+    # this model, so the provider refuses tool_choice required before it goes out.
     #
     # Cache reads are 5% of input rather than the usual 10%, and five-minute cache writes
     # 125% (https://platform.claude.com/docs/en/about-claude/pricing).
@@ -2576,11 +2750,41 @@ llm:
         trains_on_data: "no"
         retention: 30d
 
+    # Claude Fable 5.2, released 9 November 2026: Anthropic's tier above Opus, for long
+    # agentic work and the hardest reasoning, and first on the Artificial Analysis
+    # Intelligence Index at 65 - at max effort, where its first answer token takes over three
+    # and a half minutes. The provider sends no effort, so it thinks at the high effort it
+    # defaults to, where that index puts it at 62 and the first answer token at 23 s; low is
+    # 54 and 7 s. Too slow for a live turn and twice Opus 5.5's price, so no shortcut prefers
+    # it: it is reached by name or as failover in the quality tier. Thinking is adaptive and
+    # cannot be switched off, and it counts against max_output_tokens. Forced tool use is a
+    # 400 on this model, so the provider refuses tool_choice required before it goes out.
+    #
+    # Cache reads are 2.5% of input, and five-minute cache writes 125%, flat across the 1M
+    # context (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-11-19).
+    # Fast mode ($16/$80) and US-only inference (1.1x) are never asked for from here.
+    - provider: anthropic
+      model: claude-fable-5-2
+      description: "Anthropic's Fable 5.2, top of the Artificial Analysis Intelligence Index. Reads images. Twice Opus 5.5's price, and slow to start."
+      benchmark: { intelligence_index: 62, output_tokens_per_second: 108 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Fable 5.2 requires 30-day retention and is not offered under zero data retention
+      # unless Anthropic expressly authorises it, so this is 30d whatever agreement we hold.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
     # Anthropic's middle model, second on the Artificial Analysis Intelligence Index at 56 -
     # at max effort. The provider sends no effort, so it thinks at the high effort it
     # defaults to, where that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.
-    # Forced tool use is a 400 on this model, so a request with tool_choice required fails
-    # if it is routed here.
+    # Forced tool use is a 400 on this model, so the provider refuses tool_choice required
+    # before it goes out.
     #
     # Cache reads are 5% of input since Anthropic halved them on 7 October 2026, and
     # five-minute cache writes 125%.
@@ -2664,12 +2868,12 @@ llm:
         trains_on_data: "no"
         retention: 30d
 
-    # GPT-6 Sol, which GPT-6.1 Sol below replaces as what llm-thinking prefers. It stays
-    # declared because callers name it outright, and because it is the Sol that can still be
-    # told not to think. Artificial Analysis score it 48 at roughly half the cost per task of
-    # GPT-5.6 Sol. OpenAI default it to medium reasoning effort; the provider asks for none
-    # unless a request names one. OpenAI's account, so the same data policy as GPT-6 Luna
-    # above.
+    # GPT-6 Sol, which GPT-6.1 Sol and then GPT-6.2 Sol below replaced as what llm-thinking
+    # prefers. It stays declared because callers name it outright, and because it is the Sol
+    # that can still be told not to think. Artificial Analysis score it 48 at roughly half
+    # the cost per task of GPT-5.6 Sol. OpenAI default it to medium reasoning effort; the
+    # provider asks for none unless a request names one. OpenAI's account, so the same data
+    # policy as GPT-6 Luna above.
     - provider: openai
       model: gpt-6-sol
       description: "OpenAI's previous model for coding and agentic work. Reads images, and can answer without thinking first."
@@ -2683,8 +2887,9 @@ llm:
         trains_on_data: "no"
         retention: 30d
 
-    # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
-    # llm-thinking prefers, so this is the model the skills run on unless it is down.
+    # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price. GPT-6.2
+    # Sol below replaces it as what llm-thinking prefers; it stays declared because callers
+    # name it outright.
     # Artificial Analysis score it 51 at xhigh, 1 below GPT-6 Astra at xhigh, at a fifth of
     # the price. Its efforts run from low to xhigh: none and max are a 400, so the provider
     # asks for low when a request names no effort. Cache writes are $2.50 per million, and a prompt over 272k
@@ -2692,8 +2897,30 @@ llm:
     # the whole request. The same data policy as GPT-6 Luna above.
     - provider: openai
       model: gpt-6.1-sol
-      description: "OpenAI's model for coding and agentic work, and what llm-thinking prefers. Reads images, and always thinks first."
+      description: "OpenAI's previous model for coding and agentic work. Reads images, and always thinks first."
       benchmark: { intelligence_index: 42, output_tokens_per_second: 60 }
+      context_window: 1050000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
+    # GPT-6.2 Sol (2026-11-17) is GPT-6.1 Sol's direct upgrade at the same price, and what
+    # llm-thinking prefers, so this is the model the skills run on unless it is down. Artificial
+    # Analysis score it 57 at max effort, at 75 output tokens a second; they have no row at
+    # low, the effort the provider sends, so there is no index here. Its
+    # efforts run from low to max: none and minimal are a 400, so the provider asks for low when
+    # a request names no effort. $2 in, $0.10 cached, $2.50 a 30-minute cache write and $10 out
+    # per million; over 272k input tokens the input and cache rates double and output is 1.5
+    # times, for the whole request (developers.openai.com/api/docs/pricing, read 2026-11-19).
+    # The same data policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6.2-sol
+      description: "OpenAI's model for coding and agentic work, and what llm-thinking prefers. Reads images, and always thinks first."
+      benchmark: { output_tokens_per_second: 75 }
       context_window: 1050000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
@@ -2710,9 +2937,31 @@ llm:
     # as failover in the quality tier. The same data policy as GPT-6 Luna above.
     - provider: openai
       model: gpt-6-astra
-      description: "OpenAI's most capable model, for the hardest reasoning. Always thinks first. The dearest here."
+      description: "OpenAI's previous most capable model, for the hardest reasoning. Always thinks first. The dearest here."
       benchmark: { intelligence_index: 46, output_tokens_per_second: 53 }
       context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
+    # GPT-6.2 Astra (2026-11-17) is GPT-6 Astra's direct upgrade, and cheaper: $8 in, $0.40
+    # cached, $10 a 30-minute cache write and $40 out per million, against $10, $1, $12.50 and
+    # $50; over 272k input tokens the input and cache rates double and output is 1.5 times, for
+    # the whole request (developers.openai.com/api/docs/pricing, read 2026-11-19). Artificial
+    # Analysis score it 62 at max effort, third of the field, at 50 output tokens a second; they
+    # have no row at low, the effort the provider sends, so there is no index here. Its efforts
+    # run from low to max: none and minimal are a 400. Still four times Sol's price, so nothing
+    # prefers it; it is reached by name or as failover in the quality tier. The same data
+    # policy as GPT-6 Luna above.
+    - provider: openai
+      model: gpt-6.2-astra
+      description: "OpenAI's most capable model, for the hardest reasoning. Always thinks first."
+      benchmark: { output_tokens_per_second: 50 }
+      context_window: 1050000
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -2759,6 +3008,27 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
+    # Meta's Muse Ember, the smallest Muse: $0.10/1M in and $0.50/1M out up to 200k tokens
+    # of prompt, three times that above (dev.meta.ai/models/muse-ember, read 2026-11-19).
+    # Artificial Analysis put it at about 470 output tokens a second. It takes Spark's
+    # requests unchanged: none is a 400, so the provider asks for low, and tool_choice takes
+    # auto and nothing else. Unlike Spark it is quick enough for the fast tier: streamed, the
+    # first answer token came 1.0-2.3 s after the request at minimal and low effort, against
+    # 1.5-4.7 s for Spark. Nothing prefers it; it is reached by name or as failover in the
+    # fast tier. The Standard terms are Spark's: no training, no retention window named.
+    - provider: meta
+      model: muse-ember-1.0
+      description: "Meta's smallest Muse, fast and cheap. Reads images and always thinks first."
+      benchmark: { output_tokens_per_second: 468 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
@@ -3047,6 +3317,27 @@ llm:
         trains_on_data: "no"
         retention: unspecified
 
+    # Gemini 4 Neon, between Hydrogen and Carbon, generally available on the paid tier only.
+    # It takes low, medium, high and xhigh, as Hydrogen does, and the provider asks for high.
+    # Artificial Analysis score it 44, 55, 60 and 61 across those. At low it took a median
+    # 3.9 s to its first answer token on our runs, against 2.2 s for Hydrogen and 1.6 s for
+    # 3.8 Flash, so it is no live-path model. The same unified 1M-token context as Argon.
+    # $3 in, $0.15 cached and $15 out per 1M tokens, flat across the context, thinking
+    # billed as output, implicit caching only (aistudio.google.com/docs/pricing, read
+    # 2026-11-19). The data terms are the paid Developer API's, as for Argon above.
+    - provider: gemini
+      model: gemini-4-neon
+      description: "Google's stronger Gemini 4 for hard work, above Hydrogen and dearer. Reads images, and can be asked to think from low to xhigh."
+      benchmark: { intelligence_index: 60 }
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
     # code for "no linguistic content", so no shortcut asking for a language reaches it,
@@ -3148,17 +3439,17 @@ llm:
     # answer itself. The conversation carries on while it thinks, so this is the shorthand
     # for quality over speed, and nothing here is chosen for how soon it starts.
     #
-    # GPT-6.1 Sol is preferred outright rather than left to the ranking, for the same reason
+    # GPT-6.2 Sol is preferred outright rather than left to the ranking, for the same reason
     # llm-fast pins its own: the model that does the thinking is the one this deployment
     # chose. The rest of the tier is still here to catch it being down.
     llm-thinking:
       tier: high-quality
-      prefer: openai/gpt-6.1-sol
+      prefer: openai/gpt-6.2-sol
 
     # What the agent moderator (Nora) reviews flagged content on. GPT-5.6 Luna is preferred
     # for now. Gemma on our own GPUs, which was preferred before, stands behind it: a review
     # is a short ruling against labels, and the app's moderation volume is billed by the GPU
-    # minute there rather than by the token. GPT-6.1 Sol, what llm-thinking prefers, catches
+    # minute there rather than by the token. GPT-6.2 Sol, what llm-thinking prefers, catches
     # both being down, or OpenAI failing Luna while GEMMA_BASE_URL is unset. Named outright
     # with only because the three share no tier. It has no title: the moderator page offers
     # no model picker, so it is the template's default rather than a choice.
@@ -3167,7 +3458,7 @@ llm:
       only:
         - openai/gpt-5.6-luna
         - gemma/gemma-4-26B-A4B-it
-        - openai/gpt-6.1-sol
+        - openai/gpt-6.2-sol
 
     # What product data is analysed on: the model that reads a week of calls, tickets and
     # threads and writes what customers are asking for. That is a different intent from
