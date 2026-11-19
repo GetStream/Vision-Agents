@@ -458,9 +458,9 @@ $consent = $connections->authorize($connection->id, new AuthorizeOptions('https:
 // Open $consent->launchUrl in a popup from a page of the return URL's origin, and post it
 // $consent->handoffToken. The attempt ends at $consent->expiresAt.
 
-$connection = $connections->get($connection->id, 'ada'); // status is pending until ada consents
+$connection = $connections->get($connection->id, userId: 'ada'); // status is pending until ada consents
 $hers = $connections->list(new ConnectionFilter(userId: 'ada'));
-$connections->delete($connection->id, 'ada');
+$connections->delete($connection->id, userId: 'ada');
 ```
 
 Each call takes the user as `userId`: a parameter of `get` and `delete`, a field of `NewConnection`,

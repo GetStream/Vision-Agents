@@ -4,7 +4,7 @@
 
 ### The PHP SDK connects a user's own accounts
 
-`$client->connections` creates, authorizes, reads, lists and deletes connections: `create(new NewConnection('linear', userId: 'ada'))`, `authorize($id, new AuthorizeOptions($returnUrl, 'ada'))` for the launch URL, handoff token and expiry of the consent, `get($id, 'ada')`, `list(new ConnectionFilter('ada'))` (every page) and `delete($id, 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
+`$client->connections` creates, authorizes, reads, lists and deletes connections: `create(new NewConnection('linear', userId: 'ada'))`, `authorize($id, new AuthorizeOptions($returnUrl, userId: 'ada'))` for the launch URL, handoff token and expiry of the consent, `get($id, userId: 'ada')`, `list(new ConnectionFilter(userId: 'ada'))` (every page) and `delete($id, userId: 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
 
 ### The Go SDK reads a session's tokens, timeline and decisions
 

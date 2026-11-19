@@ -211,6 +211,45 @@ final class ConnectionsTest extends TestCase
         ], array_map(static fn (Received $sent): array => $sent->params(), $this->router->received()));
     }
 
+    // Catches a list by connector that reads the connector as the user (the filter fields swapped):
+    // an app's list would then go out as a user's, with a header naming the connector.
+    public function testAnAppListByConnectorSendsNoUser(): void
+    {
+        $this->router->answer('GET', '/v1/agents/connections', 200, ['items' => [], 'has_more' => false]);
+
+        $this->client->connections->list(new ConnectionFilter(connectorId: 'linear'));
+
+        $sent = $this->router->to('GET', '/v1/agents/connections')[0];
+        self::assertArrayNotHasKey('x-stream-user-id', $sent->headers);
+        self::assertSame(['owner_type' => 'app', 'connector_id' => 'linear', 'limit' => '200'], $sent->params());
+    }
+
+    // Catches an authorization that reads the return URL as the user: the URL would go out as
+    // X-Stream-User-Id.
+    public function testAnAppAuthorizationWithAReturnUrlSendsNoUser(): void
+    {
+        $this->router->answer('POST', '/v1/agents/connections/con_1/authorizations', 201, self::authorization());
+
+        $this->client->connections->authorize('con_1', new AuthorizeOptions('https://app.example.com/settings'));
+
+        $sent = $this->router->to('POST', '/v1/agents/connections/con_1/authorizations')[0];
+        self::assertArrayNotHasKey('x-stream-user-id', $sent->headers);
+        self::assertSame(['return_url' => 'https://app.example.com/settings'], $sent->json());
+    }
+
+    // Catches a create that reads the label as the user: an app's connection would be filed as
+    // the account of a user named like its label.
+    public function testAnAppConnectionWithALabelIsOwnedByTheApp(): void
+    {
+        $this->router->answer('POST', '/v1/agents/connections', 201, Rows::connection('con_1', 'linear'));
+
+        $this->client->connections->create(new NewConnection('linear', 'work'));
+
+        $sent = $this->router->to('POST', '/v1/agents/connections')[0];
+        self::assertArrayNotHasKey('x-stream-user-id', $sent->headers);
+        self::assertSame(['connector_id' => 'linear', 'owner' => ['type' => 'app'], 'label' => 'work'], $sent->json());
+    }
+
     // Catches a list that pages forever when the router hands back a cursor it answered before,
     // or ends on a page that has more but an empty cursor without keeping that page.
     public function testListingStopsOnACursorItAlreadyFollowedOrAnEmptyOne(): void
