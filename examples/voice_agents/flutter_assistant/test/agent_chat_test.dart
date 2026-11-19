@@ -533,8 +533,11 @@ void main() {
         (id: 'T1', zone: 'Cliff Terrace', seats: 2, available: false),
         (id: 'T4', zone: 'Harbor Window', seats: 4, available: true),
       ];
+      const terrace = <DiningTableItem>[(id: 'T1', zone: 'Terrace', seats: 2, available: true)];
+      const garden = <DiningTableItem>[(id: 'T1', zone: 'Garden', seats: 2, available: true)];
 
       const tools = 'POST /v1/agents/sessions/s1/tools';
+      const removal = 'DELETE /v1/agents/sessions/s1/tools/reserve_table';
 
       /// Offers [tables] from reply m1, as its card does once it is written, and waits for the
       /// tool to be added.
@@ -543,9 +546,14 @@ void main() {
         await until(() => sessions.routes.contains(tools));
       }
 
-      /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
-      /// returns the result sent back.
-      Future<Map<String, Object?>> call(AgentChat chat, String tableId, {String id = 'c1'}) async {
+      /// Has the router call `reserve_table` for [tableId] in [zone], allows it as the person
+      /// would, and returns the result sent back.
+      Future<Map<String, Object?>> call(
+        AgentChat chat,
+        String tableId,
+        String zone, {
+        String id = 'c1',
+      }) async {
         bool answered(String m) => m.contains('"tool_result"') && m.contains('"$id"');
         (await sessions.socket()).add(
           jsonEncode({
@@ -554,8 +562,9 @@ void main() {
             'name': SeatSelectorComponent.reserveTableTool,
             'arguments': jsonEncode({
               'table_id': tableId,
+              'zone': zone,
               'when': 'tonight at 8pm',
-              'summary': '$tableId, for 4, tonight at 8pm',
+              'summary': '$tableId in $zone, for 4, tonight at 8pm',
             }),
           }),
         );
@@ -571,11 +580,26 @@ void main() {
         await chat.open();
 
         await offer(chat);
-        // A second card bringing the tool waits for what that does, so a second request
-        // would have reached the router by the time it returns.
-        await chat.bring(SeatSelectorComponent.reserveTable(chat.reserve));
+        chat.offer('m1', tables);
+        // A booking's round trip comes after any change of the tool the second offer asked for.
+        await call(chat, 'T4', 'Harbor Window');
 
         expect(sessions.routes.where((r) => r == tools), hasLength(1));
+      });
+
+      test('brings no tool for a card with no free table', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', [(id: 'T1', zone: 'Terrace', seats: 2, available: false)])
+          ..offer('m2', garden);
+        await until(() => sessions.routes.contains(tools));
+
+        // The tool was added for m2's free table only.
+        expect(sessions.routes.where((r) => r == tools), hasLength(1));
+        await call(chat, 'T1', 'Garden');
+        // Nothing is left to book: m1 has no free table.
+        await until(() => sessions.routes.contains(removal));
       });
 
       test(
@@ -631,140 +655,32 @@ void main() {
 
       test('a card shown while the tool is being taken back gets it again', () async {
         final taken = Completer<void>();
-        sessions.holdRoute('DELETE /v1/agents/sessions/s1/tools/reserve_table', taken.future);
+        sessions.holdRoute(removal, taken.future);
         final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
         await offer(chat);
-        await call(chat, 'T4');
-        await until(
-          () => sessions.routes.contains('DELETE /v1/agents/sessions/s1/tools/reserve_table'),
-        );
+        await call(chat, 'T4', 'Harbor Window');
+        await until(() => sessions.routes.contains(removal));
 
         chat.offer('m2', [(id: 'K3', zone: 'Garden', seats: 4, available: true)]);
         taken.complete();
         await until(() => sessions.routes.where((r) => r == tools).length == 2);
 
-        expect((await call(chat, 'K3', id: 'c2'))['output'], contains('Reserved table K3'));
-      });
-
-      const terrace = <DiningTableItem>[(id: 'T1', zone: 'Terrace', seats: 2, available: true)];
-      const garden = <DiningTableItem>[(id: 'T1', zone: 'Garden', seats: 2, available: true)];
-
-      test('a second booking of a tapped table in the same reply is refused', () async {
-        final chat = closing(AgentChat('s1', sessions: sessions));
-        await chat.open();
-        chat
-          ..offer('m1', terrace)
-          ..offer('m2', garden)
-          ..choose('m1', 'T1');
-        await until(() => sessions.routes.contains(tools));
-
-        await call(chat, 'T1');
-        final second = await call(chat, 'T1', id: 'c2');
-
-        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
-        expect(second['error'], isNotEmpty);
-        expect(chat.reservations.value['m2'], isNull);
-      });
-
-      test('a question stopped before it is asked keeps the table tapped before it', () async {
-        final added = Completer<void>();
-        sessions.holdRoute(tools, added.future);
-        final composer = ChatComposerController();
-        addTearDown(composer.dispose);
-        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
-        await chat.open();
-        final conversation = conversationOf(chat, composer: composer);
-        chat
-          ..offer('m1', terrace)
-          ..offer('m2', garden)
-          ..choose('m1', 'T1');
-        await until(() => sessions.routes.contains(tools));
-
-        // The question waits for the tool, and is stopped before it is asked.
-        conversation.send('Something else');
-        await pumpEventQueue();
-        conversation.stop();
-        added.complete();
-        await until(() => conversation.pendingMessage == null);
-        expect(sessions.asked, 0);
-        await call(chat, 'T1');
-
-        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
-        expect(chat.reservations.value['m2'], isNull);
-      });
-
-      test('a typed question is not held to a table tapped before it', () async {
-        final composer = ChatComposerController();
-        addTearDown(composer.dispose);
-        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
-        await chat.open();
-        final conversation = conversationOf(chat, composer: composer);
-        chat
-          ..offer('m1', terrace)
-          ..offer('m2', garden)
-          ..choose('m1', 'T1')
-          // Terrace's T1 is taken after the tap.
-          ..offer('m1', [(id: 'T1', zone: 'Terrace', seats: 2, available: false)]);
-        await until(() => sessions.routes.contains(tools));
-
-        conversation.send('Book T1 at the Garden instead');
-        await until(() => sessions.asked == 1);
-        final result = await call(chat, 'T1');
-
-        expect(result['output'], contains('Reserved table T1'));
-        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
-      });
-
-      test('a newer card is booked once the tapped table it shares an id with is booked', () async {
-        final chat = closing(AgentChat('s1', sessions: sessions));
-        await chat.open();
-        chat
-          ..offer('m1', terrace)
-          ..choose('m1', 'T1');
-        await until(() => sessions.routes.contains(tools));
-        await call(chat, 'T1');
-
-        // The agent shows another venue with a T1, and books it without a tap, as on a call.
-        chat.offer('m2', garden);
-        await until(() => sessions.routes.where((r) => r == tools).length == 2);
-        final result = await call(chat, 'T1', id: 'c2');
-
-        expect(result['output'], contains('Reserved table T1'));
-        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
-      });
-
-      test('a question that could not be asked keeps the table tapped before it', () async {
-        final composer = ChatComposerController();
-        addTearDown(composer.dispose);
-        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
-        await chat.open();
-        final conversation = conversationOf(chat, composer: composer);
-        chat
-          ..offer('m1', terrace)
-          ..offer('m2', garden)
-          ..choose('m1', 'T1');
-        await until(() => sessions.routes.contains(tools));
-        sessions.answer('POST /v1/agents/sessions/s1/responses', 500);
-
-        conversation.send('Something else');
-        await until(() => conversation.error != null);
-        await call(chat, 'T1');
-
-        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
-        expect(chat.reservations.value['m2'], isNull);
+        expect(
+          (await call(chat, 'K3', 'Garden', id: 'c2'))['output'],
+          contains('Reserved table K3'),
+        );
       });
 
       test(
         'a card\'s action waiting while the tool is taken back ends once the chat closes',
         () async {
-          const removal = 'DELETE /v1/agents/sessions/s1/tools/reserve_table';
           final taken = Completer<void>();
           sessions.holdRoute(removal, taken.future);
           final chat = AgentChat('s1', sessions: sessions);
           await chat.open();
           await offer(chat);
-          await call(chat, 'T4');
+          await call(chat, 'T4', 'Harbor Window');
           await until(() => sessions.routes.contains(removal));
           chat.offer('m2', [(id: 'K3', zone: 'Garden', seats: 4, available: true)]);
           final sent = chat.ui.send(
@@ -784,36 +700,57 @@ void main() {
           await sent.timeout(const Duration(seconds: 5));
           await closed;
           chat.dispose();
+          // Closed, the action is not asked and the tool is not added again.
+          expect(sessions.asked, 0);
+          expect(sessions.routes.where((r) => r == tools), hasLength(1));
         },
       );
 
-      test('a question that could not be asked keeps a table tapped while it was sent', () async {
-        final composer = ChatComposerController();
-        addTearDown(composer.dispose);
-        final chat = closing(AgentChat('s1', sessions: sessions, composer: composer));
+      test('books the venue whose zone is named when two cards offer the same id', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
         await chat.open();
-        final conversation = conversationOf(chat, composer: composer);
         chat
-          ..offer('m1', terrace)
           ..offer('m2', garden)
-          ..choose('m1', 'T1');
+          // The older card is built only now, as the person scrolls up.
+          ..offer('m1', terrace);
         await until(() => sessions.routes.contains(tools));
-        const asking = 'POST /v1/agents/sessions/s1/responses';
-        final refused = Completer<void>();
-        sessions
-          ..holdRoute(asking, refused.future)
-          ..answer(asking, 500);
 
-        conversation.send('Something else');
-        await until(() => sessions.routes.contains(asking));
-        // Garden's T1 is tapped while the question is on its way, and the question fails.
-        chat.choose('m2', 'T1');
-        refused.complete();
-        await until(() => conversation.error != null);
-        await call(chat, 'T1');
+        await call(chat, 'T1', 'Garden');
 
         expect(chat.reservations.value['m2']?.table.zone, 'Garden');
         expect(chat.reservations.value['m1'], isNull);
+      });
+
+      test('books another venue\'s table of the same id once one is booked', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden);
+        await until(() => sessions.routes.contains(tools));
+        await call(chat, 'T1', 'Terrace');
+
+        final second = await call(chat, 'T1', 'Garden', id: 'c2');
+
+        expect(second['output'], contains('Reserved table T1'));
+        expect(chat.reservations.value['m1']?.table.zone, 'Terrace');
+        expect(chat.reservations.value['m2']?.table.zone, 'Garden');
+      });
+
+      test('refuses a second booking of a booked card', () async {
+        final chat = closing(AgentChat('s1', sessions: sessions));
+        await chat.open();
+        chat
+          ..offer('m1', terrace)
+          ..offer('m2', garden);
+        await until(() => sessions.routes.contains(tools));
+        await call(chat, 'T1', 'Terrace');
+
+        final second = await call(chat, 'T1', 'Terrace', id: 'c2');
+
+        expect(second['error'], contains('T1 in Terrace is not a free table'));
+        expect(second['error'], contains('T1 (Garden)'));
+        expect(chat.reservations.value['m2'], isNull);
       });
 
       test('reserves a free table, keeps the booking and takes its tool back', () async {
@@ -821,15 +758,13 @@ void main() {
         await chat.open();
         await offer(chat);
 
-        final result = await call(chat, 'T4');
+        final result = await call(chat, 'T4', 'Harbor Window');
 
         expect(result['output'], contains('Reserved table T4'));
         expect(result['error'], isEmpty);
         expect(chat.reservations.value['m1']?.table.id, 'T4');
         expect(chat.reservations.value['m1']?.when, 'tonight at 8pm');
-        await until(
-          () => sessions.routes.contains('DELETE /v1/agents/sessions/s1/tools/reserve_table'),
-        );
+        await until(() => sessions.routes.contains(removal));
       });
 
       test('refuses a taken table, naming the free ones, and keeps its tool', () async {
@@ -837,12 +772,21 @@ void main() {
         await chat.open();
         await offer(chat);
 
-        final result = await call(chat, 'T1');
+        final result = await call(chat, 'T1', 'Cliff Terrace');
 
-        expect(result['error'], allOf(contains('T1 is not a free table'), contains('T4')));
+        expect(
+          result['error'],
+          allOf(
+            contains('T1 in Cliff Terrace is not a free table'),
+            contains('T4 (Harbor Window)'),
+          ),
+        );
         expect(chat.reservations.value, isEmpty);
         // The tool is still there to reserve a free table.
-        expect((await call(chat, 'T4', id: 'c2'))['output'], contains('Reserved table T4'));
+        expect(
+          (await call(chat, 'T4', 'Harbor Window', id: 'c2'))['output'],
+          contains('Reserved table T4'),
+        );
       });
 
       // Booking on the chat let go of would throw from its disposed notifier instead.
@@ -852,7 +796,10 @@ void main() {
         await chat.close();
         chat.dispose();
 
-        expect(() => chat.reserve('T4', 'tonight at 8pm'), throwsA(isA<ToolFailure>()));
+        expect(
+          () => chat.reserve('T4', 'Harbor Window', 'tonight at 8pm'),
+          throwsA(isA<ToolFailure>()),
+        );
       });
     });
 

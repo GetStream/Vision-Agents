@@ -103,22 +103,21 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick.
   final liveUI = LiveUI();
 
-  /// The tables each seat selector shown in this conversation offers, oldest first, by the
-  /// reply it is in: the same card shown again is the same offer, and two venues' tables of the
-  /// same ids are two. A reply here is never deleted or written again, so neither is its offer.
+  /// The tables each seat selector shown in this conversation offers, by the reply it is in, in
+  /// the order the cards were first shown: the same card shown again is the same offer. A reply
+  /// here is never deleted or written again, so neither is its offer.
   final _offers = <String, List<DiningTableItem>>{};
 
   /// The bookings made from the seat selectors, by the offer each was made from.
   ValueListenable<Map<String, Reservation>> get reservations => _reservations;
   final _reservations = ValueNotifier<Map<String, Reservation>>(const {});
 
-  /// The card's tool being added or taken back, which a question and a card's action wait for,
-  /// so the reply they ask for has the tools the cards on the screen need.
-  Future<void>? _adding;
+  /// The changes of the session's `reserve_table`, one at a time, which a question and a card's
+  /// action wait for, so the reply they ask for has the tool when there is a table to book.
+  Future<void> _tools = Future.value();
 
-  /// The tools the cards in the conversation brought to its session, by name, so a card shown
-  /// again, such as after scrolling back to it, does not bring its tool twice.
-  final _brought = <String>{};
+  /// Whether the session has `reserve_table`.
+  var _reserving = false;
 
   /// The composer option that asks for more reasoning.
   static const thinkHarder = 'think_harder';
@@ -393,26 +392,15 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       throw const AIConversationCancelledException();
     }
     // A card's tool still being added is waited for, so the reply can call it.
-    await _adding;
+    await _tools;
     _checkNotStopped(stops, request);
     // Only now, so a new conversation whose first question was never asked is not listed.
     _usedSessionId.value = session.id;
-    // A question of their own is not about the tables they tapped before it, once it is asked:
-    // one the router refused leaves them as they were.
-    final chosen = Map.of(_chosen);
-    _chosen.clear();
-    final choices = ++_choices;
-    try {
-      await session.responses.create(
-        request.text,
-        images: images,
-        reasoningEffort: reasoningEffortOf(request.chatOption),
-      );
-    } on Object {
-      // Unless a table was tapped, or a newer card shown, while it was on its way.
-      if (choices == _choices) _chosen.addAll(chosen);
-      rethrow;
-    }
+    await session.responses.create(
+      request.text,
+      images: images,
+      reasoningEffort: reasoningEffortOf(request.chatOption),
+    );
     // Stopped while the router took the question: its reply starts only now, so stop it.
     if (stops != _stops) await stop();
   }
@@ -449,7 +437,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     _failure.value = null;
     try {
       final session = await use();
-      await _adding;
+      await _tools;
       if (_closed) return;
       await session.responses.create(action.label, uiAction: action.toJson());
     } on Object catch (error) {
@@ -495,115 +483,76 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     }
   }
 
-  /// Gives the agent a tool a card in the conversation brings, unless it has it already. A card
-  /// is shown in a reply, so the conversation has its session by then. One that could not be
-  /// added is added again the next time a card brings it.
-  Future<void> bring(AgentTool tool) {
-    final session = _session;
-    if (session == null || _closed) return Future.value();
-    if (!_brought.add(tool.name)) return _adding ?? Future.value();
-    return _adding = _add(session, tool);
-  }
-
-  Future<void> _add(AgentSession session, AgentTool tool) async {
-    try {
-      await session.addTools([tool]);
-    } on Object catch (error) {
-      _brought.remove(tool.name);
-      if (!_closed) _failure.value = '$error';
-    }
-  }
-
-  /// Takes back a tool a card brought, once the cards have done what they were for. One that
-  /// could not be taken back is taken back the next time this is asked. A question, and a card
-  /// shown meanwhile, wait for it.
-  Future<void> withdraw(String name) {
-    final session = _session;
-    if (session == null || _closed || !_brought.contains(name)) return Future.value();
-    return _adding = _withdraw(session, name);
-  }
-
-  Future<void> _withdraw(AgentSession session, String name) async {
-    try {
-      await session.removeTool(name);
-      _brought.remove(name);
-    } on Object catch (error) {
-      if (!_closed) _failure.value = '$error';
-      return;
-    }
-    // A card shown while the tool was taken back still offers tables to book.
-    if (!_closed && _offers.keys.any((offer) => !_reservations.value.containsKey(offer))) {
-      await bring(SeatSelectorComponent.reserveTable(reserve));
-    }
-  }
-
-  /// The offer the person last tapped each table on, by the table's id, which a booking of that
-  /// table comes from, until they next ask something or a newer card is shown.
-  final _chosen = <String, String>{};
-
-  /// How many times the choices in [_chosen] changed, so a question that could not be asked
-  /// puts back only the ones nothing replaced while it was on its way.
-  var _choices = 0;
-
-  /// Notes that the person tapped table [tableId] on the seat selector of reply [offer].
-  void choose(String offer, String tableId) {
-    _chosen[tableId] = offer;
-    _choices++;
-  }
-
-  /// Offers [tables] from the seat selector of reply [offer], or its newer version, and gives
-  /// the agent the tool to book them while the offer is not booked.
+  /// Offers [tables] from the seat selector of reply [offer], or its newer version, which the
+  /// agent can book with `reserve_table` while a table a card offers is free and not booked.
+  ///
+  /// A card also offers its tables again when one is tapped, which adds the tool again if adding
+  /// it failed.
   void offer(String offer, List<DiningTableItem> tables) {
     if (_closed) return;
-    // A newer card is a newer answer, which the tables tapped on before it are not about.
-    if (!_offers.containsKey(offer)) {
-      _chosen.clear();
-      _choices++;
-    }
     _offers[offer] = tables;
-    if (_reservations.value.containsKey(offer)) return;
-    unawaited(bring(SeatSelectorComponent.reserveTable(reserve)));
+    _updateTool();
   }
 
-  /// Books table [tableId] for [when] from the offer the person tapped it on, or else from the
-  /// newest offer that has it free and is not booked, and takes the tool back once every offer
-  /// is booked. The tool's answer does not wait for that, since the router takes the tool back
-  /// only once the call that booked has finished.
+  /// Books table [tableId] in [zone] for [when], from the newest card that offers it free and is
+  /// not booked, and takes the tool back once no table is left to book. The tool's answer does
+  /// not wait for that, since the router takes the tool back only once the call that booked has
+  /// finished.
   ///
-  /// Throws a [ToolFailure] naming the free tables of the offers it looked at when none has it.
-  Reservation reserve(String tableId, String when) {
+  /// Throws a [ToolFailure] naming the free tables when no card offers it.
+  Reservation reserve(String tableId, String zone, String when) {
     if (_closed) throw const ToolFailure('The conversation has closed.');
     final booked = _reservations.value;
-    final newestFirst = _offers.entries.toList().reversed;
-    final chosen = _chosen[tableId];
-    // The offer the table was tapped on is the one booked: if it can no longer be, the table is
-    // refused rather than booked at another venue whose table shares the id.
-    final candidates = switch (_offers[chosen]) {
-      final tables? => [MapEntry(chosen!, tables)],
-      null => newestFirst,
-    };
-    for (final MapEntry(key: offer, value: tables) in candidates) {
+    bool matches(DiningTableItem table) =>
+        table.id == tableId && table.zone.toLowerCase() == zone.trim().toLowerCase();
+    for (final MapEntry(key: offer, value: tables) in _offers.entries.toList().reversed) {
       if (booked.containsKey(offer)) continue;
-      final table = tables.where((t) => t.id == tableId && t.available).firstOrNull;
+      final table = tables.where((table) => matches(table) && table.available).firstOrNull;
       if (table == null) continue;
-      final reservation = (table: table, when: when, code: _confirmationCode(), offer: offer);
+      final reservation = (table: table, when: when, code: _confirmationCode());
       _reservations.value = {...booked, offer: reservation};
-      if (_offers.keys.every(_reservations.value.containsKey)) {
-        unawaited(withdraw(SeatSelectorComponent.reserveTableTool));
-      }
+      _updateTool();
       return reservation;
     }
     final free = [
-      for (final MapEntry(key: offer, value: tables) in candidates)
+      for (final MapEntry(key: offer, value: tables) in _offers.entries)
         if (!booked.containsKey(offer))
           for (final table in tables)
-            if (table.available) table.id,
+            if (table.available) '${table.id} (${table.zone})',
     ];
     throw ToolFailure(
       free.isEmpty
-          ? '$tableId is not a free table on a seat selector, and none is free.'
-          : '$tableId is not a free table on a seat selector. The free ones are ${free.join(', ')}.',
+          ? '$tableId in $zone is not a free table on a seat selector, and none is free.'
+          : '$tableId in $zone is not a free table on a seat selector. The free ones are '
+                '${free.join(', ')}.',
     );
+  }
+
+  /// Whether a card offers a table that is free and not booked.
+  bool get _bookable => _offers.entries.any(
+    (offer) =>
+        !_reservations.value.containsKey(offer.key) && offer.value.any((table) => table.available),
+  );
+
+  /// Gives the session `reserve_table` while a table is left to book, and takes it back once
+  /// none is, after the changes before it.
+  void _updateTool() => _tools = _tools.then((_) => _syncTool());
+
+  Future<void> _syncTool() async {
+    final session = _session;
+    final wanted = _bookable;
+    if (session == null || _closed || wanted == _reserving) return;
+    try {
+      if (wanted) {
+        await session.addTools([SeatSelectorComponent.reserveTable(reserve)]);
+      } else {
+        await session.removeTool(SeatSelectorComponent.reserveTableTool);
+      }
+      _reserving = wanted;
+    } on Object catch (error) {
+      // Tried again the next time a card offers its tables, such as when a table is tapped.
+      if (!_closed) _failure.value = '$error';
+    }
   }
 
   static String _confirmationCode() {

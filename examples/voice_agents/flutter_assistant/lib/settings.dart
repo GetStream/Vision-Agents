@@ -51,7 +51,7 @@ enum ReplyFormat {
   }
 }
 
-/// The app's settings: how the agent answers.
+/// The app's settings: how the agent answers, and the brand its UI wears.
 class SettingsSheet extends StatefulWidget {
   const SettingsSheet({super.key});
 

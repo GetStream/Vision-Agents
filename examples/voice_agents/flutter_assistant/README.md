@@ -162,8 +162,8 @@ swift_assistant's `go run ./configure` again, which binds both:
   there it is an event in the calendar new events go in, at the time it is due, with an alert
   then, and it takes a due time, as android_assistant's does. `send_email` has swift_assistant's
   backend send it through the router's proxy for the person's Gmail (`POST /gmail/send`). A seat
-  selector card adds `reserve_table` once it is written, while a table it offers is not booked
-  (see [Interactive UI](#interactive-ui)).
+  selector card adds `reserve_table` once it is written, while a card has a free table not yet
+  booked (see [Interactive UI](#interactive-ui)).
 
 The app is the user `juno-owner`, Alex, as the iOS and Android apps are, so all three phones
 list the same conversations. `assistant.dart` holds the whole configuration: the router's and
@@ -196,13 +196,14 @@ also the app's own. Tapping a free table asks to reserve it.
 - **A card brings its own tool.** The agent cannot book a table until a seat selector has been
   shown in the conversation: once a card is written, it offers its tables to the conversation,
   which gives its session `reserve_table` (`SeatSelectorComponent.reserveTable`) with
-  `AgentSession.addTools`. Tapping a free table has the agent call it, which asks first
-  ("Reserve this table?", with the table it names) and books that table on the card it was
-  tapped on, or a free table another card in the conversation offers. Once you allow it that
+  `AgentSession.addTools`. Tapping a free table has the agent call it with the table's id and
+  zone, as the card shows them, which asks first ("Reserve this table?", with the table it
+  names) and books that table on the newest card that offers it free. Once you allow it that
   card turns into the booking: the table, the time and a confirmation code. Each card keeps its
-  own booking, so a conversation that showed two venues can book at both. Bookings are kept
-  while the conversation is open: opened again, a card offers its tables again. Once every card
-  is booked the tool is taken back with `AgentSession.removeTool`. The router's
+  own booking, so a conversation that showed two venues can book at both, even when their
+  tables share ids. Bookings are kept while the conversation is open: opened again, a card
+  offers its tables again. Once no card has a free table left to book, the tool is taken back
+  with `AgentSession.removeTool`. The router's
   `GET /v1/agents/sessions/{id}/tools`, with the backend's credentials, lists `reserve_table`
   as `session` while it is given.
 - **The UI streams in over the socket.** The router sends a reply's UI on the session's socket

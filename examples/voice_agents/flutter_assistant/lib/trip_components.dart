@@ -674,9 +674,8 @@ class _GaugePainter extends CustomPainter {
 
 typedef DiningTableItem = ({String id, String zone, int seats, bool available});
 
-/// A booking a seat selector's tool made, and the offer, the reply whose card it was made
-/// from.
-typedef Reservation = ({DiningTableItem table, String when, String code, String offer});
+/// A booking a seat selector's tool made.
+typedef Reservation = ({DiningTableItem table, String when, String code});
 
 /// A venue's tables, by zone and seats. Tapping a free one chooses it and asks to reserve it;
 /// a taken one can't be tapped.
@@ -695,23 +694,24 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
   static const reserveTableTool = 'reserve_table';
 
   /// Reserves a free table the cards offer, once the person says it may, with [reserve], which
-  /// books the table for the time and throws a [ToolFailure] when it can't.
+  /// books the table in its zone for the time and throws a [ToolFailure] when it can't.
   static AgentTool reserveTable(
-    Reservation Function(String tableId, String when) reserve,
+    Reservation Function(String tableId, String zone, String when) reserve,
   ) => AgentTool(
     name: reserveTableTool,
     description:
         "Reserves a table from the seat selector on the person's screen. Call it when they "
-        "chose a table, such as by tapping one, with that table's id.",
+        "chose a table, such as by tapping one, with that table's id and zone.",
     parameters: AgentTool.strings(
       {
         'table_id': 'the id of the table, as the seat selector shows it, such as T4',
+        'zone': 'the zone of the table, as the seat selector shows it, such as Terrace',
         'when': 'the day and time of the booking as they would read it, such as tomorrow at 8pm',
         'summary':
             'the table by its id, the party and the time as they would read it, such as T4 on '
             'the Terrace, for 4, tomorrow at 8pm',
       },
-      required: ['table_id', 'when', 'summary'],
+      required: ['table_id', 'zone', 'when', 'summary'],
     ),
     displayTitle: 'Reserving your table',
     approval: const ToolApproval(
@@ -723,6 +723,7 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
     ),
     run: (arguments) async {
       final id = '${arguments['table_id'] ?? ''}';
+      final zone = '${arguments['zone'] ?? ''}';
       final when = '${arguments['when'] ?? ''}';
       final summary = '${arguments['summary'] ?? ''}';
       if (when.isEmpty) throw const ToolFailure('Say when the table is for.');
@@ -732,7 +733,7 @@ class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
       if (!named.hasMatch(summary.toLowerCase())) {
         throw ToolFailure('Name table $id in the summary: the person reads it before allowing.');
       }
-      final reservation = reserve(id, when);
+      final reservation = reserve(id, zone, when);
       final table = reservation.table;
       return 'Reserved table ${table.id} (${table.zone}, for ${table.seats}) for $when, under '
           '${Assistant.userName}. The confirmation code is ${reservation.code}. The seat '
@@ -882,7 +883,6 @@ class _SeatSelectorViewState extends State<_SeatSelectorView> {
                 onSelected: table.available && !widget.isStreaming
                     ? (_) {
                         setState(() => _selected = table.id);
-                        _chat?.choose(widget.offer, table.id);
                         // Brings the tool again if adding it failed, which the question waits for.
                         _offer();
                         widget.onSelect(table);

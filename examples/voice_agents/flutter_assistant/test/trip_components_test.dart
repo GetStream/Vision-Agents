@@ -89,7 +89,7 @@ root = SeatSelector([{id: "T7", zone: "Garden", seats: 6, available: true}])
       expect(find.text('Select a table zone'), findsNWidgets(2));
       expect(find.textContaining('T4 · Harbor Window'), findsOneWidget);
 
-      final reservation = chat.reserve('T4', 'tonight at 8pm');
+      final reservation = chat.reserve('T4', 'Harbor Window', 'tonight at 8pm');
       await tester.pumpAndSettle();
 
       expect(find.text('Table T4 reserved'), findsOneWidget);

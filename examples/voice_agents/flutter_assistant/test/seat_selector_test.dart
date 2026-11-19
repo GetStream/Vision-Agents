@@ -87,11 +87,12 @@ void main() {
       }
     }
 
-    /// Has the router call `reserve_table` for [tableId], allows it as the person would, and
-    /// returns the result sent back.
+    /// Has the router call `reserve_table` for [tableId] in [zone], allows it as the person
+    /// would, and returns the result sent back.
     Future<Map<String, Object?>> call(
       WidgetTester tester,
-      String tableId, {
+      String tableId,
+      String zone, {
       String id = 'c1',
       String? summary,
     }) async {
@@ -104,8 +105,9 @@ void main() {
             'name': SeatSelectorComponent.reserveTableTool,
             'arguments': jsonEncode({
               'table_id': tableId,
+              'zone': zone,
               'when': 'tonight at 8pm',
-              'summary': summary ?? '$tableId, for 2, tonight at 8pm',
+              'summary': summary ?? '$tableId in $zone, for 2, tonight at 8pm',
             }),
           }),
         );
@@ -146,7 +148,7 @@ void main() {
       ]);
       await settle(tester, brought, 'The card never brought its tool.');
 
-      final result = await call(tester, 'T4');
+      final result = await call(tester, 'T4', 'Harbor Window');
 
       expect(result['output'], contains('Reserved table T4'));
       expect(find.text('Table T4 reserved'), findsOneWidget);
@@ -161,7 +163,7 @@ void main() {
       ]);
       await settle(tester, brought, 'The cards never brought their tool.');
 
-      final result = await call(tester, 'K3');
+      final result = await call(tester, 'K3', 'Garden');
 
       expect(result['output'], contains('Reserved table K3'));
       expect(find.text('Table K3 reserved'), findsOneWidget);
@@ -176,8 +178,8 @@ void main() {
       ]);
       await settle(tester, brought, 'The cards never brought their tool.');
 
-      await call(tester, 'T4');
-      final second = await call(tester, 'K3', id: 'c2');
+      await call(tester, 'T4', 'Harbor Window');
+      final second = await call(tester, 'K3', 'Garden', id: 'c2');
 
       expect(second['output'], contains('Reserved table K3'));
       expect(find.text('Table T4 reserved'), findsOneWidget);
@@ -185,7 +187,7 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('books the card of one venue when another has tables of the same ids', (
+    testWidgets('books the venue whose zone is named when two cards offer the same id', (
       tester,
     ) async {
       await open(tester);
@@ -195,54 +197,27 @@ void main() {
       ]);
       await settle(tester, brought, 'The cards never brought their tool.');
 
-      await call(tester, 'T1');
+      await call(tester, 'T1', 'Terrace');
 
-      // The newer card is booked, and the other still offers its table.
-      expect(find.text('Table T1 reserved'), findsOneWidget);
-      expect(find.text('Garden · 2 people · tonight at 8pm'), findsOneWidget);
-      expect(find.textContaining('T1 · Terrace'), findsOneWidget);
-      await finish(tester);
-    });
-
-    testWidgets('books the card a table was tapped on when another offers the same id', (
-      tester,
-    ) async {
-      await open(tester);
-      await show(tester, [
-        _card('m1', [('T1', 'Terrace', 2, true)]),
-        _card('m2', [('T1', 'Garden', 2, true)]),
-      ]);
-      await settle(tester, brought, 'The cards never brought their tool.');
-
-      await tester.tap(find.textContaining('T1 · Terrace'));
-      await settle(tester, () => sessions.routes.contains(_asked), 'The table was never asked.');
-      await call(tester, 'T1');
-
+      // The older card is booked, and the newer one still offers its table.
       expect(find.text('Terrace · 2 people · tonight at 8pm'), findsOneWidget);
       expect(find.textContaining('T1 · Garden'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('refuses a tapped table taken since rather than booking another card\'s', (
+    testWidgets('refuses a table taken since rather than booking another venue\'s of that id', (
       tester,
     ) async {
       await open(tester);
       await show(tester, [
-        _card('m1', [('T1', 'Terrace', 2, true)]),
-        _card('m2', [('T1', 'Garden', 2, true)]),
-      ]);
-      await settle(tester, brought, 'The cards never brought their tool.');
-      await tester.tap(find.textContaining('T1 · Terrace'));
-      await settle(tester, () => sessions.routes.contains(_asked), 'The table was never asked.');
-      // Terrace's T1 is taken before the agent books it.
-      await show(tester, [
         _card('m1', [('T1', 'Terrace', 2, false)]),
         _card('m2', [('T1', 'Garden', 2, true)]),
       ]);
+      await settle(tester, brought, 'The cards never brought their tool.');
 
-      final result = await call(tester, 'T1');
+      final result = await call(tester, 'T1', 'Terrace');
 
-      expect(result['error'], contains('T1'));
+      expect(result['error'], contains('T1 in Terrace is not a free table'));
       expect(find.text('Garden · 2 people · tonight at 8pm'), findsNothing);
       await finish(tester);
     });
@@ -259,10 +234,10 @@ void main() {
       await tester.pump();
 
       // The table taken since is refused, and no card is booked by it.
-      final taken = await call(tester, 'T1', id: 'c0');
-      expect(taken['error'], contains('T1 is not a free table'));
+      final taken = await call(tester, 'T1', 'Terrace', id: 'c0');
+      expect(taken['error'], contains('T1 in Terrace is not a free table'));
       expect(find.text('Table T1 reserved'), findsNothing);
-      final result = await call(tester, 'T7');
+      final result = await call(tester, 'T7', 'Garden');
 
       expect(result['output'], contains('Reserved table T7'));
       await finish(tester);
@@ -277,14 +252,14 @@ void main() {
         _card('m1', [('T1', 'Cliff Terrace', 2, true), ('T4', 'Harbor Window', 4, true)]),
       ]);
       await settle(tester, brought, 'The card never brought its tool.');
-      await call(tester, 'T4');
+      await call(tester, 'T4', 'Harbor Window');
       await settle(
         tester,
         () => sessions.routes.contains(_withdraw),
         'The tool was never taken back.',
       );
 
-      final second = await call(tester, 'T1', id: 'c2');
+      final second = await call(tester, 'T1', 'Cliff Terrace', id: 'c2');
 
       expect(second['error'], isNotEmpty);
       expect(find.text('Table T4 reserved'), findsOneWidget);
@@ -345,7 +320,12 @@ void main() {
       ]);
       await settle(tester, brought, 'The card never brought its tool.');
 
-      final result = await call(tester, 'T1', summary: 'T10 in the Garden, for 4, tonight at 8pm');
+      final result = await call(
+        tester,
+        'T1',
+        'Cliff Terrace',
+        summary: 'T10 in the Garden, for 4, tonight at 8pm',
+      );
 
       expect(result['error'], contains('T1'));
       expect(find.text('Table T1 reserved'), findsNothing);
@@ -359,7 +339,12 @@ void main() {
       ]);
       await settle(tester, brought, 'The card never brought its tool.');
 
-      final result = await call(tester, 'T4', summary: 'Cliff Terrace, for 2, tonight at 8pm');
+      final result = await call(
+        tester,
+        'T4',
+        'Harbor Window',
+        summary: 'Cliff Terrace, for 2, tonight at 8pm',
+      );
 
       expect(result['error'], contains('T4'));
       expect(find.text('Table T4 reserved'), findsNothing);
