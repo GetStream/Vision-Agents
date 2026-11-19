@@ -26,7 +26,6 @@ from ._generated.models import (
     AgentDispatch,
     AgentMode,
     AgentScheduling,
-    AgentTools,
     ChannelIdentity,
     ChannelLineRequest,
     ConnectionOwnerType,
@@ -47,6 +46,8 @@ from ._generated.models import (
     SessionVideo,
     SyncAgentRequest,
     SyncAgentRequestTags,
+    ToolGroup,
+    ToolLoading,
     SyncAgentResult,
 )
 from ._generated.types import UNSET, Unset
@@ -368,9 +369,15 @@ async def _declare_settings(
             await _connector_binding(client, entry) for entry in settings.connectors
         ]
     if settings.tools is not None:
-        body.tools = AgentTools()
-        if settings.tools.progressive is not None:
-            body.tools.progressive = settings.tools.progressive
+        body.tools = [
+            ToolGroup(
+                name=group.name,
+                tools=list(group.tools),
+                loading=ToolLoading(group.loading) if group.loading else UNSET,
+                output_retention=group.output_retention or UNSET,
+            )
+            for group in settings.tools
+        ]
     if settings.channels is not None:
         declared = AgentChannels()
         if settings.channels.whatsapp is not None:
@@ -454,6 +461,8 @@ async def _connector_binding(
         require_approval=UNSET
         if entry.require_approval is None
         else list(entry.require_approval),
+        loading=ToolLoading(entry.loading) if entry.loading else UNSET,
+        output_retention=entry.output_retention or UNSET,
     )
 
 

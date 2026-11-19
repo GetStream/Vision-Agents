@@ -17,10 +17,6 @@ type toolLine struct {
 	holds *holds
 }
 
-func (l toolLine) Update(_ context.Context, id, text string, verbatim bool) error {
-	return l.send(Frame{"type": "tool_update", "tool_call_id": id, "text": text, "verbatim": verbatim})
-}
-
 func (l toolLine) Hold(ctx context.Context, id string) (bool, error) {
 	return l.holds.ask(ctx, id, func() error { return l.send(Frame{"type": "tool_hold", "tool_call_id": id}) })
 }

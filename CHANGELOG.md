@@ -2,6 +2,13 @@
 
 ## Features
 
+### A tool is registered once for the app, and each agent's agent.yaml enables it
+
+Every server SDK's client has a tool registry for the whole app, and one call runs it for every agent: Go `client.Tools().Add(...)` and `client.RunDispatch(ctx)`, Python `client.tools.register(...)` and `await client.run_dispatch()`, JavaScript `client.tools.register(...)` and `await client.runDispatch()`, .NET `client.Tools.Register(...)` and `await client.RunDispatchAsync()`, Ruby `client.tools.register(...)` and `client.run_dispatch`, Rust `client.tools().register(...)` and `client.run_dispatch().await`, PHP `$client->tools->register(...)` and `$client->runDispatch()`. A worker that also answers calls or messages hosts them with `dispatch.host(client)`. A session is offered one of those tools only when a tool group of its agent's `agent.yaml` names it, and a tool of the same name an agent hosts itself wins. A worker asks for this with `every_agent: true` on its `host_tools` frame; one naming neither an agent nor `every_agent` is still refused, so a forgotten agent id never offers tools to every agent.
+
+### Tool stats show how to load each tool, per agent
+
+`GET /v1/stats/agents` takes `agent`, an agent config id, and answers how many sessions took a turn and how many turns they took. Each tool now also has the sessions that called it and their share, the turns a session took before its first call, how it was loaded, and what its definition costs every turn, in full and as a summary: the numbers that decide between `full`, `summary` and `deferred`. A call's token cost and its tool's definition size now survive tool output retention, which used to shrink a redacted call's tokens to its tool name. Calls recorded before this have no definition size.
 ### The Go SDK connects a user's own accounts
 
 `client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.
@@ -629,6 +636,13 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Tools are hosted from the client, not from an agent
+
+An agent handle no longer has tools to host: Go `client.Agent.Tools()`, Python `Agent.register` and `Agent.functions`, JavaScript `AgentHandle.tools`, Rust `AgentRef.tools` and PHP `AgentHandle::$tools` are gone. Register the tools on the client and run them with its `run_dispatch` (see above), and name each one in a tool group of the agents that use it. `Dispatch.host` takes the client in place of an agent in every SDK, and the hosting refusal no longer names an agent: JavaScript's `HostingRefusedError` and PHP's `HostingRefusedException` lose `agentId`, and PHP's `Dispatch::$hosting` is a boolean. A session's own tools stay: Go `SessionOptions.Tools`, Python `SessionOptions(tools=...)`, and the in-process `Agent`'s tools in JavaScript, .NET, Ruby and Go's `agents` package.
+
+### A tool call no longer has update or say
+
+A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Say` (and `tools.Line` has only `Hold`), JavaScript `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), Python `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), .NET `UpdateAsync`/`SayAsync`, Ruby `update`/`say`, Rust `update`/`say` and PHP `update()`/`say()`. A session's own `say` stays. A tool says nothing while it runs: the agent tells a waiting caller the work is still going, and a tool's `display_title` is what its call shows. The router still takes `tool_update` from an older SDK, so a released app keeps working.
 ### `agents.DefineSkills` takes the id of the agent config the skills belong to
 
 `agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).

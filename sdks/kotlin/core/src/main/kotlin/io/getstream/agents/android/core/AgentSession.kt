@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -80,6 +83,7 @@ public class AgentSession internal constructor(
     private val connected = MutableStateFlow(false)
     private val stoppedBy = MutableStateFlow<AgentsException?>(null)
     private val held = MutableStateFlow<List<ToolApprovalRequest>>(emptyList())
+    private val calls = MutableStateFlow<Map<String, AgentEvent.ToolCallState>>(emptyMap())
     private val broadcast = MutableSharedFlow<AgentEvent>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -106,6 +110,25 @@ public class AgentSession internal constructor(
 
     /** Calls of tools that ask first, waiting for the person to answer with [decide], oldest first. */
     public val approvals: StateFlow<List<ToolApprovalRequest>> = held.asStateFlow()
+
+    /**
+     * Every tool call of the session by its id, as it was last reported: running, waiting for a
+     * person's approval, or how it ended, whichever process runs it. Finished calls stay.
+     */
+    public val toolCalls: StateFlow<Map<String, AgentEvent.ToolCallState>> = calls.asStateFlow()
+
+    /** One tool call as it was last reported, or null before the session said anything of it. */
+    public fun toolCall(id: String): Flow<AgentEvent.ToolCallState?> = calls.map { it[id] }.distinctUntilChanged()
+
+    /**
+     * Calls [handler] with every event of [kind], such as [AgentEvent.Kind.ToolCallFinished], on
+     * the session's scope until the returned job is cancelled or the session closes. It is
+     * subscribed before this returns, so it misses nothing sent after.
+     */
+    public fun on(kind: AgentEvent.Kind, handler: suspend (AgentEvent) -> Unit): Job =
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            broadcast.filter { it.kind == kind }.collect { handler(it) }
+        }
 
     /**
      * The session's turns: asking, reading back and rewinding. What is asked here shows in
@@ -356,6 +379,7 @@ public class AgentSession internal constructor(
 
     private fun apply(event: AgentEvent) {
         state.update { it.reduce(event) }
+        event.toolCallState?.let { call -> calls.update { it + (call.id to call) } }
         when (event.kind) {
             AgentEvent.Kind.ToolCall -> event.toolCall?.let(::answer)
             AgentEvent.Kind.ToolCancel -> {
@@ -382,12 +406,13 @@ public class AgentSession internal constructor(
         // tool this device never declared would resolve it before its owner could. The request
         // for frames is this device's only while its camera is on; otherwise a video worker in
         // the backend may own it.
+        if (!call.run) return
         if (call.name == CameraFrames.TOOL_NAME) {
             cameraFrames?.let { return show(it, call) }
         }
         val tool = tools[call.name] ?: return
         val approval = tool.approval
-        if (approval != null) {
+        if (approval != null && !call.approved) {
             held.update { it + ToolApprovalRequest(call, approval, tool) }
         } else {
             run(call, tool)

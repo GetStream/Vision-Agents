@@ -490,6 +490,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 		spec.ToolOutputRetention = floor.Shorter(spec.ToolOutputRetention)
 	}
+	loading := newToolLoading(spec)
+	if ungrouped := loading.ungrouped(spec.Tools); len(ungrouped) > 0 {
+		// A conversation carried on from its row was opened with the tools its config named
+		// then. One the config no longer names is left out rather than ending the conversation.
+		if spec.Reopened.IsZero() {
+			return nil, stack.Wrap(fmt.Errorf("%w: %s", ErrToolNotConfigured, strings.Join(ungrouped, ", ")))
+		}
+		spec.Tools = slices.DeleteFunc(slices.Clone(spec.Tools), func(tool harness.Tool) bool { return !loading.grouped(tool.Name) })
+	}
 
 	// The Stream app the session acts in is settled once, before anything is done there,
 	// and the whole session keeps it: its call, its transcript and the rows it writes.
@@ -682,6 +691,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 	}()
 	created := m.newSession(spec, conv, skills, opening, runtime)
+	created.loading = loading
 	// A session held ends where it closes (Session.counted); one never held ends here,
 	// unless it was turned away for a router shutting down or for a session already held
 	// under its id (a redelivered hook): neither is a session that failed.
@@ -697,6 +707,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		runtime.Cancel()
 		created.Close()
 	}
+	created.toolCalls.approves = created.approves
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
 		spec.Tools,
@@ -710,7 +721,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	sources := map[string]ToolSource{}
 	markTools(sources, tools, ToolFromSession)
 	var callers agent.ToolRunner = created.tools
-	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
+	tools, callers = m.hostedTools(spec, loading, created.id, hostedProgress{created}, tools, callers)
 	markTools(sources, tools[len(spec.Tools):], ToolFromWorker)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
@@ -719,6 +730,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			return nil, stack.Wrap(err)
 		}
 		tools = append(tools, spec.callTools(builtin.Tools)...)
+	}
+	// A worker that is not connected, or an SDK that no longer defines a function, leaves
+	// the agent without it. The session still opens and does what it can.
+	if missing := loading.missing(tools); len(missing) > 0 {
+		m.logger.Warn("the agent's tool groups name tools nothing on this session runs; it carries on without them",
+			"session", created.id, "config", spec.ConfigID, "tools", missing)
 	}
 
 	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
@@ -756,6 +773,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		connectors.next = runner
 		runner = connectors
 		connectors.askIn(conv, created.chose)
+		connectors.approvals.changed = created.trackToolCall
 		connectors.stepUps = newStepUps(m.options.Connectors.Consents, created.broadcast, m.logger)
 		created.connectors = connectors
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
@@ -764,8 +782,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	created.toolSources = sources
 	// Last, so every other tool's name is taken first and a child cannot shadow one.
 	tools, runner = m.childAgents(spec, created, tools, runner)
-	if spec.ProgressiveTools {
-		tools, runner = progressively(tools, connectorTools, runner)
+	if loading.summarises() {
+		runner = newProgressiveRunner(runner, created.summarised)
 	}
 	created.otherTools = slices.Clone(tools[len(spec.Tools):])
 
@@ -863,7 +881,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Ender:              m.ender(created, spec, stream),
 			EndCallWhen:        spec.endCallWhen(),
 			ToolRunner:         runner,
-			Tools:              harness.Tools{Tools: created.offering(spec.Tools)},
+			Tools:              created.offering(spec.Tools),
 			Sandbox:            box,
 			Publish:            publisher(conv),
 			Tasks:              spec.Tasks,

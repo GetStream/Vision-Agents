@@ -1,0 +1,15 @@
+name: travel_support
+description: Travel customer support that answers policy questions and plans itineraries.
+mode: text
+llm: llm-fast
+connectors:
+  - name: tablejourney
+    connector: custom_tablejourney
+    connection: tablejourney
+    tools: [cities, plan_day, itineraries, search_places, place, things_to_do, experiences, stays, dishes, festivals]
+tools:
+  - name: booking
+    loading: full
+    tools: [lookup_booking]
+
+  

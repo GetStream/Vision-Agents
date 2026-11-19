@@ -235,7 +235,6 @@ $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
     'properties' => ['flight_id' => ['type' => 'string']],
 ], function (ToolCallContext $toolCallContext, array $args): string {
-    $toolCallContext->update('checking seats');
     $toolCallContext->disallowInterruptions();
     return $bookings->book($args['flight_id'], user: $toolCallContext->user->id, key: $toolCallContext->id);
 }, timeout: 20, approval: 'Book flight {flight_id}?');
@@ -254,9 +253,7 @@ $agent->tools->register('book_flight', 'Book a flight for the caller', [
 
 `$toolCallContext->id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `sessionId`, `turnId`, `user` and `conversation`
-say where it came from. `update($text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say($text)` has it say `$text` as written,
-which a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going
+say where it came from. `disallowInterruptions()` keeps the call going
 from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when
 the router had already cancelled it. A PHP fiber cannot be stopped from outside, so a call that
 was cancelled or ran out of time keeps running with `$toolCallContext->cancelled()` true, and
@@ -325,24 +322,25 @@ worker's server credential acting for the writer.
 
 ### Hosted tools
 
-A worker can also run an agent's tools for every session opened under it, including sessions
-opened from a browser. Hosting alone is enough to `run()`.
+A worker can also run the app's tools, registered once on the client for every agent, for any
+session, including sessions opened from a browser. The router offers a tool to a session only
+where a tool group of its agent's agent.yaml names it.
 
 ```php
-$agent = $client->agent('my-agent');
-$agent->tools->register('get_weather', 'The weather in a city', [
+$client->tools->register('get_weather', 'The weather in a city', [
     'type' => 'object',
     'properties' => ['city' => ['type' => 'string']],
 ], fn (array $args): string => weatherIn($args['city']));
 
-$dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default 30 seconds per tool call
-$dispatch->run();
+$client->runDispatch();
 ```
 
 Each call runs in its own fiber. A hosted tool takes the same `interruptible:`, `timeout:` and
 `approval:` (asked on a voice call), can take its call, and is cancelled when the router gives
-up on it. A refusal throws `HostingRefusedException`, and
-`$dispatch->hosting` lists the agent ids the router accepted.
+up on it; without its own `timeout:` the router waits 30 seconds for a call. A refusal throws
+`HostingRefusedException`. A worker that also answers calls or messages hosts the tools with
+`$dispatch->host($client)` before `run()`, and `$dispatch->hosting` says whether the router
+accepted them.
 
 ## Guests
 

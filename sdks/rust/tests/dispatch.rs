@@ -9,13 +9,12 @@ use serde_json::json;
 use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
 use vision_agents::{
-    Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage,
-    ToolCallContext, types,
+    Agent, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage, ToolCallContext,
+    types,
 };
 
-fn stream_support(client: &Client) -> AgentRef {
-    let agent = client.agent("stream-support");
-    agent.tools.register(
+fn stream_support(client: Client) -> Client {
+    client.tools().register(
         "investigate_sdk",
         "Read SDK source",
         json!({"type": "object", "properties": {"sdk": {"type": "string"}}}),
@@ -26,7 +25,7 @@ fn stream_support(client: &Client) -> AgentRef {
             Ok::<_, String>(format!("read {}", arguments["sdk"].as_str().unwrap_or("")))
         },
     );
-    agent
+    client
 }
 
 #[tokio::test]
@@ -34,7 +33,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
     let server = Server::start().await;
     let dispatch = Dispatch::new(server.client());
     dispatch.host(
-        &stream_support(&server.client()),
+        &stream_support(server.client()),
         Some(Duration::from_secs(60)),
     );
 
@@ -51,7 +50,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
         socket.expect("host_tools").await,
         json!({
             "type": "host_tools",
-            "agent_id": "stream-support",
+            "every_agent": true,
             "tools": [{
                 "name": "investigate_sdk",
                 "description": "Read SDK source",
@@ -61,9 +60,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
         })
     );
     socket
-        .send(
-            json!({"type": "hosting", "agent_id": "stream-support", "tools": ["investigate_sdk"]}),
-        )
+        .send(json!({"type": "hosting", "every_agent": true, "tools": ["investigate_sdk"]}))
         .await;
 
     socket
@@ -102,7 +99,7 @@ async fn a_hosted_function_is_declared_and_answered_over_the_dispatch_socket() {
 async fn a_worker_tells_the_router_what_it_hosts_every_time_it_is_ready() {
     let server = Server::start().await;
     let dispatch = Dispatch::new(server.client());
-    dispatch.host(&stream_support(&server.client()), None);
+    dispatch.host(&stream_support(server.client()), None);
 
     let running = {
         let dispatch = dispatch.clone();
@@ -114,7 +111,7 @@ async fn a_worker_tells_the_router_what_it_hosts_every_time_it_is_ready() {
             .send(json!({"type": "ready", "worker_id": worker}))
             .await;
         let declared = socket.expect("host_tools").await;
-        assert_eq!(declared["agent_id"], "stream-support");
+        assert_eq!(declared["every_agent"], true);
         assert_eq!(declared["timeout_ms"], 0);
     }
 
@@ -126,7 +123,7 @@ async fn a_worker_tells_the_router_what_it_hosts_every_time_it_is_ready() {
 async fn a_worker_whose_tools_are_refused_stops_waiting() {
     let server = Server::start().await;
     let dispatch = Dispatch::new(server.client());
-    dispatch.host(&stream_support(&server.client()), None);
+    dispatch.host(&stream_support(server.client()), None);
 
     let running = {
         let dispatch = dispatch.clone();
@@ -134,17 +131,38 @@ async fn a_worker_whose_tools_are_refused_stops_waiting() {
     };
     let mut socket = server.accept().await;
     socket
-        .send(json!({"type": "hosting_refused", "agent_id": "stream-support", "reason": "hosting no tools is not hosting"}))
+        .send(json!({"type": "hosting_refused", "reason": "hosting no tools is not hosting"}))
         .await;
 
     let refused = running.await.unwrap().unwrap_err();
     assert!(matches!(refused, Error::Failed { .. }));
     assert_eq!(
         refused.to_string(),
-        "dispatch: the router refused to host tools for agent stream-support: hosting no tools is not hosting"
+        "dispatch: the router refused to host tools: hosting no tools is not hosting"
     );
 }
 
+#[tokio::test]
+async fn run_dispatch_runs_the_clients_tools_for_every_agent() {
+    let server = Server::start().await;
+    let client = stream_support(server.client());
+
+    let running = tokio::spawn(async move { client.run_dispatch().await });
+    let mut socket = server.accept().await;
+    assert_eq!(socket.query, "capacity=4&active=0&handles=");
+    socket
+        .send(json!({"type": "ready", "worker_id": "w-1"}))
+        .await;
+    let declared = socket.expect("host_tools").await;
+    assert_eq!(declared["every_agent"], true);
+    assert_eq!(declared["tools"][0]["name"], "investigate_sdk");
+    socket
+        .send(json!({"type": "tool_call", "id": "call-1", "session_id": "s", "name": "investigate_sdk", "arguments": r#"{"sdk":"ios"}"#}))
+        .await;
+    assert_eq!(socket.expect("tool_result").await["output"], "read ios");
+    socket.close().await;
+    running.await.unwrap().unwrap();
+}
 #[tokio::test]
 async fn a_worker_answers_calls_and_tells_the_router_how_each_went() {
     let server = Server::start().await;
@@ -595,9 +613,9 @@ async fn hosting_payments(
     support::Accepted,
     serde_json::Value,
 ) {
-    let agent = server.client().agent("payments");
-    agent
-        .tools
+    let client = server.client();
+    client
+        .tools()
         .register_with_tool_call_context(
             types::SessionTool {
                 name: "pay".into(),
@@ -619,8 +637,8 @@ async fn hosting_payments(
             },
         )
         .unwrap();
-    agent
-        .tools
+    client
+        .tools()
         .register_with_tool_call_context(
             types::SessionTool {
                 name: "slow".into(),
@@ -635,13 +653,13 @@ async fn hosting_payments(
             },
         )
         .unwrap();
-    agent
-        .tools
+    client
+        .tools()
         .register("fast", "Does not", json!({}), |_| async {
             Ok::<_, String>("done")
         });
     let dispatch = Dispatch::new(server.client());
-    dispatch.host(&agent, None);
+    dispatch.host(&client, None);
     let running = {
         let dispatch = dispatch.clone();
         tokio::spawn(async move { dispatch.run().await })

@@ -383,8 +383,31 @@ func (s *DispatchSuite) TestHostedToolsNeedAnAgentToBeFor() {
 	}))
 
 	s.Equal("hosting_refused", s.next(worker)["type"])
-	tools, _ := s.dispatch.HostedTools(s.customerID(), "")
-	s.Empty(tools)
+	tools, _ := s.dispatch.HostedTools(s.customerID(), dispatch.EveryAgent)
+	s.Empty(tools, "an agent id left out offered the tools to every agent")
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-support", "every_agent": true,
+		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source"}},
+	}))
+	s.Equal("hosting_refused", s.next(worker)["type"])
+}
+
+func (s *DispatchSuite) TestToolsHostedForEveryAgentAreTheApps() {
+	worker := s.worker()
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "every_agent": true,
+		"tools": []frame{{"name": "weather_lookup", "description": "Look up the weather"}},
+	}))
+	reply := s.next(worker)
+	s.Equal("hosting", reply["type"], reply)
+	s.Equal(true, reply["every_agent"])
+
+	tools, _ := s.dispatch.HostedTools(s.customerID(), dispatch.EveryAgent)
+	s.Require().Len(tools, 1)
+	s.Equal("weather_lookup", tools[0].Name)
+	tools, _ = s.dispatch.HostedTools(s.customerID(), "stream-support")
+	s.Empty(tools, "tools hosted for every agent are not one agent's own")
 }
 
 func (s *DispatchSuite) TestAHostedToolCallIsAnsweredOverTheSocket() {

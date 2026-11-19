@@ -775,6 +775,8 @@ async fn connector_bindings(
             policy: None,
             require_approval: None,
             sandbox: None,
+            loading: None,
+            output_retention: None,
             timeout_ms: None,
         });
     }

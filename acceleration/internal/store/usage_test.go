@@ -379,7 +379,7 @@ func (s *StoreSuite) TestToolUsageIsMostCalledFirstWithHowLongEachTook() {
 	s.ranTool(session, "lookup_order", s.base.Add(2*time.Minute), 300*time.Millisecond, "shipped", false)
 	s.ranTool(session, "refund", s.base.Add(3*time.Minute), 2*time.Second, "", true)
 
-	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
 	s.Require().NoError(err)
 	s.Require().Len(tools, 2)
 
@@ -405,11 +405,147 @@ func (s *StoreSuite) TestToolUsageIsOnlyTheCallingCustomers() {
 	theirs := s.opened("theirs", "globex", s.base, nil)
 	s.ranTool(theirs, "lookup_order", s.base.Add(time.Minute), time.Second, "shipped", false)
 
-	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", s.base, s.base.Add(24*time.Hour))
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
 	s.Require().NoError(err)
 	s.Empty(tools)
 	s.Zero(overall.Calls)
 	s.Nil(overall.AvgMs)
+}
+
+// turned records a turn the session took at, before change.
+func (s *StoreSuite) turned(session *AgentSession, id string, at time.Time, change func(*AgentResponse)) {
+	response := &AgentResponse{ID: id, SessionID: session.ID, CustomerID: session.CustomerID, CreatedAt: at}
+	if change != nil {
+		change(response)
+	}
+	s.Require().NoError(s.store.StartResponse(s.ctx, response))
+}
+
+// calledTool records one call of tool in the turn responseID, its result a second later, with
+// what the session put on each item.
+func (s *StoreSuite) calledTool(session *AgentSession, responseID, tool string, at time.Time, call, result map[string]any) {
+	s.Require().NoError(s.store.AppendResponseItems(s.ctx, []AgentResponseItem{
+		{ResponseID: responseID, Ordinal: 0, SessionID: session.ID, Kind: ItemToolCall, ToolName: tool,
+			Payload: call, At: at},
+		{ResponseID: responseID, Ordinal: 1, SessionID: session.ID, Kind: ItemToolResult, ToolName: tool,
+			Text: "shipped", Payload: result, At: at.Add(time.Second)},
+	}))
+}
+
+func (s *StoreSuite) TestToolUsageOfOneAgentIsOutOfThatAgentsSessions() {
+	for i := range 4 {
+		session := s.opened(fmt.Sprintf("a%d", i), "acme", s.base, func(session *AgentSession) { session.ConfigID = "cfg-a" })
+		s.turned(session, session.ID+"-1", s.base.Add(time.Minute), nil)
+		if i == 0 {
+			s.calledTool(session, session.ID+"-1", "lookup_order", s.base.Add(time.Minute),
+				map[string]any{"call_id": "c1"}, map[string]any{"call_id": "c1"})
+		}
+	}
+	other := s.opened("b0", "acme", s.base, func(session *AgentSession) { session.ConfigID = "cfg-b" })
+	s.turned(other, "b0-1", s.base.Add(time.Minute), nil)
+	s.calledTool(other, "b0-1", "refund", s.base.Add(time.Minute), map[string]any{"call_id": "c1"}, map[string]any{"call_id": "c1"})
+
+	turns, err := s.store.CustomerTurns(s.ctx, "acme", "cfg-a", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Equal(SessionTurns{Sessions: 4, Turns: 4}, turns)
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", "cfg-a", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(tools, 1, "the other agent's refund is not this one's")
+	s.Equal("lookup_order", tools[0].Tool)
+	s.EqualValues(1, tools[0].Sessions)
+	s.EqualValues(1, overall.Sessions)
+
+	_, tools, err = s.store.CustomerToolUsage(s.ctx, "acme", "cfg-b", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(tools, 1)
+	s.Equal("refund", tools[0].Tool)
+
+	everyone, err := s.store.CustomerTurns(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.EqualValues(5, everyone.Sessions)
+}
+
+func (s *StoreSuite) TestTurnsBeforeAToolIsUsedAreTheConversationsOwn() {
+	first := s.opened("first", "acme", s.base, nil)
+	s.turned(first, "first-1", s.base, nil)
+	rewound := s.base.Add(2 * time.Minute)
+	s.turned(first, "first-gone", s.base.Add(time.Minute), func(response *AgentResponse) { response.RewoundAt = &rewound })
+	s.turned(first, "first-2", s.base.Add(2*time.Minute), nil)
+	s.turned(first, "first-task", s.base.Add(3*time.Minute), func(response *AgentResponse) {
+		response.ParentResponseID = "first-2"
+	})
+	s.turned(first, "first-3", s.base.Add(4*time.Minute), nil)
+	s.calledTool(first, "first-3", "lookup_order", s.base.Add(4*time.Minute), map[string]any{"call_id": "c1"}, map[string]any{"call_id": "c1"})
+	s.turned(first, "first-4", s.base.Add(5*time.Minute), nil)
+	s.calledTool(first, "first-4", "lookup_order", s.base.Add(5*time.Minute), map[string]any{"call_id": "c2"}, map[string]any{"call_id": "c2"})
+
+	second := s.opened("second", "acme", s.base, nil)
+	s.turned(second, "second-1", s.base, nil)
+	s.turned(second, "second-task", s.base.Add(time.Minute), func(response *AgentResponse) {
+		response.ParentResponseID = "second-1"
+	})
+	s.calledTool(second, "second-task", "lookup_order", s.base.Add(time.Minute), map[string]any{"call_id": "c1"}, map[string]any{"call_id": "c1"})
+
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(tools, 1)
+	s.EqualValues(3, tools[0].Calls)
+	s.EqualValues(2, tools[0].Sessions)
+	s.Require().NotNil(tools[0].AvgTurnsBeforeUse)
+	// Two turns before the first session's first call, none before the second's: a call in a
+	// delegated task is the turn that delegated it's.
+	s.InDelta(1.0, *tools[0].AvgTurnsBeforeUse, 0.001)
+	s.Nil(overall.AvgTurnsBeforeUse)
+
+	turns, err := s.store.CustomerTurns(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Equal(SessionTurns{Sessions: 2, Turns: 5}, turns)
+}
+
+func (s *StoreSuite) TestToolUsageReportsTheLatestDefinitionAToolWasOfferedWith() {
+	session := s.opened("one", "acme", s.base, nil)
+	s.turned(session, "one-1", s.base.Add(time.Minute), nil)
+	s.calledTool(session, "one-1", "lookup_order", s.base.Add(time.Minute),
+		map[string]any{"call_id": "c1", "loading": ToolLoadingFull, "definition_tokens": 461}, map[string]any{"call_id": "c1"})
+	s.turned(session, "one-2", s.base.Add(2*time.Minute), nil)
+	s.calledTool(session, "one-2", "lookup_order", s.base.Add(2*time.Minute),
+		map[string]any{"call_id": "c2", "loading": ToolLoadingSummary, "definition_tokens": 470, "summary_tokens": 84},
+		map[string]any{"call_id": "c2"})
+	s.turned(session, "one-3", s.base.Add(3*time.Minute), nil)
+	s.calledTool(session, "one-3", "lookup_order", s.base.Add(3*time.Minute), map[string]any{"call_id": "c3"}, map[string]any{"call_id": "c3"})
+
+	_, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(tools, 1)
+	s.Equal(ToolLoadingSummary, tools[0].Loading, "the config moved it to a summary")
+	s.Require().NotNil(tools[0].DefinitionTokens)
+	s.EqualValues(470, *tools[0].DefinitionTokens)
+	s.Require().NotNil(tools[0].SummaryTokens)
+	s.EqualValues(84, *tools[0].SummaryTokens)
+}
+
+func (s *StoreSuite) TestARedactedCallStillReportsWhatItAndItsToolCost() {
+	session := s.opened("one", "acme", s.base, nil)
+	s.turned(session, "one-1", s.base, nil)
+	s.calledTool(session, "one-1", "lookup_order", s.base,
+		map[string]any{"call_id": "c1", "loading": ToolLoadingSummary, "definition_tokens": 461, "summary_tokens": 84},
+		map[string]any{"call_id": "c1", "arguments": `{"order":"A-1"}`, "tokens": 250})
+	_, err := s.store.db.NewUpdate().Model((*AgentResponseItem)(nil)).
+		Set("redact_at = ?", s.base).Where("session_id = ?", "one").Exec(s.ctx)
+	s.Require().NoError(err)
+	redacted, err := s.store.RedactToolOutput(s.ctx, s.base.Add(time.Hour), 100)
+	s.Require().NoError(err)
+	s.EqualValues(2, redacted)
+
+	_, tools, err := s.store.CustomerToolUsage(s.ctx, "acme", "", s.base, s.base.Add(24*time.Hour))
+	s.Require().NoError(err)
+	s.Require().Len(tools, 1)
+	s.InDelta(250, tools[0].AvgTokens, 0.001, "the result it gave the model is gone, not what it cost")
+	s.Equal(ToolLoadingSummary, tools[0].Loading)
+	s.Require().NotNil(tools[0].DefinitionTokens)
+	s.EqualValues(461, *tools[0].DefinitionTokens)
+	s.Require().NotNil(tools[0].SummaryTokens)
+	s.EqualValues(84, *tools[0].SummaryTokens)
 }
 
 func (s *StoreSuite) TestUsageQueriesRejectBadArguments() {

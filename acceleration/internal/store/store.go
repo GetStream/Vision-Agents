@@ -1431,55 +1431,106 @@ func (s *Store) peakAcrossShards(ctx context.Context, spans, customerID string, 
 }
 
 // CustomerToolUsage returns how every tool one customer's agents ran in a window was used,
-// most called first, and the same figures over all of them. A web search the agent made
-// has no result item, so it is not a tool call here.
-func (s *Store) CustomerToolUsage(ctx context.Context, customerID string, from, to time.Time) (ToolUsage, []ToolUsage, error) {
+// most called first, and the same figures over all of them. A configID keeps to the
+// sessions of that agent config, and empty is every one. A web search the agent made has no
+// result item, so it is not a tool call here.
+//
+// A turn is a top-level response that was not rewound, and a call made in a delegated task
+// belongs to the turn that delegated it.
+func (s *Store) CustomerToolUsage(ctx context.Context, customerID, configID string, from, to time.Time) (ToolUsage, []ToolUsage, error) {
 	if customerID == "" {
 		return ToolUsage{}, nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
 
 	type usageRow struct {
-		Tool      string   `bun:"tool"`
-		Overall   bool     `bun:"overall"`
-		Calls     int64    `bun:"calls"`
-		Failed    int64    `bun:"failed"`
-		AvgTokens float64  `bun:"avg_tokens"`
-		AvgMs     *float64 `bun:"avg_ms"`
-		P99Ms     *float64 `bun:"p99_ms"`
+		Tool              string     `bun:"tool"`
+		Overall           bool       `bun:"overall"`
+		Calls             int64      `bun:"calls"`
+		Failed            int64      `bun:"failed"`
+		Sessions          int64      `bun:"sessions"`
+		Firsts            int64      `bun:"firsts"`
+		AvgTurnsBeforeUse *float64   `bun:"avg_turns_before_use"`
+		AvgTokens         float64    `bun:"avg_tokens"`
+		AvgMs             *float64   `bun:"avg_ms"`
+		P99Ms             *float64   `bun:"p99_ms"`
+		OfferedAt         *time.Time `bun:"offered_at"`
+		Loading           string     `bun:"loading"`
+		DefinitionTokens  *int64     `bun:"definition_tokens"`
+		SummaryTokens     *int64     `bun:"summary_tokens"`
 	}
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]usageRow, error) {
 		var rows []usageRow
 		err := db.NewRaw(`
-WITH ran AS (
+WITH turns AS (
+    SELECT
+        a.id,
+        ROW_NUMBER() OVER (PARTITION BY a.session_id ORDER BY a.created_at, a.id) - 1 AS before
+    FROM agent_responses AS a
+    JOIN agent_sessions AS s ON s.id = a.session_id
+    WHERE a.customer_id = ?3 AND (?6 = '' OR s.config_id = ?6) AND a.created_at < ?5
+        AND a.parent_response_id IS NULL AND a.rewound_at IS NULL
+),
+ran AS (
     SELECT
         r.tool_name AS tool,
+        a.session_id,
+        t.before,
+        r.at,
         r.payload->>'error' IS NOT NULL AS failed,
-        (octet_length(r.tool_name) + octet_length(COALESCE(r.payload->>'arguments', ''))
-            + octet_length(r.text) + ?0 - 1) / ?0 AS tokens,
-        EXTRACT(EPOCH FROM (r.at - started.at)) * 1000 AS ms
+        COALESCE((r.payload->>'tokens')::double precision,
+            (octet_length(r.tool_name) + octet_length(COALESCE(r.payload->>'arguments', ''))
+                + octet_length(r.text) + ?0 - 1) / ?0) AS tokens,
+        EXTRACT(EPOCH FROM (r.at - started.at)) * 1000 AS ms,
+        started.payload->>'loading' AS loading,
+        (started.payload->>'definition_tokens')::bigint AS definition_tokens,
+        (started.payload->>'summary_tokens')::bigint AS summary_tokens
     FROM agent_responses AS a
+    JOIN agent_sessions AS s ON s.id = a.session_id
     JOIN agent_response_items AS r ON r.response_id = a.id AND r.kind = ?1
+    LEFT JOIN turns AS t ON t.id = COALESCE(a.parent_response_id, a.id)
     LEFT JOIN LATERAL (
-        SELECT c.at FROM agent_response_items AS c
+        SELECT c.at, c.payload FROM agent_response_items AS c
         WHERE c.response_id = r.response_id AND c.kind = ?2 AND c.tool_name = r.tool_name
             AND c.ordinal < r.ordinal
             AND COALESCE(c.payload->>'call_id', '') = COALESCE(r.payload->>'call_id', '')
         ORDER BY c.ordinal DESC LIMIT 1
     ) AS started ON true
-    WHERE a.customer_id = ?3 AND a.created_at < ?5 AND r.at >= ?4 AND r.at < ?5
+    WHERE a.customer_id = ?3 AND (?6 = '' OR s.config_id = ?6) AND a.created_at < ?5
+        AND r.at >= ?4 AND r.at < ?5
+),
+firsts AS (
+    SELECT tool, COUNT(*) AS firsts, AVG(before)::double precision AS avg_turns_before_use
+    FROM (SELECT tool, MIN(before) AS before FROM ran WHERE before IS NOT NULL GROUP BY tool, session_id) AS first
+    GROUP BY tool
+),
+offered AS (
+    SELECT DISTINCT ON (tool) tool, at, loading, definition_tokens, summary_tokens
+    FROM ran WHERE definition_tokens IS NOT NULL
+    ORDER BY tool, at DESC
 )
 SELECT
-    COALESCE(tool, '') AS tool,
-    GROUPING(tool) = 1 AS overall,
+    COALESCE(ran.tool, '') AS tool,
+    GROUPING(ran.tool) = 1 AS overall,
     COUNT(*) AS calls,
     COUNT(*) FILTER (WHERE failed) AS failed,
+    COUNT(DISTINCT ran.session_id) AS sessions,
+    COALESCE(f.firsts, 0) AS firsts,
+    f.avg_turns_before_use,
     COALESCE(AVG(tokens), 0)::double precision AS avg_tokens,
     AVG(ms)::double precision AS avg_ms,
-    percentile_cont(0.99) WITHIN GROUP (ORDER BY ms) AS p99_ms
+    percentile_cont(0.99) WITHIN GROUP (ORDER BY ms) AS p99_ms,
+    o.at AS offered_at,
+    COALESCE(o.loading, '') AS loading,
+    o.definition_tokens,
+    o.summary_tokens
 FROM ran
-GROUP BY GROUPING SETS ((tool), ())
+LEFT JOIN firsts AS f ON f.tool = ran.tool
+LEFT JOIN offered AS o ON o.tool = ran.tool
+GROUP BY GROUPING SETS (
+    (ran.tool, f.firsts, f.avg_turns_before_use, o.at, o.loading, o.definition_tokens, o.summary_tokens),
+    ())
 ORDER BY overall DESC, calls DESC, tool ASC`,
-			charsPerToken, ItemToolResult, ItemToolCall, customerID, from, to,
+			charsPerToken, ItemToolResult, ItemToolCall, customerID, from, to, configID,
 		).Scan(ctx, &rows)
 		return rows, err
 	})
@@ -1496,6 +1547,9 @@ ORDER BY overall DESC, calls DESC, tool ASC`,
 	var order []usageKey
 	sums := map[usageKey]*ToolUsage{}
 	tokens, ms, p99s, calls := map[usageKey][]*float64{}, map[usageKey][]*float64{}, map[usageKey][]*float64{}, map[usageKey][]int64{}
+	befores, firsts := map[usageKey][]*float64{}, map[usageKey][]int64{}
+	// The definition is the latest call's on any shard: a tool's description can change.
+	offeredAt := map[usageKey]time.Time{}
 	for _, rows := range lists {
 		for _, row := range rows {
 			k := usageKey{row.Tool, row.Overall}
@@ -1505,11 +1559,18 @@ ORDER BY overall DESC, calls DESC, tool ASC`,
 			}
 			sums[k].Calls += row.Calls
 			sums[k].Failed += row.Failed
+			sums[k].Sessions += row.Sessions
 			avgTokens := row.AvgTokens
 			tokens[k] = append(tokens[k], &avgTokens)
 			ms[k] = append(ms[k], row.AvgMs)
 			p99s[k] = append(p99s[k], row.P99Ms)
 			calls[k] = append(calls[k], row.Calls)
+			befores[k] = append(befores[k], row.AvgTurnsBeforeUse)
+			firsts[k] = append(firsts[k], row.Firsts)
+			if row.OfferedAt != nil && row.OfferedAt.After(offeredAt[k]) {
+				offeredAt[k] = *row.OfferedAt
+				sums[k].Loading, sums[k].DefinitionTokens, sums[k].SummaryTokens = row.Loading, row.DefinitionTokens, row.SummaryTokens
+			}
 		}
 	}
 	var overall ToolUsage
@@ -1520,6 +1581,7 @@ ORDER BY overall DESC, calls DESC, tool ASC`,
 			usage.AvgTokens = *avg
 		}
 		usage.AvgMs, usage.P99Ms = weighted(ms[k], calls[k]), weighted(p99s[k], calls[k])
+		usage.AvgTurnsBeforeUse = weighted(befores[k], firsts[k])
 		if len(lists) == 1 {
 			usage.AvgMs, usage.P99Ms = ms[k][0], p99s[k][0]
 		}
@@ -1533,6 +1595,37 @@ ORDER BY overall DESC, calls DESC, tool ASC`,
 		return cmp.Or(cmp.Compare(b.Calls, a.Calls), strings.Compare(a.Tool, b.Tool))
 	})
 	return overall, tools, nil
+}
+
+// CustomerTurns counts the sessions one customer's agents took a turn in during a window,
+// and those turns, as CustomerToolUsage counts a turn. A configID keeps to the sessions of
+// that agent config, and empty is every one.
+func (s *Store) CustomerTurns(ctx context.Context, customerID, configID string, from, to time.Time) (SessionTurns, error) {
+	if customerID == "" {
+		return SessionTurns{}, stack.Wrap(errors.New("store: customer id is required"))
+	}
+	counts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (SessionTurns, error) {
+		var counts SessionTurns
+		err := db.NewRaw(`
+SELECT COUNT(DISTINCT a.session_id) AS sessions, COUNT(*) AS turns
+FROM agent_responses AS a
+JOIN agent_sessions AS s ON s.id = a.session_id
+WHERE a.customer_id = ?0 AND (?1 = '' OR s.config_id = ?1)
+    AND a.created_at >= ?2 AND a.created_at < ?3
+    AND a.parent_response_id IS NULL AND a.rewound_at IS NULL`,
+			customerID, configID, from, to,
+		).Scan(ctx, &counts)
+		return counts, err
+	})
+	if err != nil {
+		return SessionTurns{}, stack.Wrap(fmt.Errorf("store: turns: %w", err))
+	}
+	var total SessionTurns
+	for _, shard := range counts {
+		total.Sessions += shard.Sessions
+		total.Turns += shard.Turns
+	}
+	return total, nil
 }
 
 // charsPerToken is the rule of thumb llm.Compose estimates tool use with.

@@ -28,12 +28,36 @@ func (s *ToolOutputRetentionSuite) TestAnAppPolicyOfNoneRecordsNoneOfAToolsOutpu
 		map[string]any{"tool_output_retention": "none"}, nil))
 	// The config would keep it a week. The app's policy is the longest any of its agents keeps.
 	config := s.createConfig(map[string]any{"name": "orders", "llm": "tooling/tool-model",
-		"tools": map[string]any{"output_retention": "7d"}})
+		"tools": []any{map[string]any{"name": "orders", "output_retention": "7d", "tools": []any{lookupOrder}}}})
 
 	result := s.ranTheTool(config.Id, map[string]any{"output": "it ships tomorrow"})
 
 	s.Empty(value(result.Text))
 	s.Equal(map[string]any{"call_id": result.callID, "redacted": true}, value(result.Payload))
+}
+
+func (s *ToolOutputRetentionSuite) TestAGroupThatKeepsNoneRecordsNoneOfItsToolsOutput() {
+	config := s.createConfig(map[string]any{"name": "orders", "llm": "tooling/tool-model",
+		"tools": []any{map[string]any{"name": "orders", "output_retention": "none", "tools": []any{lookupOrder}}}})
+
+	result := s.ranTheTool(config.Id, map[string]any{"output": "it ships tomorrow"})
+
+	s.Empty(value(result.Text))
+	s.Equal(map[string]any{"call_id": result.callID, "redacted": true}, value(result.Payload))
+}
+
+func (s *ToolOutputRetentionSuite) TestASessionDeclaringAToolNoGroupNamesIsRefused() {
+	config := s.createConfig(map[string]any{"name": "orders", "llm": "tooling/tool-model", "tools": []any{
+		map[string]any{"name": "orders", "tools": []any{lookupOrder}},
+	}})
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", map[string]any{
+		"config_id": config.Id,
+		"tools":     []any{map[string]any{"name": "cancel_order", "description": "cancel an order"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "no tool group of the agent's config names the tool: cancel_order")
 }
 
 func (s *ToolOutputRetentionSuite) TestWithoutARetentionAToolsOutputIsRecordedWhole() {
@@ -104,7 +128,12 @@ func (s *ToolOutputRetentionSuite) ranTheTool(configID string, answer map[string
 	return recordedResult{AgentResponseItem: *found, callID: callID}
 }
 
+// createConfig creates the config body describes, naming the caller's own tool in a group
+// when body names none.
 func (s *ToolOutputRetentionSuite) createConfig(body map[string]any) AgentConfig {
+	if _, named := body["tools"]; !named {
+		body["tools"] = []any{map[string]any{"name": "orders", "tools": []any{lookupOrder}}}
+	}
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated,
 		s.serverClient.do(http.MethodPost, "/v1/agents/configs", body, &created))

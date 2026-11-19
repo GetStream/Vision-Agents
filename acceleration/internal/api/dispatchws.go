@@ -259,10 +259,12 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			// At echoes back a ping, so the worker can measure the round trip itself.
 			At float64 `json:"at"`
 			// AgentID, Tools and TimeoutMs are what a worker offers to run for every
-			// session opened under one agent id.
-			AgentID   string       `json:"agent_id"`
-			Tools     []hostedTool `json:"tools"`
-			TimeoutMs int          `json:"timeout_ms"`
+			// session opened under one agent id, or with EveryAgent instead of an agent
+			// id, for every agent of the app whose tool groups name them.
+			AgentID    string       `json:"agent_id"`
+			EveryAgent bool         `json:"every_agent"`
+			Tools      []hostedTool `json:"tools"`
+			TimeoutMs  int          `json:"timeout_ms"`
 			// ToolCallID, Output and Error answer one hosted tool call, as a session's
 			// tool_result does: Output is a string or a parts array. ID is ToolCallID under
 			// the name workers sent it by before.
@@ -307,7 +309,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			}
 
 		case "host_tools":
-			reply := s.hostTools(worker, report.AgentID, report.Tools, report.TimeoutMs)
+			reply := s.hostTools(worker, report.AgentID, report.EveryAgent, report.Tools, report.TimeoutMs)
 			select {
 			case replies <- reply:
 			case <-writerDone:
@@ -398,10 +400,17 @@ type hostedApproval struct {
 // is trusted with its customer's conversations already, and naming an agent is not a way
 // into anybody else's. The agent is named as its config is, since that is the name sessions
 // are opened by, and a name no config has is refused.
-func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []hostedTool, timeoutMs int) frame {
+func (s *Server) hostTools(worker *dispatch.Worker, agentID string, everyAgent bool, declared []hostedTool, timeoutMs int) frame {
 	refuse := func(reason string) frame {
 		s.logger.Warn("refused a worker's hosted tools", "worker", worker.ID, "agent", agentID, "reason", reason)
-		return frame{"type": "hosting_refused", "agent_id": agentID, "reason": reason}
+		return frame{"type": "hosting_refused", "agent_id": agentID, "every_agent": everyAgent, "reason": reason}
+	}
+	// An agent id left out by mistake would otherwise offer the tools to every agent.
+	switch {
+	case everyAgent && agentID != "":
+		return refuse("host tools for one agent_id or for every_agent, not both")
+	case !everyAgent && agentID == "":
+		return refuse("hosted tools need the agent_id they are for, or every_agent")
 	}
 	tools := make([]dispatch.Tool, 0, len(declared))
 	names := make([]string, 0, len(declared))
@@ -433,8 +442,8 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 	if s.workers != nil {
 		s.workers.Offer(context.Background(), worker.CustomerID, agentID)
 	}
-	s.logger.Info("a worker hosts tools", "worker", worker.ID, "agent", agentID, "tools", names)
-	return frame{"type": "hosting", "agent_id": agentID, "tools": names}
+	s.logger.Info("a worker hosts tools", "worker", worker.ID, "agent", agentID, "every_agent", everyAgent, "tools", names)
+	return frame{"type": "hosting", "agent_id": agentID, "every_agent": everyAgent, "tools": names}
 }
 
 // unknownHostedAgent says why tools offered under a name the customer has no agent config

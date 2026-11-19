@@ -215,33 +215,29 @@ func (d *Dispatch) OnCall(handler CallHandler) { d.call = handler }
 // OnMessage registers what to do with a message written to an agent that is not running.
 func (d *Dispatch) OnMessage(handler MessageHandler) { d.message = handler }
 
-// hosting is one set of functions this worker runs for every session under an agent id.
+// hosting is one set of functions this worker runs for every agent of the app.
 type hosting struct {
-	agentID     string
 	functions   *tools.Registry
 	toolTimeout time.Duration
 }
 
-// HostedAgent is an agent whose tools a worker can host: a client.Agent or an agents.Agent.
+// ToolHost holds the tools a worker can host: a client.Client.
 //
-// An interface rather than either, because both of those are built on this package and it
-// cannot name them.
-type HostedAgent interface {
-	Name() string
+// An interface rather than the client, because it is built on this package and this
+// package cannot name it.
+type ToolHost interface {
 	Tools() *tools.Registry
 }
 
-// Host runs an agent's tools for every session opened under it, whoever opened it.
+// Host runs the app's tools for every session that is offered them, whoever opened it.
 //
-// A session's own functions run in the process that opened it, which is no use to a
-// conversation opened from a browser that wants to read a source tree. Hosting is the other
-// direction: the router offers the agent's tools to each session naming the agent and sends
-// every call to one of them here. The router matches a session on its agent id or its
-// agent's name, so the name is what the agent is hosted under. toolTimeout is how long the
-// router waits for one tool call to be answered before telling the model it failed, not how
-// long the worker runs; zero takes the router's default of 30 seconds. Call before Run.
-func (d *Dispatch) Host(agent HostedAgent, toolTimeout time.Duration) {
-	d.hosted = append(d.hosted, hosting{agentID: agent.Name(), functions: agent.Tools(), toolTimeout: toolTimeout})
+// The tools are registered once for every agent: the router offers one to a session only
+// when a tool group of its agent's agent.yaml names it, and sends every call of it to one of
+// the workers hosting it. toolTimeout is how long the router waits for one tool call to be
+// answered before telling the model it failed, not how long the worker runs; zero takes the
+// router's default of 30 seconds. Call before Run.
+func (d *Dispatch) Host(host ToolHost, toolTimeout time.Duration) {
+	d.hosted = append(d.hosted, hosting{functions: host.Tools(), toolTimeout: toolTimeout})
 }
 
 // host tells the router what this worker runs, once it is listening.
@@ -261,7 +257,7 @@ func (d *Dispatch) host() {
 			}
 			declared = append(declared, tool)
 		}
-		d.tell(Frame{"type": "host_tools", "agent_id": offer.agentID, "tools": declared, "timeout_ms": offer.toolTimeout.Milliseconds()})
+		d.tell(Frame{"type": "host_tools", "every_agent": true, "tools": declared, "timeout_ms": offer.toolTimeout.Milliseconds()})
 	}
 }
 
@@ -499,12 +495,11 @@ func (d *Dispatch) read(ctx context.Context, socket *Socket) error {
 				offer.functions.Cancel(frame.String("session_id"), frame.String("id"))
 			}
 		case "hosting":
-			d.logger.Info("the router sends this worker's tools here", "agent", frame.String("agent_id"))
+			d.logger.Info("the router sends this worker's tools here", "tools", frame["tools"])
 		case "hosting_refused":
 			// Not worth waiting on: a worker whose tools were refused is one nobody will
 			// call, and saying so is better than sitting connected looking healthy.
-			return fmt.Errorf("%w for agent %s: %s", errRefused,
-				frame.String("agent_id"), frame.String("reason"))
+			return fmt.Errorf("%w: %s", errRefused, frame.String("reason"))
 		case "pong":
 			select {
 			case d.pong <- struct{}{}:

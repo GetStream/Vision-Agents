@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -625,6 +626,9 @@ func frameOf(event session.Event) (frame, bool) {
 		}
 		return ignored, true
 
+	case session.ToolCallChanged:
+		return toolStateFrame(typed), true
+
 	case agent.ToolUpdated:
 		return frame{
 			"type": "tool_updated", "id": typed.ID, "turn_id": typed.TurnID, "tool": typed.Tool,
@@ -997,6 +1001,75 @@ func withLine(rendered frame, line string) frame {
 		rendered["line_id"] = line
 	}
 	return rendered
+}
+
+// toolStateFrame renders one change to a tool call's state, as ToolCallState describes it.
+func toolStateFrame(changed session.ToolCallChanged) frame {
+	state := changed.State
+	rendered := frame{
+		"type":         "tool_call." + string(changed.Phase),
+		"tool_call_id": state.ID,
+		"tool":         state.Tool,
+		"turn_id":      state.TurnID,
+		"status":       string(state.Status),
+		"started_at":   state.StartedAt,
+		"duration_ms":  state.Duration.Milliseconds(),
+	}
+	for key, value := range map[string]string{"progress": state.Progress, "error": state.Error} {
+		if value != "" {
+			rendered[key] = value
+		}
+	}
+	for key, at := range map[string]time.Time{"approved_at": state.ApprovedAt, "rejected_at": state.RejectedAt} {
+		if !at.IsZero() {
+			rendered[key] = at
+		}
+	}
+	return rendered
+}
+
+// ToolCallState is one change to a tool call's state, sent to every watcher of the session.
+type ToolCallState struct {
+	Type       ToolCallFrameType `json:"type"`
+	ToolCallID string            `json:"tool_call_id" doc:"The call, as tool_call, tool_started and tool_ran name it."`
+	Tool       string            `json:"tool"`
+	TurnID     string            `json:"turn_id"`
+	Status     ToolCallStatus    `json:"status"`
+	Progress   string            `json:"progress,omitempty" doc:"The last thing said about the call while it runs, such as \"Searching for flights\": a tool_update, the connector binding's pre_speech, or the question it waits on."`
+	StartedAt  time.Time         `json:"started_at"`
+	DurationMS int64             `json:"duration_ms" doc:"From started_at to this change; on tool_call.finished, how long the call took."`
+	ApprovedAt *time.Time        `json:"approved_at,omitempty" doc:"When a person allowed the call."`
+	RejectedAt *time.Time        `json:"rejected_at,omitempty" doc:"When a person declined the call, or its wait for them passed."`
+	Error      string            `json:"error,omitempty" doc:"Why a failed call failed, or what a declined one shows, such as \"Not allowed in time\"."`
+}
+
+func (*ToolCallState) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One change to a tool call's state. Every watcher is sent tool_call.started once, " +
+		"tool_call.progress for each change while it runs or waits, and tool_call.finished once, carrying " +
+		"the call's whole state each time, so a client keeps the last one it got per tool_call_id."
+	return schema
+}
+
+// ToolCallFrameType is which of a call's changes a ToolCallState is.
+type ToolCallFrameType string
+
+func (ToolCallFrameType) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ToolCallFrameType",
+		"tool_call.started is the call's first frame, tool_call.progress one while it runs or waits, "+
+			"and tool_call.finished its last.",
+		"tool_call.started", "tool_call.progress", "tool_call.finished")
+}
+
+// ToolCallStatus is where a tool call stands.
+type ToolCallStatus string
+
+func (ToolCallStatus) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ToolCallStatus",
+		"in_progress while it runs, waiting while it is held for a person's approval, and success, "+
+			"failed or cancelled once it finished. A call declined, or whose approval nobody gave in "+
+			"time, is cancelled with rejected_at.",
+		string(session.ToolCallInProgress), string(session.ToolCallWaiting), string(session.ToolCallSuccess),
+		string(session.ToolCallFailed), string(session.ToolCallCancelled))
 }
 
 func participantOf(participant stt.Participant) frame {

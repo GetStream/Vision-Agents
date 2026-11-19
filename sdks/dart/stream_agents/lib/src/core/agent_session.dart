@@ -119,6 +119,7 @@ final class AgentSession {
   final _conversation = LiveValueController(const Conversation());
   final _connection = LiveValueController<Connection>(Connection.notStarted);
   final _approvals = LiveValueController<List<ToolApprovalRequest>>(const []);
+  final _toolCalls = LiveValueController<Map<String, ToolCallState>>(const {});
   final Set<_Subscriber> _subscribers = {};
   final Set<String> _running = {};
   final Set<String> _cancelled = {};
@@ -141,6 +142,10 @@ final class AgentSession {
   /// Calls of tools that ask first, waiting for the person to answer with [decide], oldest
   /// first.
   LiveValue<List<ToolApprovalRequest>> get approvals => _approvals;
+
+  /// Every tool call of the session by its id, as it was last reported: running, waiting for a
+  /// person's approval, or how it ended, whichever process runs it. Finished calls stay.
+  LiveValue<Map<String, ToolCallState>> get toolCalls => _toolCalls;
 
   List<Turn> get turns => _conversation.value.turns;
   ConversationState get state => _conversation.value.state;
@@ -214,6 +219,11 @@ final class AgentSession {
       return event;
     });
   }
+
+  /// Calls [handler] with every event of [kind], such as [AgentEventKind.toolCallFinished],
+  /// until the subscription is cancelled or the conversation ends.
+  StreamSubscription<AgentEvent> on(AgentEventKind kind, void Function(AgentEvent event) handler) =>
+      events().where((event) => event.kind == kind).listen(handler);
 
   /// Speaks this without going through the model.
   ///
@@ -502,6 +512,9 @@ final class AgentSession {
 
   void _apply(AgentEvent event) {
     _conversation.value = _conversation.value.apply(event);
+    if (event.toolCallState case final call?) {
+      _toolCalls.value = {..._toolCalls.value, call.id: call};
+    }
     switch (event.kind) {
       case AgentEventKind.toolCall:
         _answer(event.toolCall!, run: event['run'] != false);
@@ -541,13 +554,16 @@ final class AgentSession {
       }
       return;
     }
+    if (!run) {
+      return;
+    }
     // Session events go to observers as well as to whoever owns the tool. A worker elsewhere
     // may own this one, and an observer must not answer it first.
     final tool = _tools[call.name];
     if (tool == null) {
       return;
     }
-    if (tool.approval case final approval?) {
+    if (tool.approval case final approval? when !call.approved) {
       _approvals.value = [..._approvals.value, ToolApprovalRequest._(call, approval, tool)];
     } else {
       _run(call, tool);
@@ -665,6 +681,7 @@ final class AgentSession {
     _conversation.close();
     _connection.close();
     _approvals.close();
+    _toolCalls.close();
   }
 }
 

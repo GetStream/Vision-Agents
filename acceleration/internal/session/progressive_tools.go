@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 
@@ -13,48 +12,30 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
-// summaryLimit caps the description a deferred tool is offered with, in runes.
-const summaryLimit = 200
-
-// firstCallNote ends a deferred tool's description, so the model expects its first call to
+// firstCallNote ends a summarised tool's description, so the model expects its first call to
 // come back with instructions rather than a result.
 const firstCallNote = "Its first call runs nothing and returns how to use it."
 
-// progressively offers the deferred tools among tools by the first line of what each does
-// and its arguments without their descriptions, and puts a runner in front of next that
-// answers the first call to each with all of it instead of running it. A server that writes
-// a page of examples into a tool's description then costs that page only in the
-// conversations that use the tool, at the price of one more model turn when they do.
-func progressively(tools, deferred []harness.Tool, next agent.ToolRunner) ([]harness.Tool, agent.ToolRunner) {
-	if len(deferred) == 0 {
-		return tools, next
-	}
-	runner := &progressiveRunner{next: next, full: map[string]harness.Tool{}, described: map[string]bool{}}
-	for _, tool := range deferred {
-		runner.full[tool.Name] = tool
-	}
-	offered := slices.Clone(tools)
-	for i, tool := range offered {
-		if _, ok := runner.full[tool.Name]; ok {
-			offered[i] = briefTool(tool)
-		}
-	}
-	return offered, runner
-}
-
-// progressiveRunner answers the first call to a deferred tool with how to use it, and
-// hands every other call to next.
+// progressiveRunner answers the first call to a summarised tool (store.ToolLoadingSummary)
+// with how to use it, and hands every other call to next. A server that writes a page of
+// examples into a tool's description then costs that page only in the conversations that use
+// the tool, at the price of one more model turn when they do.
 type progressiveRunner struct {
 	next agent.ToolRunner
-	// full are the deferred tools as their servers describe them, by name.
-	full map[string]harness.Tool
+	// full is the summarised tool called name as its server or SDK describes it, read when
+	// it is called since a caller's tools change while the session runs.
+	full func(name string) (harness.Tool, bool)
 
 	mu        sync.Mutex
 	described map[string]bool
 }
 
+func newProgressiveRunner(next agent.ToolRunner, full func(string) (harness.Tool, bool)) *progressiveRunner {
+	return &progressiveRunner{next: next, full: full, described: map[string]bool{}}
+}
+
 func (r *progressiveRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
-	if tool, ok := r.full[call.Name]; ok && r.firstCall(call.Name) {
+	if tool, ok := r.full(call.Name); ok && r.firstCall(call.Name) {
 		return llm.TextParts(howToUse(tool)), nil
 	}
 	return r.next.Run(ctx, call)
@@ -76,32 +57,13 @@ func howToUse(tool harness.Tool) string {
 		tool.Name, tool.Description, schema)
 }
 
-// briefTool is tool as a deferred one is offered.
+// briefTool is tool as a summarised one is offered.
 func briefTool(tool harness.Tool) harness.Tool {
-	tool.Description = strings.TrimSpace(summary(tool.Description) + " " + firstCallNote)
+	tool.Description = strings.TrimSpace(harness.Summary(tool.Description) + " " + firstCallNote)
 	if tool.Parameters != nil {
 		tool.Parameters = bareSchema(tool.Parameters)
 	}
 	return tool
-}
-
-// summary is the first line of a description, cut at a word to summaryLimit runes.
-func summary(description string) string {
-	var first string
-	for line := range strings.Lines(description) {
-		if first = strings.TrimSpace(line); first != "" {
-			break
-		}
-	}
-	runes := []rune(first)
-	if len(runes) <= summaryLimit {
-		return first
-	}
-	cut := string(runes[:summaryLimit])
-	if space := strings.LastIndex(cut, " "); space > 0 {
-		cut = cut[:space]
-	}
-	return cut + "…"
 }
 
 // bareSchema is a JSON Schema without the words written for a reader: every description,

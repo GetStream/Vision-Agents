@@ -64,7 +64,6 @@ as its first argument, ahead of the arguments:
 agent.tools.register("book_flight", description: "Book a flight for the caller",
                      parameters: { type: "object", properties: { flight_id: { type: "string" } } },
                      timeout: 20, approval: "Book flight {flight_id}?") do |tool_call_context, args|
-  tool_call_context.update("checking seats")
   tool_call_context.disallow_interruptions
   bookings.book(args["flight_id"], user: tool_call_context.user.id, key: tool_call_context.id)
 end
@@ -81,10 +80,7 @@ end
 
 `tool_call_context.id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation`
-say where it came from. `update(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
-a speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
-on, for a write that must not stop halfway, and raises `CallNotHeldError` when the call had
+say where it came from. `disallow_interruptions` keeps the call going from then on, for a write that must not stop halfway, and raises `CallNotHeldError` when the call had
 already been stopped. A Ruby thread cannot be stopped from outside, so a call that was cancelled
 or ran out of time keeps running with `tool_call_context.cancelled?` true, and its answer is
 dropped. A call the router addresses to another watcher (`run: false`) is left alone.
@@ -178,30 +174,32 @@ answer it on that session, with the worker's own credential acting for `message.
 shows it the photos sent with it (`message.images`, by URL).
 `get_or_create_agent` refuses such a message.
 
-A worker can also run an agent's tools for every session under it, whoever opened it, such
-as a conversation started from a browser. The tools are hosted under the agent's config name:
+A worker can also run the app's tools, registered once on the client for every agent, for any
+session, whoever opened it, such as a conversation started from a browser. The router offers a
+tool to a session only where a tool group of its agent's agent.yaml names it:
 
 ```ruby
-support = GetStream::VisionAgents::Client.new.agent("support")
-support.tools.register("lookup_order", description: "An order by id",
-                       parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
+client = GetStream::VisionAgents::Client.new
+client.tools.register("lookup_order", description: "An order by id", timeout: 30,
+                      parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
   orders.find(args["id"])
 end
 
-dispatch = GetStream::VisionAgents::Dispatch.new
-dispatch.host(support, tool_timeout: 30)
-dispatch.run
+client.run_dispatch
 ```
+
+A worker that also answers calls or messages hosts them with `dispatch.host(client)` before
+`dispatch.run`.
 
 A tool can say who runs it and how it is shown: `executor: "client"` for one a person's device
 runs (this process still answers it, once the device has reported), and `display_title:` for
 the words shown while it runs, such as `"Checking your order"`.
 
 The tools are declared each time the router says it is ready, and each call runs on its own
-thread. `tool_timeout` is how many seconds the router waits for one tool call; nil takes its default of 30 seconds. A hosted tool takes the
-same `interruptible:`, `timeout:` and `approval:` (asked on a voice call), is handed its call,
-and is cancelled when the router gives up on it. Hosting alone is enough
-to `run`, and a router that refuses the tools ends `run` with the reason.
+thread. A tool's `timeout:` is how many seconds the router waits for one of its calls; without
+one it waits 30 seconds. A hosted tool takes the same `interruptible:` and `approval:` (asked on
+a voice call), is handed its call, and is cancelled when the router gives up on it. Hosting
+alone is enough to `run`, and a router that refuses the tools ends `run` with the reason.
 
 A dispatched call names the session it is for: `join(call)` opens it with voice, on the call
 the caller is already in.
