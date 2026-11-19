@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -490,6 +491,38 @@ func (s *WriterSuite) TestARejectedRowIsKeptAndCounted() {
 	s.Contains(s.logs.String(), "the usage service refused usage rows")
 	s.Contains(s.logs.String(), ahead.request.UsageID.String()+" "+usage.ReasonOccurredAt)
 	s.Len(s.events(service), 1)
+}
+
+func (s *WriterSuite) TestTheUnownedAlertNamesTheAppWhoseRowsWaitUntilItJoinsOne() {
+	service := s.usageService()
+	writer := s.shippingWriter(service, nil)
+	writer.enqueue(s.row(func(request *store.Request) {
+		request.StartedAt, request.APIKey = time.Now().UTC().Add(-time.Hour), "job:crawler"
+	}))
+	s.written(1)
+	sweeper := s.sweeper(service.Client)
+	var unowned alerts.Condition
+	for _, condition := range Alerts(time.Minute) {
+		if condition.Name == "unowned" {
+			unowned = condition
+		}
+	}
+
+	s.swept(sweeper)
+
+	held := unowned.Items(time.Now())
+	s.Require().Contains(held, s.customer)
+	s.EqualValues(1, held[s.customer]["waiting_rows"], "rows, however many sweeps passed over them")
+	s.EqualValues(25, held[s.customer]["cost_micros"])
+	s.Equal([]store.UnownedGroup{{APIKey: "job:crawler", Modality: "llm", Provider: "openai", Model: "gpt", Rows: 1, CostMicros: 25}},
+		held[s.customer]["written_by"])
+	s.swept(sweeper)
+	s.EqualValues(1, unowned.Items(time.Now())[s.customer]["waiting_rows"], "a second sweep counts the same row once")
+
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, s.customer, s.organization))
+	s.swept(sweeper)
+
+	s.NotContains(unowned.Items(time.Now()), s.customer)
 }
 
 func (s *WriterSuite) TestARowWithNoOrganizationWaitsForOne() {

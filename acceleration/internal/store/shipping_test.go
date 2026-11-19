@@ -58,3 +58,39 @@ func (s *StoreSuite) TestARouterWithoutTheShipLockKeepsNoConnectionForIt() {
 	s.False(held)
 	s.Nil(other.conn, "given back to the pool until the next try")
 }
+
+// waiting writes a row the sweeper has not shipped, of app, with no organization unless change
+// gives it one.
+func (s *StoreSuite) waiting(app string, startedAt time.Time, change func(*Request)) {
+	request := &Request{UsageID: uuid.Must(uuid.NewV7()), Modality: "knowledge", CustomerID: app, APIKey: "job:crawler",
+		Provider: "turbopuffer", Model: "write", StartedAt: startedAt, Success: true, CostMicros: 10, ToShip: true}
+	if change != nil {
+		change(request)
+	}
+	s.Require().NoError(s.store.RecordRequest(s.ctx, request))
+}
+
+func (s *StoreSuite) TestUnownedUsageIsTheWaitingRowsOfAppsWithNoOrganization() {
+	s.waiting("app", s.base.Add(time.Minute), nil)
+	s.waiting("app", s.base, func(r *Request) { r.CostMicros = 5 })
+	s.waiting("app", s.base.Add(2*time.Minute), func(r *Request) {
+		r.APIKey, r.Modality, r.Provider, r.Model, r.CostMicros = "key-1", "llm", "openai", "gpt", 7
+	})
+	s.waiting("app", s.base.Add(-time.Hour), func(r *Request) { r.ToShip = false })
+	s.waiting("app", s.base.Add(-time.Hour), func(r *Request) { r.OrganizationID = "org" })
+	s.waiting("joined", s.base, nil)
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, "joined", "org"))
+
+	unowned, err := s.store.UnownedUsage(s.ctx)
+
+	s.Require().NoError(err)
+	s.Require().Len(unowned, 1, "an app that has joined one ships at the next sweep")
+	s.Equal("app", unowned[0].App)
+	s.EqualValues(3, unowned[0].Rows)
+	s.EqualValues(22, unowned[0].CostMicros)
+	s.True(s.base.Equal(unowned[0].OldestStartedAt), "%v", unowned[0].OldestStartedAt)
+	s.Equal([]UnownedGroup{
+		{APIKey: "job:crawler", Modality: "knowledge", Provider: "turbopuffer", Model: "write", Rows: 2, CostMicros: 15},
+		{APIKey: "key-1", Modality: "llm", Provider: "openai", Model: "gpt", Rows: 1, CostMicros: 7},
+	}, unowned[0].Groups)
+}

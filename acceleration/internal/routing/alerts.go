@@ -19,8 +19,9 @@ const (
 	// A row's age is counted from when its work started, so a long call written a moment ago
 	// is already old; the shipper sends it within seconds.
 	shipStaleFor = 2 * time.Minute
-	// unownedFor is how long rows must keep waiting for an organization to warn: an app's
-	// membership is normally written within seconds of its first request.
+	// unownedFor is how long ago an app's oldest row waiting for an organization must have
+	// started to warn: an app's membership is normally written within seconds of its first
+	// request, before any of its rows is written.
 	unownedFor = 15 * time.Minute
 	// pendingSlowSeconds is how long a row may wait to be written before Postgres is too slow.
 	pendingSlowSeconds = 60
@@ -63,8 +64,11 @@ func Alerts(limit time.Duration) []alerts.Condition {
 			Summary: "spend holds are not reaching the other routers, so billable requests are refused with 503 spend_check_unavailable"},
 		{Name: "ship_stale", Level: alerts.Page, Check: aboveFor(unshippedOldest, shipStaleSeconds, shipStaleFor, "oldest_unshipped_started_seconds_ago"),
 			Summary: "usage rows are not reaching the usage service, so the balances it keeps are stale"},
-		{Name: "unowned", Level: alerts.Warn, Check: alerts.IncreasingFor(func() float64 { return alerts.Total(usageUnowned) }, unownedFor),
-			Summary: "usage rows of an app that has joined no organization keep waiting; they are not billed until the app joins one"},
+		// One alert per app, so each is its own Sentry issue.
+		{Name: "unowned", Level: alerts.Warn, Items: unownedApps(unownedFor), Describe: func(string) string {
+			return "the app has joined no organization, so its usage rows wait and are not billed until it joins one; " +
+				"check app_organizations for the app first, then what wrote the rows (written_by: api_key, modality, provider, model)"
+		}},
 		{Name: "pending_slow", Level: alerts.Warn, Check: aboveFor(oldestPending, pendingSlowSeconds, 0, "oldest_pending_seconds"),
 			Summary: fmt.Sprintf("a usage row has waited over %d seconds to be written: Postgres is slow, or writes are failing and retried", pendingSlowSeconds)},
 		// A site that owns work and names neither a key nor an origin: its rows are billed, and
@@ -86,6 +90,35 @@ func lostCheck(limit time.Duration) alerts.Check {
 		extra["lost_by_reason"] = byReason
 		extra["lost_micros"] = alerts.Total(usageLostMicros)
 		return holds, extra
+	}
+}
+
+// unownedApps holds for each app whose oldest row waiting for an organization, as the last
+// count of the shard found, started at least span ago.
+func unownedApps(span time.Duration) alerts.ItemCheck {
+	return func(now time.Time) map[string]map[string]any {
+		held := map[string]map[string]any{}
+		sweepers.Range(func(key, _ any) bool {
+			counted := key.(*Sweeper).unowned.Load()
+			if counted == nil {
+				return true
+			}
+			for _, app := range *counted {
+				waited := now.Sub(app.OldestStartedAt)
+				if waited < span {
+					continue
+				}
+				held[app.App] = map[string]any{
+					"waiting_rows":      app.Rows,
+					"cost_micros":       app.CostMicros,
+					"oldest_started_at": app.OldestStartedAt.UTC().Format(time.RFC3339),
+					"oldest_waiting":    waited.Round(time.Second).String(),
+					"written_by":        app.Groups,
+				}
+			}
+			return true
+		})
+		return held
 	}
 }
 
