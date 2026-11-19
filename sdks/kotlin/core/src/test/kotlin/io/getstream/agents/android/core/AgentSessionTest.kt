@@ -18,11 +18,13 @@ import kotlin.time.Instant
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -492,6 +494,48 @@ class AgentSessionTest {
         chat.say("still there?")
         assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
         assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call the router cancelled while its card showed is not answered from the card`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        router.script.send(Script.Send(refundCall))
+        chat.approvals.first { it.isNotEmpty() }
+        router.script.send(Script.Send("""{"type":"tool_cancel","id":"c1","request_id":"m1","turn_id":"t1"}"""))
+        chat.approvals.first { it.isEmpty() }
+        chat.decide(shownRefund, allowed = true)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call the session holds, answered at once by id and as shown, is approved once`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(CopyOnWriteArrayList()))))
+
+        router.script.send(Script.Send(refundCall))
+        chat.approvals.first { it.isNotEmpty() }
+        coroutineScope {
+            repeat(8) { i ->
+                launch(Dispatchers.Default) {
+                    if (i % 2 == 0) chat.decide("c1", allowed = true) else chat.decide(shownRefund, allowed = true)
+                }
+            }
+        }
+        chat.say("still there?")
+
+        var approvals = 0
+        while (true) {
+            val sent = router.nextSent()
+            if (sent == """{"type":"say","text":"still there?"}""") break
+            if (Json.parseToJsonElement(sent).jsonObject["type"] == JsonPrimitive("tool_approval")) approvals++
+        }
+        assertEquals(1, approvals)
         chat.close()
     }
 

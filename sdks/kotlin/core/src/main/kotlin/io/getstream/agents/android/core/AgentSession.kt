@@ -74,8 +74,13 @@ public class AgentSession internal constructor(
     /** Held through a change of tools, so that one runs at a time, in the order they were asked for. */
     private val changing = Mutex()
     private val running = ConcurrentHashMap<String, Job>()
-    /** The calls answered here, so answering one shown from the conversation again sends nothing. */
+    /**
+     * The calls answered here, each claimed before its answer is sent, so a call answered twice,
+     * by id or as shown, is answered once.
+     */
     private val answered = ConcurrentHashMap.newKeySet<String>()
+    /** The calls the router cancelled, which an answer must not run. */
+    private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private val started = AtomicBoolean(false)
 
     private val state = MutableStateFlow(Conversation())
@@ -177,6 +182,15 @@ public class AgentSession internal constructor(
      * cannot be sent, the call waits again.
      */
     public suspend fun decide(toolCallId: String, allowed: Boolean, summary: String = "") {
+        if (held.value.none { it.id == toolCallId } || !answered.add(toolCallId)) return
+        decideHeld(toolCallId, allowed, summary)
+    }
+
+    /**
+     * Answers the call claimed in [answered] if it is waiting in [approvals], and says whether it
+     * was. If the answer cannot be sent, the call waits again and its claim is let go.
+     */
+    private suspend fun decideHeld(toolCallId: String, allowed: Boolean, summary: String): Boolean {
         var index = -1
         var request: ToolApprovalRequest? = null
         held.update { waiting ->
@@ -184,15 +198,15 @@ public class AgentSession internal constructor(
             request = waiting.getOrNull(index)
             if (index < 0) waiting else waiting.filterIndexed { i, _ -> i != index }
         }
-        val decided = request ?: return
+        val decided = request ?: return false
         val call = decided.call
         try {
             socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
         } catch (e: AgentsException) {
             held.update { it.toMutableList().apply { add(minOf(index, size), decided) } }
+            answered -= call.id
             throw e
         }
-        answered += call.id
         if (allowed) {
             run(call, decided.tool)
         } else {
@@ -200,6 +214,7 @@ public class AgentSession internal constructor(
                 Command.ToolResult(call.id, error = "The person declined this call.", requestId = call.requestId, turnId = call.turnId),
             )
         }
+        return true
     }
 
     /**
@@ -212,12 +227,12 @@ public class AgentSession internal constructor(
      * declined, and an allowed one of this session's tools runs here, or is failed when the
      * conversation left out its arguments, so the model is not left waiting. An allowed call of a
      * tool this session lacks is left to whoever has it. A call answered here before is left
-     * alone, so answering twice does nothing. If the answer cannot be sent, it can be answered
-     * again.
+     * alone, so answering twice does nothing, and so is one the router cancelled. If the answer
+     * cannot be sent, it can be answered again.
      */
     public suspend fun decide(call: ShownToolCall, allowed: Boolean, summary: String = "") {
-        if (held.value.any { it.id == call.id }) return decide(call.id, allowed, summary)
-        if (!answered.add(call.id)) return
+        if (call.id in cancelled || !answered.add(call.id)) return
+        if (decideHeld(call.id, allowed, summary) || call.id in cancelled) return
         try {
             socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
         } catch (e: AgentsException) {
@@ -404,6 +419,7 @@ public class AgentSession internal constructor(
             AgentEvent.Kind.ToolCall -> event.toolCall?.let(::answer)
             AgentEvent.Kind.ToolCancel -> {
                 val id = event.string("id")
+                cancelled += id
                 running.remove(id)?.cancel()
                 held.update { waiting -> waiting.filterNot { it.id == id } }
             }
