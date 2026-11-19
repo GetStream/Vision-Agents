@@ -90,6 +90,38 @@ func (s *AlertsSuite) TestAConditionHeldPastTheLimitIsSentAgain() {
 	s.Equal(sentry.LevelError, s.sent()[0].Level)
 }
 
+func (s *AlertsSuite) TestAConditionWithItsOwnRepeatIsSentAgainOnlyAfterIt() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "unowned", Level: Warn, Repeat: 24 * time.Hour,
+		Check: func(time.Time) (bool, map[string]any) { return true, nil }})
+
+	s.ticks(loop, &now, start, 0)
+	s.Require().Len(s.sent(), 1, "the first event goes out as soon as the condition holds")
+	s.ticks(loop, &now, start, time.Minute, 2*time.Minute, time.Hour, 24*time.Hour-time.Second)
+	s.Len(s.sent(), 1, "the loop's one-minute limit does not apply to it")
+	s.ticks(loop, &now, start, 24*time.Hour)
+	s.Len(s.sent(), 2)
+}
+
+func (s *AlertsSuite) TestAnItemOfAConditionWithItsOwnRepeatIsSentAgainOnlyAfterIt() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "unowned", Level: Warn, Repeat: 24 * time.Hour,
+		Items: func(time.Time) map[string]map[string]any { return map[string]map[string]any{"a": nil} }})
+
+	s.ticks(loop, &now, start, 0, time.Minute, 2*time.Minute, 24*time.Hour-time.Second)
+	s.Len(s.sent(), 1)
+	s.ticks(loop, &now, start, 24*time.Hour)
+	s.Len(s.sent(), 2)
+}
+
 func (s *AlertsSuite) TestWithNoDSNAnAlertIsLogged() {
 	held := Condition{Name: "ingest_failing", Level: Page, Check: func(time.Time) (bool, map[string]any) {
 		return true, map[string]any{"increase": 4}

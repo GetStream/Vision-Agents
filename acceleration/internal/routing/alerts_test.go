@@ -43,6 +43,19 @@ func (s *UsageAlertsSuite) TestTheRouterHasItsEightConditions() {
 	}, levels)
 }
 
+// unowned holds for days while one row waits, so a per-minute event floods Sentry.
+func (s *UsageAlertsSuite) TestOnlyUnownedRepeatsOnceADay() {
+	repeats := map[string]time.Duration{}
+	for _, condition := range Alerts(time.Minute) {
+		repeats[condition.Name] = condition.Repeat
+	}
+
+	s.Equal(map[string]time.Duration{
+		"lost": 0, "rejected": 0, "write_failing": 0, "ship_stale": 0,
+		"holds_flush_failing": 0, "unowned": 24 * time.Hour, "pending_slow": 0, "unattributed": 0,
+	}, repeats)
+}
+
 // The Slack message of an alert is its Sentry title: without a summary it names only the alert.
 func (s *UsageAlertsSuite) TestEveryConditionSaysWhatItMeans() {
 	for _, condition := range Alerts(time.Minute) {

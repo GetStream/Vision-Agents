@@ -63,7 +63,7 @@ func Alerts(limit time.Duration) []alerts.Condition {
 			Summary: "spend holds are not reaching the other routers, so billable requests are refused with 503 spend_check_unavailable"},
 		{Name: "ship_stale", Level: alerts.Page, Check: aboveFor(unshippedOldest, shipStaleSeconds, shipStaleFor, "oldest_unshipped_started_seconds_ago"),
 			Summary: "usage rows are not reaching the usage service, so the balances it keeps are stale"},
-		{Name: "unowned", Level: alerts.Warn, Check: alerts.IncreasingFor(func() float64 { return alerts.Total(usageUnowned) }, unownedFor),
+		{Name: "unowned", Level: alerts.Warn, Repeat: 24 * time.Hour, Check: alerts.IncreasingFor(func() float64 { return alerts.Total(usageUnowned) }, unownedFor),
 			Summary: "usage rows of an app that has joined no organization keep waiting; they are not billed until the app joins one"},
 		{Name: "pending_slow", Level: alerts.Warn, Check: aboveFor(oldestPending, pendingSlowSeconds, 0, "oldest_pending_seconds"),
 			Summary: fmt.Sprintf("a usage row has waited over %d seconds to be written: Postgres is slow, or writes are failing and retried", pendingSlowSeconds)},
