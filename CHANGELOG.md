@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Ruby SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", user_id: "alice")`, then `authorize(id, return_url:, user_id:)` for the launch URL, handoff token and expiry of the consent, and `get(id, user_id:)`, `list(connector:, user_id:)`, `delete(id, user_id:)`; no `user_id` is the app's own connection. `Client#get`, `post`, `put`, `patch`, `delete` and `socket` take an optional `user_id:` sent in `X-Stream-User-Id`, and `Backend#acting_for` is deprecated in its favour (AI-3380, AI-3387).
+
 ### The Go SDK reads a session's tokens, timeline and decisions
 
 `client.Sessions.Tokens(ctx, id)`, `Timeline(ctx, id)` and `Decisions(ctx, id)` read what a server needs to monitor a session: its tokens per model, its exchanges with their timings, and what the agent decided. They are server side only. `Tokens` answers while the session runs; a timeline and decisions are kept for an hour (#2056).

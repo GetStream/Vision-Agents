@@ -115,7 +115,7 @@ module GetStream
           raise ConfigurationError, "no session is holding this message; open one with get_or_create_agent"
         end
 
-        acting = Client.new(backend: @client.backend.acting_for(message.user_id))
+        acting = Client.new(backend: @client.backend.acting(message.user_id))
         images = message.images.map { |image| { url: image.url } } unless message.images.empty?
         Responses.new(acting, message.session_id).answer(message.text, message.request_id, images: images)
       end
