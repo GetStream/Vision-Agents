@@ -121,7 +121,7 @@ Full apps with chat, voice and tools, one per client SDK:
 
 ## Tool Calling
 
-Any backend SDK can provide tools to the agent. Here's a Python based example:
+Any backend SDK can provide tools to the agent. Tools are registered once for the app, and each agent's `agent.yaml` names the ones it uses in a tool group. Here's a Python based example:
 
 ```python
 import asyncio
@@ -129,10 +129,10 @@ import asyncio
 from vision_agents.core.llm import ToolCallContext
 from vision_agents.plugins import stream
 
-agent = stream.Client().agent("my-agent")
+client = stream.Client()
 
 
-@agent.register()
+@client.tools.register()
 async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
     """Look up the user's open support cases."""
     user = tool_call_context.user
@@ -142,13 +142,7 @@ async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
     return await crm.open_cases(user.id)
 
 
-async def main() -> None:
-    dispatch = stream.Dispatch()
-    dispatch.host(agent, tool_timeout=30)
-    await dispatch.run()
-
-
-asyncio.run(main())
+asyncio.run(client.run_dispatch())
 ```
 
 

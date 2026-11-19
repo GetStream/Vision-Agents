@@ -466,19 +466,26 @@ def api(router: Router) -> stream.Client:
 
 @pytest.fixture
 def docs(api: stream.Client) -> stream.Agent:
-    """An agent whose own lookup_order every one of its sessions runs."""
-    agent = api.agent("docs")
-
-    @agent.register(description="Look up an order")
-    async def lookup_order() -> str:
-        return "found"
-
-    return agent
+    return api.agent("docs")
 
 
 @pytest.fixture
-async def session(docs: stream.Agent) -> AsyncIterator[stream.Session]:
-    session = await docs.sessions.create(stream.SessionOptions())
+def lookup() -> FunctionRegistry:
+    """The caller's own lookup_order, which the session below runs."""
+    functions = FunctionRegistry()
+
+    @functions.register(description="Look up an order")
+    async def lookup_order() -> str:
+        return "found"
+
+    return functions
+
+
+@pytest.fixture
+async def session(
+    docs: stream.Agent, lookup: FunctionRegistry
+) -> AsyncIterator[stream.Session]:
+    session = await docs.sessions.create(stream.SessionOptions(tools=lookup))
     yield session
     await session.close()
 
@@ -548,19 +555,13 @@ class TestSessions:
             assert field not in body
 
     async def test_a_call_for_a_tool_held_elsewhere_is_left_for_whoever_holds_it(
-        self, api: stream.Client, router: Router
+        self, docs: stream.Agent, router: Router, lookup: FunctionRegistry
     ):
-        agent = api.agent("docs")
-
-        @agent.register(description="Look up an order")
-        async def lookup_order() -> str:
-            return "found"
-
         router.frames = [
             {"type": "tool_call", "id": "call-1", "name": "book_flight"},
             {"type": "tool_call", "id": "call-2", "name": "lookup_order"},
         ]
-        session = await agent.sessions.create(stream.SessionOptions())
+        session = await docs.sessions.create(stream.SessionOptions(tools=lookup))
         try:
             answer = await asyncio.wait_for(router.commands.get(), 2)
             assert answer["tool_call_id"] == "call-2"
@@ -574,8 +575,9 @@ class TestSessions:
     ):
         agent = api.agent("docs")
         seen: list[stream.ToolCallContext] = []
+        functions = FunctionRegistry()
 
-        @agent.register(description="Look up an order", timeout=2.5)
+        @functions.register(description="Look up an order", timeout=2.5)
         async def lookup_order(tool_call_context: stream.ToolCallContext) -> str:
             seen.append(tool_call_context)
             return "found"
@@ -590,7 +592,7 @@ class TestSessions:
                 "run": True,
             },
         ]
-        session = await agent.sessions.create(stream.SessionOptions())
+        session = await agent.sessions.create(stream.SessionOptions(tools=functions))
         try:
             answer = await asyncio.wait_for(router.commands.get(), 2)
             await asyncio.sleep(0.1)
@@ -1368,15 +1370,19 @@ class TestSessions:
 
         assert await router.ran("reserve_table") == "Reserved T4."
 
-    async def test_the_agents_own_tool_withdrawn_runs_nothing_until_another_takes_its_name(
-        self, docs: stream.Agent, router: Router, window_table: FunctionRegistry
+    async def test_a_tool_opened_with_withdrawn_runs_nothing_until_another_takes_its_name(
+        self,
+        docs: stream.Agent,
+        router: Router,
+        window_table: FunctionRegistry,
+        lookup: FunctionRegistry,
     ):
-        @docs.register(name="reserve_table", description="Reserve a table")
+        @lookup.register(name="reserve_table", description="Reserve a table")
         async def reserve(tool_call_context: stream.ToolCallContext, table: str) -> str:
             router.started.append(tool_call_context.id)
             return f"Reserved {table}."
 
-        session = await docs.sessions.create(stream.SessionOptions())
+        session = await docs.sessions.create(stream.SessionOptions(tools=lookup))
         try:
             await session.remove_tool("reserve_table")
             withdrawn = await router.ran("reserve_table")
@@ -1400,8 +1406,7 @@ class TestSessions:
         another = await docs.sessions.create(stream.SessionOptions())
         await another.close()
 
-        declared = router.body("POST", "/v1/agents/sessions")["tools"]
-        assert [tool["name"] for tool in declared] == ["lookup_order"]
+        assert "tools" not in router.body("POST", "/v1/agents/sessions")
 
     async def test_one_change_of_a_sessions_tools_is_made_at_a_time(
         self,
@@ -1855,14 +1860,16 @@ class TestFork:
     async def test_a_fork_inherits_the_parents_functions(
         self, api: stream.Client, router: Router
     ):
-        agent = api.agent("docs")
+        functions = FunctionRegistry()
 
-        @agent.register()
+        @functions.register()
         async def get_weather(location: str) -> str:
             """Get current weather for a location"""
             return "raining in " + location
 
-        session = await agent.sessions.create()
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(tools=functions)
+        )
         try:
             forked = await session.fork()
             await forked.close()
@@ -1872,16 +1879,20 @@ class TestFork:
         assert forked.functions.list_functions() == ["get_weather"]
 
     async def test_a_fork_runs_the_tools_its_parent_has_now(
-        self, docs: stream.Agent, router: Router, reserve_table: FunctionRegistry
+        self,
+        docs: stream.Agent,
+        router: Router,
+        reserve_table: FunctionRegistry,
+        lookup: FunctionRegistry,
     ):
-        @docs.register(description="Release a table")
+        @lookup.register(description="Release a table")
         async def release_table(
             tool_call_context: stream.ToolCallContext, table: str
         ) -> str:
             router.started.append(tool_call_context.id)
             return f"Released {table}."
 
-        session = await docs.sessions.create(stream.SessionOptions())
+        session = await docs.sessions.create(stream.SessionOptions(tools=lookup))
         try:
             await session.add_tools(reserve_table)
             await session.remove_tool("release_table")
@@ -1924,16 +1935,16 @@ class TestFork:
         assert ran == "Reserved T4 by the window."
 
     async def test_a_fork_waits_for_a_change_of_its_parents_tools(
-        self, docs: stream.Agent, router: Router
+        self, docs: stream.Agent, router: Router, lookup: FunctionRegistry
     ):
-        @docs.register(description="Release a table")
+        @lookup.register(description="Release a table")
         async def release_table(
             tool_call_context: stream.ToolCallContext, table: str
         ) -> str:
             router.started.append(tool_call_context.id)
             return f"Released {table}."
 
-        session = await docs.sessions.create(stream.SessionOptions())
+        session = await docs.sessions.create(stream.SessionOptions(tools=lookup))
         try:
             router.tools_take = 0.2
             _, forked = await asyncio.gather(
@@ -1948,17 +1959,25 @@ class TestFork:
 
         assert released is None
 
-    async def test_the_model_is_offered_the_agents_functions(
+    async def test_a_session_declares_its_own_functions_and_not_the_apps(
         self, api: stream.Client, router: Router
     ):
-        agent = api.agent("docs")
+        # The app's tools are for every agent: declared on a session, the ones its agent's
+        # tool groups do not name would have the router refuse it.
+        @api.tools.register(description="Look up an order")
+        async def lookup_order() -> str:
+            return "found"
 
-        @agent.register()
+        functions = FunctionRegistry()
+
+        @functions.register()
         async def get_weather(location: str) -> str:
             """Get current weather for a location"""
             return "raining in " + location
 
-        session = await agent.sessions.create()
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(tools=functions)
+        )
         await session.close()
 
         [declared] = router.body("POST", "/v1/agents/sessions")["tools"]

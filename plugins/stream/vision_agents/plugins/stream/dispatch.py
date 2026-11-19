@@ -27,11 +27,10 @@ from ._tool_line import (
 )
 from ._generated.models import ImageSource
 from .responses import RouterError, _create_response
-from .client import Client
 from .sessions import _tools
 
 if TYPE_CHECKING:
-    from . import client
+    from .client import Client
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +49,8 @@ AgentFactory = Callable[[], Union[Agent, Awaitable[Agent]]]
 
 @dataclass
 class _Hosting:
-    """One set of functions this worker runs for every session under an agent id.
+    """One set of functions this worker runs for every agent of the app."""
 
-    An empty agent id is every agent of the app.
-    """
-
-    agent_id: str
     functions: FunctionRegistry
     tool_timeout: float
 
@@ -102,6 +97,7 @@ class Dispatch:
         customer_id: Optional[str] = None,
         capacity: int = 4,
         report_every: float = 15.0,
+        backend: Optional[Backend] = None,
     ):
         """Wait for one customer's calls on a router.
 
@@ -114,6 +110,8 @@ class Dispatch:
                 process can actually answer.
             report_every: How often to tell the router how this process is doing, in
                 seconds.
+            backend: A backend to use as it is, such as a client's, instead of building one
+                from `url` and `customer_id`.
 
         Raises:
             ValueError: If capacity is not a number of calls.
@@ -121,7 +119,7 @@ class Dispatch:
         if capacity < 1:
             raise ValueError("a worker that can hold no calls cannot answer any")
 
-        self.backend = Backend(url=url, customer_id=customer_id)
+        self.backend = backend or Backend(url=url, customer_id=customer_id)
         self.capacity = capacity
         self.report_every = report_every
 
@@ -204,19 +202,13 @@ class Dispatch:
 
         return register
 
-    def host(
-        self, target: Union["client.Agent", Client], tool_timeout: float = 0.0
-    ) -> None:
-        """Run functions for every session that is offered them, whoever opened it.
+    def host(self, client: "Client", tool_timeout: float = 0.0) -> None:
+        """Run the app's tools for every session that is offered them, whoever opened it.
 
-        A session's own functions run in the process that opened it, which is no use to a
-        conversation opened from a browser. Hosting is the other direction: the router offers
-        these functions to sessions and sends every call to a worker hosting them. Call
-        before `run`.
-
-        Hosting a client runs its `tools` for every agent of the app; an agent is offered
-        one only where a tool group of its agent.yaml names it. Hosting an agent runs its
-        own functions for its sessions alone.
+        The tools are registered once on the client, for every agent: the router offers one
+        to a session only where a tool group of its agent's agent.yaml names it, and sends
+        every call of it to a worker hosting it. `Client.run_dispatch` does this alone, for
+        a worker with no calls or messages to answer. Call before `run`.
 
         Example:
             ```python
@@ -232,16 +224,12 @@ class Dispatch:
             ```
 
         Args:
-            target: The client whose tools every agent may be offered, or the agent whose
-                sessions are offered its functions, hosted under its name.
+            client: The client whose tools every agent may be offered.
             tool_timeout: How long the router waits for one tool call to be answered, in
                 seconds, before telling the model it failed. Not how long the worker runs.
                 Zero takes the router's default of 30 seconds.
         """
-        if isinstance(target, Client):
-            self._hosted.append(_Hosting("", target.tools, tool_timeout))
-        else:
-            self._hosted.append(_Hosting(target.name, target.functions, tool_timeout))
+        self._hosted.append(_Hosting(client.tools, tool_timeout))
 
     async def get_or_create_agent(
         self, message: InboundMessage, create_agent: AgentFactory
@@ -441,15 +429,13 @@ class Dispatch:
                 cancel(call_id, self._holds, self._hosted_calls.get(key))
             elif kind == "hosting":
                 logger.info(
-                    "the router sends the tools of %s here",
-                    frame.get("agent_id") or "every agent",
+                    "the router sends the calls of %s here", frame.get("tools", [])
                 )
             elif kind == "hosting_refused":
                 # Not worth reconnecting: a worker whose tools were refused is one nobody
                 # will call, and saying so beats sitting connected looking healthy.
                 raise RouterError(
-                    f"the router refused to host tools for agent "
-                    f"{frame.get('agent_id', '')}: {frame.get('reason', '')}"
+                    f"the router refused to host tools: {frame.get('reason', '')}"
                 )
             elif kind == "pong":
                 self._latency_ms = (
@@ -465,8 +451,7 @@ class Dispatch:
             await self._tell(
                 {
                     "type": "host_tools",
-                    "agent_id": offer.agent_id,
-                    "every_agent": not offer.agent_id,
+                    "every_agent": True,
                     "tools": [tool.to_dict() for tool in _tools(offer.functions)],
                     "timeout_ms": int(offer.tool_timeout * 1000),
                 }

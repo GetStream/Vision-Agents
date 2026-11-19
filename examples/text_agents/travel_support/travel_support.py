@@ -49,10 +49,10 @@ CONNECTOR = {
 }
 CONNECTION_LABEL = "tablejourney"
 
-agent = stream.Client().agent("travel_support")
+client = stream.Client()
 
 
-@agent.register()
+@client.tools.register()
 async def lookup_booking(reference: str) -> dict[str, object]:
     """Look up a booking by its six-character booking reference, such as WF7K2Q."""
     booking = BOOKINGS.get(reference.strip().upper())
@@ -69,10 +69,8 @@ async def main() -> None:
     print(f"Chat with travel_support: {url}")
     webbrowser.open(url, 2)
 
-    dispatch = stream.Dispatch()
-    dispatch.host(agent)
     print("Hosting lookup_booking; ctrl-c to stop.")
-    await dispatch.run()
+    await client.run_dispatch()
 
 
 async def ensure_tablejourney(backend: stream.Backend) -> None:

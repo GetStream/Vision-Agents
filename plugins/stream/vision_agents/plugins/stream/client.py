@@ -24,6 +24,7 @@ from ._generated.models import (
     GuestUserRequestCustom,
 )
 from .account import OrganizationAccount, Usage
+from .dispatch import Dispatch
 from .responses import RouterError, _deleted, _unwrapped
 from .router import Router
 from .sessions import Sessions
@@ -130,14 +131,39 @@ class Client:
         self.teams = Teams(self.backend, self.spend_limits)
         self.account = OrganizationAccount(self.backend)
         self.usage = Usage(self.backend)
-        # Registered once for every agent, run by `Dispatch.host(client)`, and offered only
-        # to an agent whose agent.yaml names them in a tool group.
+        # Registered once for every agent, run by `run_dispatch`, and offered only to an
+        # agent whose agent.yaml names them in a tool group.
         self.tools = FunctionRegistry()
 
     @property
     def server_side(self) -> bool:
         """Whether this speaks for a process the customer runs rather than for a device."""
         return self.backend.server_side
+
+    async def run_dispatch(self) -> None:
+        """Run the app's tools for every session they are offered to, until cancelled.
+
+        Each agent is offered the ones a tool group of its agent.yaml names, wherever its
+        session was opened. A tool's own ``timeout`` is how long the router waits for one of
+        its calls; without one it waits 30 seconds. A worker that also answers calls or
+        messages hosts the tools with ``Dispatch.host(client)`` instead.
+
+        Example:
+            ```python
+            client = stream.Client()
+
+
+            @client.tools.register(description="Look up the weather")
+            async def weather_lookup(location: str) -> str:
+                return await weather.today(location)
+
+
+            await client.run_dispatch()
+            ```
+        """
+        dispatch = Dispatch(backend=self.backend)
+        dispatch.host(self)
+        await dispatch.run()
 
     def as_user(self, user: Union[str, dict[str, Any]], token: str) -> "Client":
         """A client acting for one end user, holding the token that proves it.
@@ -324,49 +350,8 @@ class Agent:
 
     def __init__(self, backend: Backend, name: str):
         self.name = name
-        # The functions are held on the agent rather than per session, because a function
-        # registered once should not have to be registered again for the next conversation.
-        self.functions = FunctionRegistry()
-        self.sessions = Sessions(backend, name, self.functions)
+        self.sessions = Sessions(backend, name)
         self._backend = backend
-
-    def register(
-        self,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        parameters_schema: Optional[dict[str, Any]] = None,
-        interruptible: bool = False,
-        timeout: float = 0.0,
-        needs_approval: str = "",
-    ):
-        """Register one of the caller's functions, which every conversation offers the model.
-
-        The decorator the core registry provides, so the schema comes from the type hints and
-        the description from the docstring. A first parameter annotated `ToolCallContext` is
-        handed the call it runs for:
-
-            @agent.register(needs_approval="Book flight {flight_id}?")
-            async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
-                "Book a flight for the caller"
-                await tool_call_context.disallow_interruptions()
-                return await bookings.book(flight_id, key=tool_call_context.id)
-
-        Args:
-            interruptible: Let the caller talking over the agent cancel a call in flight.
-                Off, the call keeps running and the model is told it is still going.
-            timeout: How long one call may take, in seconds. Zero takes the session's.
-            needs_approval: A question a person answers before each call runs, with
-                {name} for an argument. On a voice call the agent asks it out loud and
-                waits 15 seconds for a yes; in writing it goes to the app.
-        """
-        return self.functions.register(
-            name=name,
-            description=description,
-            parameters_schema=parameters_schema,
-            interruptible=interruptible,
-            timeout=timeout,
-            needs_approval=needs_approval,
-        )
 
     async def config(self) -> Optional[AgentConfig]:
         """How the agent is configured, or None for a name nothing is stored under.
