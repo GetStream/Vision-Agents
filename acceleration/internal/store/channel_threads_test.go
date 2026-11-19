@@ -75,6 +75,21 @@ func (s *StoreSuite) TestAnotherThreadGetsAnotherChannel() {
 	s.True(created)
 }
 
+func (s *StoreSuite) TestTheFirstStarterOfAThreadIsTheOneKept() {
+	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
+	s.Require().NoError(err)
+	starter, err := s.store.ChannelThreadStarter(s.ctx, "thread-one")
+	s.Require().NoError(err)
+	s.Empty(starter, "nobody started it yet")
+
+	s.Require().NoError(s.store.SetChannelThreadStarter(s.ctx, "thread-one", "+15550100"))
+	s.Require().NoError(s.store.SetChannelThreadStarter(s.ctx, "thread-one", "+15550199"))
+
+	starter, err = s.store.ChannelThreadStarter(s.ctx, "thread-one")
+	s.Require().NoError(err)
+	s.Equal("+15550100", starter)
+}
+
 // One Slack workspace can install two customers' apps, so the same thread is two threads.
 func (s *StoreSuite) TestTheSameThreadOfAnotherCustomerIsAThreadOfItsOwn() {
 	_, err := s.store.LinkChannelThread(s.ctx, thread("thread-one", "C0000CHAN:1"))
