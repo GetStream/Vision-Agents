@@ -732,22 +732,23 @@ through. A backend creates one for a user, sends the user's browser to the provi
 and reads whether it connected:
 
 ```go
-connections := api.Connections()
-connection, err := connections.Create(ctx, client.ConnectionRequest{Connector: "linear", User: "alice"})
-consent, err := connections.Authorize(ctx, *connection.Id, client.AuthorizeOptions{
-    ReturnURL: "https://app.example.com/settings", User: "alice",
-})
+alice, err := api.ForUser("alice") // server side only: keeps the app's credential
+connections := alice.Connections()
+connection, err := connections.Create(ctx, client.ConnectionRequest{Connector: "linear"})
+consent, err := connections.Authorize(ctx, *connection.Id, "https://app.example.com/settings")
 // Open consent.LaunchUrl in a popup from a page of the return URL's origin, and post it
 // consent.HandoffToken. The attempt ends at consent.ExpiresAt.
 
-connection, err = connections.Get(ctx, *connection.Id, "alice") // Status is pending until alice consents
-mine, err := connections.List(ctx, client.ConnectionFilter{User: "alice"})
-err = connections.Delete(ctx, *connection.Id, "alice")
+connection, err = connections.Get(ctx, *connection.Id) // Status is pending until alice consents
+mine, err := connections.List(ctx, "") // or one connector's, such as "linear"
+err = connections.Delete(ctx, *connection.Id)
 ```
 
-Each call names the user once, and the SDK sends it as the owner and as `X-Stream-User-Id`, so
-the two never differ. Another user's connection is not found, the same as one that does not
-exist. Leave `User` empty for the app's own connection, which any of its agents may be bound to.
+`ForUser` names the user once, and the SDK sends it as the owner and as `X-Stream-User-Id` on
+every request, so the two never differ. It is refused on a device client (`SetUser`) and for an
+empty id. Another user's connection is not found, the same as one that does not exist. On
+`api` itself, which acts for nobody, `api.Connections()` manages the app's own connections,
+which any of its agents may be bound to.
 
 ## Layout
 
