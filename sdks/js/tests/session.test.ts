@@ -954,7 +954,13 @@ describe("Session", () => {
         const [session, connection] = await opened(refunds());
 
         session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
-        assert.equal((await connection.next()).type, "tool_approval");
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
         assert.deepEqual(ran, [], "nothing to run it with yet");
 
         connection.send(refundCall);
