@@ -2576,6 +2576,36 @@ llm:
         trains_on_data: "no"
         retention: 30d
 
+    # Claude Fable 5.2, released 9 November 2026: Anthropic's tier above Opus, for long
+    # agentic work and the hardest reasoning, and first on the Artificial Analysis
+    # Intelligence Index at 65 - at max effort, where its first answer token takes over three
+    # and a half minutes. The provider sends no effort, so it thinks at the high effort it
+    # defaults to, where that index puts it at 62 and the first answer token at 23 s; low is
+    # 54 and 7 s. Too slow for a live turn and twice Opus 5.5's price, so no shortcut prefers
+    # it: it is reached by name or as failover in the quality tier. Thinking is adaptive and
+    # cannot be switched off, and it counts against max_output_tokens. Forced tool use is a
+    # 400 on this model, so the provider refuses tool_choice required before it goes out.
+    #
+    # Cache reads are 2.5% of input, and five-minute cache writes 125%, flat across the 1M
+    # context (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-11-19).
+    # Fast mode ($16/$80) and US-only inference (1.1x) are never asked for from here.
+    - provider: anthropic
+      model: claude-fable-5-2
+      description: "Anthropic's Fable 5.2, top of the Artificial Analysis Intelligence Index. Reads images. Twice Opus 5.5's price, and slow to start."
+      benchmark: { intelligence_index: 62, output_tokens_per_second: 108 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      # Anthropic's Commercial Terms say they "may not train models on Customer Content",
+      # and API inputs and outputs are deleted "within 30 days of receipt or generation".
+      # Fable 5.2 requires 30-day retention and is not offered under zero data retention
+      # unless Anthropic expressly authorises it, so this is 30d whatever agreement we hold.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
     # Anthropic's middle model, second on the Artificial Analysis Intelligence Index at 56 -
     # at max effort. The provider sends no effort, so it thinks at the high effort it
     # defaults to, where that index puts it at 47. Thinking is adaptive and counts against max_output_tokens.

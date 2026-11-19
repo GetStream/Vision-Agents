@@ -86,10 +86,22 @@ func newMessages(options Options) (*LLM, error) {
 		client: anthropic.NewClient(clientOptions...),
 		// Every current Claude model reads images. High is the API's own default effort,
 		// so naming it changes nothing for a request that names none.
-		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model)},
+		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model), ToolChoices: toolChoices(options.Model)},
 		systemTurns:  takesSystemTurns(options.Model),
 		inFlight:     map[uint64]context.CancelFunc{},
 	}, nil
+}
+
+// unforcedToolModels answer tool_choice any or tool with a 400, so a request that needs a
+// tool called is refused before it goes out rather than halfway through a call.
+var unforcedToolModels = []string{"claude-fable-5-2"}
+
+// toolChoices are the tool choices a model honours, or nil for all of them.
+func toolChoices(model string) []string {
+	if slices.Contains(unforcedToolModels, datedModel.ReplaceAllString(model, "")) {
+		return []string{"auto", "none"}
+	}
+	return nil
 }
 
 // systemTurnModels take a system message after a user turn mid-conversation and follow it,

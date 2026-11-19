@@ -170,11 +170,23 @@ func (s *AnthropicSuite) TestXhighGoesOutOnSonnet55() {
 
 func (s *AnthropicSuite) TestEffortLevelsFollowTheModel() {
 	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-opus-5-5"))
+	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-fable-5-2"))
 	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-opus-4-7-20260416"))
 	s.Equal([]string{"low", "medium", "high", "max"}, efforts("claude-sonnet-4-6"))
 	s.Equal([]string{"low", "medium", "high"}, efforts("claude-opus-4-5-20251101"))
 	s.Equal([]string{"low", "medium", "high"}, efforts("claude-haiku-4-5"))
 	s.Nil(efforts("gpt-5"))
+}
+
+func (s *AnthropicSuite) TestForcedToolUseIsRefusedBeforeItGoesOutOnFable() {
+	_, err := s.collect(s.provider(Options{Model: "claude-fable-5-2"}), llm.ResponseParams{
+		Input:      []llm.Message{{Role: llm.User, Content: "weather in Paris?"}},
+		Tools:      []llm.Tool{{Name: "weather"}},
+		ToolChoice: "required",
+	})
+
+	s.ErrorContains(err, `tool choice "required" is not one of auto, none`)
+	s.Empty(s.sent())
 }
 
 func (s *AnthropicSuite) TestAnEffortTheModelLacksIsRefused() {
