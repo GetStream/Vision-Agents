@@ -394,7 +394,8 @@ func (s *DrainSuite) TestADrainingRouterStopsSayingItTakesTrunkCallsOver() {
 }
 
 // A draining router's sessions go on carrying hosted calls to the node their worker moved to,
-// so it goes on hearing the replies.
+// so it goes on hearing the replies; and its peers route work to its still-connected workers
+// until their offers lapse, so it goes on taking that work.
 func (s *DrainSuite) TestADrainingRouterStillHearsTheRepliesToWorkItCarriedElsewhere() {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
@@ -425,9 +426,10 @@ func (s *DrainSuite) TestADrainingRouterStillHearsTheRepliesToWorkItCarriedElsew
 	waiting, release := chat.Hold("/message")
 	settings.Node.Advertise = settings.Node.Listen
 	hearing := func() bool {
-		channels, err := client.Do(s.ctx, client.B().PubsubChannels().Pattern("*replies:"+settings.Node.Advertise).Build()).AsStrSlice()
-		s.Require().NoError(err)
-		return len(channels) == 1
+		// The node's hosted requests and hosted replies channels.
+		channels, err := client.Do(s.ctx, client.B().PubsubChannels().Pattern("*:hosted:*:"+settings.Node.Advertise).Build()).AsStrSlice()
+		s.NoError(err)
+		return len(channels) == 2
 	}
 
 	stopped := make(chan struct{})
@@ -449,7 +451,7 @@ func (s *DrainSuite) TestADrainingRouterStillHearsTheRepliesToWorkItCarriedElsew
 		}
 	})
 	s.Require().Eventually(func() bool { return serving(settings.Addr) }, 15*time.Second, 10*time.Millisecond)
-	s.Require().Eventually(hearing, 10*time.Second, 20*time.Millisecond, "the running router hears no replies")
+	s.Require().Eventually(hearing, 10*time.Second, 20*time.Millisecond, "the running router hears no hosted requests or replies")
 	body := fmt.Sprintf(`{"type":"message.new","app_id":1,"channel_id":%q,"channel_type":"agent","created_at":%q,
 "channel_custom":{"agent_config_id":%q},"channel":{"members":[{"user_id":"anya_123"}]},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
 		"chat-"+uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano), agent.ID, "message-"+uuid.NewString())
@@ -473,7 +475,7 @@ func (s *DrainSuite) TestADrainingRouterStillHearsTheRepliesToWorkItCarriedElsew
 	s.Require().Eventually(func() bool { return !serving(settings.Addr) }, 5*time.Second, 20*time.Millisecond,
 		"the router never started draining")
 	s.Require().Never(func() bool { return !hearing() }, time.Second, 20*time.Millisecond,
-		"a draining router stopped hearing the replies its sessions still wait on")
+		"a draining router stopped hearing hosted requests or the replies its sessions still wait on")
 	s.Require().True(serving(settings.Node.Listen), "the drain ended before the check, so stopping alone withdrew the router")
 	release()
 
