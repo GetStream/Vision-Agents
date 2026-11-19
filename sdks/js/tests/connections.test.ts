@@ -324,6 +324,74 @@ describe("Connections", () => {
     assert.equal(router.received.length, 0);
   });
 
+
+  it("keeps a client's own user when a call names the empty user", async () => {
+    const jims = new Client({ url: router.url, apiKey: "vak_live_x", apiSecret: "shh", userId: "jim" });
+    const apps = await api.connections.create("github");
+    router.received.splice(0);
+
+    await jims.connections.get(apps.id, { userId: "" });
+    await jims.connections.authorize(apps.id, { userId: "" });
+    await jims.connections.delete(apps.id, { userId: "" });
+
+    assert.deepEqual(usersSent(router), ["jim", "jim", "jim"]);
+  });
+
+  it("sends the label it was given", async () => {
+    await api.connections.create("linear", { label: "personal", userId: "anya" });
+
+    assert.deepEqual(router.last.body, {
+      connector_id: "linear",
+      label: "personal",
+      owner: { type: "user", user_id: "anya" },
+    });
+  });
+
+  it("sends the return URL it was given, and the user without one", async () => {
+    const created = await api.connections.create("linear", { userId: "anya" });
+    await api.connections.authorize(created.id, { returnUrl: "https://other.example.com/back", userId: "anya" });
+    await api.connections.authorize(created.id, { userId: "anya" });
+
+    const sent = router.requestsTo("POST", `/v1/agents/connections/${created.id}/authorizations`);
+    assert.deepEqual(sent.map((one) => one.body), [{ return_url: "https://other.example.com/back" }, undefined]);
+    assert.deepEqual(sent.map((one) => one.headers["x-stream-user-id"]), ["anya", "anya"]);
+  });
+
+  it("asks for the connector it was given, and every connector's for an empty one", async () => {
+    await api.connections.list({ connectorId: "linear", userId: "anya" });
+    await api.connections.list({ connectorId: "", userId: "anya" });
+
+    const pages = router.requestsTo("GET", "/v1/agents/connections");
+    assert.deepEqual(pages.map((one) => one.query.get("connector_id")), ["linear", null]);
+  });
+
+
+  it("refuses to name a user on a device, which holds its own user's token", async () => {
+    const device = new Client({ url: router.url, apiKey: "vak_live_x", token: "jim-token", userId: "jim" });
+    const page = new Client({ url: router.url, customerId: "local" });
+    await page.backend.setUser("jim", "jim-token");
+
+    for (const client of [device, page]) {
+      await assert.rejects(client.connections.get("connection-1", { userId: "alice" }), ConfigurationError);
+      await assert.rejects(client.connections.create("linear", { userId: "alice" }), ConfigurationError);
+      await assert.rejects(client.connections.list({ userId: "alice" }), ConfigurationError);
+    }
+    assert.equal(router.received.length, 0);
+  });
+
+  it("drops the deprecated actingFor user on a call naming none, so the call is the app's", async () => {
+    const bobs = await api.connections.create("linear", { userId: "bob" });
+    const bob = new Client(api.backend.actingFor("bob"));
+    router.received.splice(0);
+
+    await bob.connections.create("github");
+    await bob.connections.list();
+    await assert.rejects(bob.connections.get(bobs.id), (error: unknown) => error instanceof RouterError && error.status === 404);
+
+    assert.deepEqual(usersSent(router), ["", "", ""]);
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/connections")[0]?.body, { connector_id: "github", owner: { type: "app" } });
+  });
+
   it("is still reached through the deprecated actingFor, sending what it sent before userId", async () => {
     router.serve("GET", "/v1/agents/configs", { body: { items: [], has_more: false } });
     // Each expected request is what the base commit (fa2a6a66d) sent for the same shape, read off its test router.

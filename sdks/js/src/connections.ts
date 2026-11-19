@@ -11,7 +11,8 @@ export interface ConnectionUser {
   /**
    * The end user whose connection it is, sent as the owner and as `X-Stream-User-Id`. Left out or
    * empty, it is the app's own connection, and the call adds no user (a client built with a
-   * `userId` of its own still sends that one, as on its other calls).
+   * `userId` of its own still sends that one, as on its other calls). Only a server holding the
+   * API secret may name one: a device or page gets a `ConfigurationError`.
    */
   readonly userId?: string;
 }
@@ -127,9 +128,23 @@ export class Connections {
     await this.as(options.userId).delete("/v1/agents/connections/{id}", { path: { id: named(id) } });
   }
 
-  /** The client a call goes out on: this one, or this backend's credential speaking for the user. */
+  /**
+   * The client a call goes out on: this backend's credential speaking for `userId`, or for nobody.
+   * A device or page holds its own user's token and the router refuses it here, so naming another
+   * user from one is refused before anything is sent. A client the deprecated `actingFor` made
+   * drops its user on a call naming none, so that call is the app's.
+   */
   private as(userId: string | undefined): Client {
-    return userId ? new Client(this.client.backend.speakingFor(userId)) : this.client;
+    const backend = this.client.backend;
+    if (userId) {
+      if (!backend.serverSide) {
+        throw new ConfigurationError(
+          "a user's connections are reached from a server holding the API secret, not from a device or page",
+        );
+      }
+      return new Client(backend.speakingFor(userId));
+    }
+    return backend.actsFor ? new Client(backend.speakingFor("")) : this.client;
   }
 }
 

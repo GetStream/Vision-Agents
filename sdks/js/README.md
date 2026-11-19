@@ -201,9 +201,11 @@ await api.connections.delete(connection.id, { userId: "alice" });
 the two never differ. Without it a call is about the app's own connections, which any of its
 agents may be bound to. Another user's connection is not found, the same as one that does not
 exist; the app's are reached whatever `userId` a call names, but `list({ userId })` lists only
-that user's.
+that user's. Only a server holding the API secret may name a user: a device or page gets a
+`ConfigurationError` before anything is sent.
 
-`backend.actingFor(userId)` still works and is deprecated: name the user on the call instead.
+`backend.actingFor(userId)` still works and is deprecated: name the user on the call instead. A
+client built on it sends no user on a call that names none.
 
 ## A conversation somebody comes back to
 
