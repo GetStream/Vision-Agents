@@ -876,12 +876,16 @@ func spendGroups(groupBy string, acrossApps bool) (value, join string, ok bool) 
 func (s *Store) OrganizationApps(ctx context.Context, organizationID string) ([]string, error) {
 	// One statement, so an app a request records under the organization meanwhile is in one
 	// half or the other.
+	namedOther := s.db.NewSelect().Model((*AppOrganization)(nil)).
+		ColumnExpr("1").
+		Where("ao.app_id = ap.id AND ao.organization_id <> ?", organizationID)
+	named := s.db.NewSelect().Model((*AppOrganization)(nil)).Column("app_id").Where("organization_id = ?", organizationID).
+		Union(s.db.NewSelect().Model((*App)(nil)).
+			Column("id").
+			Where("ap.organization_id = ?", organizationID).
+			Where("NOT EXISTS (?)", namedOther))
 	var members []string
-	err := s.db.NewRaw(`SELECT app_id FROM app_organizations WHERE organization_id = ?
-UNION
-SELECT id FROM apps AS ap WHERE organization_id = ?
-  AND NOT EXISTS (SELECT 1 FROM app_organizations AS ao WHERE ao.app_id = ap.id AND ao.organization_id <> ?)
-ORDER BY 1`, organizationID, organizationID, organizationID).Scan(ctx, &members)
+	err := s.db.NewSelect().TableExpr("(?) AS member", named).Column("member.app_id").OrderExpr("1").Scan(ctx, &members)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: organization apps: %w", err))
 	}
@@ -1092,15 +1096,16 @@ func (s *Store) CustomerTagKeys(
 		if err != nil || read.rows == 0 {
 			return read, err
 		}
-		err = db.NewRaw(`
-SELECT tag.key AS key, tag.value AS value,
-       SUM(r.cost_micros) AS cost_micros_total, `+requestCount+` AS request_count
-FROM requests AS r
-CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
-WHERE r.customer_id = ?
-  AND r.started_at >= ? AND r.started_at < ?
-  AND r.tags @> ?::jsonb
-GROUP BY tag.key, tag.value`, customerID, from, to, string(filter)).Scan(ctx, &read.values)
+		err = db.NewSelect().Model((*Request)(nil)).
+			ColumnExpr("tag.key AS key, tag.value AS value").
+			ColumnExpr("SUM(r.cost_micros) AS cost_micros_total").
+			ColumnExpr(requestCount+" AS request_count").
+			Join("CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)").
+			Where("r.customer_id = ?", customerID).
+			Where("r.started_at >= ? AND r.started_at < ?", from, to).
+			Where("r.tags @> ?::jsonb", string(filter)).
+			Group("tag.key", "tag.value").
+			Scan(ctx, &read.values)
 		return read, err
 	})
 	if err != nil {
@@ -1606,15 +1611,16 @@ func (s *Store) CustomerTurns(ctx context.Context, customerID, configID string, 
 	}
 	counts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (SessionTurns, error) {
 		var counts SessionTurns
-		err := db.NewRaw(`
-SELECT COUNT(DISTINCT a.session_id) AS sessions, COUNT(*) AS turns
-FROM agent_responses AS a
-JOIN agent_sessions AS s ON s.id = a.session_id
-WHERE a.customer_id = ?0 AND (?1 = '' OR s.config_id = ?1)
-    AND a.created_at >= ?2 AND a.created_at < ?3
-    AND a.parent_response_id IS NULL AND a.rewound_at IS NULL`,
-			customerID, configID, from, to,
-		).Scan(ctx, &counts)
+		q := db.NewSelect().Model((*AgentResponse)(nil)).
+			ColumnExpr("COUNT(DISTINCT ars.session_id) AS sessions, COUNT(*) AS turns").
+			Join("JOIN agent_sessions AS asn ON asn.id = ars.session_id").
+			Where("ars.customer_id = ?", customerID).
+			Where("ars.created_at >= ? AND ars.created_at < ?", from, to).
+			Where("ars.parent_response_id IS NULL AND ars.rewound_at IS NULL")
+		if configID != "" {
+			q.Where("asn.config_id = ?", configID)
+		}
+		err := q.Scan(ctx, &counts)
 		return counts, err
 	})
 	if err != nil {

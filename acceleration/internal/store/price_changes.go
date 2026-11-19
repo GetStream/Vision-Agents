@@ -258,8 +258,8 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite,
 				return err
 			}
 		}
-		var seeded bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM price_changes)").Scan(&seeded); err != nil {
+		seeded, err := tx.NewSelect().Model((*PriceChange)(nil)).Exists(ctx)
+		if err != nil {
 			return err
 		}
 		if !seeded {
@@ -289,8 +289,8 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite,
 			CreatedBy:      write.ActorID,
 			IdempotencyKey: write.IdempotencyKey,
 		}
-		var taken bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM price_changes WHERE name = ?)", change.Name).Scan(&taken); err != nil {
+		taken, err := tx.NewSelect().Model((*PriceChange)(nil)).Where("name = ?", change.Name).Exists(ctx)
+		if err != nil {
 			return err
 		}
 		if taken {

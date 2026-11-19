@@ -402,12 +402,17 @@ func addGrantUses(ctx context.Context, tx bun.Tx, uses []GrantUse) (int, error) 
 	for i, use := range uses {
 		grants[i], usageIDs[i], micros[i] = use.GrantID, use.UsageID.String(), use.Micros
 	}
-	if _, err := tx.ExecContext(ctx, "SELECT id FROM limit_grants WHERE id = ANY(?::bigint[]) ORDER BY id FOR UPDATE",
-		pgdialect.Array(slices.Compact(slices.Sorted(slices.Values(grants))))); err != nil {
+	_, err := tx.NewSelect().Model((*LimitGrant)(nil)).
+		Column("lg.id").
+		Where("lg.id = ANY(?::bigint[])", pgdialect.Array(slices.Compact(slices.Sorted(slices.Values(grants))))).
+		Order("lg.id").
+		For("UPDATE").
+		Exec(ctx)
+	if err != nil {
 		return 0, err
 	}
 	var added int
-	err := tx.NewRaw(`
+	err = tx.NewRaw(`
 WITH sent AS (
     SELECT * FROM unnest(?::bigint[], ?::uuid[], ?::bigint[]) AS s (grant_id, usage_id, micros)
 ), counted AS (
