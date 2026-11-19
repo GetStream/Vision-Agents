@@ -2912,6 +2912,27 @@ llm:
         trains_on_data: "no"
         retention: unspecified
 
+    # Meta's Muse Ember, the smallest Muse: $0.10/1M in and $0.50/1M out up to 200k tokens
+    # of prompt, three times that above (dev.meta.ai/models/muse-ember, read 2026-11-19).
+    # Artificial Analysis put it at about 470 output tokens a second. It takes Spark's
+    # requests unchanged: none is a 400, so the provider asks for low, and tool_choice takes
+    # auto and nothing else. Unlike Spark it is quick enough for the fast tier: streamed, the
+    # first answer token came 1.0-2.3 s after the request at minimal and low effort, against
+    # 1.5-4.7 s for Spark. Nothing prefers it; it is reached by name or as failover in the
+    # fast tier. The Standard terms are Spark's: no training, no retention window named.
+    - provider: meta
+      model: muse-ember-1.0
+      description: "Meta's smallest Muse, fast and cheap. Reads images and always thinks first."
+      benchmark: { output_tokens_per_second: 468 }
+      context_window: 1000000
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
     # The open-weight models, and the hosts that serve them.
     #
     # The weights are the same wherever they run, so a second host of a model already
