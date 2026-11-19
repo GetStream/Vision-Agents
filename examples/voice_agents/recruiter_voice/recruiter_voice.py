@@ -12,7 +12,7 @@ load_dotenv()
 
 """
 An agent that rings a candidate and screens them against the role in this
-directory, which is stored on placing the call rather than by hand.
+directory, which `agent.sync()` stores before the call is placed.
 """
 
 
@@ -20,6 +20,7 @@ async def main() -> None:
     agent = Agent(
         config="recruiter_voice",
     )
+    await agent.sync()
     async with agent.outbound_call(
         from_=os.environ["OUTBOUND_FROM"],
         to=os.environ["OUTBOUND_TO"],

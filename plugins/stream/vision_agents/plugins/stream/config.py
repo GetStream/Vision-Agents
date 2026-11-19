@@ -57,7 +57,6 @@ from .folder import (
     Folder,
     Settings,
     Simulation,
-    find,
     load,
     read_stamp,
     resolve,
@@ -79,11 +78,8 @@ async def sync_agent(
 
     Reads `examples/voice_agents/{name}/` (or `path`) and writes what it holds to the
     acceleration server. What `agent.yaml` declares goes with it, so the models an agent
-    runs on are decided on disk. A hash of the directory is sent too: a second call with
-    the same files does nothing.
-
-    This always asks the server. `ensure_agent` is the one that answers out of
-    `.agent_sync` and does not.
+    runs on are decided on disk. `.agent_sync` records the hash of what was stored, so a
+    second call with the same files sends nothing and returns the stored config.
 
     Args:
         name: What the agent is called, which is also its directory's name.
@@ -117,6 +113,15 @@ async def sync_agent(
     ]
 
     fingerprint = folder.hash()
+    if await asyncio.to_thread(read_stamp, folder.path, AGENT_STAMP) == fingerprint:
+        listed = _answer(
+            await list_agent_configs.asyncio(client=client, name=folder.name)
+        )
+        for stored in listed:
+            if stored.name == folder.name:
+                logger.info("agent %s is already in sync", folder.name)
+                return SyncAgentResult(config=stored, unchanged=True)
+
     body = SyncAgentRequest(name=folder.name, hash_=fingerprint)
     if folder.instructions:
         body.instructions = folder.instructions
@@ -152,40 +157,6 @@ async def sync_agent(
         for warning in result.warnings:
             logger.warning("synced agent %s with a warning: %s", folder.name, warning)
     return result
-
-
-async def ensure_agent(
-    name: str,
-    url: Optional[str] = None,
-    customer_id: Optional[str] = None,
-) -> Optional[SyncAgentResult]:
-    """Store the agent directory called `name`, if there is one and it has changed.
-
-    This is what makes launching an agent enough. `.agent_sync` next to `agent.yaml`
-    holds the fingerprint of what was last stored, so a run that changed nothing costs a
-    file read rather than a request, and a name with no directory behind it is left to
-    whatever is already on the server.
-
-    Args:
-        name: The stored config, which is also the directory's name.
-        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
-        customer_id: Who the work is billed to. Defaults to
-            `STREAM_ACCELERATION_CUSTOMER_ID`.
-
-    Returns:
-        What the router stored, or None when nothing needed storing.
-    """
-    path = await asyncio.to_thread(find, name)
-    if path is None:
-        return None
-
-    folder = await asyncio.to_thread(load, path)
-    stamped = await asyncio.to_thread(read_stamp, path, AGENT_STAMP)
-    if stamped == folder.hash():
-        logger.debug("%s is unchanged since it was last synced", path)
-        return None
-
-    return await sync_agent(name, path=str(path), url=url, customer_id=customer_id)
 
 
 async def define_agent(

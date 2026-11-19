@@ -217,8 +217,9 @@ await agent.Knowledge.AddUrlAsync("https://example.com/pricing", title: "Pricing
 
 `SyncAsync` sends the directory in one request. The fingerprint is the one the Go and
 Python SDKs take, so `.agent_sync` written by any of them is read back by this one, and an
-unchanged directory is only read back. A key `agent.yaml` does not know is refused. Joining
-syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
+unchanged directory is only read back. A key `agent.yaml` does not know is refused. Nothing
+syncs on its own: a session runs on the config stored under the agent's `Name`, so call
+`SyncAsync` before the agent takes calls, e.g. as a deploy step. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
 a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
 
 `floor_control:` is the model that controls the agent's floor, and how long a caller may wait
