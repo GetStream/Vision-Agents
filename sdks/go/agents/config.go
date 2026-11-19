@@ -17,7 +17,9 @@ import (
 //
 // A config is what a session can be created from by name, so the things worth deciding once
 // are decided once. Both the config and its skills are found by name first, so calling this
-// twice edits what is stored rather than storing another copy of it.
+// twice edits what is stored rather than storing another copy of it. When the stored config
+// has a sandbox its skills are written before the config, so a config the router refuses
+// leaves those skill edits applied; a corrected retry converges.
 //
 // An agent read from a directory is synced whole, with what its agent.yaml declares, and
 // .agent_sync records the fingerprint of what was stored. A directory unchanged since then

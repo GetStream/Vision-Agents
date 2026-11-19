@@ -43,6 +43,8 @@ class Router:
         # nothing about them.
         self.simulations: list[dict[str, Any]] | None = None
         self.syncs = 0
+        # The writes to configs and skills, in the order they came.
+        self.edits: list[str] = []
         self.bodies: list[dict[str, Any]] = []
         self.connection_pages: list[list[dict[str, Any]]] = [[]]
         self.connection_queries: list[dict[str, str]] = []
@@ -74,6 +76,7 @@ class Router:
     async def _update_config(self, request: web.Request) -> web.Response:
         id = request.match_info["id"]
         body = await self._config(request)
+        self.edits.append("config")
         # As the router's storedSkillSandboxComplaint: a config left without a sandbox is
         # refused while a skill it names, as stored, still has scripts.
         if not body.get("sandbox"):
@@ -104,6 +107,7 @@ class Router:
 
     async def _update_skill(self, request: web.Request) -> web.Response:
         body = await request.json()
+        self.edits.append(f"skill {body['name']}")
         if refused := self._skill_refused(body):
             return refused
         return web.json_response(
@@ -383,8 +387,13 @@ class TestDefineAgent:
         await self.define(router, skills=[forms], vm=Daytona)
 
         forms.files = {"reference.md": "# Forms"}
+        router.edits.clear()
         config = await self.define(router, skills=[forms])
 
+        assert router.edits == ["skill forms", "config"], (
+            "the skill loses its scripts before the config loses the vm, and is not "
+            "written a second time"
+        )
         assert "sandbox" not in router.configs[config.id]
         [skill] = list(router.skills.values())
         assert skill["files"] == {"reference.md": "# Forms"}

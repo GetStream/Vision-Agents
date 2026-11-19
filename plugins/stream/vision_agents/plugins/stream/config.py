@@ -215,6 +215,10 @@ async def define_agent(
     Both the config and its skills are found by name first, so calling this twice edits
     what is stored rather than storing another copy of it.
 
+    When the stored config has a sandbox, its skills are written before the config, so a
+    config the router refuses leaves those skill edits applied; a corrected retry
+    converges.
+
     Args:
         name: What the config is called, which is also how it is found again.
         instructions: The system prompt.
@@ -294,9 +298,9 @@ async def define_agent(
     if config is None:
         config = _answer(await create_agent_config.asyncio(client=client, body=wanted))
 
-    # The skills belong to the config, so they are written after it: a new agent has no id
-    # to hang them off until it has been stored, and a skill with scripts needs the sandbox
-    # this edit may add.
+    # A skill belongs to a config, so it is stored once the config has an id to name. With
+    # no sandbox stored, the config goes first too, so a skill with scripts finds the
+    # sandbox that this edit adds.
     if named:
         await define_skills(named, config.id, client)
     return config
