@@ -11,6 +11,8 @@ name: Publish Kotlin SDK
 #   release, then tags the commit `sdk-kotlin-vX.Y.Z`.
 # - Any other push to main publishes nothing, even one that sets a new version: only the merge of
 #   a pull request from release-kotlin-X.Y.Z does. Other pull requests do not run the jobs.
+#   If the run of a release merge says nothing is published, re-run all its jobs: the lookup of
+#   its pull request can lag right after the merge.
 #
 # There is no GitHub release: publishing one starts the Python release (release.yml), and the
 # repository's releases are the Python packages'.
@@ -65,7 +67,7 @@ jobs:
               --jq '.[] | select(.base.ref == "main" and .merged_at != null) | .head.ref')
             release=$(grep -xE 'release-kotlin-[0-9]+\.[0-9]+\.[0-9]+' <<< "$heads" | head -1 || true)
             if [ -z "$release" ]; then
-              echo "::notice::Nothing is published: this push is not the merge of a release-kotlin-X.Y.Z pull request."
+              echo "::notice::Nothing is published: this push is not the merge of a release-kotlin-X.Y.Z pull request. If it is one, the lookup may have lagged: re-run all jobs of this run."
               echo "channel=none" >> "$GITHUB_OUTPUT"
               exit 0
             fi

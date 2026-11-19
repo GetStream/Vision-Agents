@@ -383,6 +383,7 @@ to `https://stream-io-repo.com` from `release-kotlin-*` branches only. `version`
   published. Merging it publishes the release and tags the commit `sdk-kotlin-vX.Y.Z`.
 
 Other merges into `main` publish nothing, even one that sets a new `version`: only the merge of a
-pull request from a `release-kotlin-X.Y.Z` branch publishes.
+pull request from a `release-kotlin-X.Y.Z` branch publishes. If a release merge's run says nothing
+is published, re-run all its jobs: the lookup of its pull request can lag right after the merge.
 
 There is no GitHub release: publishing one starts the Python release, `release.yml`.
