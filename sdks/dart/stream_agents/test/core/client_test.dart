@@ -1506,6 +1506,15 @@ void main() {
       expect(page.nextCursor, 'next-1');
     });
 
+    test('refuses to list by a state the router does not know, before asking', () async {
+      expect(
+        () =>
+            agents.scheduledTasks.list(const ScheduledTaskQuery(state: ScheduledTaskState.unknown)),
+        throwsArgumentError,
+      );
+      expect(router.arrived, isEmpty);
+    });
+
     test('lists with no filters as none', () async {
       router.answer('GET $tasks', Answer(200, pageJson([])));
 
@@ -1524,11 +1533,11 @@ void main() {
         't1',
         title: 'Water the ferns',
         schedule: const ScheduledTaskSchedule(
-          inValue: 'P1D',
+          after: 'P1D',
           repeat: 'FREQ=WEEKLY;BYDAY=MO',
           description: 'not sent',
         ),
-        next: const ScheduledTaskNext.inValue('PT15M'),
+        next: const ScheduledTaskNext.after('PT15M'),
         deliverTo: const ['sms'],
         quietHours: const ScheduledTaskQuietHours(start: '23:00', end: '06:30'),
       );

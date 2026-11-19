@@ -12,11 +12,16 @@ final class ScheduledTasks {
 
   final api.Operations _operations;
 
-  /// One page of this user's tasks, newest first, the ones their backend made included. Pass
-  /// the page's [ListPage.nextCursor] as [ScheduledTaskQuery.cursor] for the next one.
+  /// One page of this user's tasks, newest first, the ones their backend made included.
+  ///
+  /// Pass the page's [ListPage.nextCursor] as [ScheduledTaskQuery.cursor] for the next one. A
+  /// [ScheduledTaskQuery.state] of [ScheduledTaskState.unknown] is an [ArgumentError].
   Future<ListPage<ScheduledTask>> list([
     ScheduledTaskQuery query = const ScheduledTaskQuery(),
   ]) async {
+    if (query.state == ScheduledTaskState.unknown) {
+      throw ArgumentError.value(query.state, 'query.state', 'an unknown state cannot be asked for');
+    }
     final page = await _operations.listScheduledTasks(
       limit: query.limit,
       cursor: _named(query.cursor),
@@ -62,23 +67,27 @@ final class ScheduledTasks {
     ),
   );
 
-  /// Holds a task: nothing comes due while it is paused, and what it slept through is never
-  /// replayed.
+  /// Holds a task.
+  ///
+  /// Nothing comes due while it is paused, and what it slept through is never replayed.
   Future<ScheduledTask> pause(String id) async =>
       scheduledTaskOf(await _operations.pauseScheduledTask(id: id));
 
-  /// Starts a paused or failed task again, counting its next occurrence from now. A one-shot
-  /// whose time came while it was paused is completed instead, and a task with no occurrence
-  /// left needs a new schedule first.
+  /// Starts a paused or failed task again, counting its next occurrence from now.
+  ///
+  /// A one-shot whose time came while it was paused is completed instead, and a task with no
+  /// occurrence left needs a new schedule first.
   Future<ScheduledTask> resume(String id) async =>
       scheduledTaskOf(await _operations.resumeScheduledTask(id: id));
 
   /// Cancels a task: it and its runs are gone.
   Future<void> delete(String id) => _operations.deleteScheduledTask(id: id);
 
-  /// One page of the times a task came due, newest first. Snoozes and pauses write none, but
-  /// resuming a one-shot that came due while paused records that time as missed. Pass
-  /// the page's [ListPage.nextCursor] as [cursor] for the next one.
+  /// One page of the times a task came due, newest first.
+  ///
+  /// A snooze writes none. Pausing settles a run in progress as missed, and resuming a one-shot
+  /// that came due while paused records that time as missed; nothing a pause slept through is
+  /// replayed. Pass the page's [ListPage.nextCursor] as [cursor] for the next one.
   Future<ListPage<ScheduledTaskRun>> runs(String id, {int? limit, String? cursor}) async {
     final page = await _operations.listScheduledTaskRuns(
       id: id,

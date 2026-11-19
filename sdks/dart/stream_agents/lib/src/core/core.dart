@@ -14,7 +14,7 @@ export 'guests.dart' show GuestStore, MemoryGuestStore, guestStorageKey;
 export 'live_value.dart';
 export 'models.dart';
 export 'router.dart';
-export 'scheduled_tasks.dart';
+export 'scheduled_tasks.dart' show ScheduledTasks;
 export 'sessions.dart' show Responses, Sessions;
 export 'socket.dart';
 export 'stream_agents.dart';

@@ -188,7 +188,7 @@ ScheduledTask scheduledTaskOf(api.ScheduledTask wire) => ScheduledTask(
   instructions: wire.instructions,
   schedule: ScheduledTaskSchedule(
     at: wire.schedule.at,
-    inValue: wire.schedule.inValue,
+    after: wire.schedule.inValue,
     repeat: wire.schedule.repeat,
     timezone: wire.schedule.timezone,
     until: wire.schedule.until,
@@ -239,7 +239,7 @@ api.UpdateScheduledTaskRequest updateTaskRequestOf({
     null => null,
     final schedule => api.ScheduledTaskSchedule(
       at: schedule.at,
-      inValue: schedule.inValue,
+      inValue: schedule.after,
       repeat: schedule.repeat,
       timezone: schedule.timezone,
       until: schedule.until,
@@ -248,7 +248,7 @@ api.UpdateScheduledTaskRequest updateTaskRequestOf({
   next: switch (next) {
     null => null,
     ScheduledTaskNextAt(:final at) => api.ScheduledTaskNext(at: at),
-    ScheduledTaskNextIn(:final duration) => api.ScheduledTaskNext(inValue: duration),
+    ScheduledTaskNextAfter(:final duration) => api.ScheduledTaskNext(inValue: duration),
   },
   deliverTo: deliverTo,
   quietHours: switch (quietHours) {

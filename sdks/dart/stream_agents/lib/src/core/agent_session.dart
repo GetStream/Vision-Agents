@@ -215,8 +215,9 @@ final class AgentSession {
     });
   }
 
-  /// Speaks this without going through the model. [interrupt] stops what the agent is saying
-  /// first, rather than waiting for it to finish.
+  /// Speaks this without going through the model.
+  ///
+  /// [interrupt] stops what the agent is saying first, rather than waiting for it to finish.
   void say(String text, {bool interrupt = false}) {
     final socket = _held();
     if (interrupt) {
@@ -227,9 +228,10 @@ final class AgentSession {
 
   /// Abandons the reply in flight.
   ///
-  /// With [requestId], the `request_id` of the request a reply answers, as `command_accepted` and
-  /// its tool calls carry it, only that reply is abandoned, and the router reports it stopped with `command_stopped`. An id the
-  /// router does not know comes back as an `error` event.
+  /// With [requestId], the `request_id` a reply answers (as `command_accepted` and its tool
+  /// calls carry it), only that reply is abandoned and the router reports `command_stopped`.
+  /// An id the router does not know, or any id on a conversation that keeps no commands,
+  /// comes back as an `error` event.
   void interrupt({String requestId = ''}) => _held().send(InterruptCommand(requestId: requestId));
 
   /// Answers a call waiting in [approvals].

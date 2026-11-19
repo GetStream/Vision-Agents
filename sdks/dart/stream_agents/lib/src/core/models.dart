@@ -747,11 +747,11 @@ enum ScheduledTaskCreatedBy {
   unknown,
 }
 
-/// When a task comes due. On a change, exactly one of [at] and [inValue] is given.
+/// When a task comes due. On a change, exactly one of [at] and [after] is given.
 final class ScheduledTaskSchedule {
   const ScheduledTaskSchedule({
     this.at,
-    this.inValue,
+    this.after,
     this.repeat,
     this.timezone,
     this.until,
@@ -762,9 +762,8 @@ final class ScheduledTaskSchedule {
   /// `Z` it is that instant.
   final String? at;
 
-  /// How long from now instead, an ISO 8601 duration: `PT20M`, `P1D`. Never read back. The
-  /// wire's `in`, which Dart reserves.
-  final String? inValue;
+  /// How long from now instead, an ISO 8601 duration: `PT20M`, `P1D`. Never read back.
+  final String? after;
 
   /// Null for once. Otherwise an RRULE without DTSTART or UNTIL: `FREQ=DAILY`,
   /// `FREQ=WEEKLY;BYDAY=MO,WE,FR`.
@@ -783,14 +782,14 @@ final class ScheduledTaskSchedule {
   bool operator ==(Object other) =>
       other is ScheduledTaskSchedule &&
       other.at == at &&
-      other.inValue == inValue &&
+      other.after == after &&
       other.repeat == repeat &&
       other.timezone == timezone &&
       other.until == until &&
       other.description == description;
 
   @override
-  int get hashCode => Object.hash(at, inValue, repeat, timezone, until, description);
+  int get hashCode => Object.hash(at, after, repeat, timezone, until, description);
 }
 
 /// Where the next occurrence moves to.
@@ -800,8 +799,8 @@ sealed class ScheduledTaskNext {
   /// As the user's clock reads it, in the task's zone: `2026-10-20T09:00:00`.
   const factory ScheduledTaskNext.at(String at) = ScheduledTaskNextAt;
 
-  /// How long from now, an ISO 8601 duration: `PT15M`. The wire's `in`, which Dart reserves.
-  const factory ScheduledTaskNext.inValue(String duration) = ScheduledTaskNextIn;
+  /// How long from now, an ISO 8601 duration: `PT15M`.
+  const factory ScheduledTaskNext.after(String duration) = ScheduledTaskNextAfter;
 }
 
 /// [ScheduledTaskNext.at].
@@ -817,14 +816,14 @@ final class ScheduledTaskNextAt extends ScheduledTaskNext {
   int get hashCode => at.hashCode;
 }
 
-/// [ScheduledTaskNext.inValue].
-final class ScheduledTaskNextIn extends ScheduledTaskNext {
-  const ScheduledTaskNextIn(this.duration);
+/// [ScheduledTaskNext.after].
+final class ScheduledTaskNextAfter extends ScheduledTaskNext {
+  const ScheduledTaskNextAfter(this.duration);
 
   final String duration;
 
   @override
-  bool operator ==(Object other) => other is ScheduledTaskNextIn && other.duration == duration;
+  bool operator ==(Object other) => other is ScheduledTaskNextAfter && other.duration == duration;
 
   @override
   int get hashCode => duration.hashCode;
