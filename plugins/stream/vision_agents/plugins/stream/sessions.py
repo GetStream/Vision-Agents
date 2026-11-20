@@ -1159,6 +1159,8 @@ def _with_policy(tool: SessionTool, policy: ToolPolicy) -> SessionTool:
         tool.timeout_ms = max(1, int(policy.timeout * 1000))
     if policy.approval:
         tool.approval = SessionToolApproval(title=policy.approval)
+    if policy.display_title:
+        tool.display_title = policy.display_title
     return tool
 
 
