@@ -413,7 +413,7 @@ that holds a user's token instead of the secret (`AsUser`, or `Token` with `User
 device. It cannot act for another user, so a call naming one throws a `ConfigurationException`
 before any request, and a call naming none is sent as before. The Go SDK differs here: a
 `client.Client` made for a user (`UserID` with the secret) keeps signing that user's own token
-when a call names another, which the router answers as the device it is.
+when a call names another, which Stream's proxy refuses with a 403.
 
 ## Working on this package
 
