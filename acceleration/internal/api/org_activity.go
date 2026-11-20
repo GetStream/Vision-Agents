@@ -207,10 +207,7 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		answer.Latency = append(answer.Latency, ActivityLatency(leg))
 	}
 	for _, area := range areas {
-		answer.Areas = append(answer.Areas, ActivityArea{
-			Area: area.Area, Client: area.Client, FirstAt: area.FirstAt, LastAt: area.LastAt,
-			Requests: area.Requests, Refused: area.Refused, LastRefusalCode: area.LastRefusalCode,
-		})
+		answer.Areas = append(answer.Areas, ActivityArea(area))
 		if answer.FirstSeen == nil || area.FirstAt.Before(*answer.FirstSeen) {
 			answer.FirstSeen = &area.FirstAt
 		}
