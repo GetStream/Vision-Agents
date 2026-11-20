@@ -2288,7 +2288,10 @@ holds for; one that does not hold adds nothing, and the counter is never reset. 
 whether or not the Sentry limit sends the event, and names no item. A hold at the last check, on shutdown, or during a drain reaches Sentry only: by then the process has closed `/metrics` or handed it over. A counter, not a gauge,
 because a condition that holds on a rise (`lost`, `rejected`, `service_rejected`,
 `batch_refused`) holds at one check only, which a scrape between two checks would miss. Page on
-`increase(router_alert_holds_total{level="page"}[5m]) > 0`.
+`increase(router_alert_holds_total{level="page"}[5m]) > 0`. `lost`, `rejected` and `unattributed`
+hold at most once per limit, and each item of a condition of items at most once per limit for that
+item: 1 minute on the router's usage loop, 1 hour on its metering loop. Their counter therefore
+rises at most once per limit, as their Sentry events do; a page increase still catches each rise.
 
 ## Prices
 
