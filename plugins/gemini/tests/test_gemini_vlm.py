@@ -42,6 +42,7 @@ async def gemini_api() -> AsyncIterator[tuple[AsyncClient, list[dict]]]:
 
     app = web.Application()
     app.router.add_post("/v1beta/models/{call}", stream)
+    app.router.add_post("/v1/models/{call}", stream)
     server = TestServer(app)
     await server.start_server()
     http_options = types.HttpOptions(base_url=str(server.make_url("")))
