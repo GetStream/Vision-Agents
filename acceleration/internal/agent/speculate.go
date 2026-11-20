@@ -56,10 +56,11 @@ type speculation struct {
 // reports whether it did: the reply's tag is then the ruling, and chorus-asr's is not acted
 // on. Chorus-asr hears the audio and not the conversation, so it cannot tell a caller
 // answering the agent ("So exactly.") from the room; the reply model reads the conversation
-// and is told what chorus-asr made of the sound. Only with UnifiedReplies, and never over
-// the agent, where there is no time to ask twice and the words are kept for the next reply.
+// and is told what chorus-asr made of the sound. It is the reply's own request: one that
+// opens with [respond] is what the caller hears. Never over the agent, where there is no
+// time to ask twice and the words are kept for the next reply.
 func (a *Agent) secondOpinion(current *harness.Harness, ruling harness.Decided) bool {
-	if !a.options.UnifiedReplies || ruling.Ruler != harness.Heard || ruling.Disposition != harness.Ignore || ruling.Err != nil {
+	if ruling.Ruler != harness.Heard || ruling.Disposition != harness.Ignore || ruling.Err != nil {
 		return false
 	}
 	ready, ok := a.converse.settled(ruling.CandidateID)
@@ -92,7 +93,7 @@ func (a *Agent) secondOpinion(current *harness.Harness, ruling harness.Decided) 
 // ruling, made from the audio, decides the turn, and the reply rules only as the second
 // opinion on words it ignored (secondOpinion), told so.
 func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, anotherVoice, second bool) bool {
-	unified := a.options.UnifiedReplies && (a.audioFloor == nil || second)
+	unified := second || a.options.UnifiedReplies && a.audioFloor == nil
 	if !a.options.SpeculativeReplies && !unified {
 		return false
 	}
