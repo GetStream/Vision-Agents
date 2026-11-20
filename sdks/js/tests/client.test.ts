@@ -188,6 +188,20 @@ describe("Client", () => {
     );
   });
 
+  it("keeps only the start of a long page as the message, since apps log and show it", async () => {
+    const page = `<html><body>${"<p>Upstream error, request headers follow.</p>".repeat(200)}</body></html>`;
+    router.serve("GET", "/v1/agents/calls", { status: 500, headers: { "Content-Type": "text/html" }, text: page });
+
+    await assert.rejects(
+      () => api.get("/v1/agents/calls"),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.message, `${page.slice(0, 1024)}…`);
+        return true;
+      },
+    );
+  });
+
   it("keeps an older router's error string as the message, with no kind to branch on", async () => {
     router.serve("GET", "/v1/agents/calls", { status: 400, body: { error: "limit is too big" } });
 
@@ -327,9 +341,45 @@ describe("Client", () => {
       await assert.rejects(asking, (raised: unknown) => (raised as Error).name === "AbortError");
       assert.equal(router.requestsTo("GET", "/v1/agents/calls").length, 1);
     });
+
+    it("gives up on a router that does not start answering, and sends a GET again", async () => {
+      const impatient = new Client({ url: router.url, customerId: "local", maxRetries: 1, timeoutMs: 200 });
+      router.serve("GET", "/v1/agents/calls", async (_, calls) => {
+        if (calls === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1_000));
+        }
+        return { body: { calls: [] } };
+      });
+
+      const started = Date.now();
+      assert.deepEqual(await impatient.get("/v1/agents/calls"), { calls: [] });
+
+      assert.ok(Date.now() - started < 900, "waited out the router that went quiet");
+      assert.equal(router.requestsTo("GET", "/v1/agents/calls").length, 2);
+    });
+
+    it("reports a POST the router did not start answering as one that never arrived, without sending it again", async () => {
+      const impatient = new Client({ url: router.url, customerId: "local", timeoutMs: 200 });
+      router.serve("POST", "/v1/agents/sessions", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        return { body: {} };
+      });
+
+      await assert.rejects(() => impatient.post("/v1/agents/sessions", { body: {} }), (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.status, 0);
+        assert.match(raised.message, /did not start answering within 200 ms/);
+        return true;
+      });
+      assert.equal(router.requestsTo("POST", "/v1/agents/sessions").length, 1);
+    });
   });
 
   it("refuses a retry count that is not one", () => {
     assert.throws(() => new Client({ url: router.url, customerId: "local", maxRetries: -1 }), ConfigurationError);
+  });
+
+  it("refuses a timeout that is not one", () => {
+    assert.throws(() => new Client({ url: router.url, customerId: "local", timeoutMs: -1 }), ConfigurationError);
   });
 });

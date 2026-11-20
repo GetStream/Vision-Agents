@@ -121,8 +121,10 @@ dispatch, and the four modality streams.
   everything said after it.
 - `close()` is idempotent. `finish()` removes the listeners and resolves every waiting reader
   as done, so a `for await` ends rather than hanging.
-- Credentials go in the query string, because a browser WebSocket carries no headers.
-  **A socket never says it is a backend.** The router reads a `stream-auth-type` query
+- A page's credentials go in the query string, because a browser WebSocket carries no headers.
+  A backend holding the secret sends the same credential as upgrade headers instead
+  (`Backend.socketHeaders`, added by `Socket.open`), since its token speaks for the whole app
+  and a URL is written into access logs. **A socket never says it is a backend.** The router reads a `stream-auth-type` query
   parameter only as `jwt` or `anonymous`, only in `proxy` mode without declared kinds, and
   never over the header; the hosted proxy reads it only as `jwt`. That is what stops a
   socket opened from a browser claiming to be a backend. Never send `server` there.
@@ -140,7 +142,9 @@ would hang on a session nobody is watching.
 - Each call runs on its own `void this.runTool(frame)`, not awaited, because reading the socket
   is also what delivers `tool_cancel`.
 - A tool that throws is answered with `{ error }`, never dropped. The model can only say
-  something useful about a tool that did not work if it is told that it did not work.
+  something useful about a tool that did not work if it is told that it did not work. What it
+  says is `Tools.failure`: the `onError` of the `Tools` the function was registered in, else the
+  error's message, cut to 1 KiB either way. Session and Dispatch both go through it.
 - `tool_cancel` aborts that call's `AbortController`; ending the session aborts all of them.
 - `events()` gives each loop its own queue, from when it started reading; the first loop also
   gets what arrived while nobody read (256, oldest dropped). A loop that falls 256 behind is
@@ -346,3 +350,9 @@ queues are bounded. Stream token refresh stays with the original user, guest ref
 shared per store, and a local sync stamp is trusted only with the same remote `sync_hash`.
 Other SDKs also need to audit these behaviours, empty skill overrides, non-JSON responses,
 truncated-body failures and folder parsing; update them separately.
+
+Also in JS, not yet in the other SDKs: a request is given up as never answered once the router
+has not started answering within `timeoutMs` (60 s); a non-envelope error body is cut to 1 KiB;
+`Backend` and `Edge` print no secret or token through `toJSON` or Node's inspect; folder sync
+leaves hidden entries and `node_modules` out of skills and knowledge and refuses a symlink out of
+the agent directory; and a tool's failure reaches the model through an `onError` hook on `Tools`.

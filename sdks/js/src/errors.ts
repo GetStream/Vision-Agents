@@ -111,7 +111,7 @@ export async function errorOf(
     return new RouterError(
       response.status,
       operation,
-      text.trim() || `${answeredBy} answered ${response.status}`,
+      clipped(text.trim()) || `${answeredBy} answered ${response.status}`,
       { requestId },
     );
   }
@@ -142,4 +142,16 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 
 function stringOf(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+/**
+ * How much of a body that is not the router's own envelope becomes an error's message. Enough to
+ * read what a proxy or a gateway said; past it is a whole HTML page, or a request echoed back,
+ * which an app would log and show in full.
+ */
+const MAX_MESSAGE_CHARS = 1024;
+
+/** `text`, cut to `MAX_MESSAGE_CHARS` with an ellipsis where it was cut. */
+export function clipped(text: string): string {
+  return text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS)}…` : text;
 }
