@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
 // endsAtOnce is a chorus-asr server's ruling that the turn has ended, at the first check.
@@ -237,6 +238,59 @@ func (s *AgentSuite) TestActingOnChorusASRTheReplyAnswersWordsItIgnoredThatWereF
 	s.Require().Len(history, 2)
 	s.Equal("So exactly.", history[0].Content)
 	s.Equal("Glad we agree.", history[1].Content, "the tag is never part of the reply")
+}
+
+// talkedThrough has the agent mid-line, its voice never finishing, when a caller says words
+// that chorus-asr lets it talk through, with the reply model set to open with reply and then,
+// for a request after it, to say then. It returns what lets the voice finish.
+func (s *AgentSuite) talkedThrough(words, reply, then string) (release chan struct{}) {
+	held, release := make(chan struct{}), make(chan struct{})
+	s.floorRules(ignoresAtOnce)
+	s.joinWithVoice(true, func(voice *stubTTS) tts.TTS { return newHeldCompletionTTS(voice, held, release) })
+	s.model.reply, s.model.then = []string{reply}, []string{then}
+	s.Require().NoError(s.agent.Say(s.ctx, "Once upon a time there was a fox who lived by a river."))
+	<-held
+	s.asksOverTheFloor(stt.Participant{ID: "alice"}, words)
+	s.eventually(func() bool { return slices.Equal(s.heardLines(), []string{words}) }, "the words were never ruled on")
+	return release
+}
+
+// Session test-d3ca41d7: chorus-asr let the agent talk through "Can you stop?" and it told
+// its story for 18 s more. The reply model is asked about words said over the agent that
+// chorus-asr ignored, and its [respond] stops the agent, which then answers them.
+func (s *AgentSuite) TestActingOnChorusASRTheReplyModelStopsTheAgentOverWordsItTalkedThrough() {
+	release := s.talkedThrough("Can you stop?", "[respond]", "Sure, I'll stop.")
+	defer close(release)
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the agent talked on over the caller's stop")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller's words were never answered")
+	told := slices.ContainsFunc(s.model.requests()[0].Input, func(message llm.Message) bool {
+		return strings.Contains(message.Content, harness.TalkedThroughNote)
+	})
+	s.True(told, "the reply model was not told chorus-asr let the agent talk through the words")
+	input := harness.WithoutNotes(s.model.requests()[1].Input)
+	s.Equal("Can you stop?", input[len(input)-1].Content, "the answer is to the words that stopped the agent")
+}
+
+// An acknowledgement in words ("that makes sense") is no reason to stop: the reply model
+// agrees with chorus-asr, the agent talks on, and the words are kept as chorus-asr had them.
+func (s *AgentSuite) TestActingOnChorusASRTheReplyModelAgreeingLetsTheAgentTalkOn() {
+	release := s.talkedThrough("That makes sense.", "[ignore]", "unused")
+	defer close(release)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply model was never asked")
+	s.Never(func() bool { return countOf[Interrupted](s.reported()) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the agent was stopped over words both models ignored")
+	s.Len(s.model.requests(), 1, "the reply model was asked again about the same words")
+}
+
+// A murmur over the agent is somebody listening: the reply model is not asked about it.
+func (s *AgentSuite) TestActingOnChorusASRAMurmurTalkedThroughIsNotPutToTheReplyModel() {
+	release := s.talkedThrough("Mm-hmm.", "[respond]", "unused")
+	defer close(release)
+
+	s.Never(func() bool { return len(s.model.requests()) > 0 || countOf[Interrupted](s.reported()) > 0 },
+		300*time.Millisecond, 10*time.Millisecond, "a murmur over the agent was put to the reply model")
 }
 
 // Non-chorus agents hear the transcriber as they always have: no floor of chorus-asr's, and its

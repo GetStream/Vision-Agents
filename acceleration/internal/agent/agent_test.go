@@ -1893,7 +1893,7 @@ func (s *AgentSuite) TestEverySpeculativeReplyIsAskedForUnderItsOwnGeneration() 
 	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
 	var generations []uint64
 	for range 2 {
-		s.agent.speculate(s.agent.harness, ready, false, false, false)
+		s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
 		s.agent.mu.Lock()
 		generations = append(generations, s.agent.speculations[ready.ID].turn.Generation)
 		s.agent.mu.Unlock()
@@ -1910,7 +1910,7 @@ func (s *AgentSuite) TestADroppedSpeculationForgottenAfterTheAnswerWasAskedLeave
 	finish := make(chan struct{})
 	s.model.holdCompletion = finish
 	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
-	s.agent.speculate(s.agent.harness, ready, false, false, false)
+	s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the speculation was never asked for")
 
 	// The speculation is dropped, but reading it out to its end waits for the model, so
