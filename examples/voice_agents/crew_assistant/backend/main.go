@@ -144,7 +144,8 @@ var events = map[string]struct{ title, instructions string }{
 // agentSpeaksFirst has the agent say what instructions ask for in userID's conversation, about an
 // event or a decision, by creating a scheduled task in it and running it now.
 func agentSpeaksFirst(ctx context.Context, userID, sessionID, title, instructions, timezone string) (string, error) {
-	client, err := stream.Backend{ActingFor: userID}.Client()
+	// The create names the user; running and deleting the task reach it as the backend.
+	client, err := stream.Backend{}.Client()
 	if err != nil {
 		return "", err
 	}
