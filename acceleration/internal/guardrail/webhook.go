@@ -53,6 +53,9 @@ type Ask struct {
 	// replied does not need a second shape.
 	Role string `json:"role"`
 	Text string `json:"text"`
+	// Conversation is what was said before it, one "role: words" line each (Conversation).
+	// Absent for a turn that opens a conversation.
+	Conversation string `json:"conversation,omitempty"`
 	// Policy is the prose from guardrail.md, sent so a server can answer without holding
 	// a copy of a file it does not own.
 	Policy string `json:"policy"`
@@ -97,18 +100,19 @@ func (w *webhook) Policy() Policy { return w.policy }
 func (w *webhook) Close() error { return nil }
 
 // Check posts the turn and reads the verdict off the reply.
-func (w *webhook) Check(ctx context.Context, turnID, text string) (Verdict, error) {
+func (w *webhook) Check(ctx context.Context, turnID, text, conversation string) (Verdict, error) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
 	body, err := json.Marshal(Ask{
-		CustomerID: w.owner.CustomerID,
-		AgentID:    w.owner.AgentID,
-		CallID:     w.owner.CallID,
-		TurnID:     turnID,
-		Role:       "user",
-		Text:       text,
-		Policy:     w.policy.Text,
+		CustomerID:   w.owner.CustomerID,
+		AgentID:      w.owner.AgentID,
+		CallID:       w.owner.CallID,
+		TurnID:       turnID,
+		Role:         "user",
+		Text:         text,
+		Conversation: conversation,
+		Policy:       w.policy.Text,
 	})
 	if err != nil {
 		return Verdict{}, fmt.Errorf("guardrail: encode the turn: %w", err)
@@ -144,7 +148,7 @@ func (w *webhook) Check(ctx context.Context, turnID, text string) (Verdict, erro
 	}
 
 	if answer.Allow {
-		return allowed(0), nil
+		return Verdict{Allowed: true}, nil
 	}
 	reason := answer.Reason
 	if reason == "" {

@@ -1255,10 +1255,11 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 	a.mu.Unlock()
 
 	turnID := writtenPrefix + turnStamp()
-	screening := a.screening(ctx, turnID, asked)
+	screening := a.screening(ctx, turnID, asked, conversationBefore(history))
 	if screening != nil && screening.blocking {
-		if verdict := screening.verdict(); !verdict.Allowed {
-			return a.refuseWritten(turnID, verdict), nil
+		decided, _ := screening.wait()
+		if !decided.verdict.Allowed {
+			return a.refuseWritten(turnID, decided.verdict), nil
 		}
 		screening = nil
 	}
@@ -1282,12 +1283,12 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 	// string, so holding it until the verdict is in costs the reader nothing but the wait,
 	// and what was written is discarded unread if the policy refuses it.
 	if screening != nil {
-		waited := time.Now()
-		if verdict := screening.verdict(); !verdict.Allowed {
-			return a.refuseWritten(turnID, verdict), nil
+		decided, heldMs := screening.wait()
+		if !decided.verdict.Allowed {
+			return a.refuseWritten(turnID, decided.verdict), nil
 		}
 		a.logger.Debug("a written answer waited on the guardrail",
-			"turn", turnID, "held_ms", routing.MsSince(waited))
+			"turn", turnID, "held_ms", heldMs)
 	}
 
 	a.mu.Lock()
@@ -3032,14 +3033,16 @@ func (a *Agent) startReply(
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
 
-	screening := a.screening(ctx, turn.ID, screen)
+	screening := a.screening(ctx, turn.ID, screen, conversationBefore(turn.History))
 
 	// In blocking mode the model is not asked at all until the verdict is in, so a refused
 	// turn spends nothing on a reply nobody hears - and every caller waits for the check,
 	// including all the ones who asked something perfectly ordinary.
 	if screening != nil && screening.blocking {
-		if verdict := screening.verdict(); !verdict.Allowed {
-			a.refuse(turn.ID, verdict, 0)
+		decided, _ := screening.wait()
+		a.turns.screened(turn.ID, decided.check)
+		if !decided.verdict.Allowed {
+			a.refuse(turn.ID, decided.verdict, 0)
 			return
 		}
 		screening = nil
@@ -3075,14 +3078,14 @@ func (a *Agent) startReply(
 	// the voice, so a reply held on this side of it has not been heard, written down or
 	// spoken. Nothing the model wrote escapes a refusal.
 	if screening != nil {
-		waited := time.Now()
-		verdict := screening.verdict()
-		if !verdict.Allowed {
+		decided, heldMs := screening.wait()
+		a.turns.screened(turn.ID, held(decided.check, heldMs))
+		if !decided.verdict.Allowed {
 			stream.Close()
 			a.mu.Lock()
 			delete(a.streams, turn.ID)
 			a.mu.Unlock()
-			a.refuse(turn.ID, verdict, routing.MsSince(waited))
+			a.refuse(turn.ID, decided.verdict, heldMs)
 			return
 		}
 	}
@@ -3094,15 +3097,54 @@ func (a *Agent) startReply(
 type screening struct {
 	// blocking says the model must not be asked until this has answered.
 	blocking bool
-	decided  chan guardrail.Verdict
+	decided  chan checked
 }
 
-// verdict waits for the check to answer.
-func (s *screening) verdict() guardrail.Verdict { return <-s.decided }
+// checked is what a check answered, and the record of it for the turn.
+type checked struct {
+	verdict guardrail.Verdict
+	// check is nil for a check its turn was abandoned under, which answered nothing.
+	check *live.GuardrailCheck
+}
+
+// wait waits for the check to answer, and says how long that was: zero when the answer was
+// already in.
+func (s *screening) wait() (checked, float64) {
+	select {
+	case decided := <-s.decided:
+		return decided, 0
+	default:
+	}
+	waited := time.Now()
+	decided := <-s.decided
+	return decided, routing.MsSince(waited)
+}
+
+// held notes on a check how long a reply the model had begun waited for it.
+func held(check *live.GuardrailCheck, heldMs float64) *live.GuardrailCheck {
+	if check != nil {
+		check.HeldMs = heldMs
+	}
+	return check
+}
+
+// conversationBefore is what was said before the turn a reply answers, for the guardrail:
+// the history the model is sent, without the harness's notes and up to the caller's last
+// message, which is the turn itself.
+func conversationBefore(history []llm.Message) string {
+	history = harness.WithoutNotes(history)
+	for at := len(history) - 1; at >= 0; at-- {
+		if history[at].Role == llm.User {
+			history = history[:at]
+			break
+		}
+	}
+	return guardrail.Conversation(history)
+}
 
 // screening starts the check for a turn, or returns nil where there is nothing to screen:
 // no policy, or a turn that carries no new words of the caller's.
-func (a *Agent) screening(ctx context.Context, turnID, text string) *screening {
+func (a *Agent) screening(ctx context.Context, turnID, text, conversation string) *screening {
 	if a.options.Guardrail == nil || strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -3110,11 +3152,19 @@ func (a *Agent) screening(ctx context.Context, turnID, text string) *screening {
 	policy := a.options.Guardrail.Policy()
 	started := &screening{
 		blocking: policy.Mode == guardrail.ModeBlocking,
-		decided:  make(chan guardrail.Verdict, 1),
+		decided:  make(chan checked, 1),
 	}
 
 	go func() {
-		decided, err := a.options.Guardrail.Check(ctx, turnID, text)
+		asked := time.Now()
+		decided, err := a.options.Guardrail.Check(ctx, turnID, text, conversation)
+		latencyMs := routing.MsSince(asked)
+		if err != nil && ctx.Err() != nil {
+			// The turn was abandoned under the check, so nothing was decided about it.
+			started.decided <- checked{verdict: guardrail.Verdict{Allowed: true}}
+			return
+		}
+		check := guardrailCheckOf(policy, decided, latencyMs, err != nil)
 		if err != nil {
 			// A check that could not be made allows the turn. This is the one place that
 			// decision is taken, so it is worth stating plainly: a classifier having an
@@ -3124,10 +3174,31 @@ func (a *Agent) screening(ctx context.Context, turnID, text string) *screening {
 				"turn", turnID, "error", err)
 			decided = guardrail.Verdict{Allowed: true}
 		}
-		started.decided <- decided
+		started.decided <- checked{verdict: decided, check: check}
 	}()
 
 	return started
+}
+
+// guardrailCheckOf is the record of one check. A webhook answers yes or no, so its check has
+// no model, probability or threshold, and a check that failed has no probability: read as
+// zero, it would say the turn was judged harmless.
+func guardrailCheckOf(policy guardrail.Policy, verdict guardrail.Verdict, latencyMs float64, failed bool) *live.GuardrailCheck {
+	check := &live.GuardrailCheck{
+		Kind:      string(policy.Kind),
+		Model:     verdict.Model,
+		Allowed:   failed || verdict.Allowed,
+		LatencyMs: latencyMs,
+		Mode:      string(policy.Mode),
+		Failed:    failed,
+	}
+	if policy.Kind != guardrail.KindWebhook {
+		check.Threshold = &policy.Threshold
+		if !failed {
+			check.Probability = &verdict.Probability
+		}
+	}
+	return check
 }
 
 // refuse answers a turn with the policy's refusal instead of the model's reply.
