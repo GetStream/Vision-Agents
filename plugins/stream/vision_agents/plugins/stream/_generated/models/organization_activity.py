@@ -45,9 +45,9 @@ class OrganizationActivity:
             so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of
             the true ones.
         sessions (ActivitySessions):
-        steps (list[ActivityStepDay] | None): Every step the organization's apps had a request answered in from since
-            on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization
-            that only texts, is absent, and so is one whose every request was refused.
+        steps (list[ActivityStepDay] | None): Every step the organization's apps ever had a request answered in,
+            whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as
+            voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
         first_seen (datetime.datetime | Unset): When the first request of any area arrived, absent when none did.
         last_seen (datetime.datetime | Unset): When the last request of any area arrived, absent when none did.
     """

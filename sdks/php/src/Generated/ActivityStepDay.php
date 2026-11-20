@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class ActivityStepDay
 {
     public function __construct(
-        // The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+        // The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not onl...
         public string $firstAnswered,
         // The step, one of furthest_step's but none and steady_use.
         public string $step,

@@ -427,7 +427,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ActivityStep {
 ///`ActivityStepDay`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ActivityStepDay {
-    ///The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+    ///The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
     pub first_answered: ::std::string::String,
     ///The step, one of furthest_step's but none and steady_use.
     pub step: ActivityStepDayStep,
@@ -8814,7 +8814,7 @@ pub struct OrganizationActivity {
     pub shards: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
     pub since: ::std::string::String,
-    ///Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+    ///Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub steps: ::std::option::Option<::std::vec::Vec<ActivityStepDay>>,
 }

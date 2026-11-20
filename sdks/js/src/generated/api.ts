@@ -4793,7 +4793,7 @@ export type components = {
         readonly ActivityStepDay: {
             /**
              * Format: date
-             * @description The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+             * @description The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
              */
             readonly first_answered: string;
             /**
@@ -8595,7 +8595,7 @@ export type components = {
              * @description The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
              */
             readonly since: string;
-            /** @description Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused. */
+            /** @description Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused. */
             readonly steps: readonly components["schemas"]["ActivityStepDay"][] | null;
         };
         /**

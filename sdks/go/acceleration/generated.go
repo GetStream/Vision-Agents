@@ -3700,7 +3700,7 @@ type ActivityStep string
 
 // ActivityStepDay defines model for ActivityStepDay.
 type ActivityStepDay struct {
-	// FirstAnswered The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+	// FirstAnswered The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
 	FirstAnswered openapi_types.Date `json:"first_answered"`
 
 	// Step The step, one of furthest_step's but none and steady_use.
@@ -8010,7 +8010,7 @@ type OrganizationActivity struct {
 	// Since The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
 	Since time.Time `json:"since"`
 
-	// Steps Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+	// Steps Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
 	Steps *[]ActivityStepDay `json:"steps"`
 }
 

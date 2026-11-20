@@ -408,7 +408,7 @@ components:
     ActivityStepDay:
       properties:
         first_answered:
-          description: The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+          description: The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
           format: date
           type: string
         step:
@@ -7040,7 +7040,7 @@ components:
           format: date-time
           type: string
         steps:
-          description: Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+          description: Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
           items:
             $ref: '#/components/schemas/ActivityStepDay'
           nullable: true

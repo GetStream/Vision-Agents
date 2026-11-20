@@ -514,7 +514,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+        /// The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("first_answered")]
         [System.Text.Json.Serialization.JsonConverter(typeof(DateFormatConverter))]
@@ -10333,7 +10333,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset Since { get; set; } = default!;
 
         /// <summary>
-        /// Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+        /// Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("steps")]
         public System.Collections.Generic.List<ActivityStepDay>? Steps { get; set; } = default!;

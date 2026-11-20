@@ -17,8 +17,8 @@ T = TypeVar("T", bound="ActivityStepDay")
 class ActivityStepDay:
     """
     Attributes:
-        first_answered (datetime.date): The UTC day, YYYY-MM-DD, of the first request answered in the step's area from
-            since on.
+        first_answered (datetime.date): The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over
+            every day recorded, not only from since on.
         step (ActivityStepDayStep): The step, one of furthest_step's but none and steady_use.
     """
 

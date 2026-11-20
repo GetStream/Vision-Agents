@@ -30,7 +30,7 @@ final readonly class OrganizationActivity
         public array $latency,
         // The sessions the organization's apps opened from since on, from the shards listed in shards.
         public ActivitySessions $sessions,
-        // Every step the organization's apps had a request answered in from since on, in furthest_step's order, with...
+        // Every step the organization's apps ever had a request answered in, whenever, not only from since on, in fur...
         /** @var list<ActivityStepDay> */
         public array $steps,
         // When the first request of any area arrived, absent when none did.
