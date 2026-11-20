@@ -23,9 +23,13 @@ func RequesterFrom(ctx context.Context) (Requester, bool) {
 }
 
 // requesterLocked is who the turn being answered came from. A participant heard on a call
-// names their user; a typed command names its sender. The caller holds a.mu.
+// names their user; a message written in a channel of a type an agent config answers in names
+// its writer (WithWriter); a typed command names its sender. The caller holds a.mu.
 func (a *Agent) requesterLocked() Requester {
 	requester := Requester{UserID: a.lastParticipant.UserID, Name: a.lastParticipant.Name}
+	if requester.UserID == "" {
+		requester = Requester{UserID: a.lastWriter.id, Name: a.lastWriter.name}
+	}
 	if requester.UserID == "" {
 		requester.UserID = a.sender.UserID
 	}
