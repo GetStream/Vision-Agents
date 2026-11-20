@@ -82,6 +82,23 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	})
 }
 
+// Session test-8a88d5dd: "Are you a bitch?" came while the reply to "What? Sorry. What?" was
+// still being written. chorus-asr was told the agent was talking and let it talk through the
+// words, while the router dropped the reply as unheard, so neither was answered. Until any of
+// the reply goes out, the floor models are told the caller has it; once some does, the agent.
+func (s *AgentSuite) TestAReplyNobodyHasHeardIsNotTheAgentTalking() {
+	s.join(true)
+	asker := pauseAsker{s.agent}
+	turn := s.answering("What? Sorry. What?")
+
+	s.False(asker.Speaking(), "a reply being written that none of has gone out is not the agent talking")
+	s.False(asker.Moment(nash).Speaking, "chorus-asr was asked about the caller's pause as over the agent")
+
+	s.heardSomeOf(turn)
+	s.True(asker.Speaking(), "a reply that has begun to go out is the agent talking")
+	s.True(asker.Moment(nash).Speaking, "chorus-asr was not told the agent is talking over a reply being heard")
+}
+
 func (s *AgentSuite) TestAHeldReplyDroppedIsLoggedAsNeverSentToTheVoice() {
 	s.onFakeClock(func() {
 		s.logs = &logLines{}

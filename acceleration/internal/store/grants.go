@@ -111,7 +111,7 @@ func (s *Store) LiveGrants(ctx context.Context, organizationIDs []string, now ti
 func (s *Store) AddGrant(ctx context.Context, grant *LimitGrant, audit LimitAudit) error {
 	grant.UsedMicros = 0
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('limit_grants:' || ?, 0))", grant.OrganizationID); err != nil {
+		if err := lockUntilCommit(ctx, tx, "limit_grants:"+grant.OrganizationID, 0); err != nil {
 			return err
 		}
 		query := tx.NewSelect().Model((*LimitGrant)(nil)).Where("organization_id = ?", grant.OrganizationID)
@@ -210,7 +210,7 @@ func (s *Store) UnrevokeGrant(ctx context.Context, organizationID string, id int
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('limit_grants:' || ?, 0))", found.OrganizationID); err != nil {
+		if err := lockUntilCommit(ctx, tx, "limit_grants:"+found.OrganizationID, 0); err != nil {
 			return err
 		}
 		before, err := grantOf(ctx, tx, found.OrganizationID, id, true)

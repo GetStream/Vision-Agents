@@ -2017,7 +2017,7 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 		s.agent.mu.Unlock()
 		ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
 
-		s.agent.speculate(s.agent.harness, ready, false, false)
+		s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
 		s.Require().True(s.agent.adoptSpeculation(ready, ""))
 
 		s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
