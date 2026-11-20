@@ -114,25 +114,21 @@ func (s *Store) PutConnectorOAuthClient(ctx context.Context, client *ConnectorOA
 			return fmt.Errorf("%w: %s lists %v, not %s", ErrOAuthClientRegistrationNotListed,
 				client.ConnectorID, definition.Manifest.Client.Registration, client.Registration)
 		}
-		err = tx.NewRaw(`
-INSERT INTO connector_oauth_clients AS coc
-    (customer_id, connector_id, registration, client_id, auth_method, secret_sealed, kek_version,
-     provider_app_id, stream_app_pk, signing_secret_sealed, signing_kek_version, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (customer_id, connector_id) DO UPDATE
-SET client_id = EXCLUDED.client_id,
-    auth_method = EXCLUDED.auth_method,
-    secret_sealed = EXCLUDED.secret_sealed,
-    kek_version = EXCLUDED.kek_version,
-    provider_app_id = EXCLUDED.provider_app_id,
-    signing_secret_sealed = EXCLUDED.signing_secret_sealed,
-    signing_kek_version = EXCLUDED.signing_kek_version,
-    updated_at = EXCLUDED.updated_at
-WHERE coc.registration = EXCLUDED.registration
-RETURNING coc.created_at, coc.stream_app_pk`,
-			client.CustomerID, client.ConnectorID, client.Registration, client.ClientID, client.AuthMethod,
-			client.SecretSealed, client.KEKVersion, client.ProviderAppID, nullablePin(client.StreamAppPK),
-			client.SigningSecretSealed, client.SigningKEKVersion, now, now).Scan(ctx, &createdAt, &pin)
+		row := *client
+		row.CreatedAt, row.UpdatedAt = now, now
+		err = tx.NewInsert().Model(&row).
+			On("CONFLICT (customer_id, connector_id) DO UPDATE").
+			Set("client_id = EXCLUDED.client_id").
+			Set("auth_method = EXCLUDED.auth_method").
+			Set("secret_sealed = EXCLUDED.secret_sealed").
+			Set("kek_version = EXCLUDED.kek_version").
+			Set("provider_app_id = EXCLUDED.provider_app_id").
+			Set("signing_secret_sealed = EXCLUDED.signing_secret_sealed").
+			Set("signing_kek_version = EXCLUDED.signing_kek_version").
+			Set("updated_at = EXCLUDED.updated_at").
+			Where("coc.registration = EXCLUDED.registration").
+			Returning("coc.created_at, coc.stream_app_pk").
+			Scan(ctx, &createdAt, &pin)
 		// The conflict's WHERE kept the row, so nothing was written or returned.
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %s", ErrOAuthClientRegistration, client.ConnectorID)

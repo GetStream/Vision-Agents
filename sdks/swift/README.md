@@ -32,15 +32,20 @@ is new after that. The examples reach the package by path, so they build against
 let agents = StreamAgents(apiKey: "your_api_key")
 agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 
-// In writing. No call is joined, nothing is transcribed or spoken.
+// In writing. No call is joined, nothing is transcribed or spoken. It opens watched: the
+// socket is open when this returns, so session.turns grows as the reply streams in, the
+// session's tools run here, and every event is on session.events(), an AsyncStream of its own
+// for each caller.
 let session = try await agents.agent("myagent").sessions.create()
 let turn = try await session.responses.create("What are your opening hours?")
 // session.responses.items(responseID: turn.id) reads back what the agent did.
 
-// Or watch it arrive: session.turns grows as the reply streams in, and every event is on
-// session.events(), an AsyncStream of its own for each caller.
-await session.start()
-_ = try await session.responses.create("And on Sundays?")
+// Or with no socket at all: ask, then read the turn back.
+var unwatched = SessionOptions()
+unwatched.watch = false
+let quiet = try await agents.agent("myagent").sessions.create(unwatched)
+let asked = try await quiet.responses.create("And on Sundays?")
+// quiet.say(...) and the rest of what needs the socket throw AgentsError.configuration.
 
 // Out loud. The agent joins a call and so does this device.
 let voice = try await VoiceSession.start(agents: agents, agent: "myagent")
@@ -103,7 +108,25 @@ reply and its id: every reply numbers its steps from `r1`. The same events contr
 `AITypingIndicatorView`.
 
 Ask with `session.responses.create`, from `AIComposerView`'s send; its stop button is
-`session.interrupt()`. Start the session first, so its socket runs this phone's tools.
+`session.interrupt()`. A session from `sessions.create` is watched already, so its socket runs
+this phone's tools. `agents.chat(...)` and `agents.voice(...)` open one too, without its
+socket: call `start()` on it once you are reading its `events()`.
+
+An incognito session has no channel, so `chat()` throws. Show it from its socket instead:
+`session.turnMessages` is the conversation in the same shape, one reply per question with its
+steps as attachment payloads and the whole of each round of thinking. A call waiting in
+`approvals` shows its question on its step, for the session's user:
+
+```swift
+var options = SessionOptions()
+options.incognito = true
+let session = try await agents.agent("juno").sessions.create(options)
+
+for message in session.turnMessages {
+    let parts = AIMessagePart.parts(from: message.steps.map { ($0.type, $0.payload) })
+    // StreamingReasoningView(part: step, text: message.reasoning[step.id]) for each round of thinking
+}
+```
 
 ### A tool that runs on the phone
 
@@ -121,10 +144,8 @@ let lookup = AgentTool(
     await Orders.local.find(arguments["order_id"]?.stringValue ?? "")
 }
 
-var options = SessionOptions(agent: "myagent")
-options.tools = [lookup]
-let session = try await agents.sessions.create(options)
-await session.start()   // the socket is what carries tool calls to this device
+// Watched once it returns: the socket is what carries tool calls to this device.
+let session = try await agents.agent("myagent").sessions.create(SessionOptions(tools: [lookup]))
 ```
 
 `executor: .client` shows the people in a persistent conversation that a device is running it,

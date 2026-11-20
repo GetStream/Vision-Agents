@@ -33,6 +33,9 @@ type approvals struct {
 	await  func(owner, callID, arguments string, approval persistent.ToolApproval) (string, string, bool)
 	waits  func(callID string) bool
 	decide func(agent.ToolApprovalDecided) bool
+	// changed is told a call started waiting and how it was answered, for its state
+	// (Session.trackToolCall). Nil tells nobody.
+	changed func(agent.Event)
 	// wait is how long a call waits, approvalWait when zero.
 	wait time.Duration
 
@@ -81,9 +84,9 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 	// answer that comes at once finds it (answerApproval).
 	a.mu.Lock()
 	commandID, person, asked := "", "", false
+	title := fmt.Sprintf("Allow %s to run %s?", r.binding.Name, r.tool)
 	if a.await != nil {
-		commandID, person, asked = a.await(d.spec.Caller.UserID, call.ID, call.Arguments, persistent.ToolApproval{
-			Title: fmt.Sprintf("Allow %s to run %s?", r.binding.Name, r.tool)})
+		commandID, person, asked = a.await(d.spec.Caller.UserID, call.ID, call.Arguments, persistent.ToolApproval{Title: title})
 	}
 	if asked {
 		if a.held == nil {
@@ -92,6 +95,9 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 		a.held[call.ID] = heldCall{commandID: commandID, asked: person, answer: answer}
 	}
 	a.mu.Unlock()
+	if asked {
+		a.tell(agent.ToolAwaitingApproval{ID: call.ID, TurnID: call.TurnID, Tool: call.Name, Question: title})
+	}
 	if !asked {
 		return false, approvalText("unavailable", fmt.Sprintf("%s runs only once the user allows it, and nobody can be "+
 				"asked here, so it was not run. Tell the user it needs their approval in a chat of their own.", call.Name)),
@@ -118,9 +124,11 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 			return false, nil, failure{kind: store.InvocationClientTimeout},
 				stack.Wrap(fmt.Errorf("session: %s stopped waiting for its approval: %w", call.Name, ctx.Err()))
 		case got := <-answer:
-			if !a.decide(agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Allowed: got.allowed, Summary: got.summary}) {
+			decided := agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Allowed: got.allowed, Summary: got.summary}
+			if !a.decide(decided) {
 				return stopped()
 			}
+			a.tell(decided)
 			if got.allowed {
 				return true, nil, failure{}, nil
 			}
@@ -128,7 +136,9 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 					"run. Do not call it again unless they ask.", call.Name)),
 				failure{kind: store.InvocationDenied, message: "declined by the person"}, nil
 		case <-expiry.C:
-			a.decide(agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Summary: "Not allowed in time"})
+			decided := agent.ToolApprovalDecided{ID: call.ID, TurnID: call.TurnID, Summary: "Not allowed in time"}
+			a.decide(decided)
+			a.tell(decided)
 			return false, approvalText("declined", fmt.Sprintf("Nobody allowed %s in time, so it "+
 					"was declined and not run. Tell the user, and that they can ask again.", call.Name)),
 				failure{kind: store.InvocationDenied, message: "declined by timeout"}, nil
@@ -137,6 +147,13 @@ func (d *dispatcher) holdForApproval(ctx context.Context, r route, call llm.Tool
 				return stopped()
 			}
 		}
+	}
+}
+
+// tell passes event on to changed, when anything listens.
+func (a *approvals) tell(event agent.Event) {
+	if a.changed != nil {
+		a.changed(event)
 	}
 }
 
@@ -158,6 +175,15 @@ func (d *dispatcher) answerApproval(callID, commandID string, may func(asked str
 	d.approvals.mu.Unlock()
 	held.answer <- approvalAnswer{allowed: allowed, summary: summary}
 	return nil
+}
+
+// ExpireApprovals has the reply being written, if it ends with a call still waiting for a
+// person, decline that call as expired and say so (persistent.Conversation.ExpireApprovals).
+// For a session about to close with its turn; a session with no conversation asks nobody.
+func (s *Session) ExpireApprovals() {
+	if s.persisted != nil {
+		s.persisted.ExpireApprovals()
+	}
 }
 
 // approvalText is what the model reads of a call that waited for approval and was not run.

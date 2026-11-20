@@ -431,8 +431,8 @@ func (s *Store) SaveScheduledTask(ctx context.Context, task *ScheduledTask) erro
 					task.State, task.NextRunAt = ScheduledTaskCompleted, nil
 					break
 				}
-				var again time.Time
-				if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&again); err != nil {
+				again, err := databaseNow(ctx, tx)
+				if err != nil {
 					return fmt.Errorf("store: save scheduled task: %w", err)
 				}
 				task.NextRunAt = &again
@@ -560,12 +560,12 @@ func (s *Store) ClaimDueScheduledTasks(ctx context.Context, limit int, lease tim
 	}
 	claimed := []ClaimedScheduledTask{}
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var now time.Time
-		if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&now); err != nil {
+		now, err := databaseNow(ctx, tx)
+		if err != nil {
 			return fmt.Errorf("store: claim scheduled tasks: %w", err)
 		}
 		var tasks []ScheduledTask
-		err := tx.NewSelect().Model(&tasks).
+		err = tx.NewSelect().Model(&tasks).
 			Where("state = ?", ScheduledTaskActive).
 			Where("next_run_at <= now()").
 			Where("(lease_until IS NULL OR lease_until < now())").

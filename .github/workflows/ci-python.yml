@@ -1,0 +1,64 @@
+name: CI (Python)
+# Ruff lints every .py in the repository, examples included, and the stream plugin's client is
+# generated from the spec, so both are among the paths.
+# Feature branches run through pull_request; a push of the same commit would be a second,
+# uncancellable copy of every job. A push to main runs it on the same paths as a pull request.
+# A pull request that changes none of them never starts this workflow, so its check must not
+# be made required: it would wait forever on such a pull request.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**/*.py'
+      - '**/pyproject.toml'
+      - 'uv.lock'
+      - 'pytest.ini'
+      - 'sdks/python/**'
+      - 'plugins/**'
+      - 'tests/**'
+      - 'acceleration/api/openapi.yaml'
+      - '.github/workflows/run_tests.yml'
+      - '.github/actions/python-uv-setup/**'
+      - '.github/workflows/ci-python.yml'
+      - '!**/*.md'
+      # The example plugins/stream/tests/test_folder.py loads, instructions.md included, so it
+      # must stay after the *.md exclusion.
+      - 'examples/text_agents/mcp_plugins/**'
+  pull_request:
+    branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - '**/*.py'
+      - '**/pyproject.toml'
+      - 'uv.lock'
+      - 'pytest.ini'
+      - 'sdks/python/**'
+      - 'plugins/**'
+      - 'tests/**'
+      - 'acceleration/api/openapi.yaml'
+      - '.github/workflows/run_tests.yml'
+      - '.github/actions/python-uv-setup/**'
+      - '.github/workflows/ci-python.yml'
+      - '!**/*.md'
+      # The example plugins/stream/tests/test_folder.py loads, instructions.md included, so it
+      # must stay after the *.md exclusion.
+      - 'examples/text_agents/mcp_plugins/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# Cancel in-flight runs for the same branch/PR when new commits arrive
+concurrency:
+  group: ci-python-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # No secrets: unit tests reach no provider, and a pull request's code runs here.
+  unit:
+    if: github.event.pull_request.draft != true
+    uses: ./.github/workflows/run_tests.yml
+    with:
+      marker: 'not integration'

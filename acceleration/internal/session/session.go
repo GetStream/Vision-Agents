@@ -190,6 +190,7 @@ type Session struct {
 	typed      []string
 	typedTurns map[string]struct{}
 	tools      *bridge
+	toolCalls  toolCalls
 	// calls records the call's row when it moves onto other models. Nil when the
 	// deployment keeps no calls.
 	calls      *callRecorder
@@ -287,8 +288,12 @@ type Session struct {
 	toolSources map[string]ToolSource
 	// otherTools are what the session offers besides its caller's own tools, which go first:
 	// the workers', the router's, the connectors' and other agents'. Set before the session
-	// is served and only read after; the caller's change (AddTools, RemoveTool).
+	// is served and only read after; the caller's change (AddTools, RemoveTool). Each is
+	// held whole, and offered as loading says.
 	otherTools []harness.Tool
+	// loading is how each tool is offered and how long what it was given and gave back is
+	// kept. Set before the session is served and only read after.
+	loading toolLoading
 	// connectors is the session's connector dispatcher, nil when its config binds none. A
 	// consent finished for one of its logins is handed back to it (ConnectorConsentFinished).
 	connectors *dispatcher
@@ -550,9 +555,10 @@ func (w *watcher) send(event Event) bool {
 
 // Watch attaches a consumer and returns it along with the way to detach.
 //
-// Every watcher sees everything from the moment it attached. Nothing is replayed: a caller
-// that connects late has missed the conversation, and a control channel that opened with a
-// backlog would have it answering tool calls that timed out before it arrived.
+// Every watcher sees everything from the moment it attached. Nothing else is replayed, but a
+// call still waiting for the person to allow it is asked again: a caller that connects late has
+// missed the conversation, and a control channel that opened with a backlog would have it
+// answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
 	return s.WatchAs(Seat{Owner: OwnerOf(s.Spec())})
 }
@@ -573,6 +579,7 @@ func (s *Session) WatchAs(seat Seat) (<-chan Event, func()) {
 // (WatchFrom), sent resumed and then what it missed after cursor.
 func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Event, func()) {
 	attached := &watcher{events: make(chan Event, watcherBuffer), seat: seat}
+	asking := s.askingPerson()
 
 	s.mu.Lock()
 	if s.state == Ended {
@@ -615,6 +622,23 @@ func (s *Session) watch(seat Seat, cursor string, resumed *Resumed) (<-chan Even
 	}
 	for _, unavailable := range s.connectorsUnavailable {
 		attached.send(unavailable)
+	}
+	// A call still waiting for the person to allow it is asked again of a watcher that comes
+	// later, such as an app reopened after the one that was asked was closed: the question is
+	// on the reply's step, and only a watcher that has the call can answer it and run it. One
+	// answered or finished since asking was read is not: the answer is recorded on the call
+	// before the conversation hears it (DecideCommandTool).
+	for _, pending := range asking {
+		if resent[pending.ID] || !s.tools.asking(pending.ID) {
+			continue
+		}
+		if resent == nil {
+			resent = map[string]bool{}
+		}
+		resent[pending.ID] = true
+		replayed := s.placed(pending)
+		replayed.Run = s.seatRuns(seat, replayed.Name)
+		attached.send(replayed)
 	}
 	if seat.ReplayPendingVoiceTools && s.Voicing() && s.tools != nil {
 		for _, pending := range s.tools.Pending() {
@@ -1822,7 +1846,10 @@ func (s *Session) DecideCommandTool(id, commandID, turnID string, allowed bool, 
 	if !bound || expected != commandID || !s.tools.waitsOn(id, turnID) {
 		return false
 	}
-	s.persisted.Observe(agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary})
+	s.tools.decide(id, turnID)
+	decided := agent.ToolApprovalDecided{ID: id, TurnID: turnID, Allowed: allowed, Summary: summary}
+	s.persisted.Observe(decided)
+	s.trackToolCall(decided)
 	return true
 }
 
@@ -1937,6 +1964,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
+		s.trackToolCall(event)
 		s.name(event)
 	}
 	s.heard(held)
@@ -2007,11 +2035,14 @@ func (s *Session) write(event Event) {
 			s.openTurn(typed.TurnID, typed.Prompt)
 		}
 	case agent.ToolStarted:
-		s.item(typed.TurnID, store.ItemToolCall, "", typed.Tool, map[string]any{
-			"call_id": typed.ID, "product": typed.Product, "sdk": typed.SDK,
-		})
+		payload := map[string]any{"call_id": typed.ID, "product": typed.Product, "sdk": typed.SDK}
+		s.describeOffer(payload, typed.Tool)
+		s.item(typed.TurnID, store.ItemToolCall, "", typed.Tool, payload)
 	case agent.ToolRan:
-		payload := map[string]any{"call_id": typed.ID, "arguments": typed.Arguments}
+		payload := map[string]any{
+			"call_id": typed.ID, "arguments": typed.Arguments,
+			"tokens": llm.ToolUseTokens(typed.Tool, typed.Arguments, typed.Result),
+		}
 		if typed.Err != nil {
 			payload["error"] = store.SafeLogText(typed.Err.Error())
 		}
@@ -2199,7 +2230,7 @@ func (s *Session) item(turnID, kind, text, tool string, payload map[string]any) 
 		Kind: kind, Text: text, ToolName: tool, Payload: payload, At: time.Now().UTC(),
 	}
 	if kind == store.ItemToolCall || kind == store.ItemToolResult {
-		switch window, kept := s.spec.ToolOutputRetention.Window(); {
+		switch window, kept := s.spec.ToolOutputRetention.Shorter(s.loading.retention(tool)).Window(); {
 		case kept && window == 0:
 			item.Redact()
 		case kept:
@@ -2361,6 +2392,24 @@ func (s *Session) broadcast(event Event) {
 				"session", s.id, "watcher", id)
 		}
 	}
+}
+
+// askingPerson is the calls still waiting for the person to allow them, on the step of the
+// conversation's reply, each with its command as askTool sends it. It is read without s.mu,
+// since the conversation broadcasts to the session under its own lock.
+func (s *Session) askingPerson() []ToolCall {
+	if s.persisted == nil || s.tools == nil {
+		return nil
+	}
+	var asking []ToolCall
+	for _, pending := range s.tools.Pending() {
+		if !s.persisted.AwaitsApproval(pending.ID) {
+			continue
+		}
+		pending.CommandID, _ = s.persisted.CommandForTurn(pending.TurnID)
+		asking = append(asking, pending)
+	}
+	return asking
 }
 
 // placed is call with what it is part of filled in: this session, its conversation, and

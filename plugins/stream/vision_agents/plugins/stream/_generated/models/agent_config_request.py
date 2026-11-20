@@ -32,13 +32,13 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
-    from ..models.agent_tools import AgentTools
     from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
+    from ..models.tool_group import ToolGroup
 
 
 T = TypeVar("T", bound="AgentConfigRequest")
@@ -74,7 +74,11 @@ class AgentConfigRequest:
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
-            model. Empty means every turn is answered.
+            model. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision
+            model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the
+            conversation before it as conversation, and by default is asked whether message, read in light of conversation,
+            is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets
+            question is refused. Empty means every turn is answered.
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
             skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the
             default, the only one there is.
@@ -133,8 +137,13 @@ class AgentConfigRequest:
             and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a
             test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live
             config, and it may bind a channel connection another config binds.
-        tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
-            is kept.
+        tools (list[ToolGroup] | Unset): The functions an SDK provides that the agent may offer, in named groups, each
+            with how it is loaded. A function an SDK registers, declares on a session or hosts in a worker is offered only
+            when a group names it: a session declaring one that none names is refused (400 tool_not_configured), and a
+            worker's is left out. The router's own tools, connector tools and other agents are not named here. Omitted or
+            null on an update, the groups stored stay; an empty list removes them all. The mapping this field once was, with
+            progressive and output_retention, is refused: loading summary and output_retention on a group or a connector
+            binding replaced them.
         tts (str | Unset):
         video (SessionVideo | Unset):
         visible_tools (list[str] | Unset): Tools whose steps end users see on a persistent conversation's replies, as
@@ -209,7 +218,7 @@ class AgentConfigRequest:
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
-    tools: AgentTools | Unset = UNSET
+    tools: list[ToolGroup] | Unset = UNSET
     tts: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
@@ -346,9 +355,12 @@ class AgentConfigRequest:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
-        tools: dict[str, Any] | Unset = UNSET
+        tools: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tools, Unset):
-            tools = self.tools.to_dict()
+            tools = []
+            for tools_item_data in self.tools:
+                tools_item = tools_item_data.to_dict()
+                tools.append(tools_item)
 
         tts = self.tts
 
@@ -493,13 +505,13 @@ class AgentConfigRequest:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
-        from ..models.agent_tools import AgentTools
         from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
+        from ..models.tool_group import ToolGroup
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -688,11 +700,13 @@ class AgentConfigRequest:
             tags = AgentConfigRequestTags.from_dict(_tags)
 
         _tools = d.pop("tools", UNSET)
-        tools: AgentTools | Unset
-        if isinstance(_tools, Unset):
-            tools = UNSET
-        else:
-            tools = AgentTools.from_dict(_tools)
+        tools: list[ToolGroup] | Unset = UNSET
+        if _tools is not UNSET:
+            tools = []
+            for tools_item_data in _tools:
+                tools_item = ToolGroup.from_dict(tools_item_data)
+
+                tools.append(tools_item)
 
         tts = d.pop("tts", UNSET)
 

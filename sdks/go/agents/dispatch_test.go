@@ -691,9 +691,9 @@ func TestAMessageARunningSessionHoldsIsNotGivenASecondAgent(t *testing.T) {
 	}
 }
 
-func TestAClientAgentsToolsAreHostedUnderItsName(t *testing.T) {
-	// The router matches a hosted tool on a session's agent id or its agent's name, and the
-	// name is what a caller holding the handle knows the agent as.
+func TestTheClientsToolsAreHostedForEveryAgent(t *testing.T) {
+	// Registered once for the app, the router offers each to the agents whose tool groups
+	// name it, so the worker names no agent.
 	told := make(chan stream.Frame, 2)
 	router := newWorked(t, func(connection *websocket.Conn) {
 		for {
@@ -716,25 +716,68 @@ func TestAClientAgentsToolsAreHostedUnderItsName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent := api.Agent("stream-support")
 	var ran atomic.Bool
-	if err := agent.Tools().Add(count{ran: &ran}); err != nil {
+	if err := api.Tools().Add(count{ran: &ran}); err != nil {
 		t.Fatal(err)
 	}
 	dispatch, err := NewDispatch(DispatchOptions{Backend: backend, Logger: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dispatch.Host(agent, time.Minute)
+	dispatch.Host(api, time.Minute)
 	stop := waited(t, dispatch)
 	defer stop()
 
 	declared, answered := <-told, <-told
-	if declared.String("agent_id") != "stream-support" || declared.Int("timeout_ms") != 60000 {
+	if declared["every_agent"] != true || declared.Int("timeout_ms") != 60000 {
 		t.Errorf("the router was told %v", declared)
 	}
 	if answered.String("output") != "42" || !ran.Load() {
 		t.Errorf("the hosted tool was answered %v", answered)
+	}
+}
+
+func TestRunDispatchRunsTheClientsToolsUntilItsContextEnds(t *testing.T) {
+	told := make(chan stream.Frame, 2)
+	router := newWorked(t, func(connection *websocket.Conn) {
+		for {
+			var frame stream.Frame
+			if err := connection.ReadJSON(&frame); err != nil {
+				return
+			}
+			switch frame.Type() {
+			case "host_tools":
+				told <- frame
+				_ = connection.WriteJSON(stream.Frame{"type": "tool_call", "id": "call-1", "name": "count", "arguments": `{}`})
+			case "tool_result":
+				told <- frame
+			}
+		}
+	})
+	api, err := client.New(stream.Backend{URL: router.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ran atomic.Bool
+	if err := api.Tools().Add(count{ran: &ran}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := make(chan error, 1)
+	go func() { stopped <- api.RunDispatch(ctx) }()
+
+	declared, answered := <-told, <-told
+	if declared["every_agent"] != true {
+		t.Errorf("the router was told %v", declared)
+	}
+	if answered.String("output") != "42" || !ran.Load() {
+		t.Errorf("the hosted tool was answered %v", answered)
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunDispatch kept running after its context ended")
 	}
 }
 

@@ -127,7 +127,7 @@ func (s *WebhookSuite) webhookAt(url string, client *http.Client) Guardrail {
 func (s *WebhookSuite) TestTheServerDecidesAndTheRequestIsSignedForIt() {
 	s.server.answer = Answer{Allow: true}
 
-	verdict, err := s.guardrail().Check(s.ctx, "turn-1", "how do I install stream-chat-react")
+	verdict, err := s.guardrail().Check(s.ctx, "turn-1", "how do I install stream-chat-react", "")
 	s.Require().NoError(err)
 
 	s.True(verdict.Allowed)
@@ -150,7 +150,7 @@ func (s *WebhookSuite) TestARefusalMayCarryTheServersOwnWords() {
 		Message: "Billing questions go to your account manager.",
 	}
 
-	verdict, err := s.guardrail().Check(s.ctx, "turn-1", "can you refund me")
+	verdict, err := s.guardrail().Check(s.ctx, "turn-1", "can you refund me", "")
 	s.Require().NoError(err)
 
 	s.False(verdict.Allowed)
@@ -162,7 +162,7 @@ func (s *WebhookSuite) TestARefusalWithNoWordsFallsBackToThePolicysOwn() {
 	s.server.answer = Answer{Allow: false}
 
 	screening := s.guardrail()
-	verdict, err := screening.Check(s.ctx, "turn-1", "how do I make a pizza")
+	verdict, err := screening.Check(s.ctx, "turn-1", "how do I make a pizza", "")
 	s.Require().NoError(err)
 
 	s.False(verdict.Allowed)
@@ -174,7 +174,7 @@ func (s *WebhookSuite) TestAServerThatFailedIsReportedRatherThanReadAsAVerdict()
 	s.server.status = http.StatusInternalServerError
 	s.server.replied = `{"error":"database is down"}`
 
-	_, err := s.guardrail().Check(s.ctx, "turn-1", "anything")
+	_, err := s.guardrail().Check(s.ctx, "turn-1", "anything", "")
 
 	s.ErrorContains(err, "500")
 	s.ErrorContains(err, "database is down")
@@ -185,7 +185,7 @@ func (s *WebhookSuite) TestAnAnswerThatWillNotParseIsAFailureRatherThanAnAllow()
 	// mean a server that started returning HTML silently stopped screening.
 	s.server.replied = `<html>maintenance</html>`
 
-	_, err := s.guardrail().Check(s.ctx, "turn-1", "anything")
+	_, err := s.guardrail().Check(s.ctx, "turn-1", "anything", "")
 
 	s.Require().Error(err)
 }
@@ -235,7 +235,7 @@ func (s *WebhookSuite) TestASignatureCoversTheWholeBodyAndOnlyThisSecretMakesIt(
 func (s *WebhookSuite) TestEveryRequestCarriesTheTimestampItWasSignedWith() {
 	// Without the header a receiver has nothing to reproduce the signature from, so the
 	// signature it cannot check is a signature it has to ignore.
-	_, err := s.guardrail().Check(s.ctx, "turn-1", "anything")
+	_, err := s.guardrail().Check(s.ctx, "turn-1", "anything", "")
 	s.Require().NoError(err)
 
 	s.NotEmpty(s.server.stamped)
@@ -251,7 +251,7 @@ func (s *WebhookSuite) TestAWebhookOnLoopbackIsNeverReached() {
 	_, port, err := net.SplitHostPort(s.server.http.Listener.Addr().String())
 	s.Require().NoError(err)
 	for _, host := range []string{"127.0.0.1", "localhost", "[::1]"} {
-		_, err := s.webhookAt("https://"+host+":"+port+"/check", nil).Check(s.ctx, "turn-1", "anything")
+		_, err := s.webhookAt("https://"+host+":"+port+"/check", nil).Check(s.ctx, "turn-1", "anything", "")
 
 		s.ErrorContains(err, "non-public address", host)
 	}
@@ -267,7 +267,7 @@ func (s *WebhookSuite) TestAWebhookOnAPrivateOrLinkLocalAddressIsRefusedBeforeIt
 		"https://[fd7a:115c:a1e0::1]/check", // Unique-Local, RFC 4193
 		"https://[fe80::1]/check",           // Link-Local Unicast, RFC 4291
 	} {
-		_, err := s.webhookAt(url, nil).Check(s.ctx, "turn-1", "anything")
+		_, err := s.webhookAt(url, nil).Check(s.ctx, "turn-1", "anything", "")
 
 		s.ErrorContains(err, "non-public address", url)
 	}
@@ -288,8 +288,18 @@ func (s *WebhookSuite) TestAWebhookThatRedirectsToAnotherHostIsNotFollowed() {
 	client := redirecting.Client()
 	client.CheckRedirect = egress.NewClient(0, nil).CheckRedirect
 
-	_, err = s.webhookAt(redirecting.URL+"/check", client).Check(s.ctx, "turn-1", "anything")
+	_, err = s.webhookAt(redirecting.URL+"/check", client).Check(s.ctx, "turn-1", "anything", "")
 
 	s.ErrorContains(err, "redirect to another host refused")
 	s.Zero(elsewhere.calls)
+}
+
+func (s *WebhookSuite) TestTheServerIsToldWhatCameBeforeAFollowUp() {
+	before := "user: what dose of ibuprofen for an adult?\nassistant: I can't help with that."
+
+	_, err := s.guardrail().Check(s.ctx, "turn-2", "and how about for my kid?", before)
+	s.Require().NoError(err)
+
+	s.Equal(before, s.server.asked.Conversation)
+	s.Equal("and how about for my kid?", s.server.asked.Text)
 }

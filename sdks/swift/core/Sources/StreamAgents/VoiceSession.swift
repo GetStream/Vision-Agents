@@ -56,14 +56,17 @@ public final class VoiceSession: ObservableObject {
     /// What the camera showed lately, while it is on, for the agent to look at.
     private let frames = CameraFrames()
 
-    /// Starts an agent on the new session's own call, `agent:<session id>`, and prepares to
-    /// join it.
+    /// Starts an agent on the new session's own call, `agent:<session id>`, follows it, and
+    /// prepares to join it.
     public static func start(
         agents: StreamAgents,
         agent: String? = nil,
         tools: [AgentTool] = []
     ) async throws -> VoiceSession {
-        let session = try await agents.voice(agent: agent, tools: tools)
+        var options = SessionOptions(agent: agent)
+        options.tools = tools
+        options.startVoice = true
+        let session = try await agents.sessions.create(options)
         return VoiceSession(agents: agents, session: session, createdLocally: true)
     }
 

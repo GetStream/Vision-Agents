@@ -56,7 +56,7 @@ Models public, operations not:
 
 Known gaps, generated only (docs on getstream.io call some of them raw today): simulations and
 their runs, voices, knowledge documents and URLs beyond ingest and add, scheduled tasks,
-campaigns, channels, connectors and connections, SIP trunks, 10DLC and opt-outs, phone
+campaigns, channels, connectors, a connection's credentials and tools, SIP trunks, 10DLC and opt-outs, phone
 transfer, digits and release, account, credits, spend limits, usage events, teams, prices,
 stats, policies, provider keys, runs, OCR and classify. Folder sync does not read
 `resume_history:` from agent.yaml yet, so one that names it is refused.
@@ -110,8 +110,8 @@ Every identifier in a code block exists; the quickstart is the example file verb
 is copied. While 0.x, a minor may break a signature; a patch only fixes.
 
 1. Land the change on `main` by a pull request, with the `CHANGELOG.md` entry. The `Go SDK`
-   workflow (`.github/workflows/sdk-go.yml`) checks `sdks/go` alone on Go 1.25, as a consumer
-   gets it.
+   steps of the `CI (SDKs)` workflow (`.github/workflows/ci-sdks.yml`) check `sdks/go` alone
+   on Go 1.25, as a consumer gets it.
 2. Check out the commit to tag (`git switch --detach <the main commit>`), run the smoke set
    from `sdks/go` with `E2E_REQUIRED=1`, as above, and keep its output, so the result is the
    tagged commit's.

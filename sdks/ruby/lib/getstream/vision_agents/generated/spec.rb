@@ -508,7 +508,7 @@ module GetStream
         }.freeze,
         "getAgentStats" => {
           method: :get, path: "/v1/stats/agents",
-          path_params: [].freeze, query: %w[from to].freeze,
+          path_params: [].freeze, query: %w[from to agent].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1898,7 +1898,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
-          properties: %w[connection connector_id events name policy require_approval required sandbox timeout_ms tool_patterns tools].freeze,
+          properties: %w[connection connector_id events loading name output_retention policy require_approval required sandbox timeout_ms tool_patterns tools].freeze,
           required: %w[name connector_id connection tools].freeze, open: false
         }.freeze,
         "AgentConnectorSelection" => {
@@ -1942,12 +1942,8 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentStats" => {
-          properties: %w[peak_at peak_concurrent_sessions tool_calls tools].freeze,
-          required: %w[peak_concurrent_sessions peak_at tool_calls tools].freeze, open: false
-        }.freeze,
-        "AgentTools" => {
-          properties: %w[output_retention progressive].freeze,
-          required: [].freeze, open: false
+          properties: %w[avg_turns peak_at peak_concurrent_sessions sessions tool_calls tools].freeze,
+          required: %w[peak_concurrent_sessions peak_at sessions avg_turns tool_calls tools].freeze, open: false
         }.freeze,
         "AgentUser" => {
           properties: %w[include_phone_history phone phone_history_since user_id].freeze,
@@ -2505,6 +2501,10 @@ module GetStream
           properties: %w[mode text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
+        "GuardrailCheck" => {
+          properties: %w[allowed failed held_ms kind latency_ms mode model probability threshold].freeze,
+          required: %w[allowed kind latency_ms mode].freeze, open: false
+        }.freeze,
         "GuestUser" => {
           properties: %w[custom expires_at id name refresh_secret token].freeze,
           required: %w[id token].freeze, open: false
@@ -2706,7 +2706,7 @@ module GetStream
           required: %w[cost_micros id markdown status].freeze, open: false
         }.freeze,
         "OfferedTool" => {
-          properties: %w[description name parameters source tokens].freeze,
+          properties: %w[description loading name parameters source tokens].freeze,
           required: %w[name description tokens].freeze, open: false
         }.freeze,
         "OfferedTools" => {
@@ -3214,7 +3214,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
-          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
+          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks guardrail heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[started_at turn_id].freeze, open: false
         }.freeze,
         "ToolApprovalAnswer" => {
@@ -3225,13 +3225,21 @@ module GetStream
           properties: %w[allowed request_id summary tool_call_id turn_id type].freeze,
           required: %w[allowed request_id tool_call_id type].freeze, open: false
         }.freeze,
+        "ToolCallState" => {
+          properties: %w[approved_at display_title duration_ms error progress rejected_at started_at status tool tool_call_id turn_id type].freeze,
+          required: %w[type tool_call_id tool turn_id status started_at duration_ms].freeze, open: false
+        }.freeze,
+        "ToolGroup" => {
+          properties: %w[loading name output_retention tools].freeze,
+          required: %w[name tools].freeze, open: false
+        }.freeze,
         "ToolResultCommand" => {
           properties: %w[error output request_id tool_call_id turn_id type].freeze,
           required: %w[tool_call_id type].freeze, open: false
         }.freeze,
         "ToolStats" => {
-          properties: %w[avg_ms avg_tokens calls failed p99_ms tool].freeze,
-          required: %w[tool calls failed avg_tokens avg_ms p99_ms].freeze, open: false
+          properties: %w[avg_ms avg_tokens avg_turns_before_use calls definition_tokens failed loading p99_ms session_share sessions summary_tokens tool].freeze,
+          required: %w[tool calls failed sessions session_share avg_turns_before_use avg_tokens avg_ms p99_ms loading definition_tokens summary_tokens].freeze, open: false
         }.freeze,
         "TranscriptEntity" => {
           properties: %w[end_ms start_ms text type].freeze,

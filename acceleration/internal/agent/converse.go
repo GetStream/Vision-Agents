@@ -513,12 +513,17 @@ func (c *converse) forgetStop(participantID string) {
 	delete(c.stops, participantID)
 }
 
-// stopSpent is a settled turn of the utterance a stop over the agent was ruled on in, if it
-// is one with nothing more than the stop's words: it is heard and set aside, as the agent has
-// done what they asked. One that says more is the caller's turn, and is answered on all its
-// words: a stop is often ruled on the start of the request it makes ("hi, what's the weather"
-// over a greeting), which the words after it alone would cut ("like in Lisbon tomorrow?").
-func (c *converse) stopSpent(ready candidate) (Action, bool) {
+// stoppedOn says a settled turn is of the utterance a stop over the agent was ruled on, with
+// nothing more than the stop's words. One that says more is the caller's turn, and is
+// answered on all its words: a stop is often ruled on the start of the request it makes
+// ("hi, what's the weather" over a greeting), which the words after it alone would cut
+// ("like in Lisbon tomorrow?").
+//
+// The stop's words alone may be the request too: a stop ruled late, on "Okay. So can you
+// tell me a story about Amsterdam?" whole (session test-c9dbce25), spent the request, and
+// nobody answered it. So they are put to the reply model (afterStop), and set aside (spent)
+// only when it cannot be asked or says there is nothing in them to answer.
+func (c *converse) stoppedOn(ready candidate) bool {
 	c.mu.Lock()
 	stop, ok := c.stops[ready.Participant.ID]
 	// A later utterance of the same transcriber means the stop's is over, its final never
@@ -527,12 +532,15 @@ func (c *converse) stopSpent(ready candidate) (Action, bool) {
 		delete(c.stops, ready.Participant.ID)
 	}
 	c.mu.Unlock()
-	if !ok || stop.utterance != ready.Utterance || ready.Utterance == 0 {
-		return Action{}, false
-	}
-	if saysMore(ready.Text, stop.words) {
-		return Action{}, false
-	}
+	return ok && stop.utterance == ready.Utterance && ready.Utterance != 0 && !saysMore(ready.Text, stop.words)
+}
+
+// spent sets aside the words a stop over the agent was ruled on: heard, and no turn, as the
+// agent has done what they asked.
+func (c *converse) spent(ready candidate) Action {
+	c.mu.Lock()
+	delete(c.candidates, ready.ID)
+	c.mu.Unlock()
 	c.cadence.Resolve(ready.ID, false)
 	shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
 	sendHeard(c.emitter, c.onHeard, Heard{Participant: ready.Participant, Text: shown, Language: ready.Language, LineID: line})
@@ -543,7 +551,7 @@ func (c *converse) stopSpent(ready candidate) (Action, bool) {
 		Participant: ready.Participant,
 		Text:        shown,
 		LineID:      line,
-	}), true
+	})
 }
 
 // overlap asks the controller whether the agent should give up the floor to a caller who
@@ -758,8 +766,12 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 	if released, ok := c.answeredByHeld(ready, state); ok {
 		return released
 	}
-	if spent, ok := c.stopSpent(ready); ok {
-		return spent
+	if c.stoppedOn(ready) {
+		// Talking again, the agent has moved on from them.
+		if !state.Quiet {
+			return c.spent(ready)
+		}
+		ready.Stopped = true
 	}
 	c.mu.Lock()
 	if !state.Quiet {
@@ -802,6 +814,18 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 		Participant: ready.Participant,
 		Text:        ready.Text,
 	})
+}
+
+// settled is the turn put to the flow controller as candidateID that no ruling has been acted
+// on, and false for a provisional ask over the agent or a turn that has moved on.
+func (c *converse) settled(candidateID string) (candidate, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, provisional := c.overlaps[candidateID]; provisional {
+		return candidate{}, false
+	}
+	ready, ok := c.candidates[candidateID]
+	return ready, ok
 }
 
 // Unasked forgets a turn the flow controller could not be asked about, so the caller gets

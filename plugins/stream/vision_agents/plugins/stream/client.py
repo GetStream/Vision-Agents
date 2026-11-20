@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, replace
 from typing import Any, Optional, Sequence, Union
 
 from vision_agents.core.llm.function_registry import FunctionRegistry
 
-from ._backend import TOKEN_VALIDITY_SECONDS, Backend
+from ._backend import TOKEN_VALIDITY_SECONDS, Backend, acting_for
 from ._generated.api.default import (
     claim_guest_user,
     create_guest_user,
@@ -24,6 +25,8 @@ from ._generated.models import (
     GuestUserRequestCustom,
 )
 from .account import OrganizationAccount, Usage
+from .connections import Connections
+from .dispatch import Dispatch
 from .responses import RouterError, _deleted, _unwrapped
 from .router import Router
 from .sessions import Sessions
@@ -130,11 +133,40 @@ class Client:
         self.teams = Teams(self.backend, self.spend_limits)
         self.account = OrganizationAccount(self.backend)
         self.usage = Usage(self.backend)
+        self.connections = Connections(self.backend)
+        # Registered once for every agent, run by `run_dispatch`, and offered only to an
+        # agent whose agent.yaml names them in a tool group.
+        self.tools = FunctionRegistry()
 
     @property
     def server_side(self) -> bool:
         """Whether this speaks for a process the customer runs rather than for a device."""
         return self.backend.server_side
+
+    async def run_dispatch(self) -> None:
+        """Run the app's tools for every session they are offered to, until cancelled.
+
+        Each agent is offered the ones a tool group of its agent.yaml names, wherever its
+        session was opened. A tool's own ``timeout`` is how long the router waits for one of
+        its calls; without one it waits 30 seconds. A worker that also answers calls or
+        messages hosts the tools with ``Dispatch.host(client)`` instead.
+
+        Example:
+            ```python
+            client = stream.Client()
+
+
+            @client.tools.register(description="Look up the weather")
+            async def weather_lookup(location: str) -> str:
+                return await weather.today(location)
+
+
+            await client.run_dispatch()
+            ```
+        """
+        dispatch = Dispatch(backend=self.backend)
+        dispatch.host(self)
+        await dispatch.run()
 
     def as_user(self, user: Union[str, dict[str, Any]], token: str) -> "Client":
         """A client acting for one end user, holding the token that proves it.
@@ -156,15 +188,30 @@ class Client:
         """A server-side client running work for one end user, still holding the app's
         credential.
 
+        Deprecated: name the user on the call instead, with the ``user_id`` parameter of
+        ``agent``, ``router`` and the ``connections`` methods, on a client built with the
+        team and usage categories, ``stream.Client(team="finance")``. Kept working for the
+        callers that use it.
+
         The work counts against that user's spend limits, and against the team and usage
         categories given here, which are this user's alone: the parent client's are not
         carried over. Server side only.
 
         Example:
             ```python
+            # Deprecated
             alice = api.for_user("user-42", team="finance")
+            # Instead
+            router = stream.Client(team="finance").router("clinic", user_id="user-42")
             ```
         """
+        warnings.warn(
+            "Client.for_user is deprecated: pass user_id to the call instead, such as "
+            "agent(name, user_id=...) or router(config, user_id=...), on a client built "
+            "with team= and usage_categories=",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not self.server_side:
             raise ValueError(
                 "working for a user keeps the app's credential, which only a backend holds; "
@@ -219,15 +266,31 @@ class Client:
             {"id": guest.id, "name": guest.name or "Guest"}, guest.token
         )
 
-    def agent(self, name: str) -> "Agent":
+    def agent(self, name: str, *, user_id: Optional[str] = None) -> "Agent":
         """An agent addressed by the name it is configured under.
 
         No request is made: this is the name in a wrapper, and a name that matches nothing
         configured is refused when a conversation is opened rather than here.
-        """
-        return Agent(self.backend, name)
 
-    def router(self, config: str = "", tags: Optional[dict[str, str]] = None) -> Router:
+        Args:
+            name: The name the agent is configured under.
+            user_id: The end user every request about the agent is for, sent as
+                ``X-Stream-User-Id``: the sessions it opens are theirs, and their work
+                counts against their spend limits and this client's team and usage
+                categories. Server side only. None is the client's own work.
+
+        Raises:
+            ValueError: A ``user_id`` on a client that is not server side.
+        """
+        return Agent(self._acting(user_id, "an agent"), name)
+
+    def router(
+        self,
+        config: str = "",
+        tags: Optional[dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
+    ) -> Router:
         """Route through a stored router config, named by what it was stored under or its id.
 
         No request is made. The config holds the defaults, which model answers included, and
@@ -243,8 +306,14 @@ class Client:
         Args:
             config: A stored router config, by name or by id.
             tags: Cost labels carried onto everything routed here.
+            user_id: The end user the routed work is for, sent as ``X-Stream-User-Id``: it
+                counts against their spend limits and this client's team and usage
+                categories. Server side only. None is the client's own work.
+
+        Raises:
+            ValueError: A ``user_id`` on a client that is not server side.
         """
-        return Router(config, tags=tags, backend=self.backend)
+        return Router(config, tags=tags, backend=self._acting(user_id, "a router"))
 
     async def guest_user(self, options: Optional[GuestOptions] = None) -> GuestUser:
         """Mint a guest so somebody can talk to an agent before they sign up.
@@ -294,6 +363,17 @@ class Client:
             f"claiming the guest {guest_id}",
         )
 
+    def _acting(self, user_id: Optional[str], what: str) -> Backend:
+        """This client's backend, or a copy of it acting for ``user_id`` when one is named."""
+        if not user_id:
+            return self.backend
+        if not self.server_side:
+            raise ValueError(
+                f"{what} for a user keeps the app's credential, which only a backend "
+                "holds; a device holds its user's token (as_user)"
+            )
+        return acting_for(self.backend, user_id)
+
 
 class Memories:
     """What agents remember about the app's users between conversations."""
@@ -321,50 +401,8 @@ class Agent:
 
     def __init__(self, backend: Backend, name: str):
         self.name = name
-        # The functions are held on the agent rather than per session, because a function
-        # registered once should not have to be registered again for the next conversation.
-        self.functions = FunctionRegistry()
-        self.sessions = Sessions(backend, name, self.functions)
+        self.sessions = Sessions(backend, name)
         self._backend = backend
-
-    def register(
-        self,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        parameters_schema: Optional[dict[str, Any]] = None,
-        interruptible: bool = False,
-        timeout: float = 0.0,
-        needs_approval: str = "",
-    ):
-        """Register one of the caller's functions, which every conversation offers the model.
-
-        The decorator the core registry provides, so the schema comes from the type hints and
-        the description from the docstring. A first parameter annotated `ToolCallContext` is
-        handed the call it runs for:
-
-            @agent.register(needs_approval="Book flight {flight_id}?")
-            async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
-                "Book a flight for the caller"
-                await tool_call_context.update("checking seats")
-                await tool_call_context.disallow_interruptions()
-                return await bookings.book(flight_id, key=tool_call_context.id)
-
-        Args:
-            interruptible: Let the caller talking over the agent cancel a call in flight.
-                Off, the call keeps running and the model is told it is still going.
-            timeout: How long one call may take, in seconds. Zero takes the session's.
-            needs_approval: A question a person answers before each call runs, with
-                {name} for an argument. On a voice call the agent asks it out loud and
-                waits 15 seconds for a yes; in writing it goes to the app.
-        """
-        return self.functions.register(
-            name=name,
-            description=description,
-            parameters_schema=parameters_schema,
-            interruptible=interruptible,
-            timeout=timeout,
-            needs_approval=needs_approval,
-        )
 
     async def config(self) -> Optional[AgentConfig]:
         """How the agent is configured, or None for a name nothing is stored under.

@@ -2,8 +2,10 @@ package stream
 
 import (
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -612,5 +614,104 @@ func TestATokenHandedInCannotBeGivenAnotherTeamOrCategories(t *testing.T) {
 		if _, err := backend.Resolve(); err == nil {
 			t.Errorf("a token handed in resolved beside team %q and categories %q", backend.Team, backend.UsageCategories)
 		}
+	}
+}
+
+// sentBy is the request line and headers a client built from backend makes, with the token
+// shown as <token> because it differs on every run, and the headers the Go transport adds
+// left out.
+func sentBy(t *testing.T, backend Backend) []string {
+	t.Helper()
+	seen := make(chan *http.Request, 1)
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer router.Close()
+
+	backend.URL = router.URL
+	client, err := backend.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListSkillsWithResponse(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	request := <-seen
+	sent := []string{request.Method + " " + request.URL.RequestURI()}
+	for _, name := range slices.Sorted(maps.Keys(request.Header)) {
+		if name == "Accept-Encoding" || name == "User-Agent" {
+			continue
+		}
+		values := request.Header[name]
+		if name == "Authorization" {
+			values = []string{"<token>"}
+		}
+		sent = append(sent, name+": "+strings.Join(values, ","))
+	}
+	return sent
+}
+
+// Catches a change to what a client built with the deprecated ActingFor sends. The expected
+// requests were read off a client built the same way at the commit that deprecated the field.
+func TestABackendBuiltWithActingForSendsWhatItAlwaysDid(t *testing.T) {
+	cases := []struct {
+		name    string
+		backend Backend
+		want    []string
+	}{
+		{
+			"a local router told whom to bill",
+			Backend{CustomerID: "acme", ActingFor: "u"},
+			[]string{"GET /v1/agents/skills", "X-Customer-Id: acme", "X-Stream-Client: sdk", "X-Stream-User-Id: u"},
+		},
+		{
+			"a router behind the proxy",
+			Backend{Authenticate: true, APIKey: "ntv9", APISecret: "shh", ActingFor: "u"},
+			[]string{
+				"GET /v1/agents/skills", "Api_key: ntv9", "Authorization: <token>", "Stream-Auth-Type: jwt",
+				"X-Stream-Client: sdk", "X-Stream-User-Id: u",
+			},
+		},
+		{
+			"a team and usage categories",
+			Backend{CustomerID: "acme", ActingFor: "u", Team: "finance", UsageCategories: []string{"project:x"}},
+			[]string{
+				"GET /v1/agents/skills", "X-Customer-Id: acme", "X-Stream-Client: sdk",
+				"X-Stream-Usage-Categories: project:x,team:finance", "X-Stream-User-Id: u",
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sentBy(t, c.backend); !slices.Equal(got, c.want) {
+				t.Errorf("the router was sent\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(c.want, "\n"))
+			}
+		})
+	}
+}
+
+// Catches a user named through ActingFor that is signed into the token: the request is still the
+// server's, so the proxy must read a token naming nobody.
+func TestActingForAUserKeepsTheServersToken(t *testing.T) {
+	credentials, err := Backend{Authenticate: true, APIKey: "ntv9", APISecret: "shh", ActingFor: "anya"}.Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	user, err := admit(t, credentials, "shh")
+	if err != nil {
+		t.Fatalf("the proxy would refuse this: %v", err)
+	}
+	if user != "" {
+		t.Errorf("the token names %q, want nobody", user)
+	}
+	if server := claimsOf(t, credentials, "shh")["server"]; server != true {
+		t.Errorf("the token's server claim is %v, want true", server)
+	}
+	if got := credentials.Get(UserHeader); got != "anya" {
+		t.Errorf("%s was %q, want anya", UserHeader, got)
 	}
 }

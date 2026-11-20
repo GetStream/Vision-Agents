@@ -56,7 +56,6 @@ export class Holds {
 /** A call's way back to its session, over the socket that delivered it. */
 export function socketLine(send: (frame: Record<string, unknown>) => void, holds: Holds): ToolLine {
   return {
-    update: (id, said, verbatim) => send({ type: "tool_update", tool_call_id: id, text: said, verbatim }),
     hold: (id, signal) => holds.ask(id, () => send({ type: "tool_hold", tool_call_id: id }), signal),
   };
 }

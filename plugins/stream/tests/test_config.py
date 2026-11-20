@@ -1,3 +1,4 @@
+from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
 
 import pytest
@@ -42,6 +43,8 @@ class Router:
         # nothing about them.
         self.simulations: list[dict[str, Any]] | None = None
         self.syncs = 0
+        # The writes to configs and skills, in the order they came.
+        self.edits: list[str] = []
         self.bodies: list[dict[str, Any]] = []
         self.connection_pages: list[list[dict[str, Any]]] = [[]]
         self.connection_queries: list[dict[str, str]] = []
@@ -71,11 +74,20 @@ class Router:
         )
 
     async def _update_config(self, request: web.Request) -> web.Response:
-        return web.json_response(
-            self._store(
-                self.configs, await self._config(request), request.match_info["id"]
-            )
-        )
+        id = request.match_info["id"]
+        body = await self._config(request)
+        self.edits.append("config")
+        # As the router's storedSkillSandboxComplaint: a config left without a sandbox is
+        # refused while a skill it names, as stored, still has scripts.
+        if not body.get("sandbox"):
+            for skill in self.skills.values():
+                if (
+                    skill["config_id"] == id
+                    and skill["name"] in (body.get("skills") or [])
+                    and _scripts(skill)
+                ):
+                    return _refused(f"skill {skill['name']!r} needs a sandbox")
+        return web.json_response(self._store(self.configs, body, id))
 
     async def _list_skills(self, request: web.Request) -> web.Response:
         held = request.query.get("config_id", "")
@@ -88,14 +100,25 @@ class Router:
         )
 
     async def _create_skill(self, request: web.Request) -> web.Response:
-        return web.json_response(
-            status=201, data=self._store(self.skills, await request.json())
-        )
+        body = await request.json()
+        if refused := self._skill_refused(body):
+            return refused
+        return web.json_response(status=201, data=self._store(self.skills, body))
 
     async def _update_skill(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        self.edits.append(f"skill {body['name']}")
+        if refused := self._skill_refused(body):
+            return refused
         return web.json_response(
-            self._store(self.skills, await request.json(), request.match_info["id"])
+            self._store(self.skills, body, request.match_info["id"])
         )
+
+    def _skill_refused(self, body: dict[str, Any]) -> web.Response | None:
+        """As the router's skillSandboxComplaint: scripts need the config's sandbox."""
+        if _scripts(body) and not self.configs[body["config_id"]].get("sandbox"):
+            return _refused(f"skill {body['name']!r} needs a sandbox")
+        return None
 
     async def _sync(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -219,6 +242,28 @@ class Router:
         return stored
 
 
+def _scripts(skill: dict[str, Any]) -> list[str]:
+    """The files of a skill the router runs rather than reads, as harness.Scripts."""
+    return [
+        path
+        for path in skill.get("files") or {}
+        if PurePosixPath(path).suffix.lower() not in (".md", ".mdx", ".txt")
+    ]
+
+
+def _refused(message: str) -> web.Response:
+    return web.json_response(
+        status=400,
+        data={
+            "error": {
+                "type": "invalid_request",
+                "code": "invalid_request",
+                "message": message,
+            }
+        },
+    )
+
+
 class TestDefineAgent:
     @pytest.fixture
     async def router(self) -> AsyncIterator[Router]:
@@ -329,6 +374,64 @@ class TestDefineAgent:
         config = await self.define(router)
 
         assert "sandbox" not in router.configs[config.id]
+
+    async def test_one_edit_drops_the_vm_and_a_skills_scripts_together(
+        self, router: Router
+    ):
+        forms = Skill(
+            name="forms",
+            description="Fill a form",
+            instructions="Fill it in.",
+            files={"scripts/fill.py": "print(1)", "reference.md": "# Forms"},
+        )
+        await self.define(router, skills=[forms], vm=Daytona)
+
+        forms.files = {"reference.md": "# Forms"}
+        router.edits.clear()
+        config = await self.define(router, skills=[forms])
+
+        assert router.edits == ["skill forms", "config"], (
+            "the skill loses its scripts before the config loses the vm, and is not "
+            "written a second time"
+        )
+        assert "sandbox" not in router.configs[config.id]
+        [skill] = list(router.skills.values())
+        assert skill["files"] == {"reference.md": "# Forms"}
+
+    async def test_one_edit_adds_the_vm_and_a_skills_scripts_together(
+        self, router: Router
+    ):
+        forms = Skill(
+            name="forms",
+            description="Fill a form",
+            instructions="Fill it in.",
+            files={"reference.md": "# Forms"},
+        )
+        await self.define(router, skills=[forms])
+
+        forms.files = {"scripts/fill.py": "print(1)", "reference.md": "# Forms"}
+        config = await self.define(router, skills=[forms], vm=Daytona)
+
+        assert router.configs[config.id]["sandbox"] == "daytona"
+        [skill] = list(router.skills.values())
+        assert skill["files"] == forms.files
+
+    async def test_an_edit_that_drops_the_vm_but_keeps_scripts_is_refused(
+        self, router: Router
+    ):
+        forms = Skill(
+            name="forms",
+            description="Fill a form",
+            instructions="Fill it in.",
+            files={"scripts/fill.py": "print(1)"},
+        )
+        config = await self.define(router, skills=[forms], vm=Daytona)
+
+        with pytest.raises(RuntimeError, match="needs a sandbox"):
+            await self.define(router, skills=[forms])
+
+        assert router.configs[config.id]["sandbox"] == "daytona"
+        assert len(router.skills) == 1, "the skill was edited, not copied"
 
 
 class TestKnowledge:
@@ -515,38 +618,24 @@ class TestSyncAgent:
 
         assert again.unchanged is True
         assert again.config.id == first.config.id
-        assert router.syncs == 2
+        assert router.syncs == 1, ".agent_sync should answer for an untouched directory"
         assert len(router.configs) == 1
 
-    async def test_a_launch_after_an_unchanged_launch_asks_the_router_nothing(
-        self, router: Router, launched_from
+    async def test_a_directory_the_router_no_longer_holds_is_stored_again(
+        self, router: Router, support_dir
     ):
-        stored = await stream.ensure_agent(
-            "support", url=router.url, customer_id="acme"
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+        router.configs.clear()
+
+        again = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert stored is not None
-        assert router.syncs == 1
-        assert (
-            await stream.ensure_agent("support", url=router.url, customer_id="acme")
-            is None
-        ), ".agent_sync should answer for a directory nothing has touched"
-        assert router.syncs == 1
-
-    async def test_a_launch_after_an_edit_stores_the_directory_again(
-        self, router: Router, launched_from
-    ):
-        await stream.ensure_agent("support", url=router.url, customer_id="acme")
-
-        (launched_from / "instructions.md").write_text("Be brief.\n")
-        stored = await stream.ensure_agent(
-            "support", url=router.url, customer_id="acme"
-        )
-
-        assert stored is not None
-        assert stored.unchanged is False
-        assert router.configs[stored.config.id]["instructions"] == "Be brief."
+        assert again.unchanged is False
         assert router.syncs == 2
+        assert [config["name"] for config in router.configs.values()] == ["support"]
 
     async def test_a_declaration_says_what_the_agent_runs_on(
         self, router: Router, support_dir
@@ -659,18 +748,19 @@ class TestSyncAgent:
 
         assert router.bodies == []
 
-    async def test_offering_tools_progressively_is_sent(
-        self, router: Router, support_dir
-    ):
+    async def test_tool_groups_are_sent(self, router: Router, support_dir):
         (support_dir / "agent.yaml").write_text(
-            "name: support\ntools:\n  progressive: true\n"
+            "name: support\ntools:\n"
+            "  - name: booking\n    loading: summary\n    tools: [lookup_booking]\n"
         )
 
         result = await stream.sync_agent(
             "support", path=str(support_dir), url=router.url, customer_id="acme"
         )
 
-        assert router.configs[result.config.id]["tools"] == {"progressive": True}
+        assert router.configs[result.config.id]["tools"] == [
+            {"name": "booking", "loading": "summary", "tools": ["lookup_booking"]}
+        ]
 
     async def test_a_file_saying_nothing_about_tools_sends_nothing(
         self, router: Router, support_dir
@@ -872,24 +962,14 @@ class TestSyncAgent:
     async def test_editing_a_model_stores_the_directory_again(
         self, router: Router, launched_from
     ):
-        first = await stream.ensure_agent("support", url=router.url, customer_id="acme")
-        assert first is not None
+        first = await stream.sync_agent("support", url=router.url, customer_id="acme")
 
         (launched_from / "agent.yaml").write_text("name: support\nllm: llm-smart\n")
-        again = await stream.ensure_agent("support", url=router.url, customer_id="acme")
+        again = await stream.sync_agent("support", url=router.url, customer_id="acme")
 
-        assert again is not None
+        assert again.unchanged is False
         assert again.config.id == first.config.id
         assert router.configs[again.config.id]["llm"] == "llm-smart"
-
-    async def test_a_name_with_no_directory_behind_it_is_left_alone(
-        self, router: Router, launched_from
-    ):
-        assert (
-            await stream.ensure_agent("nowhere", url=router.url, customer_id="acme")
-            is None
-        )
-        assert router.syncs == 0
 
     @pytest.fixture
     def bare_dir(self, tmp_path):

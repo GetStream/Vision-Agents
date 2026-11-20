@@ -222,8 +222,7 @@ func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string,
 	var definitions []ConnectorDefinition
 	query := s.db.NewSelect().Model(&definitions).ModelTableExpr("(?) AS cd", latest)
 	if filter.Text != "" {
-		// Backslash is ILIKE's default escape, so the caller's % and _ match themselves.
-		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(filter.Text)
+		escaped := likeEscaper.Replace(filter.Text)
 		// Each field on its own, so a query cannot match across the boundary of two.
 		query = query.Where("(cd.id ILIKE ?0 OR cd.name ILIKE ?0 OR cd.category ILIKE ?0 OR cd.description ILIKE ?0)", "%"+escaped+"%")
 	}
@@ -248,8 +247,7 @@ func (s *Store) ListConnectorDefinitions(ctx context.Context, customerID string,
 func (s *Store) saveRevision(ctx context.Context, customerID string, manifest core.Manifest) (ConnectorDefinition, error) {
 	var saved ConnectorDefinition
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			customerID+"/"+manifest.ID, definitionLockSeed); err != nil {
+		if err := lockUntilCommit(ctx, tx, customerID+"/"+manifest.ID, definitionLockSeed); err != nil {
 			return err
 		}
 
@@ -308,8 +306,7 @@ func (s *Store) saveRevision(ctx context.Context, customerID string, manifest co
 // manifest is a new revision whose content is the old one.
 func (s *Store) seedBuiltin(ctx context.Context, manifest core.Manifest) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			BuiltinCustomer+"/"+manifest.ID, definitionLockSeed); err != nil {
+		if err := lockUntilCommit(ctx, tx, BuiltinCustomer+"/"+manifest.ID, definitionLockSeed); err != nil {
 			return err
 		}
 
@@ -574,8 +571,7 @@ func (s *Store) DeleteConnectorDefinition(ctx context.Context, customerID, id st
 	}
 	var deleted DeletedConnector
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			customerID+"/"+id, definitionLockSeed); err != nil {
+		if err := lockUntilCommit(ctx, tx, customerID+"/"+id, definitionLockSeed); err != nil {
 			return err
 		}
 		var revisions []int
@@ -637,9 +633,10 @@ func (s *Store) DeleteConnectorDefinition(ctx context.Context, customerID, id st
 		}
 		// The deliveries go with their destination (ON DELETE CASCADE,
 		// 20261007040000_connector_event_destinations.sql).
-		for _, table := range []string{"connector_oauth_clients", "connector_config_tokens", "connector_event_destinations"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE customer_id = ? AND connector_id = ?", customerID, id); err != nil {
-				return fmt.Errorf("store: delete the connector's %s: %w", table, err)
+		for _, model := range []any{(*ConnectorOAuthClient)(nil), (*ConnectorConfigToken)(nil), (*EventDestination)(nil)} {
+			q := tx.NewDelete().Model(model).Where("customer_id = ? AND connector_id = ?", customerID, id)
+			if _, err := q.Exec(ctx); err != nil {
+				return fmt.Errorf("store: delete the connector's %s: %w", q.GetTableName(), err)
 			}
 		}
 		_, err = tx.NewDelete().Model((*ConnectorDefinition)(nil)).

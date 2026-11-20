@@ -102,7 +102,6 @@ from vision_agents.core.llm import ToolCallContext
     needs_approval="Book flight {flight_id}?",
 )
 async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
-    await tool_call_context.update("checking seats")
     await tool_call_context.disallow_interruptions()
     return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
 ```
@@ -149,13 +148,14 @@ run code it writes, and needs `DAYTONA_API_KEY` on the backend. Only a voice age
 ## An agent as a directory
 
 `agents/customer_support/agent.yaml` is what makes a directory an agent, and
-`instructions.md`, `skills/*.md` and `knowledge/` are what it holds. Joining a call
-stores them on the backend, so naming the config is the whole of it:
+`instructions.md`, `skills/*.md` and `knowledge/` are what it holds. `agent.sync()` stores
+them on the backend; joining a call never does, so sync before the agent takes calls:
 
 ```python
 from vision_agents.core import Agent
 
 agent = Agent(config="customer_support")
+await agent.sync()
 ```
 
 `agent.yaml` also says what the agent runs on, so the models are decided on disk with
@@ -209,9 +209,9 @@ again on a schedule. `simulations/*.yaml` each list simulations (`name`, `scenar
 config's simulations exactly, so an empty `simulations/` deletes them; without the
 directory the stored ones are left alone. Run them with `stream.Client().simulations.run(id)`.
 
-`.agent_sync` next to `agent.yaml` records the md5 of what was last stored, so a run that
-changed nothing costs a file read rather than a request. `sync_agent("customer_support")`
-is still there for storing a directory ahead of time, without joining anything.
+`agent.sync()` stores the directory, and `sync_agent("customer_support")` does the same
+without building an agent. Joining never syncs, so sync before the agent takes calls. A sync
+of the same files changes nothing on the router.
 
 `Agent(config=)` fills in the edge, the remote pipeline and a phone, so the Go
 backend handles routing. See `examples/voice_agents/` for customer support, an outbound
@@ -411,8 +411,9 @@ team. A token's team always wins, then the session's, then the agent's tag.
   user of the organization. Keys go the same way, and `level=` overrides it. A team or a
   category with `app_id` is the one within that app.
 - **A team has no members list.** A user is in the team its token names, from
-  `create_user_token` or `for_user`, fixed when the token is signed. A client's own work is
-  counted the same way: `stream.Client(team="finance", usage_categories=["project:x"])`.
+  `create_user_token`, fixed when the token is signed. A client's own work is counted the
+  same way: `stream.Client(team="finance", usage_categories=["project:x"])`, and so is the
+  work it runs for a user, `user_id=` on `agent` or `router` (`for_user` is deprecated).
   A team is 1 to 59 characters of `A-Z a-z 0-9 _ . -`; a category 1 to 64 of
   `A-Z a-z 0-9 _ . : -`, never starting `team:`; at most 10 together. Anything else raises
   `ValueError` before a token is signed.
@@ -425,31 +426,59 @@ team. A token's team always wins, then the session's, then the agent's tag.
 - **Refusals** carry `code`: `limit_above_parent`, `limit_exists`, `no_limit`, `use_team`,
   `invalid_expiry`, `too_many_grants` and `server_side_only`.
 
-## Tools hosted for an agent
+## A user's own accounts
 
-A session's own functions run in the process that opened it. `dispatch.host` is the other
-direction: the router offers an agent's functions to every session under that agent,
-wherever it was opened, and sends each call to this worker.
+`api.connections` holds the accounts the app and its users have at connectors, such as a
+user's Linear, through which an agent's tools reach that account. Server side only. Each
+call names the user as `user_id`, sent as the owner and as `X-Stream-User-Id`; without one
+it is the app's own connection, and the call is sent as the client is otherwise.
 
 ```python
-agent = stream.Client().agent("stream-support")
+api = stream.Client()
+
+connection = await api.connections.create("linear", user_id="alice")
+consent = await api.connections.authorize(
+    connection.id, return_url="https://app.example.com/connected", user_id="alice"
+)
+# Open consent.launch_url in a popup from that origin, post it consent.handoff_token,
+# and finish before consent.expires_at.
+
+connection = await api.connections.get(connection.id, user_id="alice")
+mine = await api.connections.list(connector_id="linear", user_id="alice")  # every page
+await api.connections.delete(connection.id, user_id="alice")
+```
+
+A call naming a user still reaches the app's connections; a list naming a user holds only
+that user's. Another user's connection is not found. A refusal raises `RouterError`.
+
+The same `user_id` runs other work for a user on the app's credential: `api.agent("docs",
+user_id="alice")` opens sessions that are theirs, and `api.router("clinic", user_id="alice")`
+counts what it routes against their spend limits. `api.for_user` still works, and warns.
+
+## Tools
+
+Tools are registered once for the app, on the client. Each agent is offered the ones a tool
+group of its `agent.yaml` names, in every session, wherever it was opened, and each call is
+sent to a worker running `run_dispatch`.
+
+```python
+client = stream.Client()
 
 
-@agent.register(description="Read the SDK's source")
+@client.tools.register(description="Read the SDK's source", timeout=60)
 async def investigate_sdk(sdk: str) -> str:
     return await read_source(sdk)
 
 
-dispatch = stream.Dispatch()
-dispatch.host(agent, tool_timeout=60)
-await dispatch.run()
+await client.run_dispatch()
 ```
 
-`tool_timeout` is how long the router gives one call, in seconds; zero takes its default
-of 30. A hosted function takes the same `interruptible`, `timeout` and `needs_approval` as
+A tool's `timeout` is how long the router gives one call, in seconds; zero takes its default
+of 30. A tool takes the same `interruptible`, `timeout` and `needs_approval` as
 `register_function`, can take its call as its first argument, and is cancelled when the router
-gives up on it. The worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
-router refuses them.
+gives up on it. The worker declares its tools again whenever it reconnects, and `run_dispatch`
+raises `RouterError` if the router refuses them. A worker that also answers calls or messages
+hosts them with `dispatch.host(client)` before `dispatch.run()`.
 
 ## Calling somebody
 

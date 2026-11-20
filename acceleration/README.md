@@ -138,7 +138,7 @@ the other commands that read them there.
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user's devices may spend in a UTC day, defaults to `5000000`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`) |
 | `ROUTER_SPECULATIVE_REPLIES` | `true` starts each reply while the flow controller is still deciding whether the words were meant for the agent, and holds it until the ruling says to answer. Saves the ruling's round trip on answered turns and pays for the replies a ruling drops. Off by default |
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
-| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
+| `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A first request that had said nothing when it lost is a `timeout` instead, which counts against its provider's health, and `router_requests_total` counts it under `outcome="hedge_lost"`, so its `timeout` is only a deadline run past. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
 | `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
 | `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
 | `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control` of its own: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at its server's default point, for every such agent on the router. An agent's own choice always wins, on its config or its session: `{model: stream/chorus-asr}` with its own `max_wait_ms`, or `{model: flow-controller}` to keep the flow controller whatever this says. `{}` is no choice. Without `ROUTER_CHORUS_ASR_URL` it warns once at start and the flow controller rules; no session is refused for it. Floor control only: which transcriber writes the words does not change |
@@ -754,11 +754,11 @@ pick rather than a list of their own to keep:
 
 | Group                | What it is                                                                      |
 | -------------------- | ------------------------------------------------------------------------------- |
-| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B and GPT-5.6 Luna, pinned to Gemma 4 26B |
+| `llm-conversational` | Super lightweight: Gemma 4 26B-A4B, Muse Ember and GPT-5.6 Luna, pinned to Gemma 4 26B |
 | `llm-fast`           | The low-latency tier, pinned to Gemini 3.8 Flash                                |
-| `llm-smart`          | The high-quality tier, pinned to GPT-5.6 Sol                                    |
-| `stt-fast`           | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en`         |
-| `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
+| `llm-smart`          | The high-quality tier, pinned to GPT-6.2 Astra                                  |
+| `stt-fast`           | Flux, AssemblyAI 3.7 Realtime-Agent, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en` |
+| `stt-accurate`       | Scribe v3 Live, MAI-Transcribe-2, Muse, Ink 2 and Nemotron, pinned to Scribe v3 Live |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
 | `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
 | `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
@@ -784,7 +784,7 @@ Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
 is what the skills run on: the part of a turn the talking model could not answer itself, which
 the conversation carries on without. Both name the model this deployment wants rather than
-leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.1-sol` — and
+leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-6.2-sol` — and
 only reach the rest of their tier when that model is unavailable or fails to start.
 
 Which models those shortcuts reach for LLM, and what each costs per million tokens (the
@@ -804,7 +804,9 @@ vendor rates in `prices/vendor.json`; customers are charged each entry's price, 
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 | `openai/gpt-6-sol`                | high-quality | $2.00  | $0.20   | $10.00  |
 | `openai/gpt-6.1-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
+| `openai/gpt-6.2-sol`              | high-quality | $2.00  | $0.10   | $10.00  |
 | `openai/gpt-6-astra`              | high-quality | $10.00 | $1.00   | $50.00  |
+| `openai/gpt-6.2-astra`            | high-quality | $8.00  | $0.40   | $40.00  |
 | `gemini/gemini-4-argon`          | high-quality | $2.00  | $0.10   | $10.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
@@ -900,7 +902,8 @@ Google reports it as a token count rather than streaming it, so there are no
 | `cartesia/ink-2`                                           | en        | ~$0.54         |
 | `deepgram/flux-general-en`                                 | en        | $0.276         |
 | `deepgram/flux-general-multi`                              | 12        | $0.276         |
-| `elevenlabs/scribe_v2_realtime`                            | 57        | $0.39          |
+| `elevenlabs/scribe_v2_realtime`                            | 57        | $0.22          |
+| `elevenlabs/scribe_v3_live`                                | 57        | $0.22          |
 | `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
 | `grok/grok-stt`                                            | 25        | $0.20          |
 | `inworld/inworld-stt-1`                                    | 30        | $0.15          |

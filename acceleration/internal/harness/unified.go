@@ -42,6 +42,25 @@ const AnotherVoiceNote = "The caller's last words came in a different voice from
 	"you have been talking to: somebody else at their microphone, usually talking to the " +
 	"room rather than to you. Lean towards [ignore] unless they plainly address you."
 
+// HeardIgnoredNote is added when the reply rules on words chorus-asr ignored.
+const HeardIgnoredNote = "The model that listens to the call's audio took the caller's last " +
+	"words for not meant for you: background speech, or somebody talking to someone else. It " +
+	"hears the sound and does not read the conversation. Open with [ignore] unless the " +
+	"conversation shows the words answer you or are plainly said to you."
+
+// TalkedThroughNote is added when the reply rules on words chorus-asr let the agent talk through.
+const TalkedThroughNote = "The caller said their last words while you were still talking, and the " +
+	"model that listens to the call's audio took them for no reason to stop: an acknowledgement, " +
+	"or speech not meant for you. It hears the sound and does not read the conversation. Open " +
+	"with [respond] if the words ask you to stop, correct you, or ask or tell you something " +
+	"new: you will stop talking and they will be answered. Otherwise open with [ignore], and " +
+	"you carry on."
+
+// StoppedNote is added when the reply rules on the words the agent stopped talking for.
+const StoppedNote = "The caller said their last words over you, and you stopped talking for " +
+	"them. If they only told you to stop or to be quiet, open with [ignore] and say nothing. " +
+	"If they ask or tell you anything else, open with [respond] and answer it."
+
 // unifiedTags maps the tags a unified reply opens with to the ruling each stands for.
 var unifiedTags = map[string]Disposition{
 	"respond": Respond,

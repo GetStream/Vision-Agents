@@ -97,8 +97,7 @@ func (s *Store) CreateEventDestination(ctx context.Context, destination *EventDe
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	destination.CreatedAt, destination.UpdatedAt = now, now
 	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			destination.CustomerID+"/"+destination.ConnectorID, eventDestinationLockSeed); err != nil {
+		if err := lockUntilCommit(ctx, tx, destination.CustomerID+"/"+destination.ConnectorID, eventDestinationLockSeed); err != nil {
 			return err
 		}
 		held, err := tx.NewSelect().Model((*EventDestination)(nil)).
@@ -162,16 +161,16 @@ func (s *Store) RotateEventDestinationSecret(ctx context.Context, customerID, co
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	var destination EventDestination
-	err := s.db.NewRaw(`
-UPDATE connector_event_destinations
-SET previous_secret_sealed = secret_sealed,
-    previous_kek_version = kek_version,
-    previous_until = ?,
-    secret_sealed = ?,
-    kek_version = ?,
-    updated_at = ?
-WHERE id = ? AND customer_id = ? AND connector_id = ?
-RETURNING *`, previousUntil.UTC(), sealed, version, now, id, customerID, connectorID).Scan(ctx, &destination)
+	err := s.db.NewUpdate().Model(&destination).
+		Set("previous_secret_sealed = secret_sealed").
+		Set("previous_kek_version = kek_version").
+		Set("previous_until = ?", previousUntil.UTC()).
+		Set("secret_sealed = ?", sealed).
+		Set("kek_version = ?", version).
+		Set("updated_at = ?", now).
+		Where("id = ? AND customer_id = ? AND connector_id = ?", id, customerID, connectorID).
+		Returning("*").
+		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EventDestination{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoEventDestination, id))
 	}
@@ -316,7 +315,7 @@ func (s *Store) claimEventDeliveries(ctx context.Context, query string, now time
 // end of their lease. found is false when no delivery is queued at all.
 func (s *Store) NextEventDeliveryAt(ctx context.Context) (next time.Time, found bool, err error) {
 	var at sql.NullTime
-	if err := s.db.NewRaw("SELECT min(next_attempt_at) FROM connector_event_deliveries").Scan(ctx, &at); err != nil {
+	if err := s.db.NewSelect().Model((*EventDelivery)(nil)).ColumnExpr("min(next_attempt_at)").Scan(ctx, &at); err != nil {
 		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: next event delivery: %w", err))
 	}
 	return at.Time, at.Valid, nil

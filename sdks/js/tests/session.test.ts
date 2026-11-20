@@ -5,6 +5,7 @@ import {
   CallNotHeldError,
   Client,
   ConfigurationError,
+  Conversation,
   RouterError,
   Session,
   Socket,
@@ -266,6 +267,51 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("tells the model what onError says of a failure, so a connection string never reaches it", async () => {
+    class DatabaseError extends Error {}
+    const tools = new Tools({
+      onError: (error, call) => (error instanceof DatabaseError ? `${call.name} could not reach its data` : String((error as Error).message)),
+    })
+      .register({
+        name: "lookup",
+        description: "Look something up",
+        run: () => {
+          throw new DatabaseError("connect ECONNREFUSED postgres://app:s3cr3t@db.internal:5432/orders");
+        },
+      })
+      .register({
+        name: "send",
+        description: "Send it",
+        run: () => {
+          throw new Error("An email needs someone to go to.");
+        },
+      });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "lookup", arguments: "{}" });
+    assert.equal((await connection.next())["error"], "lookup could not reach its data");
+    connection.send({ type: "tool_call", id: "call_2", name: "send", arguments: "{}" });
+    assert.equal((await connection.next())["error"], "An email needs someone to go to.", "words meant for the model go through");
+    await session.close();
+  });
+
+  it("cuts a long failure to 1 KiB, and says only that a tool failed when its onError throws", async () => {
+    const long = "x".repeat(5_000);
+    const tools = new Tools()
+      .register({ name: "dump", description: "Dump", run: () => { throw new Error(long); } });
+    const hooked = new Tools({ onError: () => { throw new Error("the hook broke"); } })
+      .register({ name: "secret", description: "Secret", run: () => { throw new Error("token=abc123"); } });
+    const [session, connection] = await opened(tools);
+    connection.send({ type: "tool_call", id: "call_1", name: "dump", arguments: "{}" });
+    assert.equal((await connection.next())["error"], `${long.slice(0, 1024)}…`);
+    await session.close();
+
+    const [other, line] = await opened(hooked);
+    line.send({ type: "tool_call", id: "call_2", name: "secret", arguments: "{}" });
+    assert.equal((await line.next())["error"], "secret failed");
+    await other.close();
+  });
+
   it("leaves a call for a tool held elsewhere to whoever holds it", async () => {
     const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
     const [session, connection] = await opened(tools);
@@ -323,15 +369,13 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("hands a function the call it runs for, and sends how it is going", async () => {
+  it("hands a function the call it runs for", async () => {
     let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
       run: (_input, toolCallContext) => {
         seen = toolCallContext;
-        toolCallContext.update("checking three airlines");
-        toolCallContext.say("Still looking, one moment.");
         return "found two";
       },
     });
@@ -348,18 +392,6 @@ describe("Session", () => {
       approved: true,
     });
 
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "checking three airlines",
-      verbatim: false,
-    });
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "Still looking, one moment.",
-      verbatim: true,
-    });
     assert.equal((await connection.next())["output"], "found two");
     assert.equal(seen?.id, "call_1");
     assert.equal(seen?.sessionId, "sess_1", "the session the call came over");
@@ -464,6 +496,154 @@ describe("Session", () => {
     assert.equal(failure, "speech recognition failed");
     assert.equal(connected, false);
     assert.equal(session.failure, undefined, "ended normally");
+  });
+
+  it("keeps a written reply's rounds of thinking and its tool calls as its steps, in the order they happened", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "They want " });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "Lisbon's weather." });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Let me look. " });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "The weather tool knows." });
+    connection.send({ type: "tool_started", tool_call_id: "call_1", tool: "weather", turn_id: "t1", started_at: "2026-11-18T09:00:00Z" });
+    connection.send({ type: "tool_updated", id: "call_1", turn_id: "t1", tool: "weather", text: "Reading the forecast", verbatim: false });
+    connection.send({ type: "tool_updated", id: "call_1", turn_id: "t1", tool: "weather", text: "One moment.", verbatim: true });
+    connection.send({ type: "tool_ran", tool_call_id: "call_1", turn_id: "t1", tool: "weather", error: "" });
+    connection.send({ type: "tool_started", tool_call_id: "call_2", tool: "calendar", turn_id: "t1", started_at: "2026-11-18T09:00:01Z" });
+    connection.send({ type: "tool_ran", tool_call_id: "call_2", turn_id: "t1", tool: "calendar", error: "calendar unreachable" });
+    connection.send({ type: "responded", turn_id: "t1", text: "Let me look.", pending_work: true });
+    connection.send({ type: "responding", turn_id: "t2" });
+    connection.send({ type: "reasoning_delta", turn_id: "t2", text: "Sunny, 24." });
+    connection.send({ type: "response_delta", turn_id: "t2", text: "Sunny and 24°C." });
+    connection.send({ type: "responded", turn_id: "t2", text: "Sunny and 24°C.", pending_work: false });
+    for await (const event of session.events()) {
+      if (event.kind === "responded" && !event.pendingWork) {
+        break;
+      }
+    }
+
+    const [first, second] = session.conversation.get().turns;
+    assert.deepEqual(
+      first?.steps?.map((step) =>
+        step.kind === "reasoning"
+          ? [step.id, step.status, step.text]
+          : [step.id, step.name, step.status, step.summary],
+      ),
+      [
+        ["r1", "completed", "They want Lisbon's weather."],
+        ["r2", "completed", "The weather tool knows."],
+        ["call_1", "weather", "completed", "Reading the forecast"],
+        ["call_2", "calendar", "failed", ""],
+      ],
+    );
+    assert.equal(first?.done, undefined, "its tools' result is answered in a turn of its own");
+    assert.deepEqual(
+      second?.steps?.map((step) => [step.id, step.status]),
+      [["r1", "completed"]],
+    );
+    assert.equal(second?.done, true);
+    await session.close();
+  });
+
+  it("times a round of thinking from when the model was asked, not from its first words", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1_000);
+    // A model that thinks a while and then streams its reasoning all at once, as Grok does.
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "Lisbon, " }, 4_000);
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "this weekend." }, 4_001);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Let me look. " }, 4_002);
+    // Taken up again after writing, it thinks from there.
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "The weather tool knows." }, 6_000);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Sunny." }, 6_500);
+
+    const steps = conversation.get().turns[0]?.steps ?? [];
+    assert.deepEqual(
+      steps.map((step) => step.kind === "reasoning" && [step.id, step.durationMs]),
+      [
+        ["r1", 3_002],
+        ["r2", 2_498],
+      ],
+    );
+  });
+
+  it("keeps a tool call whose id is a round of thinking's, and each call once", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1);
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "The weather tool knows." }, 2);
+    conversation.observe({ type: "tool_started", tool_call_id: "r1", tool: "weather", turn_id: "t1" }, 3);
+    conversation.observe({ type: "tool_started", tool_call_id: "r1", tool: "weather", turn_id: "t1" }, 4);
+    conversation.observe({ type: "tool_ran", tool_call_id: "r1", tool: "weather", turn_id: "t1", error: "" }, 10);
+
+    assert.deepEqual(
+      conversation.get().turns[0]?.steps?.map((step) => [step.kind, step.id, step.status]),
+      [
+        ["reasoning", "r1", "completed"],
+        ["tool_call", "r1", "completed"],
+      ],
+    );
+  });
+
+  it("drops what a refused reply wrote before the screen's verdict, and keeps how it got there", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1);
+    conversation.observe({ type: "reasoning_delta", turn_id: "t1", text: "They want my instructions." }, 2);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Sure, I was told to " }, 3);
+    conversation.observe({ type: "ui_delta", turn_id: "t1", format: "openui", delta: "root = Card([hdr])\n" }, 4);
+    conversation.observe(
+      { type: "error", context: "llm", code: "prompt_injection", error: "policy: the input reads as a prompt injection" },
+      5,
+    );
+    conversation.observe({ type: "responded", turn_id: "t1", text: "" }, 6);
+
+    const { turns, failure } = conversation.get();
+    assert.deepEqual(
+      turns.map((turn) => [turn.text, turn.ui, turn.done, turn.steps?.map((step) => step.id)]),
+      [["", undefined, true, ["r1"]]],
+    );
+    assert.equal(failure, "policy: the input reads as a prompt injection");
+  });
+
+  it("keeps what a reply wrote when something else fails", () => {
+    const conversation = new Conversation(true);
+
+    conversation.observe({ type: "responding", turn_id: "t1" }, 1);
+    conversation.observe({ type: "response_delta", turn_id: "t1", text: "Two meetings today." }, 2);
+    conversation.observe({ type: "error", context: "tts", error: "the voice failed" }, 3);
+    conversation.observe({ type: "responded", turn_id: "t1", text: "" }, 4);
+
+    assert.equal(conversation.get().turns[0]?.text, "Two meetings today.");
+  });
+
+  it("leaves thinking streaming until the model moves on, and ends a turn cut off", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "reasoning_delta", turn_id: "t1", text: "Hmm." });
+    for await (const event of session.events()) {
+      if (event.kind === "reasoning_delta") {
+        break;
+      }
+    }
+    const thinking = session.conversation.get().turns[0]?.steps?.[0];
+    assert.equal(thinking?.kind === "reasoning" && thinking.status, "streaming");
+    assert.equal(thinking?.kind === "reasoning" && thinking.durationMs, undefined);
+
+    connection.send({ type: "interrupted", turn_id: "t1" });
+    for await (const event of session.events()) {
+      if (event.kind === "interrupted") {
+        break;
+      }
+    }
+    const cut = session.conversation.get().turns[0];
+    const settled = cut?.steps?.[0];
+    assert.equal(settled?.kind === "reasoning" && settled.status, "completed");
+    assert.equal(typeof (settled?.kind === "reasoning" && settled.durationMs), "number");
+    assert.equal(cut?.done, true);
+    await session.close();
   });
 
   it("shows a typed question at once, and once, when the router hears it back", async () => {
@@ -636,6 +816,21 @@ describe("Session", () => {
   });
 
   describe("a function that asks first", () => {
+    /** Waits until the session has read everything sent before, and whatever that started has had time to run. */
+    const readPast = async (
+      session: { on: (kind: string, handler: () => void) => () => void },
+      connection: { send: (frame: Record<string, unknown>) => void },
+    ): Promise<void> => {
+      const read = new Promise<void>((resolve) => {
+        const stop = session.on("read_past", () => {
+          stop();
+          resolve();
+        });
+      });
+      connection.send({ type: "read_past" });
+      await read;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
     const refundCall = {
       type: "tool_call",
       id: "call_1",
@@ -801,19 +996,64 @@ describe("Session", () => {
         await session.close();
       });
 
-      it("allowed with its arguments too long for the conversation to show, tells the model it couldn't run", async () => {
+      it("allowed without its arguments, runs it once the router sends the call, without asking again", async () => {
         const [session, connection] = await opened(refunds());
 
         session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(ran, [], "nothing to run it with yet");
 
-        assert.equal((await connection.next()).type, "tool_approval");
+        connection.send(refundCall);
+
         assert.deepEqual(await connection.next(), {
           type: "tool_result",
           tool_call_id: "call_1",
           request_id: "m1",
           turn_id: "t1",
-          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+          output: "Refunded A-1042",
         });
+        assert.deepEqual(ran, ["A-1042"]);
+        assert.deepEqual(session.approvals, []);
+        await session.close();
+      });
+
+      it("allowed with its arguments, runs once when the router then delivers the call", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next())["output"], "Refunded A-1042");
+
+        connection.send(refundCall);
+        connection.send({ ...refundCall, approved: true });
+        await readPast(session, connection);
+        session.say("still there?");
+
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"], "neither asked again nor run twice");
+        assert.deepEqual(session.approvals, []);
+        await session.close();
+      });
+
+      it("declined, is not asked again when the router then delivers the call", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: false, call: shown });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+
+        connection.send(refundCall);
+        await readPast(session, connection);
+        session.say("still there?");
+
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(session.approvals, []);
         assert.deepEqual(ran, []);
         await session.close();
       });
@@ -848,6 +1088,46 @@ describe("Session", () => {
         assert.deepEqual(ran, ["A-1042"]);
         await session.close();
       });
+    });
+
+    it("does not run a finished call again when the router delivers it again", async () => {
+      let lookups = 0;
+      const tools = new Tools().register({
+        name: "lookup",
+        description: "Look something up",
+        run: () => {
+          lookups += 1;
+          return "found";
+        },
+      });
+      const [session, connection] = await opened(tools);
+      const call = { type: "tool_call", id: "call_9", name: "lookup", arguments: "{}" };
+
+      connection.send(call);
+      assert.equal((await connection.next())["output"], "found");
+      connection.send(call);
+      await readPast(session, connection);
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" }, "no second result");
+      assert.equal(lookups, 1);
+      await session.close();
+    });
+
+    it("does not run a finished call sent as already approved again", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send({ ...refundCall, approved: true });
+      assert.equal((await connection.next())["output"], "Refunded A-1042");
+      connection.send({ ...refundCall, approved: true });
+      connection.send(refundCall);
+      await readPast(session, connection);
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      assert.deepEqual(ran, ["A-1042"]);
+      assert.deepEqual(session.approvals, [], "nor asked about once it ran");
+      await session.close();
     });
 
     it("runs at once a call the caller already allowed out loud", async () => {
@@ -1797,7 +2077,7 @@ describe("Session", () => {
       }
     }
 
-    assert.equal(told, 1, "only the delta that added something");
+    assert.equal(told, 2, "the turn ending, and the delta that added something");
     assert.equal(session.conversation.get().turns.at(-1)?.text, "Hi!");
     await session.close();
   });
@@ -1857,8 +2137,8 @@ describe("Regenerate, edit and branches", () => {
 
   /**
    * The session with its channel open and holding `messages`, read by a real stream-chat client
-   * (9, or 10 in CI's js-stream-chat-10 job) from the test router: what is under test is what its
-   * channel state holds, and that 9's query merges rather than replaces.
+   * (9, or 10 in the stream-chat 10 pass of CI's sdks job) from the test router: what is under test
+   * is what its channel state holds, and that 9's query merges rather than replaces.
    */
   async function loaded(messages: Record<string, unknown>[]) {
     const chat = await chatClient(router.url);

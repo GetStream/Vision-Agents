@@ -38,12 +38,11 @@ A running acceleration router: see [acceleration/README.md](../../../acceleratio
 ```bash
 cd examples/voice_agents/simple_voice_ai
 uv sync
-uv run simple_voice_ai.py run
+uv run simple_voice_ai.py
 ```
 
-`run` joins one call and opens the demo UI on it, which is what to talk into. `--call-id`
-joins a call by name rather than a new one, `--no-demo` leaves the browser alone, and
-`serve` instead starts the HTTP server that sends an agent to whichever call asks for one.
+It stores this directory with `agent.sync()`, creates a new call, opens the demo page on it
+in the browser and joins it. Talk into the demo page.
 
 Needs a `.env` with:
 
@@ -54,6 +53,5 @@ STREAM_ACCELERATION_URL=http://localhost:8080
 STREAM_ACCELERATION_CUSTOMER_ID=examples
 ```
 
-Nothing here calls `sync_agent`. The agent finds the directory `agent.yaml` marks and
-pushes it on joining; `.agent_sync` records the md5, so a second run over the same files
-does nothing.
+`agent.sync()` finds the directory `agent.yaml` marks and stores it before the call;
+`.agent_sync` records the md5, so a second run over the same files sends nothing.
