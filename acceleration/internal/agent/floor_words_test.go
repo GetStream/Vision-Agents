@@ -5,16 +5,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // endsAtOnce is a chorus-asr server's ruling that the turn has ended, at the first check.
 const endsAtOnce = `{"answer":"respond","answer_probability":0.99,"p_eot":0.999,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"continue"}}`
+
+// ignoresAtOnce is a chorus-asr server's ruling that the turn has ended and is none for the agent.
+const ignoresAtOnce = `{"answer":"ignore","answer_probability":0.99,"p_eot":0.999,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
 
 // floorRules has the agent joined next act on chorus-asr at a server ruling every check as
 // decision, while the stub transcriber, another than chorus-asr's, writes its callers' words. It
@@ -189,6 +195,60 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberAServerThatCantRuleLeavesTh
 
 	s.transcriberWrites(caller, 2, stt.ModeFinal, "What time do you open?")
 	s.heardOnly("What time do you open?")
+}
+
+// ignoredByTheFloor has chorus-asr ignore a caller's "So exactly." with the agent quiet, the
+// reply model set to open its reply with reply, and waits for the words to be heard.
+func (s *AgentSuite) ignoredByTheFloor(unified bool, reply string) {
+	s.floorRules(ignoresAtOnce)
+	s.unified = unified
+	s.join(true)
+	s.model.reply = []string{reply}
+	s.asksOverTheFloor(stt.Participant{ID: "alice"}, "So exactly.")
+	s.eventually(func() bool { return slices.Equal(s.heardLines(), []string{"So exactly."}) }, "the words were never ruled on")
+}
+
+// Without unified replies chorus-asr's ignore is final: the reply model is never asked.
+func (s *AgentSuite) TestActingOnChorusASRWordsItIgnoredAreNeverPutToTheReplyModel() {
+	s.ignoredByTheFloor(false, "[respond] Glad we agree.")
+
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"words chorus-asr ruled ignored were answered")
+	s.Empty(s.model.requests(), "the reply model was asked about words chorus-asr ignored")
+	s.Empty(harness.WithoutNotes(s.agent.History()))
+}
+
+// With unified replies on, the reply model is the second opinion on words chorus-asr ignored
+// with the agent quiet, told what chorus-asr made of them. Agreeing, nothing is said, and the
+// words are set aside as chorus-asr had them: heard, and no turn in the history.
+func (s *AgentSuite) TestActingOnChorusASRAUnifiedReplyThatAgreesWithItsIgnoreSaysNothing() {
+	s.ignoredByTheFloor(true, "[ignore]")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply model was never asked")
+	told := slices.ContainsFunc(s.model.requests()[0].Input, func(message llm.Message) bool {
+		return strings.Contains(message.Content, harness.HeardIgnoredNote)
+	})
+	s.True(told, "the reply model was not told chorus-asr ignored the words")
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"words both models ignored were answered")
+	s.Len(s.model.requests(), 1, "the reply model was asked again about the same words")
+	s.Empty(harness.WithoutNotes(s.agent.History()))
+}
+
+// Session test-8a88d5dd: chorus-asr ignored "So Exactly.", the caller agreeing with the agent,
+// which it cannot tell from the room without the conversation. The reply model reads the
+// conversation, and its [respond] answers the caller.
+func (s *AgentSuite) TestActingOnChorusASRAUnifiedReplyAnswersWordsItIgnoredThatWereForTheAgent() {
+	s.ignoredByTheFloor(true, "[respond] Glad we agree.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the caller's words were never answered")
+	s.Len(s.model.requests(), 1, "the reply that ruled is the reply spoken")
+	history := harness.WithoutNotes(s.agent.History())
+	s.Require().Len(history, 2)
+	s.Equal("So exactly.", history[0].Content)
+	s.Equal("Glad we agree.", history[1].Content, "the tag is never part of the reply")
 }
 
 // Non-chorus agents hear the transcriber as they always have: no floor of chorus-asr's, and its

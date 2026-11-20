@@ -2,6 +2,14 @@
 
 ## Features
 
+### The PHP SDK connects a user's own accounts
+
+`$client->connections` creates, authorizes, reads, lists and deletes connections: `create(new NewConnection('linear', userId: 'ada'))`, `authorize($id, new AuthorizeOptions($returnUrl, userId: 'ada'))` for the launch URL, handoff token and expiry of the consent, `get($id, userId: 'ada')`, `list(new ConnectionFilter(userId: 'ada'))` (every page) and `delete($id, userId: 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
+
+### The .NET SDK connects a user's own accounts
+
+`VisionAgentsClient.Connections` creates, authorizes, reads, lists and deletes connections: `CreateAsync("linear", new NewConnectionOptions { UserId = "alice" })`, `AuthorizeAsync(id, new AuthorizeOptions { ReturnUrl = ..., UserId = ... })` for the consent's launch URL, handoff token and expiry, `GetAsync(id, userId)`, `ListAsync(new ConnectionFilter { ConnectorId = ..., UserId = ... })` reading every page, and `DeleteAsync(id, userId)`; a user given is sent as the owner and as `X-Stream-User-Id`, and none is the app's own connection (#2099).
+
 ### The JavaScript SDK connects a user's own accounts
 
 `api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", { userId })`, `authorize(id, { returnUrl, userId })` for the consent's launch URL, handoff token and expiry, `get(id, { userId })`, `list({ connectorId, userId })` and `delete(id, { userId })`; without `userId` they are the app's own. `Backend.actingFor` is deprecated in favour of the `userId` parameter and works as before (#2110).
@@ -795,6 +803,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
+
+With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.
+
+### `unified_replies` gives chorus-asr's ignores a second opinion
+
+Chorus-asr hears the audio but not the conversation, so with the agent quiet it can take a caller's short answer for background speech. With `unified_replies` on, words chorus-asr ignored on a quiet floor are put to the reply model, which is told what chorus-asr made of them and opens with `[respond]` or `[ignore]`. If it agrees, nothing is said, as before. Chorus-asr still decides alone when to stop or shorten the agent, when a turn ends, and everything said while the agent is talking.
 
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 

@@ -804,6 +804,18 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 	})
 }
 
+// settled is the turn put to the flow controller as candidateID that no ruling has been acted
+// on, and false for a provisional ask over the agent or a turn that has moved on.
+func (c *converse) settled(candidateID string) (candidate, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, provisional := c.overlaps[candidateID]; provisional {
+		return candidate{}, false
+	}
+	ready, ok := c.candidates[candidateID]
+	return ready, ok
+}
+
 // Unasked forgets a turn the flow controller could not be asked about, so the caller gets
 // another chance at it rather than losing it to a failure they had no part in.
 func (c *converse) Unasked(candidateID string) {
