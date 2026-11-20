@@ -94,10 +94,10 @@ func (s *RouterSuite) heldSince(connection *websocket.Conn, began time.Time) tim
 	return time.Since(began)
 }
 
-// heldUntilAnswered checks the router waited for an answer to its close, though not forever.
+// heldUntilAnswered checks the router waited for an answer to its close. That it did not wait
+// forever, heldSince checks: the router hangs up within the read deadline closeUnanswered set.
 func (s *RouterSuite) heldUntilAnswered(held time.Duration) {
 	s.Greater(held, closeWait/2, "the router hung up as it sent its close")
-	s.Less(held, closeWait+closeWait/2, "the router waits for the answer for about closeWait")
 }
 
 // SocketHangUpSuite covers a caller hanging up on /v1/agents/socket while the agent speaks.
