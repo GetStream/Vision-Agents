@@ -366,7 +366,7 @@ func (s *AlertsSuite) TestWithoutADescriptionTheMessagesAreAsTheyWere() {
 
 // What a minute's limit lets out of a condition and an item condition that hold at every 15 s
 // tick for two minutes, two items of which one comes and goes, and one that never holds. The
-// expected events are what the loop sent before it kept a gauge.
+// expected events are what the loop sent on the base, before the counter.
 func (s *AlertsSuite) TestTheEventsSentAndTheirLimitAreAsTheyWere() {
 	start := time.Now()
 	now := start
