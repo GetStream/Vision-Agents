@@ -3135,17 +3135,49 @@ func held(check *live.GuardrailCheck, heldMs float64) *live.GuardrailCheck {
 }
 
 // conversationBefore is what was said before the turn a reply answers, for the guardrail:
-// the history the model is sent, without the harness's notes and up to the caller's last
-// message, which is the turn itself.
+// the history the model is sent, without the harness's notes or what the router wrote on the
+// caller's side (llm.Message.Router), up to the caller's last message, which is the turn
+// itself. A person's envelope (Authored) is read as their name and words, so the check is
+// sent no user id and spends no room on JSON.
 func conversationBefore(history []llm.Message) string {
-	history = harness.WithoutNotes(history)
-	for at := len(history) - 1; at >= 0; at-- {
-		if history[at].Role == llm.User {
-			history = history[:at]
+	var said []llm.Message
+	for _, message := range harness.WithoutNotes(history) {
+		if message.Router {
+			continue
+		}
+		if message.Role == llm.User {
+			message.Content = unauthored(message.Content)
+		}
+		said = append(said, message)
+	}
+	for at := len(said) - 1; at >= 0; at-- {
+		if said[at].Role == llm.User {
+			said = said[:at]
 			break
 		}
 	}
-	return guardrail.Conversation(history)
+	return guardrail.Conversation(said)
+}
+
+// unauthored is a person's envelope (Authored) as "Name: words", or their words alone when it
+// names nobody, and any other text as it is. Text is only an envelope when it is exactly what
+// Authored writes: JSON a person typed that merely looks like one keeps every word of it.
+func unauthored(content string) string {
+	var envelope struct {
+		Author struct {
+			ID   string `json:"user_id"`
+			Name string `json:"display_name"`
+		} `json:"author"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal([]byte(content), &envelope) != nil ||
+		Authored(envelope.Author.ID, envelope.Author.Name, envelope.Text) != content {
+		return content
+	}
+	if envelope.Author.Name == "" {
+		return envelope.Text
+	}
+	return envelope.Author.Name + ": " + envelope.Text
 }
 
 // screening starts the check for a turn, or returns nil where there is nothing to screen:
@@ -3997,7 +4029,7 @@ func summarised(summary string) []llm.Message {
 	}{summary})
 	return []llm.Message{
 		{Role: llm.System, Content: summaryAttribution},
-		{Role: llm.User, Content: string(envelope), Typed: true},
+		{Role: llm.User, Content: string(envelope), Typed: true, Router: true},
 	}
 }
 
