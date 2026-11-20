@@ -85,6 +85,8 @@ type policy struct {
 	// dial opens the socket to an address the policy has already checked.
 	dial      func(ctx context.Context, network, address string) (net.Conn, error)
 	tlsConfig *tls.Config
+	// unpooled sends a request net/http will not send twice on a new HTTP/1.1 connection.
+	unpooled bool
 }
 
 // defaultPolicy dials with the settings http.DefaultTransport uses (30s connect, 30s
@@ -111,6 +113,17 @@ func NewClient(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTri
 	return defaultPolicy.client(timeout, wrap)
 }
 
+// NewUnpooledClient is NewClient for a caller that forwards requests it cannot replay, such as the
+// sandbox egress proxy, whose bodies are never rewindable. A request net/http would not send twice
+// (a POST, or a body it cannot rewind) goes on a new HTTP/1.1 connection, so it never meets a
+// kept-alive connection the origin is closing. It costs a TCP and TLS handshake per such request:
+// every other caller uses NewClient.
+func NewUnpooledClient(timeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
+	policy := defaultPolicy
+	policy.unpooled = true
+	return policy.client(timeout, wrap)
+}
+
 func (p policy) validate(ctx context.Context, raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
@@ -133,8 +146,11 @@ func (p policy) client(timeout time.Duration, wrap func(http.RoundTripper) http.
 	// tryPutIdleConn (net/http/transport.go) close each HTTP/1.1 connection after its one
 	// request. HTTP/2 connections stay shared: an origin closes one with GOAWAY, which names the
 	// last request it processed (RFC 9113 section 6.8).
-	unpooled := transport.Clone()
-	unpooled.MaxIdleConnsPerHost = -1
+	var unpooled *http.Transport
+	if p.unpooled {
+		unpooled = transport.Clone()
+		unpooled.MaxIdleConnsPerHost = -1
+	}
 	var next http.RoundTripper = checkedRoundTripper{transport: transport, unpooled: unpooled}
 	if wrap != nil {
 		next = wrap(next)
@@ -239,14 +255,16 @@ func (t clientRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 
 func (t clientRoundTripper) CloseIdleConnections() {
 	t.transport.CloseIdleConnections()
-	t.unpooled.CloseIdleConnections()
+	if t.unpooled != nil {
+		t.unpooled.CloseIdleConnections()
+	}
 }
 
 // checkedRoundTripper repeats the URL check after the wrapper, which may rewrite the request.
-// It sends a request net/http would not send twice on a new HTTP/1.1 connection. An origin
-// closes a kept-alive connection when it has been idle for its own limit, which can be shorter
-// than the transport's 90 s (nginx's keepalive_timeout is 75 s and Apache's KeepAliveTimeout 5 s
-// by default: https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_timeout,
+// With unpooled set (NewUnpooledClient) it sends a request net/http would not send twice on a
+// new HTTP/1.1 connection. An origin closes a kept-alive connection when it has been idle for its
+// own limit, which can be shorter than the transport's 90 s (nginx's keepalive_timeout is 75 s
+// and Apache's KeepAliveTimeout 5 s by default: https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_timeout,
 // https://httpd.apache.org/docs/2.4/mod/core.html#keepalivetimeout). A request written as that
 // close happens fails, and once its bytes are written the client cannot tell that close from one
 // after the origin applied the request (RFC 9110 section 9.2.2), so sending it again could apply
@@ -259,7 +277,7 @@ func (t checkedRoundTripper) RoundTrip(request *http.Request) (*http.Response, e
 	if err := checkURL(request.URL); err != nil {
 		return nil, err
 	}
-	if !replayable(request) {
+	if t.unpooled != nil && !replayable(request) {
 		return t.unpooled.RoundTrip(request)
 	}
 	return t.transport.RoundTrip(request)

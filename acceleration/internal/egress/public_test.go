@@ -428,7 +428,7 @@ func (s *EgressSuite) TestCloseIdleConnectionsClosesThemThroughAWrapper() {
 func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
 	origin := s.startOrigin(closeAtReuse, 0, false)
 	defer origin.close()
-	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
 	_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
 	s.Require().NoError(err)
 
@@ -443,7 +443,7 @@ func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
 func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
 	origin := s.startOrigin(closeAtReuse, 0, false)
 	defer origin.close()
-	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
 	_, err := s.send(client, http.MethodGet, nil)
 	s.Require().NoError(err)
 
@@ -459,7 +459,7 @@ func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
 func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
 	origin := s.startOrigin(0, dropAfterRead, false)
 	defer origin.close()
-	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
 	_, err := s.send(client, http.MethodGet, nil)
 	s.Require().NoError(err)
 
@@ -473,7 +473,7 @@ func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
 func (s *EgressSuite) TestGetsShareOneConnection() {
 	origin := s.startOrigin(0, 0, false)
 	defer origin.close()
-	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
 
 	for range 3 {
 		_, err := s.send(client, http.MethodGet, nil)
@@ -512,7 +512,7 @@ func (s *EgressSuite) TestARequestWithABodyGoCannotSendTwiceRidesANewConnection(
 func (s *EgressSuite) TestPostsToAnHTTP2OriginShareOneConnection() {
 	origin := s.startOrigin(0, 0, true)
 	defer origin.close()
-	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
 
 	for range 3 {
 		_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
@@ -524,12 +524,27 @@ func (s *EgressSuite) TestPostsToAnHTTP2OriginShareOneConnection() {
 	s.Eventually(func() bool { return origin.closed.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
 }
 
+// A client from NewClient keeps every caller's pooling: two POSTs to an HTTP/1.1 origin share one connection, as on
+// base 8e68a6c5c, so only the sandbox egress proxy pays a handshake per POST.
+func (s *EgressSuite) TestTheDefaultClientSendsPostsOnOneConnection() {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+
+	for range 3 {
+		_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+
+	s.Equal(int32(1), origin.conns.Load())
+}
+
 // reusesAConnection sends a GET and then request to a fresh HTTP/1.1 origin, and reports whether request went on
 // the GET's connection.
 func (s *EgressSuite) reusesAConnection(request *http.Request) bool {
 	origin := s.startOrigin(0, 0, false)
 	defer origin.close()
-	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
 	_, err := s.send(client, http.MethodGet, nil)
 	s.Require().NoError(err)
 	request.URL = mustURL("https://api.example.com/mcp")
@@ -695,6 +710,12 @@ func testPolicy(server *httptest.Server, resolver lookup) policy {
 		},
 		tlsConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
 	}
+}
+
+func unpooledPolicy(server *httptest.Server) policy {
+	policy := testPolicy(server, publicAnswers())
+	policy.unpooled = true
+	return policy
 }
 
 func publicAnswers() *answers {
