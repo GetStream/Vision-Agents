@@ -48,6 +48,63 @@ type speculation struct {
 	// unified says the reply opens with the tag that rules on it, so no flow controller
 	// was asked.
 	unified bool
+	// opinion says the reply rules on words chorus-asr ignored, and where they were said.
+	opinion opinion
+}
+
+// opinion is which second opinion on chorus-asr's ignore a reply is asked for.
+type opinion int
+
+const (
+	// noOpinion is a reply chorus-asr's ignore has nothing to do with.
+	noOpinion opinion = iota
+	// onQuietFloor rules on words chorus-asr ignored with the agent quiet: its [respond] is
+	// the reply the caller hears.
+	onQuietFloor
+	// overAgent rules on words chorus-asr let the agent talk through: its [respond] stops
+	// the agent, and the words are then answered as any that interrupt it are.
+	overAgent
+	// afterStop rules on the words a stop over the agent was ruled on, once it has stopped:
+	// its [respond] is the reply the caller hears, and its [ignore] says they only told it
+	// to stop.
+	afterStop
+)
+
+// secondOpinion puts words chorus-asr ignored to the reply model, and reports whether it
+// did: the reply's tag is then the ruling, and chorus-asr's is not acted on. Chorus-asr
+// hears the audio and not the conversation, so it cannot tell a caller answering the agent
+// ("So exactly.") from the room, and it let the agent talk through "Can you stop?" for 18 s
+// (session test-d3ca41d7); the reply model reads the conversation and is told what
+// chorus-asr made of the sound.
+//
+// With the agent quiet it is the reply's own request: one that opens with [respond] is what
+// the caller hears. Over the agent it only rules, on words that are more than a murmur
+// (takesFloor), and not while the reply is still being written: its [respond] stops the
+// agent, and the answer is asked for as after any interruption.
+func (a *Agent) secondOpinion(current *harness.Harness, ruling harness.Decided) bool {
+	if ruling.Ruler != harness.Heard || ruling.Disposition != harness.Ignore || ruling.Err != nil {
+		return false
+	}
+	ready, ok := a.converse.settled(ruling.CandidateID)
+	if !ok || words(ready.Text) == "" || overlapNoise(ready.Text) {
+		return false
+	}
+	asking := onQuietFloor
+	if !a.floor().Quiet {
+		if !takesFloor(ready.Text) {
+			return false
+		}
+		asking = overAgent
+	}
+	a.mu.Lock()
+	asked := a.speculations[ready.ID] != nil && a.speculations[ready.ID].opinion != noOpinion
+	anotherVoice := a.anotherVoiceLocked(ready)
+	a.mu.Unlock()
+	// The reply agreed with chorus-asr: its ignore is acted on as chorus-asr's.
+	if asked {
+		return false
+	}
+	return a.speculate(current, ready, false, anotherVoice, asking)
 }
 
 // speculate starts the reply to a settled turn before the flow controller has ruled on it.
@@ -61,9 +118,11 @@ type speculation struct {
 // the reply it is about.
 //
 // With UnifiedReplies the reply also rules on the words, and it reports true: nobody else
-// is asked, so the caller must not ask the flow controller as well.
-func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, anotherVoice bool) bool {
-	unified := a.options.UnifiedReplies
+// is asked, so the caller must not ask the flow controller as well. With chorus-asr its
+// ruling, made from the audio, decides the turn, and the reply rules only as the second
+// opinion on words it ignored (secondOpinion), told so.
+func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, anotherVoice bool, asking opinion) bool {
+	unified := asking != noOpinion || a.options.UnifiedReplies && a.audioFloor == nil
 	if !a.options.SpeculativeReplies && !unified {
 		return false
 	}
@@ -82,6 +141,14 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		parts := []string{harness.UnifiedNote}
 		if anotherVoice {
 			parts = append(parts, harness.AnotherVoiceNote)
+		}
+		switch asking {
+		case onQuietFloor:
+			parts = append(parts, harness.HeardIgnoredNote)
+		case overAgent:
+			parts = append(parts, harness.TalkedThroughNote)
+		case afterStop:
+			parts = append(parts, harness.StoppedNote)
 		}
 		if note != "" {
 			parts = append(parts, note)
@@ -126,6 +193,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		cancel:    cancel,
 		release:   make(chan bool, 1),
 		unified:   unified,
+		opinion:   asking,
 	}
 	spec.turn.Attributes = spec.attributes
 	a.speculations[ready.ID] = spec
@@ -327,10 +395,25 @@ func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
 	took := float64(time.Since(spec.startedAt).Microseconds()) / 1000
 	a.logger.Debug("the reply ruled on its own turn",
 		"candidate", spec.ready.ID, "disposition", disposition, "lead", lead, "took_ms", took)
-	spec.harness.Rule(harness.Decided{
+	ruling := harness.Decided{
 		CandidateID: spec.ready.ID,
 		Disposition: disposition,
 		Floor:       harness.Continue,
 		TookMs:      took,
-	})
+	}
+	if spec.opinion == overAgent {
+		// Words still coming are no reason to stop either: over the agent it is stop or go on.
+		if disposition == harness.Wait {
+			ruling.Disposition = harness.Ignore
+		}
+		if ruling.Disposition != harness.Ignore {
+			ruling.Floor = harness.Stop
+		}
+	}
+	// Agreeing with chorus-asr's ignore, the words are set aside as it had them: heard, and
+	// kept for the next reply to see.
+	if spec.opinion != noOpinion && ruling.Disposition == harness.Ignore {
+		ruling.Ruler = harness.Heard
+	}
+	spec.harness.Rule(ruling)
 }

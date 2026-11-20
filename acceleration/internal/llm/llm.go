@@ -87,6 +87,11 @@ type Message struct {
 	// tool's late result, a call silence declined or a summary of the call so far. No provider
 	// reads it: a model of the call's speech is told only what was said.
 	Typed bool
+	// Router says a User turn was written by the router on the caller's side and said by
+	// nobody: a tool's late result, the note that silence declined a call, a summary of the
+	// call so far, the cards of earlier episodes. No provider reads it: a guardrail is shown
+	// only what was said.
+	Router bool
 	// Document marks a file the caller attached, which goes ahead of the conversation on
 	// every reply. No provider reads it: the file was screened once, when it arrived, so a
 	// reply's own screen leaves it out.

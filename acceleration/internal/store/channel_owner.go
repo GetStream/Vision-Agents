@@ -147,8 +147,7 @@ func lockChannelOwner(ctx context.Context, tx bun.Tx, customerID, id string) (st
 	if definition.Manifest.Channel == nil || definition.Manifest.Channel.Messages.IsZero() {
 		return "", false, nil
 	}
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-		customerID+"/"+id, channelOwnerLockSeed); err != nil {
+	if err := lockUntilCommit(ctx, tx, customerID+"/"+id, channelOwnerLockSeed); err != nil {
 		return "", false, fmt.Errorf("store: channel connection owner: %w", err)
 	}
 	return connection.ConnectorID, true, nil

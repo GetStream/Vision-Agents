@@ -582,7 +582,7 @@ func render(cards []told) []llm.Message {
 	}{kept})
 	return []llm.Message{
 		{Role: llm.System, Content: cardsAttribution},
-		{Role: llm.User, Content: string(envelope)},
+		{Role: llm.User, Content: string(envelope), Router: true},
 	}
 }
 

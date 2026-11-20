@@ -184,6 +184,23 @@ func (s *PolicySuite) TestALongConversationKeepsItsEndWithinTheBound() {
 	s.Equal("user: "+strings.Repeat("a", kept)+"\n"+said, Conversation(history))
 }
 
+func (s *PolicySuite) TestALongLineKeepsItsEndAndNotItsStart() {
+	history := []llm.Message{{Role: llm.User, Content: strings.Repeat("a", conversationChars) + strings.Repeat("b", conversationChars)}}
+
+	s.Equal("user: "+strings.Repeat("b", conversationChars), Conversation(history))
+}
+
+func (s *PolicySuite) TestABoundSpentByLaterLinesAddsNoEmptyEarlierOnes() {
+	// The bound is spent by the last line, so the one before it is left out rather than
+	// sent as a role with no words.
+	history := []llm.Message{
+		{Role: llm.User, Content: "older"},
+		{Role: llm.Assistant, Content: strings.Repeat("b", conversationChars)},
+	}
+
+	s.Equal("assistant: "+strings.Repeat("b", conversationChars), Conversation(history))
+}
+
 func (s *PolicySuite) TestNothingSaidIsNoConversation() {
 	s.Empty(Conversation(nil))
 }

@@ -21,6 +21,10 @@ A call, text or chat message the router rejects or cannot answer is logged with 
 ### The Go and JavaScript SDKs name themselves and their release
 
 Every Go SDK request sends `User-Agent: stream-agents-go/<version>` beside `X-Stream-Client: sdk`, with the new `stream.Version`. The JavaScript SDK now sends `X-Stream-Client: sdk`, so its calls are counted as the SDK's rather than the API's, and from Node also `User-Agent: stream-agents-js/<version>` (`VERSION`); a page sends `X-Stream-Client` alone (#2065).
+### Usage alerts are a counter on /metrics
+
+The router and the usage service add to `router_alert_holds_total{alert,level}` at every check of their alerts: 1 when a condition holds, or the number of items a condition of items holds for, and nothing when it does not. It counts whether or not the Sentry limit sends the event, so a monitor outside Sentry can page on `increase(...{level="page"}[5m]) > 0`, including for a condition that holds at one check only. A hold at the last check, on shutdown, or during a drain reaches Sentry only. The Sentry events and their limit are unchanged (AI-3424).
+
 ### The Python, Go, Ruby and Rust SDKs refuse a user on a device's connections call
 
 A client that holds a user's token (`as_user`, `SetUser`) and names `user_id` on a connections call now fails at once with the SDK's configuration error, the way the JavaScript and PHP SDKs do, instead of sending the call for the router's 403. A device acts only as its own user: name the user from a backend that holds the API secret. A call naming no user, and a client on a router that trusts the customer id, work as before. A Go `Backend` with the API secret and a `UserID` that names another user on a connections call now acts for that user with the app's token, as the other SDKs do, instead of signing a token for its own user that the proxy refused.
@@ -843,6 +847,25 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A guardrail is no longer shown a tool's output as the caller's words
+
+The `conversation` a guardrail's check reads (classifier, judge and webhook) left out tool calls but not the result of a call held over an interruption, which reaches the model on the caller's side once it is in: a lookup's JSON reached the next turn's check as a `user:` line. That result, the note that silence declined a call, a summary of the call so far, and the cards of earlier episodes are now left out. In a channel where several people write, each person's line is their name and words (`user: Anya: I'm sick`), not the JSON envelope with their user id, and the same goes for a line of history the caller kept with names (AI-3408).
+### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
+
+With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.
+
+### A caller who goes on before hearing any of the reply is answered
+
+While a reply was still being written, with none of it heard, chorus-asr was told the agent was talking. It could then rule the caller's next words as said over the agent and let it talk through them, while the router dropped that reply as unheard: both turns went unanswered. A reply nobody has heard no longer counts as the agent talking.
+
+### A request the agent stopped for is answered
+
+When chorus-asr ruled a stop on a caller's whole sentence, such as "Okay. So can you tell me a story about Amsterdam?", the agent stopped and the sentence was set aside as the stop's own words: nobody answered it. The words a stop was ruled on are now put to the reply model, which answers them, or opens with `[ignore]` when they only told the agent to stop.
+
+### The reply model gives chorus-asr's ignores a second opinion
+
+Chorus-asr hears the audio but not the conversation, so with the agent quiet it can take a caller's short answer for background speech. Words chorus-asr ignored on a quiet floor are now put to the reply model, which is told what chorus-asr made of them and opens its reply with `[respond]` or `[ignore]`. A reply that opens with `[respond]` is what the caller hears, so no second request is made; one that opens with `[ignore]` says nothing, as before. The same holds over the agent: real words chorus-asr lets the agent talk through, such as "Can you stop?", are put to the reply model, and its `[respond]` stops the agent, which then answers them. A murmur is not asked about, nor anything said while the reply is still being written. Chorus-asr still decides alone when a turn ends and when to shorten the agent. `unified_replies` is not needed for this, and still applies only to agents without chorus-asr.
 
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 
