@@ -247,6 +247,16 @@ func (s *CampaignContactsSuite) TestContactsCannotBeAddedOrDeletedAfterLaunch() 
 	s.Len(s.list(created.Id, "").Items, 1)
 }
 
+func (s *CampaignContactsSuite) TestALaunchedCampaignIsLockedEvenWhenEveryRowIsRefused() {
+	created := s.launched()
+
+	status, payload := s.serverClient.call(http.MethodPost, s.contactsPath(created.Id),
+		map[string]any{"contacts": []map[string]any{{"to_number": "nope"}}})
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(string(payload), codeCampaignLocked)
+}
+
 func (s *CampaignContactsSuite) TestDeletingADraftsContactsLeavesItEmpty() {
 	created := s.draft(nil)
 	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550116"}, {"to_number": "+14155550117"}}})
@@ -509,6 +519,18 @@ func (s *CampaignContactsSuite) TestAContactCannotBeChangedToANumberNobodyCanRin
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(string(payload), string(RefusedReasonInvalidNumber))
 	s.Equal([]string{"+14155550187"}, s.numbers(s.list(created.Id, "").Items))
+}
+
+func (s *CampaignContactsSuite) TestAContactCannotBeChangedToAnEmptyNumber() {
+	created := s.draft(nil)
+	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550190"}}})
+	contact := s.list(created.Id, "").Items[0]
+
+	status, payload := s.serverClient.call(http.MethodPatch, s.contactPath(created.Id, contact.Id), map[string]any{"to_number": ""})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), string(RefusedReasonInvalidNumber))
+	s.Equal([]string{"+14155550190"}, s.numbers(s.list(created.Id, "").Items))
 }
 
 func (s *CampaignContactsSuite) TestAContactCannotTakeAnotherContactsNumber() {

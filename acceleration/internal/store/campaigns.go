@@ -519,7 +519,7 @@ func (s *Store) AddContacts(ctx context.Context, campaignID string, contacts []C
 		if err != nil {
 			return err
 		}
-		if !takesContacts(campaign) {
+		if !campaign.TakesContacts() {
 			return ErrCampaignLocked
 		}
 		for start := 0; start < len(contacts); start += insertChunk {
@@ -602,9 +602,9 @@ func lockDraft(ctx context.Context, tx bun.Tx, campaignID string) error {
 	return nil
 }
 
-// takesContacts is a campaign people may be added to: a draft, or an auto-enroll campaign that
+// TakesContacts is a campaign people may be added to: a draft, or an auto-enroll campaign that
 // has not ended.
-func takesContacts(campaign Campaign) bool {
+func (campaign Campaign) TakesContacts() bool {
 	if campaign.State == Draft {
 		return true
 	}
@@ -625,21 +625,34 @@ func (s *Store) DeleteContacts(ctx context.Context, campaignID string) error {
 	return stack.Wrap(err)
 }
 
-// UpdateContact changes a draft's contact: its number, variables, time zone and instructions all
-// become what changes holds. It keeps its place in the queue.
-func (s *Store) UpdateContact(ctx context.Context, campaignID, contactID string, changes Contact) (Contact, error) {
-	if changes.ToNumber == "" {
-		return Contact{}, stack.Wrap(errors.New("store: a contact needs a number to ring"))
-	}
-	if changes.Variables == nil {
-		changes.Variables = map[string]string{}
-	}
+// UpdateContact changes a draft's contact to what change makes of it: its number, variables,
+// time zone and instructions. change is given the contact as it is under the draft's lock, so
+// overlapping changes each start from the other's result. It keeps its place in the queue.
+func (s *Store) UpdateContact(ctx context.Context, campaignID, contactID string, change func(Contact) (Contact, error)) (Contact, error) {
 	var changed Contact
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := lockDraft(ctx, tx, campaignID); err != nil {
 			return err
 		}
-		err := tx.NewUpdate().Model(&changed).
+		var found Contact
+		err := tx.NewSelect().Model(&found).Where("id = ?", contactID).Where("campaign_id = ?", campaignID).Scan(ctx)
+		if errors.Is(err, sql.ErrNoRows) {
+			return unknownContact(contactID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: read contact: %w", err)
+		}
+		changes, err := change(found)
+		if err != nil {
+			return err
+		}
+		if changes.ToNumber == "" {
+			return errors.New("store: a contact needs a number to ring")
+		}
+		if changes.Variables == nil {
+			changes.Variables = map[string]string{}
+		}
+		err = tx.NewUpdate().Model(&changed).
 			Set("to_number = ?", changes.ToNumber).
 			Set("variables = ?", changes.Variables).
 			Set("time_zone = ?", changes.TimeZone).
@@ -650,9 +663,6 @@ func (s *Store) UpdateContact(ctx context.Context, campaignID, contactID string,
 			Scan(ctx)
 		if isViolation(err, uniqueViolation) {
 			return ErrDuplicateContact
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			return unknownContact(contactID)
 		}
 		if err != nil {
 			return fmt.Errorf("store: update contact: %w", err)

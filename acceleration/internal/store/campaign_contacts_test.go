@@ -3,6 +3,7 @@
 package store
 
 import (
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,11 @@ func (s *StoreSuite) addOne(campaign Campaign, number string) (Contact, error) {
 	}
 	s.Require().Len(added, 1)
 	return s.contactByNumber(campaign, number), nil
+}
+
+// replaceWith is a change that makes the contact what changes holds.
+func replaceWith(changes Contact) func(Contact) (Contact, error) {
+	return func(Contact) (Contact, error) { return changes, nil }
 }
 
 func (s *StoreSuite) claimedNumbers(now time.Time) []string {
@@ -97,9 +103,9 @@ func (s *StoreSuite) TestADraftsContactCanBeChanged() {
 	campaign := s.draftCampaign(newID(), "+15550001")
 	contact := s.contactByNumber(campaign, "+15550001")
 
-	changed, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, Contact{
+	changed, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, replaceWith(Contact{
 		ToNumber: "+15550009", Variables: map[string]string{"first_name": "Anna"}, TimeZone: "Europe/Amsterdam", Instructions: "Speak Dutch",
-	})
+	}))
 
 	s.Require().NoError(err)
 	s.Equal(contact.ID, changed.ID)
@@ -112,11 +118,48 @@ func (s *StoreSuite) TestADraftsContactCanBeChanged() {
 	s.Equal("Speak Dutch", stored[0].Instructions)
 }
 
+func (s *StoreSuite) TestOverlappingChangesToOneContactBothPersist() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+	contact := s.contactByNumber(campaign, "+15550001")
+	firstRead := make(chan struct{})
+	release := make(chan struct{})
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		_, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, func(found Contact) (Contact, error) {
+			close(firstRead)
+			<-release
+			found.TimeZone = "Europe/Amsterdam"
+			return found, nil
+		})
+		s.NoError(err)
+	}()
+	<-firstRead
+	go func() {
+		defer wait.Done()
+		_, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, func(found Contact) (Contact, error) {
+			found.Variables = map[string]string{"first_name": "Anna"}
+			return found, nil
+		})
+		s.NoError(err)
+	}()
+	// The second change waits on the first's lock; give it time to reach it before the first writes.
+	time.Sleep(200 * time.Millisecond)
+	close(release)
+	wait.Wait()
+
+	stored := s.contactsOf(campaign)
+	s.Require().Len(stored, 1)
+	s.Equal("Europe/Amsterdam", stored[0].TimeZone)
+	s.Equal(map[string]string{"first_name": "Anna"}, stored[0].Variables)
+}
+
 func (s *StoreSuite) TestAContactCannotTakeANumberAnotherContactHolds() {
 	campaign := s.draftCampaign(newID(), "+15550001", "+15550002")
 	contact := s.contactByNumber(campaign, "+15550001")
 
-	_, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, Contact{ToNumber: "+15550002"})
+	_, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, replaceWith(Contact{ToNumber: "+15550002"}))
 
 	s.ErrorIs(err, ErrDuplicateContact)
 	s.Equal("+15550001", s.contactByNumber(campaign, "+15550001").ToNumber)
@@ -137,7 +180,7 @@ func (s *StoreSuite) TestALaunchedCampaignsContactsCannotBeChangedOrRemoved() {
 	contact, err := s.addOne(campaign, "+15550001")
 	s.Require().NoError(err)
 
-	_, err = s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, Contact{ToNumber: "+15550002"})
+	_, err = s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, replaceWith(Contact{ToNumber: "+15550002"}))
 	s.ErrorIs(err, ErrCampaignLocked)
 	s.ErrorIs(s.store.DeleteContact(s.ctx, campaign.ID, contact.ID), ErrCampaignLocked)
 	s.Equal([]string{"+15550001"}, []string{s.contactsOf(campaign)[0].ToNumber})
@@ -148,7 +191,7 @@ func (s *StoreSuite) TestChangingOrRemovingAContactOfAnotherCampaignFindsNone() 
 	other := s.draftCampaign(newID(), "+15550001")
 	contact := s.contactByNumber(other, "+15550001")
 
-	_, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, Contact{ToNumber: "+15550002"})
+	_, err := s.store.UpdateContact(s.ctx, campaign.ID, contact.ID, replaceWith(Contact{ToNumber: "+15550002"}))
 	s.ErrorIs(err, ErrNoCampaignContact)
 	s.ErrorIs(s.store.DeleteContact(s.ctx, campaign.ID, contact.ID), ErrNoCampaignContact)
 	s.Equal("+15550001", s.contactByNumber(other, "+15550001").ToNumber)

@@ -109,6 +109,10 @@ func (s *Server) addCampaignContacts(ctx context.Context, request *addCampaignCo
 		sentAt = append(sentAt, index)
 	}
 
+	// The store checks again under its lock; this covers a request with no row to store.
+	if !current.TakesContacts() {
+		return nil, errCampaignLocked
+	}
 	answer := AddContactsResponse{Refused: refused}
 	if len(contacts) > 0 {
 		added, duplicates, err := s.store.AddContacts(ctx, current.ID, contacts)
@@ -173,35 +177,37 @@ func (s *Server) updateCampaignContact(ctx context.Context, request *updateCampa
 	if request.Body == nil {
 		return nil, invalidRequest("a request body is required")
 	}
-	found, _, err := s.store.CampaignContact(ctx, current.ID, request.ContactId)
-	if errors.Is(err, store.ErrNoCampaignContact) {
-		return nil, errUnknownContact
-	}
-	if err != nil {
-		return nil, err
-	}
 	body := request.Body
-	input := ContactInput{
-		ToNumber:     cmp.Or(value(body.ToNumber), found.ToNumber),
-		Variables:    found.Variables,
-		TimeZone:     &found.TimeZone,
-		Instructions: &found.Instructions,
-	}
-	if body.Variables != nil {
-		input.Variables = body.Variables
-	}
-	if body.TimeZone != nil {
-		input.TimeZone = body.TimeZone
-	}
-	if body.Instructions != nil {
-		input.Instructions = body.Instructions
-	}
-	contact, reason := contactFrom(input, cmp.Or(current.DefaultCountry, "US"))
-	if reason != "" {
-		return nil, invalidRequest("the contact was not changed: " + string(reason))
-	}
-	_, err = s.store.UpdateContact(ctx, current.ID, found.ID, contact)
+	country := cmp.Or(current.DefaultCountry, "US")
+	changed, err := s.store.UpdateContact(ctx, current.ID, request.ContactId, func(found store.Contact) (store.Contact, error) {
+		input := ContactInput{
+			ToNumber:     found.ToNumber,
+			Variables:    found.Variables,
+			TimeZone:     &found.TimeZone,
+			Instructions: &found.Instructions,
+		}
+		if body.ToNumber != nil {
+			input.ToNumber = *body.ToNumber
+		}
+		if body.Variables != nil {
+			input.Variables = body.Variables
+		}
+		if body.TimeZone != nil {
+			input.TimeZone = body.TimeZone
+		}
+		if body.Instructions != nil {
+			input.Instructions = body.Instructions
+		}
+		contact, reason := contactFrom(input, country)
+		if reason != "" {
+			return store.Contact{}, invalidRequest("the contact was not changed: " + string(reason))
+		}
+		return contact, nil
+	})
+	var refused APIError
 	switch {
+	case errors.As(err, &refused):
+		return nil, refused
 	case errors.Is(err, store.ErrDuplicateContact):
 		return nil, errDuplicateContact
 	case errors.Is(err, store.ErrCampaignLocked):
@@ -211,7 +217,7 @@ func (s *Server) updateCampaignContact(ctx context.Context, request *updateCampa
 	case err != nil:
 		return nil, err
 	}
-	return s.contactAnswer(ctx, current, found.ID)
+	return s.contactAnswer(ctx, current, changed.ID)
 }
 
 // deleteCampaignContact removes one contact of a draft.
