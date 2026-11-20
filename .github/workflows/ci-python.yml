@@ -26,6 +26,9 @@ on:
       - 'examples/text_agents/mcp_plugins/**'
   pull_request:
     branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - '**/*.py'
       - '**/pyproject.toml'
@@ -55,6 +58,7 @@ concurrency:
 jobs:
   # No secrets: unit tests reach no provider, and a pull request's code runs here.
   unit:
+    if: github.event.pull_request.draft != true
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'not integration'
