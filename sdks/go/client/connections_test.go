@@ -508,3 +508,114 @@ func TestEveryCallSendsTheUserItNamesAsTheActingUser(t *testing.T) {
 		t.Errorf("the lists acted for %q", acting)
 	}
 }
+
+// connectionCalls is every connections call naming a user, as a device or a page would make it.
+func connectionCalls(connections *Connections) map[string]func() error {
+	call := func(_ any, err error) error { return err }
+	return map[string]func() error{
+		"create": func() error {
+			return call(connections.Create(context.Background(), ConnectionRequest{Connector: "linear", UserID: "alice"}))
+		},
+		"authorize": func() error {
+			return call(connections.Authorize(context.Background(), "c-1", AuthorizeOptions{UserID: "alice"}))
+		},
+		"get": func() error {
+			return call(connections.Get(context.Background(), "c-1", ConnectionOptions{UserID: "alice"}))
+		},
+		"list": func() error {
+			return call(connections.List(context.Background(), ConnectionFilter{UserID: "alice"}))
+		},
+		"delete": func() error {
+			return connections.Delete(context.Background(), "c-1", ConnectionOptions{UserID: "alice"})
+		},
+	}
+}
+
+// Catches a device that names a user on a connections call and gets a late 403 from the router
+// instead of an error here, before anything is sent.
+func TestADeviceNamingAUserIsRefusedBeforeTheRouter(t *testing.T) {
+	backend := newRouter(t)
+	app, err := New(stream.Backend{URL: backend.URL, APIKey: "key", APISecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := app.SetUser("jean", "jean-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, call := range connectionCalls(device.Connections()) {
+		err := call()
+		if err == nil || !strings.Contains(err.Error(), "acts only as that user") {
+			t.Errorf("%s answered %v", name, err)
+		}
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.asked) != 0 {
+		t.Errorf("the router was sent %v", backend.asked)
+	}
+}
+
+// Catches a refusal that also hits a device naming no user, or an empty one, or a backend:
+// these were sent before and still are, with the device's token and no acting user.
+func TestADeviceNamingNoUserAndABackendSendWhatTheyAlwaysDid(t *testing.T) {
+	backend := newRouter(t)
+	app, err := New(stream.Backend{URL: backend.URL, APIKey: "key", APISecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := app.SetUser("jean", "jean-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := connectFor(t, app.Connections(), "github", "")
+
+	if _, err := device.Connections().Get(t.Context(), *created.Id, ConnectionOptions{UserID: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := device.Connections().List(t.Context(), ConnectionFilter{}); err != nil {
+		t.Fatal(err)
+	}
+	connectFor(t, app.Connections(), "linear", "alice")
+	if acting := backend.actingFor("POST", "/v1/agents/connections"); !slices.Equal(acting, []string{"", "alice"}) {
+		t.Errorf("a backend's creates acted for %q", acting)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	// The two device requests are the second and third the router heard.
+	for _, heard := range backend.heard[1:3] {
+		if heard.Get(stream.AuthorizationHeader) != "jean-token" || heard.Get(stream.AuthTypeHeader) != stream.AuthTypeJWT {
+			t.Errorf("the device sent %v", heard)
+		}
+		if heard.Get(stream.UserHeader) != "" {
+			t.Errorf("the device named a user: %v", heard)
+		}
+	}
+}
+
+// Catches the refusal reaching the customer id path, where SetUser holds a token the client does
+// not send and the router reads the user from X-Stream-User-Id: that call works today.
+func TestACustomerIDClientStillNamesAUser(t *testing.T) {
+	backend := newRouter(t)
+	page, err := backend.client(t).SetUser("jean", "jean-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := connectFor(t, page.Connections(), "linear", "alice")
+
+	if *created.Owner.UserId != "alice" {
+		t.Errorf("the connection came back as %+v", created)
+	}
+	if acting := backend.actingFor("POST", "/v1/agents/connections"); !slices.Equal(acting, []string{"alice"}) {
+		t.Errorf("the create acted for %q", acting)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if heard := backend.heard[0]; heard.Get(stream.CustomerHeader) != "acme" || heard.Get(stream.AuthorizationHeader) != "" {
+		t.Errorf("the customer id client sent %v", heard)
+	}
+}
