@@ -953,6 +953,45 @@ class TestAccelerated:
             "output": "charged",
         }
 
+    async def test_a_calls_updates_reach_the_router_before_its_result(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        @joined.register_function(description="Search for flights")
+        async def search_flights(tool_call_context: ToolCallContext) -> str:
+            await tool_call_context.update("Comparing 40 flights")
+            await tool_call_context.update(
+                title="Booking the cheapest", custom={"cheapest": 129}
+            )
+            await tool_call_context.update(custom={"seat": "12A"})
+            return "found 3"
+
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-7",
+                "name": "search_flights",
+                "arguments": "{}",
+            }
+        )
+
+        assert await router.answered() == {
+            "type": "tool_update",
+            "tool_call_id": "call-7",
+            "text": "Comparing 40 flights",
+        }
+        assert await router.answered() == {
+            "type": "tool_update",
+            "tool_call_id": "call-7",
+            "text": "Booking the cheapest",
+            "custom": {"cheapest": 129},
+        }
+        assert await router.answered() == {
+            "type": "tool_update",
+            "tool_call_id": "call-7",
+            "custom": {"seat": "12A"},
+        }
+        assert (await router.answered())["output"] == "found 3"
+
     async def test_a_call_stopped_before_it_was_held_never_writes(
         self, router: Router, joined: stream.Accelerated
     ):

@@ -10,7 +10,7 @@ use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
 use vision_agents::{
     Agent, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage, ToolCallContext,
-    types,
+    ToolCallUpdate, types,
 };
 
 fn stream_support(client: Client) -> Client {
@@ -731,6 +731,69 @@ async fn a_hosted_call_cancelled_by_an_interruption_is_not_answered() {
     // Stopping waits for work in flight, so a call left running would answer here.
     running.await.unwrap().unwrap();
     assert_eq!(socket.next().await, None);
+}
+
+#[tokio::test]
+async fn a_hosted_calls_updates_reach_the_router_before_its_result() {
+    let server = Server::start().await;
+    let client = server.client();
+    client
+        .tools()
+        .register_with_tool_call_context(
+            types::SessionTool {
+                name: "search_flights".into(),
+                description: "Searches".into(),
+                ..Default::default()
+            },
+            |tool_call_context: ToolCallContext, _| async move {
+                tool_call_context.update("Comparing 40 flights").await?;
+                tool_call_context
+                    .send_update(ToolCallUpdate {
+                        title: Some("Booking the cheapest".into()),
+                        custom: json!({"cheapest": 129}).as_object().cloned(),
+                    })
+                    .await?;
+                tool_call_context
+                    .send_update(ToolCallUpdate {
+                        custom: json!({"seat": "12A"}).as_object().cloned(),
+                        ..Default::default()
+                    })
+                    .await?;
+                Ok::<_, Error>("found 3")
+            },
+        )
+        .unwrap();
+    let dispatch = Dispatch::new(server.client());
+    dispatch.host(&client, None);
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    socket
+        .send(json!({"type": "ready", "worker_id": "w-1"}))
+        .await;
+    socket.expect("host_tools").await;
+
+    socket
+        .send(json!({"type": "tool_call", "id": "c1", "session_id": "s1", "name": "search_flights", "arguments": "{}"}))
+        .await;
+
+    assert_eq!(
+        socket.expect("tool_update").await,
+        json!({"type": "tool_update", "tool_call_id": "c1", "text": "Comparing 40 flights"})
+    );
+    assert_eq!(
+        socket.expect("tool_update").await,
+        json!({"type": "tool_update", "tool_call_id": "c1", "text": "Booking the cheapest", "custom": {"cheapest": 129}})
+    );
+    assert_eq!(
+        socket.expect("tool_update").await,
+        json!({"type": "tool_update", "tool_call_id": "c1", "custom": {"seat": "12A"}})
+    );
+    assert_eq!(socket.expect("tool_result").await["output"], "found 3");
+    dispatch.stop();
+    running.await.unwrap().unwrap();
 }
 
 #[tokio::test]

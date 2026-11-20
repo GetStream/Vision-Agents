@@ -93,6 +93,8 @@ public data class AgentEvent(
                 approvedAt = instantOrNull(string("approved_at")),
                 rejectedAt = instantOrNull(string("rejected_at")),
                 error = string("error"),
+                displayTitle = string("display_title"),
+                custom = this["custom"] as? JsonObject ?: JsonObject(emptyMap()),
             )
         }
 
@@ -208,7 +210,21 @@ public data class AgentEvent(
         val rejectedAt: Instant?,
         /** Why a failed call failed, or what a declined one shows. */
         val error: String,
+        /** What the call is doing, such as "Checking the weather", as its tool was declared with, or empty for none. */
+        val displayTitle: String = "",
+        /** What the tool last sent for the app to show, such as a card under the message. Kept once the call finishes. */
+        val custom: JsonObject = JsonObject(emptyMap()),
     ) {
+        /**
+         * What to call the call in the conversation: [progress] while it runs or waits, otherwise
+         * [displayTitle], or [tool] for a tool declared without one.
+         */
+        public val title: String
+            get() = when {
+                (status == Status.InProgress || status == Status.Waiting) && progress.isNotEmpty() -> progress
+                else -> displayTitle.ifEmpty { tool }
+            }
+
         /** Where a call stands. [Unknown] is a status the router added after this SDK shipped. */
         public enum class Status(public val wire: String) {
             InProgress("in_progress"),

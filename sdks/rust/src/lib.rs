@@ -55,7 +55,7 @@ pub use simulations::{SimulationRuns, Simulations};
 pub use socket::{Frame, Incoming, Socket, SocketReceiver, SocketSender};
 pub use stream::{Call, DEFAULT_CALL_TYPE, STREAM_API, StreamApp};
 pub use teams::{TeamLimit, Teams};
-pub use tool_call::{ToolCallContext, ToolConversation, ToolUser};
+pub use tool_call::{ToolCallContext, ToolCallUpdate, ToolConversation, ToolUser};
 pub use tools::Tools;
 pub use usd::Usd;
 

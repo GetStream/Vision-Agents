@@ -132,7 +132,7 @@ func (p *progressHeard) HoldTool(id string) bool {
 	return p.holds
 }
 
-func (p *progressHeard) ToolUpdate(id, text string, verbatim bool) {
+func (p *progressHeard) ToolUpdate(id, text string, verbatim bool, custom map[string]any) {
 	p.updates = append(p.updates, id+": "+text)
 }
 
@@ -146,7 +146,7 @@ func TestAWorkerRunningAHostedCallReachesItsConversation(t *testing.T) {
 
 	go func() {
 		call := <-worker.ToolCalls()
-		worker.Update(call.ID, "reading the gradle files", false)
+		worker.Update(call.ID, "reading the gradle files", false, nil)
 		if _, held := worker.Hold(call.ID); !held {
 			t.Error("a call its conversation holds was not held")
 		}
@@ -163,7 +163,7 @@ func TestAWorkerRunningAHostedCallReachesItsConversation(t *testing.T) {
 	if _, held := worker.Hold("call-1"); held {
 		t.Error("an answered call was held")
 	}
-	worker.Update("call-1", "late", false)
+	worker.Update("call-1", "late", false, nil)
 	if len(heard.updates) != 1 {
 		t.Errorf("an answered call's update reached the conversation: %+v", heard.updates)
 	}

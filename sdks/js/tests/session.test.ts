@@ -402,6 +402,36 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("sends a call's update to the router before its result", async () => {
+    const tools = new Tools().register({
+      name: "search_flights",
+      description: "Search for flights",
+      run: async (_input, toolCallContext) => {
+        toolCallContext.update("Comparing 40 flights");
+        toolCallContext.update({ title: "Booking the cheapest", custom: { cheapest: 129 } });
+        toolCallContext.update({ custom: { seat: "12A" } });
+        return "found 3";
+      },
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "search_flights", arguments: "{}" });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "Comparing 40 flights",
+    });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_update",
+      tool_call_id: "call_1",
+      text: "Booking the cheapest",
+      custom: { cheapest: 129 },
+    });
+    assert.deepEqual(await connection.next(), { type: "tool_update", tool_call_id: "call_1", custom: { seat: "12A" } });
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", output: "found 3" });
+    await session.close();
+  });
+
   it("keeps a held call going when the caller talks over the agent", async () => {
     let release = () => {};
     let writing = false;

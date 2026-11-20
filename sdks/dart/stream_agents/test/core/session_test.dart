@@ -576,52 +576,70 @@ void main() {
       },
     );
 
-    test(
-      'keeps each tool call\'s last state, and a handler hears its kind until cancelled',
-      () async {
-        final chat = await agents.chat();
-        final socket = await router.socket();
-        final progress = <String>[];
-        final finished = <String>[];
-        late StreamSubscription<AgentEvent> first;
-        first = chat.on(AgentEventKind.toolCallProgress, (event) {
-          progress.add(event['progress'] as String);
-          first.cancel();
-        });
-        chat.on(
-          AgentEventKind.toolCallFinished,
-          (event) => finished.add(event['tool_call_id'] as String),
+    test('keeps each tool call\'s last state, and a handler hears its kind until cancelled', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      final progress = <String>[];
+      final finished = <String>[];
+      late StreamSubscription<AgentEvent> first;
+      first = chat.on(AgentEventKind.toolCallProgress, (event) {
+        progress.add(event['progress'] as String);
+        first.cancel();
+      });
+      chat.on(
+        AgentEventKind.toolCallFinished,
+        (event) => finished.add(event['tool_call_id'] as String),
+      );
+      const call =
+          '"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","display_title":"Searching flights",'
+          '"started_at":"2026-11-18T12:00:00Z"';
+
+      socket
+        ..send('{"type":"tool_call.started",$call,"status":"waiting","duration_ms":0}')
+        ..send(
+          '{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":100,'
+          '"progress":"Searching for flights","approved_at":"2026-11-18T12:00:00.1Z"}',
+        )
+        ..send(
+          '{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,'
+          '"progress":"Comparing prices","custom":{"cheapest":129},"approved_at":"2026-11-18T12:00:00.1Z"}',
+        )
+        ..send(
+          '{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,'
+          '"custom":{"cheapest":129},"approved_at":"2026-11-18T12:00:00.1Z"}',
         );
-        const call =
-            '"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","started_at":"2026-11-18T12:00:00Z"';
+      await until(() => chat.toolCalls.value['c1']?.status.isFinished ?? false);
+      await until(() => finished.isNotEmpty);
 
-        socket
-          ..send('{"type":"tool_call.started",$call,"status":"waiting","duration_ms":0}')
-          ..send(
-            '{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":100,'
-            '"progress":"Searching for flights","approved_at":"2026-11-18T12:00:00.1Z"}',
-          )
-          ..send(
-            '{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,'
-            '"progress":"Comparing prices","approved_at":"2026-11-18T12:00:00.1Z"}',
-          )
-          ..send(
-            '{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,'
-            '"approved_at":"2026-11-18T12:00:00.1Z"}',
-          );
-        await until(() => chat.toolCalls.value['c1']?.status.isFinished ?? false);
-        await until(() => finished.isNotEmpty);
+      final last = chat.toolCalls.value['c1']!;
+      expect(last.status, ToolCallStatus.success);
+      expect(last.duration, const Duration(milliseconds: 300));
+      expect(last.progress, '', reason: 'the finished frame carries the whole state');
+      expect(last.approvedAt, DateTime.utc(2026, 11, 18, 12, 0, 0, 100));
+      expect(last.displayTitle, 'Searching flights');
+      expect(last.custom, {'cheapest': 129});
+      expect(progress, ['Searching for flights']);
+      expect(finished, ['c1']);
 
-        final last = chat.toolCalls.value['c1']!;
-        expect(last.status, ToolCallStatus.success);
-        expect(last.duration, const Duration(milliseconds: 300));
-        expect(last.progress, '', reason: 'the finished frame carries the whole state');
-        expect(last.approvedAt, DateTime.utc(2026, 11, 18, 12, 0, 0, 100));
-        expect(progress, ['Searching for flights']);
-        expect(finished, ['c1']);
-        await chat.close();
-      },
-    );
+      socket.send(
+        '{"type":"tool_call.started","tool_call_id":"c2","tool":"list_issues","turn_id":"t2",'
+        '"status":"in_progress","started_at":"2026-11-18T12:00:01Z","duration_ms":0}',
+      );
+      socket.send(
+        '{"type":"tool_call.progress","tool_call_id":"c3","tool":"read_issues","turn_id":"t2",'
+        '"display_title":"Reading issues","status":"in_progress","progress":"Reading 12 issues",'
+        '"started_at":"2026-11-18T12:00:02Z","duration_ms":0}',
+      );
+      await until(() => chat.toolCalls.value.containsKey('c3'));
+      expect(chat.toolCallsForTurn('t1').map((call) => call.title), ['Searching flights']);
+      expect(chat.toolCallsForTurn('t2').map((call) => call.title), [
+        'list_issues',
+        'Reading 12 issues',
+      ]);
+      expect(chat.toolCallsForTurn('t3'), isEmpty);
+      expect(chat.toolCalls.value['c3']!.custom, isEmpty);
+      await chat.close();
+    });
 
     test('a tool call the router cancelled is not answered', () async {
       final release = Completer<String>();

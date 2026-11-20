@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from typing_extensions import Self
 from ..models.tool_call_frame_type import ToolCallFrameType
 from ..models.tool_call_status import ToolCallStatus
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.tool_call_state_custom import ToolCallStateCustom
+
 
 T = TypeVar("T", bound="ToolCallState")
 
@@ -40,6 +44,9 @@ class ToolCallState:
             display_title (str | Unset): What the call is doing, in words for the people in the conversation, such as
                 "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's
                 own search. Absent when the tool declared none.
+            custom (ToolCallStateCustom | Unset): The data whoever runs the call last sent with a tool_update, such as what
+                a card under the message shows. Each update with custom replaces it whole, and it is kept once the call
+                finishes.
     """
 
     duration_ms: int
@@ -54,6 +61,7 @@ class ToolCallState:
     progress: str | Unset = UNSET
     rejected_at: datetime.datetime | Unset = UNSET
     display_title: str | Unset = UNSET
+    custom: ToolCallStateCustom | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +93,10 @@ class ToolCallState:
 
         display_title = self.display_title
 
+        custom: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.custom, Unset):
+            custom = self.custom.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,11 +120,15 @@ class ToolCallState:
             field_dict["rejected_at"] = rejected_at
         if display_title is not UNSET:
             field_dict["display_title"] = display_title
+        if custom is not UNSET:
+            field_dict["custom"] = custom
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.tool_call_state_custom import ToolCallStateCustom
+
         d = dict(src_dict)
         duration_ms = d.pop("duration_ms")
 
@@ -148,6 +164,13 @@ class ToolCallState:
 
         display_title = d.pop("display_title", UNSET)
 
+        _custom = d.pop("custom", UNSET)
+        custom: ToolCallStateCustom | Unset
+        if isinstance(_custom, Unset):
+            custom = UNSET
+        else:
+            custom = ToolCallStateCustom.from_dict(_custom)
+
         tool_call_state = cls(
             duration_ms=duration_ms,
             started_at=started_at,
@@ -161,6 +184,7 @@ class ToolCallState:
             progress=progress,
             rejected_at=rejected_at,
             display_title=display_title,
+            custom=custom,
         )
 
         tool_call_state.additional_properties = d

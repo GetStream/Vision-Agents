@@ -118,8 +118,9 @@ type workReply struct {
 
 // callUpdate is a running hosted call's tool_update, carried back to its conversation.
 type callUpdate struct {
-	Text     string `json:"text"`
-	Verbatim bool   `json:"verbatim,omitempty"`
+	Text     string         `json:"text"`
+	Verbatim bool           `json:"verbatim,omitempty"`
+	Custom   map[string]any `json:"custom,omitempty"`
 }
 
 // NewWorkers returns Workers over this node's pool, and starts taking the work its peers
@@ -410,7 +411,7 @@ func (w *Workers) heard(news workReply) {
 	w.mu.Unlock()
 	if news.Update != nil {
 		if found {
-			carried.progress.ToolUpdate(carried.id, news.Update.Text, news.Update.Verbatim)
+			carried.progress.ToolUpdate(carried.id, news.Update.Text, news.Update.Verbatim, news.Update.Custom)
 		}
 		return
 	}
@@ -428,8 +429,8 @@ type carriedProgress struct {
 	replyTo string
 }
 
-func (p *carriedProgress) ToolUpdate(_, text string, verbatim bool) {
-	news := workReply{ID: p.request, Update: &callUpdate{Text: text, Verbatim: verbatim}}
+func (p *carriedProgress) ToolUpdate(_, text string, verbatim bool, custom map[string]any) {
+	news := workReply{ID: p.request, Update: &callUpdate{Text: text, Verbatim: verbatim, Custom: custom}}
 	if err := p.workers.bus.Publish(context.Background(), p.replyTo, news); err != nil {
 		p.workers.logger.Warn("could not carry a hosted call's update back", "error", err)
 	}

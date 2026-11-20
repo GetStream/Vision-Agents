@@ -24,6 +24,11 @@ class ToolLine(Protocol):
         Returns whether it was still running to be held.
         """
 
+    async def update(
+        self, call_id: str, title: str, custom: Optional[dict[str, Any]]
+    ) -> None:
+        """Tell the session how the call is going."""
+
 
 @dataclass(frozen=True)
 class ToolUser:
@@ -82,6 +87,22 @@ class ToolCallContext:
             return
         if not await self.line.hold(self.id):
             raise CallNotHeld(f"the call {self.id} was stopped before it could be held")
+
+    async def update(
+        self, title: str = "", *, custom: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Tell the people in the conversation how the call is going.
+
+        Args:
+            title: Replaces the call's display title while it runs, such as
+                "Comparing 40 flights". On a voice call the agent tells the caller
+                about it in its own words. Empty leaves the title as it was.
+            custom: Replaces the call's data whole, for their app to show, such as a
+                card under the message. Kept once the call finishes. None leaves it.
+        """
+        if self.line is None or not self.id:
+            return
+        await self.line.update(self.id, title, custom)
 
 
 def context_parameter(func: Callable[..., Any]) -> Optional[str]:
