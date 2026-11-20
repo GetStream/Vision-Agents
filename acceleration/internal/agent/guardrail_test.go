@@ -616,16 +616,14 @@ func (s *AgentSuite) TestHeldMsIsRecordedWhenTheReplyWaitedForTheCheck() {
 	s.Positive(turn.Guardrail.HeldMs)
 }
 
+// The verdict is put in before the reply asks, so no goroutine's timing decides the row.
 func (s *AgentSuite) TestNoHeldMsWhenTheVerdictWasInBeforeTheReply() {
-	s.screens(guardrail.ModeParallel, "pizza")
-	s.joinText()
+	started := &screening{decided: make(chan checked, 1)}
+	started.decided <- checked{}
 
-	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	_, heldMs := started.wait()
 
-	turn, _ := firstOf[Turn](s.reported())
-	s.Require().NotNil(turn.Guardrail)
-	s.Zero(turn.Guardrail.HeldMs)
+	s.Zero(heldMs)
 }
 
 func (s *AgentSuite) TestAWebhookCheckHasNoProbabilityOrThreshold() {
