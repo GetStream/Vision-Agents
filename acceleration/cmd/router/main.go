@@ -867,8 +867,9 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer stopSweeper()
 	}
 
-	// One router of the deployment checks every organization's spend for a jump each hour, and posts
-	// the day before's activity digest each day.
+	// One router of the deployment checks every organization's spend for a jump each hour, posts
+	// the day before's activity digest each day, and deletes the activity past its keep each day.
+	// It runs on every router with a database: without Slack settings it only deletes.
 	if anomalies := costAnomalies(settings, pgStore, logger); anomalies != nil {
 		anomalies.Start()
 		defer anomalies.Close()

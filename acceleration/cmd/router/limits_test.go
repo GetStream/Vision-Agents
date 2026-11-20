@@ -91,10 +91,24 @@ func (s *LimitsSuite) TestTheCostAnomalyCheckRunsWhereThereIsAChannelAndPostgres
 	s.NotNil(costAnomalies(s.settings, db, logger), "spend is priced and recorded with limits off too")
 
 	s.Nil(costAnomalies(s.settings, nil, logger), "no Postgres to read the spend from")
-	s.settings.Limits.SlackToken = " "
-	s.Nil(costAnomalies(s.settings, db, logger), "no token")
-	s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = "xoxb-test", ""
-	s.Nil(costAnomalies(s.settings, db, logger), "no channel")
+}
+
+// Defect: the retention ran only where Slack was set, so a deployment without it kept every row.
+func (s *LimitsSuite) TestTheCheckRunsWithoutSlackAndPostsNothing() {
+	logger := slog.New(slog.DiscardHandler)
+	db := &store.Store{}
+	for name, set := range map[string]func(){
+		"no token":   func() { s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = " ", "C123" },
+		"no channel": func() { s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = "xoxb-test", "" },
+		"neither":    func() { s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = "", "" },
+	} {
+		set()
+		options, ok := costAnomalyOptions(s.settings, db, logger)
+		s.Require().True(ok, name)
+		s.Nil(options.Poster, name)
+		s.False(options.Digest, name)
+		s.NotNil(costAnomalies(s.settings, db, logger), name)
+	}
 }
 
 // The message names its environment and links to the staff page, so an operator reading it in the

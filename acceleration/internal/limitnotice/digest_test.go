@@ -412,3 +412,154 @@ func (s *DigestSuite) TestAnOrganizationsFirstAnsweredConversationIsListedWithTh
 		"  • `" + sameDay + "`   0 days after its first request",
 	})), strings.Split(strings.TrimSuffix(first, "\nActive orgs: 7 (day before: 4)"), "\n"), digest)
 }
+
+// days are the UTC days table holds rows of, oldest first.
+func (s *DigestSuite) days(table string) []string {
+	var days []string
+	s.Require().NoError(s.db.DB().NewSelect().TableExpr(table).ColumnExpr("DISTINCT day::text").
+		OrderExpr("1").Scan(s.ctx, &days))
+	return days
+}
+
+// Defect: a keep other than 400 days, the day on its edge deleted, the digests' days kept for
+// good, or a delete on every check rather than once a day. The days are written out rather than
+// computed: 401 days before 10 Mar 2026 is 2 Feb 2025.
+func (s *DigestSuite) TestActivityPastFourHundredDaysIsDeletedOnceADay() {
+	pinned := organization()
+	for _, daysAgo := range []int{401, 400, 399, 0} {
+		s.active(pinned, activity.AreaAgentSetup, daysAgo, 1, 0)
+	}
+	for _, day := range []time.Time{
+		time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), time.Date(2025, 2, 3, 0, 0, 0, 0, time.UTC),
+	} {
+		claimed, err := s.db.ClaimActivityDigest(s.ctx, day, stale)
+		s.Require().NoError(err)
+		s.Require().True(claimed)
+	}
+
+	s.router().Start()
+	s.checked(0)
+	s.Equal([]string{"2025-02-03", "2025-02-04", "2026-03-10"}, s.days("customer_activity"))
+	s.Equal([]string{"2025-02-03", "2026-03-09"}, s.days("activity_digests"), "the day before's posted by the check")
+
+	s.active(organization(), activity.AreaAgentSetup, 401, 1, 0)
+	later := today.Add(8 * time.Hour)
+	s.clock.Store(&later)
+	s.checked(s.reads.Load())
+	s.Equal([]string{"2025-02-02", "2025-02-03", "2025-02-04", "2026-03-10"}, s.days("customer_activity"),
+		"written after the day's delete, so kept until the next day's, though checked later that day")
+
+	next := today.AddDate(0, 0, 1)
+	s.clock.Store(&next)
+	s.Require().Eventually(func() bool {
+		return slices.Equal(s.days("customer_activity"), []string{"2025-02-04", "2026-03-10"})
+	}, settleFor, time.Millisecond, "the day before 400 days ago went too")
+	s.Require().Eventually(func() bool {
+		return slices.Equal(s.days("activity_digests"), []string{"2026-03-09", "2026-03-10"})
+	}, settleFor, time.Millisecond)
+}
+
+// Defect: the delete needed a Slack to post to, so a deployment without one kept every row; or a
+// check with nowhere to post still posted, or noted anomalies nobody would hear of.
+func (s *DigestSuite) TestActivityIsDeletedWithoutASlackAndNothingIsPosted() {
+	pinned := organization()
+	for _, daysAgo := range []int{401, 399, 1} {
+		s.active(pinned, activity.AreaAgentSetup, daysAgo, 1, 0)
+	}
+	claimed, err := s.db.ClaimActivityDigest(s.ctx, time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), stale)
+	s.Require().NoError(err)
+	s.Require().True(claimed)
+	for daysAgo, cost := range []int64{40_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000} {
+		s.Require().NoError(s.db.RecordRequest(s.ctx, &store.Request{
+			Modality: "llm", CustomerID: "app-" + pinned, OrganizationID: pinned, Provider: "openai", Model: "m",
+			StartedAt: time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC).AddDate(0, 0, -daysAgo), CostMicros: cost,
+			Billable: true, Success: true,
+		}))
+	}
+
+	anomalies := NewAnomalies(AnomalyOptions{
+		Store: s.db, Logger: slog.New(slog.DiscardHandler), Every: 20 * time.Millisecond, Digest: true,
+		Now: func() time.Time {
+			s.reads.Add(1)
+			return *s.clock.Load()
+		},
+	})
+	s.T().Cleanup(anomalies.Close)
+	anomalies.Start()
+	s.checked(0)
+
+	s.Equal([]string{"2025-02-04", "2026-03-09"}, s.days("customer_activity"))
+	s.Empty(s.days("activity_digests"), "the old day's digest went, none was posted for the day before")
+	s.Empty(s.days("cost_anomaly_notices"), "a spike today, and nothing noted that nobody would be told of")
+	s.Empty(s.slack.posts())
+}
+
+// Defect: the keep counted from the clock's own date rather than the UTC day: at 01:00 on 11
+// Mar in UTC+14 it is still 10 Mar in UTC, so 3 Feb 2025 is 400 days back and stays.
+func (s *DigestSuite) TestTheKeepCountsFromTheUTCDayWhateverTheClocksZone() {
+	pinned := organization()
+	s.active(pinned, activity.AreaAgentSetup, 401, 1, 0)
+	s.active(pinned, activity.AreaAgentSetup, 400, 1, 0)
+
+	pruned, err := s.db.PruneActivity(s.ctx, time.Date(2026, 3, 11, 1, 0, 0, 0, time.FixedZone("UTC+14", 14*60*60)))
+	s.Require().NoError(err)
+
+	s.Equal(1, pruned)
+	s.Equal([]string{"2025-02-03"}, s.days("customer_activity"))
+}
+
+// Only the router that holds the cost anomaly lock deletes: another router's check leaves the old
+// rows, and the holder's next check deletes them.
+func (s *DigestSuite) TestOnlyTheRouterHoldingTheLockDeletesTheActivity() {
+	pinned := organization()
+	s.active(pinned, activity.AreaAgentSetup, 401, 1, 0)
+	s.active(pinned, activity.AreaAgentSetup, 0, 1, 0)
+	elsewhere := s.db.CostAnomalyLock()
+	held, err := elsewhere.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.Require().True(held)
+	s.T().Cleanup(elsewhere.Release)
+
+	s.router().Start()
+	s.checked(0)
+	s.Equal([]string{"2025-02-02", "2026-03-10"}, s.days("customer_activity"), "another router holds the lock")
+
+	elsewhere.Release()
+	s.Require().Eventually(func() bool {
+		return slices.Equal(s.days("customer_activity"), []string{"2026-03-10"})
+	}, settleFor, time.Millisecond)
+}
+
+// A delete that failed is tried again at the next check the same day, not the next day. The
+// suite's database is its own, so the delete is made to fail by renaming one of its tables.
+func (s *DigestSuite) TestADeleteThatFailedIsTriedAgainTheSameDay() {
+	pinned := organization()
+	s.active(pinned, activity.AreaAgentSetup, 401, 1, 0)
+	s.active(pinned, activity.AreaAgentSetup, 0, 1, 0)
+	_, err := s.db.DB().ExecContext(s.ctx, "ALTER TABLE activity_digests RENAME TO activity_digests_renamed")
+	s.Require().NoError(err)
+	renamed := true
+	s.T().Cleanup(func() {
+		if renamed {
+			_, _ = s.db.DB().ExecContext(s.ctx, "ALTER TABLE activity_digests_renamed RENAME TO activity_digests")
+		}
+	})
+	anomalies := NewAnomalies(AnomalyOptions{
+		Store: s.db, Logger: slog.New(slog.DiscardHandler), Every: 20 * time.Millisecond,
+		Now: func() time.Time {
+			s.reads.Add(1)
+			return *s.clock.Load()
+		},
+	})
+	s.T().Cleanup(anomalies.Close)
+	anomalies.Start()
+	s.checked(0)
+	_, err = s.db.DB().ExecContext(s.ctx, "ALTER TABLE activity_digests_renamed RENAME TO activity_digests")
+	s.Require().NoError(err)
+	renamed = false
+	_, err = s.db.DB().ExecContext(s.ctx, "INSERT INTO activity_digests (day) VALUES ('2025-02-01')")
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool {
+		return len(s.days("activity_digests")) == 0
+	}, settleFor, time.Millisecond, "the failed delete is tried again at the next check")
+}

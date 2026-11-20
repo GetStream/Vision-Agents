@@ -130,7 +130,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
-| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told. The same channel is told, once per organization and UTC day, when an organization's billable spend today reaches 5x its median day of the 7 before and a minimum spend (`anomalyMinSpendMicros` in `internal/limitnotice/anomaly.go`): one router of the deployment checks every hour under a Postgres advisory lock, and `cost_anomaly_notices` keeps what was posted. An organization that spent on fewer than 4 of the 7 days has no baseline and is not checked. This check runs in every limits mode. The same check posts the activity digest of the UTC day before, once per day on its first check after 00:05 UTC: the organizations whose first request it was, how far each got, those whose every request was refused, and how many were active, against the day before. `activity_digests` keeps the day it was posted |
+| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told. The same channel is told, once per organization and UTC day, when an organization's billable spend today reaches 5x its median day of the 7 before and a minimum spend (`anomalyMinSpendMicros` in `internal/limitnotice/anomaly.go`): one router of the deployment checks every hour under a Postgres advisory lock, and `cost_anomaly_notices` keeps what was posted. An organization that spent on fewer than 4 of the 7 days has no baseline and is not checked. This check runs in every limits mode. The same check posts the activity digest of the UTC day before, once per day on its first check after 00:05 UTC: the organizations whose first request it was, how far each got, those whose every request was refused, those stuck (at least 10 requests and a quarter of them refused, not all: "Stuck"), those whose apps had a conversation answered for the first time, with the days since their first request ("First conversation"), and how many were active, against the day before. "Stuck" and "First conversation" are left out on a day with none. `activity_digests` keeps the day it was posted. The same check deletes the activity older than 400 days, once a day, and does so without these two as well (see Usage tracking for staff) |
 | `ROUTER_LIMITS_APP_URL`, `ROUTER_LIMITS_STAFF_URL` | The pages each of those Slack notices links to: the app's own, and the operator's for the organization or app. `{organization}` and `{app}` in either stand for the notice's ids, such as `https://dashboard.example/{organization}/{app}`. A URL naming `{app}` is left out of a notice with no app. Unset: no link |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
@@ -2198,6 +2198,80 @@ billable rows, so the two can disagree for two reasons. One is an app that moved
 within the window. The other is rows the sweeper has not yet given an organization: `MeterUses`
 reads an org's apps with no organization filter, while the cost-anomaly check skips rows with an
 empty `organization_id`.
+
+`steps` lists every step (`activity.Steps`) the organization's apps had a request answered in,
+in `furthest_step`'s order, each with `first_answered`: the UTC day (`YYYY-MM-DD`) of the first
+answered request in that step's area. It reads every day recorded, not only from `since` on. A
+step the organization skipped, such as `voice_video` for one that only texts, is not listed, and
+neither is a step whose every request was refused. An organization with no answered request
+gets `[]`.
+
+#### Usage tracking for staff
+
+What each organization did with Agents lives in three places:
+
+| Where | What | Kept |
+| ----- | ---- | ---- |
+| `customer_activity` (Postgres) | One row per app, area, client and UTC day: requests, refusals, the last refusal's code | 400 days |
+| `GET /v1/ops/orgs/{org_id}/activity` | One organization: areas, `furthest_step`, `steps`, meters, sessions, latency | What the table keeps |
+| The activity digest (Slack, `ROUTER_LIMITS_SLACK_CHANNEL`) | Every organization, the UTC day before; `activity_digests` holds the days posted | 400 days |
+
+The router keeps activity for 400 days (`activityKeepDays` in `internal/store/activity_digest.go`).
+That is 13 months and a margin, so staff can compare a month with the same month a year before.
+GDPR asks that personal data is kept no longer than needed (Art. 5(1)(e)). The router that holds
+the cost anomaly lock deletes the older `customer_activity` and `activity_digests` rows once per
+UTC day. That check runs on every deployment with a database, whether or not
+`ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` are set; without them it posts
+nothing and only deletes. A step or a "first day" is therefore the first one in the last 400 days: an organization
+that comes back after 400 days without a request shows as new.
+
+To see why an organization's requests are refused, list its refusals by code from the access
+log. The router writes one `served a request` line per request, with `customer` (the app) and
+`error_code` on every refused request. That includes a call hook or a socket that is refused with
+status 200 or 101, so the query keeps those lines too. ClickHouse holds these lines in
+`logs.agent_access_logs`, with `customer` as `app_id` and the status as `response`, for 14 days. Each cluster has its own
+ClickHouse: staging is `us-east1-acceleration`, and prod has three clusters, so run the query on
+each. Find the organization's apps in Postgres first
+(`SELECT app_id FROM app_organizations WHERE organization_id = '<org>'`), then:
+
+```sql
+SELECT error_code, operation_type, response AS status, count() AS refused, max(timestamp) AS last
+FROM logs.agent_access_logs
+WHERE k8s_namespace = 'accelerate-prod'  -- accelerate-staging on staging
+  AND app_id IN (<app ids>)
+  AND (response >= 400 OR error_code != '')
+  AND timestamp > now() - INTERVAL 7 DAY
+GROUP BY error_code, operation_type, status
+ORDER BY refused DESC
+```
+
+A hook that one router hands to the router running its call is logged on both, so the query
+counts that delivery twice. `customer_activity` counts it once.
+
+To check the funnel order, count for each step the organizations that reached it, and how many of
+those had a request answered 30 or more days later. An organization that reached a step less than
+30 days ago cannot be counted yet, so `reached_30_days_ago` is the base for `active_30_days_later`.
+The counts should fall from step to step:
+
+```sql
+WITH firsts AS (
+    SELECT organization_id, area AS step, MIN(day) AS reached
+    FROM customer_activity
+    WHERE organization_id <> '' AND requests > refused
+      AND area IN ('dashboard_reads', 'agent_setup', 'workers', 'conversations', 'voice_video', 'phone_sms')
+    GROUP BY organization_id, area
+)
+SELECT f.step,
+    count(*) AS reached,
+    count(*) FILTER (WHERE f.reached <= (now() AT TIME ZONE 'UTC')::date - 30) AS reached_30_days_ago,
+    count(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM customer_activity AS later
+        WHERE later.organization_id = f.organization_id
+          AND later.day >= f.reached + 30 AND later.requests > later.refused)) AS active_30_days_later
+FROM firsts AS f
+GROUP BY f.step
+ORDER BY array_position(ARRAY['dashboard_reads', 'agent_setup', 'workers', 'conversations', 'voice_video', 'phone_sms'], f.step)
+```
 
 ### The usage service
 
