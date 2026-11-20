@@ -46,8 +46,8 @@ public sealed record ConnectionFilter
 /// owner and as <c>X-Stream-User-Id</c> alike, so the two never differ. A user's connection is
 /// reached only by a call naming that user; the app's is reached by every call, one naming a
 /// user included. No user is the app's own connection. A user given replaces the one the client
-/// was made for, with the server credential; a client holding a user's token (a device) refuses
-/// a user with a <see cref="ConfigurationException"/> before sending.
+/// was made for, with the server credential; a client with an API key holding a user's token (a
+/// device) refuses a user with a <see cref="ConfigurationException"/> before sending.
 /// </remarks>
 public sealed class Connections
 {
