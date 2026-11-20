@@ -96,6 +96,7 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	if named := r.PathValue("app"); named != "" {
 		app, ok := streamapp.ParseAppID(named)
 		if !ok {
+			noteAnswered(w, http.StatusNotFound)
 			http.NotFound(w, r)
 			return hookOrigin{}, false
 		}
@@ -169,6 +170,7 @@ func (s *Server) verifyDeploymentHook(w http.ResponseWriter, r *http.Request, pa
 		own = s.stream.DeploymentApp()
 	}
 	if pathApp != 0 && pathApp != own {
+		noteAnswered(w, http.StatusNotFound)
 		http.NotFound(w, r)
 		return hookOrigin{}, false
 	}

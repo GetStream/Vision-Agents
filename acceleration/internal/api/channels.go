@@ -135,6 +135,7 @@ func (s *Server) receiveChannelMessage(w http.ResponseWriter, r *http.Request) {
 // writeChannelAnswer answers a delivery. A challenge is echoed as itself rather than as JSON,
 // because that is what the provider compares against what it sent.
 func writeChannelAnswer(w http.ResponseWriter, answer channels.Answer) {
+	noteAnswered(w, answer.Status)
 	if answer.Text != "" {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(answer.Status)

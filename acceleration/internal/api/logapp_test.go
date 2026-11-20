@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -188,6 +190,125 @@ func (s *LogAppSuite) TestTheAccessLineOfARefusalNamesTheCodeTheCallerWasTold() 
 
 		s.Equal(s.errorCode(payload), s.field(s.lineOf(id), "error_code"), refused.path)
 	}
+}
+
+// Defect: a route whose refusal leaves the access line without a code, or with another one
+// than its answer names: one answering outside the envelope (a vendor's or gorilla's shape) or
+// one added later that answers past writeError and Huma. Every route is asked by a caller of
+// each kind, so a refusal before the handler and one in it are both read.
+func (s *LogAppSuite) TestEveryRefusalOfEveryRouteNamesItsCodeOnTheAccessLine() {
+	// The code a failure of each status has when nothing names it better, for an answer with no
+	// envelope to read it from: as ErrorDetail's doc lists them.
+	typeCodes := map[int]string{
+		http.StatusBadRequest: "invalid_request",
+		http.StatusNotFound:   "not_found",
+		http.StatusGone:       "gone",
+	}
+	parameter := regexp.MustCompile(`\{[^}]*\}`)
+	refusals := 0
+	for _, client := range []*testClient{s.unauthenticatedClient, s.client, s.serverClient} {
+		s.Require().NoError(chi.Walk(s.router.mux, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+			path := strings.ReplaceAll(parameter.ReplaceAllString(route, "probe"), "*", "probe")
+			id := s.utils.uuid()
+			named := client.with(RequestIDHeader, id)
+			status, payload := named.call(method, path, map[string]any{})
+			if status < http.StatusBadRequest {
+				return nil
+			}
+			refusals++
+			var answered ErrorResponse
+			want := typeCodes[status]
+			if json.Unmarshal(payload, &answered) == nil && answered.Error.Code != "" {
+				want = answered.Error.Code
+			}
+			key := fmt.Sprintf("%s %s answered %d %s", method, route, status, payload)
+			s.Require().NotEmpty(want, key)
+			s.Equal(want, s.field(s.lineOf(id), "error_code"), key)
+			return nil
+		}))
+	}
+	// The walk read refusals of every kind of caller, not none.
+	s.Greater(refusals, 100)
+}
+
+// Defect: a refusal withCustomer makes itself, before withRequestLog, written with no access
+// line at all.
+func (s *LogAppSuite) TestARequestNamingUsageCategoriesThatBreakTheRuleHasAnAccessLineWithItsCode() {
+	id := s.utils.uuid()
+
+	status, payload := s.serverClient.with(auth.UsageCategoriesHeader, "not a category!").with(RequestIDHeader, id).
+		call(http.MethodGet, "/v1/agents/skills", nil)
+
+	s.Require().Equal(http.StatusBadRequest, status)
+	line := s.lineOf(id)
+	s.Equal(codeInvalidUsageCategories, s.errorCode(payload))
+	s.Equal(codeInvalidUsageCategories, s.field(line, "error_code"))
+	s.Contains(line, " status=400 ")
+	s.Contains(line, " path=/v1/agents/skills ")
+}
+
+// Defect: a caller of a level its app turns away refused with no access line, or with one that
+// does not name the app it proved it is of.
+func (s *LogAppSuite) TestACallerOfALevelItsAppTurnsAwayHasAnAccessLineNamingTheApp() {
+	no := false
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{AllowAnonymous: &no}))
+	id := s.utils.uuid()
+
+	status, _ := s.anonymousClient.with(RequestIDHeader, id).call(http.MethodGet, "/v1/agents/skills", nil)
+
+	s.Require().Equal(http.StatusForbidden, status)
+	line := s.lineOf(id)
+	s.Equal("forbidden", s.field(line, "error_code"))
+	s.Equal(s.customerID(), s.field(line, "app_id"))
+	s.Equal(s.app.key, s.field(line, "api_key"))
+	// It is no customer here: nothing it asked for is the app's.
+	s.Empty(s.field(line, "customer"))
+}
+
+// Defect: a hook naming another numeric app answered with the bare 404 of http.NotFound and
+// no code on the access line.
+func (s *LogAppSuite) TestTheAccessLineOfAHookNamingAnotherAppNamesNotFound() {
+	id := s.utils.uuid()
+
+	status, _ := s.unauthenticatedClient.with(RequestIDHeader, id).call(http.MethodPost, "/v1/phone/hooks/stream/987654321", nil)
+
+	s.Require().Equal(http.StatusNotFound, status)
+	s.Equal("not_found", s.field(s.lineOf(id), "error_code"))
+}
+
+// Defect: a refusal made before the route logged the token of a token route in its path.
+func (s *LogAppSuite) TestTheAccessLineOfARefusalBeforeATokenRouteNamesNoSecret() {
+	for _, refused := range []struct {
+		name   string
+		client *testClient
+		method string
+		path   string
+		status int
+		route  string
+	}{
+		{"usage categories", s.serverClient.with(auth.UsageCategoriesHeader, "not a category!"), http.MethodPost, "/v1/phone/status/", http.StatusBadRequest, "/v1/phone/status/{token}"},
+	} {
+		token := s.utils.uuid()
+		id := s.utils.uuid()
+
+		status, _ := refused.client.with(RequestIDHeader, id).call(refused.method, refused.path+token, nil)
+
+		s.Require().Equal(refused.status, status, refused.name)
+		line := s.lineOf(id)
+		s.Contains(line, " path="+refused.route+" ", refused.name)
+		s.NotContains(line, token, refused.name)
+	}
+	no := false
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{AllowAnonymous: &no}))
+	token := s.utils.uuid()
+	id := s.utils.uuid()
+
+	status, _ := s.anonymousClient.with(RequestIDHeader, id).call(http.MethodGet, "/v1/phone/answer/"+token, nil)
+
+	s.Require().Equal(http.StatusForbidden, status)
+	line := s.lineOf(id)
+	s.Contains(line, " path=/v1/phone/answer/{token} ")
+	s.NotContains(line, token)
 }
 
 func (s *LogAppSuite) TestTheAccessLineOfASuccessNamesNoErrorCode() {
@@ -557,6 +678,8 @@ func (s *LogAppSuite) TestTheAccessLineOfAHookNamesNeitherEvenWhenTheCallerSends
 	s.Contains(line, "path=/v1/phone/hooks/stream")
 	s.NotContains(line, "app_id")
 	s.NotContains(line, "api_key")
+	// Defect (AI-3349): the customer the caller's credential names, on a hook nobody checked.
+	s.Contains(line, ` customer="" `)
 }
 
 func (s *LogAppSuite) TestALineAHandlerLogsWithTheRequestsContextNamesTheAppAndItsPublicKey() {
@@ -650,8 +773,10 @@ func (s *LogAppSuite) TestTheAccessLineOfAServerErrorNamesTheAppAndItsPublicKey(
 
 // A handler's verified hook names its app on the lines withRequestLog writes after it: a 5xx
 // and a panic as well as a success, and on the lines the handler logs with its context. The key
-// whose secret signed it is no key the request was made with, so none of them names it.
+// whose secret signed it is no key the request was made with, so none of them names it. The
+// customer the handler noted for it (activity.NoteCustomer) is the lines' customer (AI-3349).
 func (s *LogAppSuite) TestTheLinesAfterAHandlerVerifiedAHookNameItsApp() {
+	customer := s.utils.uuid()
 	for msg, answer := range map[string]func(http.ResponseWriter){
 		`msg="served a request" method=POST path=/probe-ok `:      func(http.ResponseWriter) {},
 		`msg="served a request" method=POST path=/probe-500 `:     func(w http.ResponseWriter) { w.WriteHeader(http.StatusInternalServerError) },
@@ -661,6 +786,7 @@ func (s *LogAppSuite) TestTheLinesAfterAHandlerVerifiedAHookNameItsApp() {
 		routes := chi.NewRouter()
 		routes.Post(path, func(w http.ResponseWriter, r *http.Request) {
 			marked := loggedHook(r, hookOrigin{app: 1234567, apiKey: "the-signing-key"})
+			activity.NoteCustomer(r.Context(), customer, activity.AreaHooksIn)
 			s.router.logger.InfoContext(marked.Context(), "probe from a hook at "+path)
 			answer(w)
 		})
@@ -685,6 +811,7 @@ func (s *LogAppSuite) TestTheLinesAfterAHandlerVerifiedAHookNameItsApp() {
 			return false
 		}, 5*time.Second, 20*time.Millisecond, msg)
 		s.Equal("1234567", s.field(line, "app_id"), msg)
+		s.Equal(customer, s.field(line, "customer"), msg)
 		s.NotContains(line, "api_key", msg)
 		var probe string
 		for l := range strings.Lines(s.logged.String()) {
@@ -895,4 +1022,35 @@ func (s *LogAppHookSuite) hookLine(request *http.Request) (int, string) {
 	s.Require().NoError(err)
 	s.Require().NoError(response.Body.Close())
 	return response.StatusCode, s.lineOf(id)
+}
+
+// LogAppMCPEventsSuite is a router that takes MCP events, to read what the line of a delivery
+// it turns away names.
+type LogAppMCPEventsSuite struct {
+	appLogSuite
+}
+
+func TestLogAppMCPEventsSuite(t *testing.T) {
+	runSuite(t, new(LogAppMCPEventsSuite))
+}
+
+func (s *LogAppMCPEventsSuite) SetupSuite() {
+	s.database = "log_app_mcp_events"
+	s.mcpEventsOn = true
+	s.appLogSuite.SetupSuite()
+}
+
+func (s *LogAppMCPEventsSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+// Defect: a delivery for a subscription nobody has answered 410 in mcpevents' own envelope, past
+// writeError, and left the access line without its code.
+func (s *LogAppMCPEventsSuite) TestTheAccessLineOfADeliveryForNoSubscriptionNamesGone() {
+	id := s.utils.uuid()
+
+	status, _ := s.unauthenticatedClient.with(RequestIDHeader, id).call(http.MethodPost, "/v1/connectors/mcp-events/"+s.utils.uuid(), map[string]any{})
+
+	s.Require().Equal(http.StatusGone, status)
+	s.Equal("gone", s.field(s.lineOf(id), "error_code"))
 }

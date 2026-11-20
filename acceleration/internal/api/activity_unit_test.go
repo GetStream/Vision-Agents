@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 )
 
 // AreaSuite covers which area of the API a route is counted under (areaOf).
@@ -106,4 +109,83 @@ func (s *RefusalCodeSuite) TestAFailureThatIsNoAPIErrorIsCountedAsAnInternalErro
 func (s *RefusalCodeSuite) TestAnAPIErrorIsCountedWithItsOwnCode() {
 	s.Equal(errUnknownConfig.Code, refusalCode(errUnknownConfig))
 	s.Equal(errUnknownConfig.Code, refusalCode(fmt.Errorf("config: %w", errUnknownConfig)))
+}
+
+// AnsweredCodeSuite covers the code noted for a failure answered outside the error envelope
+// (noteAnswered), which the access line names as error_code and the activity record counts.
+type AnsweredCodeSuite struct {
+	suite.Suite
+}
+
+func TestAnsweredCodeSuite(t *testing.T) {
+	suite.Run(t, new(AnsweredCodeSuite))
+}
+
+// Defect: a channel's refusal, answered in the provider's shape, noted with no code or another
+// one than its status's; or the 400 boundary left out.
+func (s *AnsweredCodeSuite) TestAChannelsRefusalIsNotedWithTheCodeOfItsStatus() {
+	for status, code := range map[int]string{
+		http.StatusBadRequest:          "invalid_request",
+		http.StatusUnauthorized:        "unauthenticated",
+		http.StatusForbidden:           "forbidden",
+		http.StatusGone:                "gone",
+		http.StatusInternalServerError: "internal_error",
+	} {
+		answered := &loggedResponse{ResponseWriter: httptest.NewRecorder()}
+
+		writeChannelAnswer(answered, channels.Answer{Status: status, Body: map[string]string{"error": "probe"}})
+
+		s.Equal(code, answered.refusal, status)
+		s.Equal(status, answered.status(), status)
+	}
+}
+
+// Defect: a delivery taken or a challenge echoed noted as a refusal.
+func (s *AnsweredCodeSuite) TestAChannelsSuccessIsNotedWithNoCode() {
+	for _, answer := range []channels.Answer{
+		{Status: http.StatusAccepted, Body: map[string]string{}},
+		{Status: http.StatusOK, Text: "challenge"},
+	} {
+		answered := &loggedResponse{ResponseWriter: httptest.NewRecorder()}
+
+		writeChannelAnswer(answered, answer)
+
+		s.Empty(answered.refusal, answer.Status)
+	}
+}
+
+// Defect: a handshake gorilla refuses noted with no code, or answered otherwise than gorilla
+// answers it by default (its body and Sec-Websocket-Version).
+func (s *AnsweredCodeSuite) TestARefusedHandshakeIsNotedWithTheCodeOfItsStatusAndAnsweredAsBefore() {
+	for _, refused := range []struct {
+		mode   auth.Mode
+		origin string
+		status int
+		code   string
+	}{
+		// Not an upgrade at all.
+		{auth.APIKey, "", http.StatusBadRequest, "invalid_request"},
+		// A page this machine did not serve, which NoAuth refuses (originAllowed).
+		{auth.NoAuth, "https://elsewhere.example", http.StatusForbidden, "forbidden"},
+	} {
+		recorder := httptest.NewRecorder()
+		answered := &loggedResponse{ResponseWriter: recorder}
+		request := httptest.NewRequest(http.MethodGet, "/v1/agents/socket", nil)
+		if refused.origin != "" {
+			request.Header.Set("Origin", refused.origin)
+			request.Header.Set("Connection", "Upgrade")
+			request.Header.Set("Upgrade", "websocket")
+			request.Header.Set("Sec-Websocket-Version", "13")
+			request.Header.Set("Sec-Websocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+		}
+		upgrader := newUpgrader(refused.mode)
+
+		_, err := upgrader.Upgrade(answered, request, nil)
+
+		s.Require().Error(err)
+		s.Equal(refused.code, answered.refusal, refused.status)
+		s.Equal(refused.status, recorder.Code)
+		s.Equal(http.StatusText(refused.status)+"\n", recorder.Body.String())
+		s.Equal("13", recorder.Header().Get("Sec-Websocket-Version"))
+	}
 }

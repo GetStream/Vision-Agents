@@ -194,6 +194,26 @@ func (s *CallHooksSuite) loggedAs(id string) string {
 	return strings.Replace(id, s.e164, "+1•••"+s.e164[len(s.e164)-2:], 1)
 }
 
+// Defect (AI-3349): the access line of a call Stream signed naming no customer, as no
+// credential names one, though the number rung says whose call it is; or a call with a bad
+// signature naming the number's customer.
+func (s *CallHooksSuite) TestTheAccessLineOfASignedCallNamesTheNumbersCustomer() {
+	s.hold("default", s.callID)
+	served := func(parts ...string) bool {
+		return s.loggedLine(append([]string{`msg="served a request"`, " path=" + phone.CallHookPath + " "}, parts...)...)
+	}
+
+	forged, _ := s.deliver(phone.CallHookPath, s.arriving("default:"+s.callID), sign(s.arriving("default:"+s.callID), "not the secret"))
+	s.Require().Equal(http.StatusUnauthorized, forged)
+	s.Require().Eventually(func() bool { return served(" status=401 ") }, settleFor, 10*time.Millisecond)
+	s.True(served(" status=401 ", ` customer="" `))
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+	s.Require().Eventually(func() bool { return served(" status=200 ") }, settleFor, 10*time.Millisecond)
+	// No worker takes it, so it is refused in a 200, with the code it is counted under.
+	s.True(served(" status=200 ", " customer="+s.customerID()+" ", " error_code=unavailable "))
+}
+
 // thisTest is what the current test logged, so a line another test logged for a number
 // that masks the same way is not read as this test's.
 func (s *CallHooksSuite) thisTest() string { return s.logged.String()[s.since:] }
