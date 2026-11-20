@@ -808,6 +808,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.
 
+### A caller who goes on before hearing any of the reply is answered
+
+While a reply was still being written, with none of it heard, chorus-asr was told the agent was talking. It could then rule the caller's next words as said over the agent and let it talk through them, while the router dropped that reply as unheard: both turns went unanswered. A reply nobody has heard no longer counts as the agent talking.
+
 ### `unified_replies` gives chorus-asr's ignores a second opinion
 
 Chorus-asr hears the audio but not the conversation, so with the agent quiet it can take a caller's short answer for background speech. With `unified_replies` on, words chorus-asr ignored on a quiet floor are put to the reply model, which is told what chorus-asr made of them and opens with `[respond]` or `[ignore]`. If it agrees, nothing is said, as before. Chorus-asr still decides alone when to stop or shorten the agent, when a turn ends, and everything said while the agent is talking.

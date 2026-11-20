@@ -4331,10 +4331,11 @@ func asideNote(said string) string {
 
 // talkingLocked says the agent holds the floor: it is writing or saying a reply, or its tools
 // still run, which own the turn after its spoken acknowledgement ends, so the flow controller
-// can stop them on a caller's correction. A reply none of which has gone out holds nothing:
-// nobody has heard it, and a caller who goes on is going on with their own turn, which drops
-// it (stale). Told the agent was talking then, chorus-asr let it talk through the caller's
-// next words, and both turns went unanswered. Agent.mu must be held.
+// can stop them on a caller's correction. A reply none of which has gone out holds nothing,
+// its tools included: nobody has heard it, and its caller going on is going on with their own
+// turn, which drops it and stops its tools (stale). Anyone else's words then wait for it to
+// end. Told the agent was talking then, chorus-asr let it talk through the caller's next
+// words, and both turns went unanswered. Agent.mu must be held.
 func (a *Agent) talkingLocked() bool {
 	if a.unheard.turnID != "" && a.unheard.turnID == a.speakingTurn {
 		return false
