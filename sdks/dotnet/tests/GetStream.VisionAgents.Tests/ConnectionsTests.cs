@@ -153,6 +153,95 @@ public sealed class ConnectionsTests
     }
 
     [Fact]
+    public async Task ABackendMadeForAUserBehindTheProxyNamesAnotherWithAServerTokenAndNoneWithItsOwn()
+    {
+        await using var router = await Answering();
+        using var ada = new VisionAgentsClient(new VisionAgentsOptions
+        {
+            Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, UserId = "ada", Authenticate = true,
+        });
+        var cancel = TestContext.Current.CancellationToken;
+
+        await ada.Connections.GetAsync("conn-1", "alice", cancel);
+        await ada.Connections.GetAsync("conn-1", cancellationToken: cancel);
+
+        var (naming, plain) = (router.Requests[0], router.Requests[1]);
+        Assert.Equal(("alice", "jwt"), (naming.Headers[Header], naming.Headers["stream-auth-type"]));
+        var named = Fixtures.Claims(naming.Headers["Authorization"]);
+        Assert.True(named["server"]!.GetValue<bool>());
+        Assert.Null(named["user_id"]);
+        Assert.False(plain.Headers.ContainsKey(Header));
+        var own = Fixtures.Claims(plain.Headers["Authorization"]);
+        Assert.Equal("ada", own["user_id"]!.GetValue<string>());
+        Assert.Null(own["server"]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ADeviceHoldingAUsersTokenRefusesToNameAUserBeforeAnythingIsSent(bool authenticate)
+    {
+        await using var router = await Answering();
+        using var device = new VisionAgentsClient(new VisionAgentsOptions
+        {
+            Url = router.Url, ApiKey = "key", Token = "ada-token", UserId = "ada", Authenticate = authenticate,
+        });
+        using var derived = new VisionAgentsClient(new VisionAgentsOptions
+        {
+            Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, Authenticate = authenticate,
+        }).AsUser("ada", "ada-token");
+        var cancel = TestContext.Current.CancellationToken;
+
+        foreach (var client in new[] { device, derived })
+        {
+            var connections = client.Connections;
+            Assert.False(client.ServerSide);
+            await Assert.ThrowsAsync<ConfigurationException>(() => connections.CreateAsync("linear", new NewConnectionOptions { UserId = "alice" }, cancel));
+            await Assert.ThrowsAsync<ConfigurationException>(() => connections.AuthorizeAsync("conn-1", new AuthorizeOptions { UserId = "alice" }, cancel));
+            await Assert.ThrowsAsync<ConfigurationException>(() => connections.GetAsync("conn-1", "alice", cancel));
+            await Assert.ThrowsAsync<ConfigurationException>(() => connections.ListAsync(new ConnectionFilter { UserId = "alice" }, cancel));
+            await Assert.ThrowsAsync<ConfigurationException>(() => connections.DeleteAsync("conn-1", "alice", cancel));
+        }
+
+        Assert.Empty(router.Requests);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task ADeviceWithNoUserOnACallSendsItsOwnTokenAsBefore(string? userId)
+    {
+        await using var router = await Answering();
+        using var device = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", Token = "ada-token", UserId = "ada" });
+        var cancel = TestContext.Current.CancellationToken;
+
+        await device.Connections.GetAsync("conn-1", userId, cancel);
+        await device.Connections.ListAsync(new ConnectionFilter { UserId = userId }, cancel);
+
+        Assert.Equal(2, router.Requests.Count);
+        Assert.All(router.Requests, seen =>
+        {
+            Assert.Equal(("Bearer ada-token", "jwt", "key"), (seen.Headers["Authorization"], seen.Headers["Stream-Auth-Type"], seen.Headers["X-Api-Key"]));
+            Assert.False(seen.Headers.ContainsKey(Header));
+        });
+    }
+
+    [Fact]
+    public async Task ACustomerIdClientMadeForAUserStillNamesAnotherOnATrustingRouter()
+    {
+        await using var router = await Answering();
+        using var ada = Fixtures.Client(router).AsUser("ada", "ada-token");
+        var cancel = TestContext.Current.CancellationToken;
+
+        Assert.True(ada.ServerSide);
+        await ada.Connections.GetAsync("conn-1", "alice", cancel);
+
+        var seen = router.Only("GET", "/v1/agents/connections/conn-1");
+        Assert.Equal(("alice", "examples"), (seen.Headers[Header], seen.Headers["X-Customer-Id"]));
+        Assert.False(seen.Headers.ContainsKey("Authorization"));
+    }
+
+    [Fact]
     public async Task EmptyOptionalStringsAreLeftOutAndTheOwnerIsTheUserGiven()
     {
         await using var router = await Answering();

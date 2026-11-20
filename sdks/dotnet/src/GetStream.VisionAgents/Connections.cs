@@ -45,7 +45,9 @@ public sealed record ConnectionFilter
 /// <c>UserId</c> of the options. A user given is sent as the
 /// owner and as <c>X-Stream-User-Id</c> alike, so the two never differ. A user's connection is
 /// reached only by a call naming that user; the app's is reached by every call, one naming a
-/// user included. No user is the app's own connection.
+/// user included. No user is the app's own connection. A user given replaces the one the client
+/// was made for, with the server credential; a client holding a user's token (a device) refuses
+/// a user with a <see cref="ConfigurationException"/> before sending.
 /// </remarks>
 public sealed class Connections
 {
@@ -149,12 +151,24 @@ public sealed class Connections
     /// Sends with this client acting for the user, or as it is when no user is given, whoever it
     /// acts for otherwise.
     /// </summary>
+    /// <remarks>
+    /// A user given replaces the one the client was made for (<see cref="VisionAgentsOptions.UserId"/>)
+    /// and the request keeps the server credential, never a token minted for that one user: the router
+    /// answers a user token as the device it is, and a device may not name another user.
+    /// </remarks>
     private async Task<T> SendAsync<T>(string? userId, Func<VisionAgentsClient, Task<T>> send)
     {
         userId = VisionAgentsClient.Blank(userId);
         if (userId is null)
         {
             return await send(_client).ConfigureAwait(false);
+        }
+        // Before anything is sent, so the reason is given rather than the router's 403.
+        if (!_client.ServerSide)
+        {
+            throw new ConfigurationException(
+                "a connections call names a user only with a server credential: this client holds a user's token, "
+                + "which cannot act for another user; leave the user out or use the app's own client");
         }
         using var acting = _client.ActingFor(userId);
         return await send(acting).ConfigureAwait(false);
