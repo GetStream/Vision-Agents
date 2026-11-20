@@ -191,4 +191,5 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 - Think harder, which iOS offers in the composer's options: Stream's Android composer has no
   options sheet.
 - A seat selector that brings its own `reserve_table` tool while it is shown, as iOS's does: the
-  Kotlin SDK cannot add a tool to a running session yet.
+  Kotlin SDK has `AgentSession.addTools` and `removeTool` (#2050), but this sample doesn't use them
+  yet.

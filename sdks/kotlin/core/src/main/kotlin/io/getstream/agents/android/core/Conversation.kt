@@ -145,7 +145,7 @@ public sealed interface TurnStep {
  * the `StateFlow` around it. Most new event handling belongs here, and is tested here.
  *
  * A value, compared by what it holds, though not a data class: it also keeps what each turn's UI
- * wrote, which nobody outside sets or reads.
+ * wrote, and which turns were cut off, which nobody outside sets or reads.
  */
 public class Conversation private constructor(
     /**
@@ -174,19 +174,24 @@ public class Conversation private constructor(
      * [uiWritten] is, so that a frame that moves only this is still kept.
      */
     private val resumedAt: Map<String, Instant>,
+    /**
+     * The agent turns with UI that were interrupted. Their UI still shows, but the router never
+     * merges a patch onto it.
+     */
+    private val cut: Set<String>,
 ) {
     public constructor(
         turns: List<Turn> = emptyList(),
         state: State = State.Idle,
         failure: String? = null,
-    ) : this(turns, state, failure, emptyMap(), emptyMap())
+    ) : this(turns, state, failure, emptyMap(), emptyMap(), emptySet())
 
     /** This conversation with the given parts changed, and the UI being written kept. */
     public fun copy(
         turns: List<Turn> = this.turns,
         state: State = this.state,
         failure: String? = this.failure,
-    ): Conversation = Conversation(turns, state, failure, uiWritten, resumedAt)
+    ): Conversation = Conversation(turns, state, failure, uiWritten, resumedAt, cut)
 
     public operator fun component1(): List<Turn> = turns
 
@@ -201,18 +206,19 @@ public class Conversation private constructor(
             state == other.state &&
             failure == other.failure &&
             uiWritten == other.uiWritten &&
-            resumedAt == other.resumedAt
+            resumedAt == other.resumedAt &&
+            cut == other.cut
 
-    override fun hashCode(): Int = listOf(turns, state, failure, uiWritten, resumedAt).hashCode()
+    override fun hashCode(): Int = listOf(turns, state, failure, uiWritten, resumedAt, cut).hashCode()
 
     override fun toString(): String = "Conversation(turns=$turns, state=$state, failure=$failure)"
 
     private fun writing(uiWritten: Map<String, UiWritten>): Conversation =
-        Conversation(turns, state, failure, uiWritten, resumedAt)
+        Conversation(turns, state, failure, uiWritten, resumedAt, cut)
 
     /** This conversation with agent turn [turnId] taken up again [at], or done with for null. */
     private fun resumed(turnId: String, at: Instant?): Conversation =
-        Conversation(turns, state, failure, uiWritten, if (at == null) resumedAt - turnId else resumedAt + (turnId to at))
+        Conversation(turns, state, failure, uiWritten, if (at == null) resumedAt - turnId else resumedAt + (turnId to at), cut)
 
     /** What a turn's UI block wrote, and how. */
     private data class UiWritten(val format: String, val version: String?, val mode: String, val text: String) {
@@ -362,7 +368,7 @@ public class Conversation private constructor(
                 copy(state = if (left.isEmpty()) State.Responding else State.Working(left))
             }
 
-            AgentEvent.Kind.Interrupted -> ended(event.turnId, at).copy(state = State.Idle)
+            AgentEvent.Kind.Interrupted -> ended(event.turnId, at).cutOff(event.turnId).copy(state = State.Idle)
 
             // The model writing the reply failing is the end of that reply, which may never be
             // reported as responded, so it is done as an interrupted one is. Its error may not say
@@ -468,14 +474,23 @@ public class Conversation private constructor(
         return writing(uiWritten - turnId).writeUi(turnId, written, TurnUI.Keep.Closed, at)
     }
 
+    /** Marks agent turn [turnId] as cut off, when it has UI that a later patch could be merged onto. */
+    private fun cutOff(turnId: String): Conversation =
+        if (turns.none { it.id == turnId && it.isAgent && it.ui != null }) {
+            this
+        } else {
+            Conversation(turns, state, failure, uiWritten, resumedAt, cut + turnId)
+        }
+
     /**
      * Shows [written], what the turn's UI block wrote, as the UI of agent turn [turnId], starting
      * the turn if the router sent UI for one we never saw begin. Of OpenUI, only the statements
      * [keep] says count; it is streaming while only the finished ones do, and sets no UI until
-     * one counts. A patch is merged onto the UI of the latest earlier turn, earlier than this
-     * one even when its UI comes late, when that UI is OpenUI; when it is not, or with none in
-     * this transcript, such as after a reload, it sets no UI, and Stream Chat's copy, which the router merged, is the one
-     * to show.
+     * one counts. A patch is merged onto the router's base: the UI of the latest earlier turn,
+     * earlier than this one even when its UI comes late, that is complete and was not cut off,
+     * when that UI is OpenUI. When it is not, or with none in this transcript, such as after a
+     * reload, the turn shows no UI, even one merged onto an earlier base, and Stream Chat's copy,
+     * which the router merged, is the one to show.
      */
     private fun writeUi(turnId: String, written: UiWritten, keep: TurnUI.Keep, at: Instant): Conversation {
         val openUi = written.format == TurnUI.OPEN_UI
@@ -485,13 +500,21 @@ public class Conversation private constructor(
         if (written.mode == "patch" && openUi) {
             // A turn we never saw begin starts after every one there is.
             val earlier = if (index < 0) turns else turns.subList(0, index)
-            // The card before is the router's base whatever its format; only OpenUI takes a patch.
-            val base = earlier.lastOrNull { it.isAgent && it.id != turnId && it.ui?.content?.isNotEmpty() == true }?.ui
-            if (base?.format != TurnUI.OPEN_UI) return this
+            // The router's base is the card it last completed whatever its format, never one it
+            // cut off or one still streaming; only OpenUI takes a patch.
+            val base = earlier.lastOrNull { it.isAgent && it.id != turnId && it.id !in cut && it.ui?.isBase == true }?.ui
+            if (base?.format != TurnUI.OPEN_UI) return if (index < 0) this else showing(index, null)
             content = TurnUI.merge(base.content, content)
         }
         val ui = TurnUI(written.format, written.version, keep == TurnUI.Keep.Finished, content)
         if (index < 0) return copy(turns = turns + Turn(turnId, Turn.Speaker.Agent, "", at, ui))
+        return showing(index, ui)
+    }
+
+    private val TurnUI.isBase: Boolean get() = !isStreaming && content.isNotEmpty()
+
+    /** This conversation with [ui] as the UI of the turn at [index]. */
+    private fun showing(index: Int, ui: TurnUI?): Conversation {
         val updated = turns.toMutableList()
         updated[index] = updated[index].copy(ui = ui)
         return copy(turns = updated)

@@ -268,11 +268,14 @@ internal fun callCard(conversation: Conversation, before: Set<String>, stored: (
 
 /**
  * Whether this is a whole card rather than a change to one: the router stores a patch as written
- * when it had no card to merge it onto, and OpenUI without a `root` draws nothing.
+ * when it had no card to merge it onto, and OpenUI without a `root`, or whose last `root` is
+ * `null` (statements apply in order), draws nothing.
  */
 private val AIUIDocument.isCard: Boolean
     get() = format != AIUIFormat.OpenUI ||
-        text.orEmpty().lineSequence().any { it.trimStart().startsWith("root") && it.substringAfter("root").trimStart().startsWith("=") }
+        text.orEmpty().lineSequence().map { it.trim() }
+            .lastOrNull { it.startsWith("root") && it.substringAfter("root").trimStart().startsWith("=") }
+            ?.substringAfter("=")?.trim().let { !it.isNullOrEmpty() && it != "null" }
 
 /**
  * The UI of one of Juno's turns on the call, as it streams, in a card that scrolls when it is

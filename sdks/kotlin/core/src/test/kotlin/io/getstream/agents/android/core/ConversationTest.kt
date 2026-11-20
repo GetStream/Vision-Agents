@@ -492,6 +492,63 @@ class ConversationTest {
     }
 
     @Test
+    fun `an interrupted card still shows but a later patch merges onto the card before it`() {
+        // The router never takes a reply it cut off as the base of a patch.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responded","turn_id":"t1","text":"Here it is."}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_delta","turn_id":"t2","format":"a2ui","delta":"[{\"createSurface\":{}}]"}""",
+            """{"type":"interrupted","turn_id":"t2","participant":{"id":"p1","user_id":"u1","name":""}}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertEquals(
+            TurnUI(format = "a2ui", isStreaming = false, content = """[{"createSurface":{}}]"""),
+            conversation.turns[1].ui,
+        )
+        assertEquals("\$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", conversation.turns[2].ui?.content)
+    }
+
+    @Test
+    fun `a card completed before its reply was cut off is not the base of a later patch`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_completed","turn_id":"t2","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Mira\")"}""",
+            """{"type":"interrupted","turn_id":"t2","participant":{"id":"p1","user_id":"u1","name":""}}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertEquals("root = Card([hdr])\nhdr = CardHeader(\"Mira\")", conversation.turns[1].ui?.content)
+        assertEquals("\$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", conversation.turns[2].ui?.content)
+    }
+
+    @Test
+    fun `a patch whose base turns out to take no patch drops the preview it merged`() {
+        // The router merged nothing, so Stream Chat's copy is the one to show.
+        var conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_delta","turn_id":"t3","format":"openui","mode":"patch","delta":"${"$"}party = 4\n"}""",
+        )
+        assertEquals("\$party = 4\nroot = Card([hdr])", conversation.turns[2].ui?.content)
+
+        conversation = conversation.after(
+            """{"type":"ui_completed","turn_id":"t2","format":"a2ui","content":"{\"createSurface\":{}}"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertNull(conversation.turns[2].ui)
+    }
+
+    @Test
     fun `a patch with no card before it sets no UI`() {
         // As after a reload: the card it changes is only in Stream Chat, which shows it merged.
         val conversation = Conversation().after(
