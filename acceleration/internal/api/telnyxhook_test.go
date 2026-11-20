@@ -172,6 +172,26 @@ func (s *TelnyxHookSuite) TestANumberAttachedBeforeItsTrunkWasKeptIsHungUpAndSay
 	s.True(s.loggedLine(masked(s.e164), "attach the number again"), "the log says what to do about this number")
 }
 
+// Defect (AI-3349): the access line of a call Telnyx signed naming no customer, as no
+// credential names one, though its number says whose call it is; or an unsigned call naming
+// the number's customer.
+func (s *TelnyxHookSuite) TestTheAccessLineOfASignedCallNamesTheNumbersCustomer() {
+	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	served := func(parts ...string) bool {
+		return s.loggedLine(append([]string{`msg="served a request"`, " path=" + telnyxCallHookPath + " "}, parts...)...)
+	}
+
+	unsigned, _, _ := s.deliver(s.call(s.e164), false)
+	s.Require().Equal(http.StatusUnauthorized, unsigned)
+	s.Require().Eventually(func() bool { return served(" status=401 ") }, settleFor, 10*time.Millisecond)
+	s.True(served(" status=401 ", ` customer="" `, " error_code=unauthenticated "))
+
+	signed, _, body := s.deliver(s.call(s.e164), true)
+	s.Require().Equal(http.StatusOK, signed, body)
+	s.Require().Eventually(func() bool { return served(" status=200 ") }, settleFor, 10*time.Millisecond)
+	s.True(served(" status=200 ", " customer="+s.customerID()+" "))
+}
+
 // thisTest is what the current test logged, so a line another test logged for a number
 // that masks the same way is not read as this test's.
 func (s *TelnyxHookSuite) thisTest() string { return s.logged.String()[s.since:] }
