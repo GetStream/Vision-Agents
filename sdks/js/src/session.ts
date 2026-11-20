@@ -251,6 +251,8 @@ export class Session {
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   /** The calls answered here, so answering one shown from the conversation again sends nothing. */
   private readonly answered = new Set<string>();
+  /** Calls allowed from the conversation without their arguments, run once the router sends them. */
+  private readonly allowedShown = new Set<string>();
   private readonly finished: Promise<void>;
   private ended = false;
   private stopped = false;
@@ -431,8 +433,9 @@ export class Session {
   /**
    * Answers a call that never reached this socket, from what the conversation shows of it, once.
    * The router settles a client call only with its result, so a declined one is answered with
-   * the same error a waiting one gets, and an allowed one of this session's tools is run here,
-   * or failed when the conversation left out its arguments, so the model isn't left waiting.
+   * the same error a waiting one gets, and an allowed one of this session's tools is run here.
+   * One whose arguments the conversation left out runs when the router sends the call, which it
+   * does to a session that attaches while the call waits.
    */
   private decideShown(id: string, call: NonNullable<ToolDecision["call"]>, { allowed, summary }: ToolDecision): void {
     if (this.answered.has(id)) {
@@ -448,12 +451,7 @@ export class Session {
       this.held().send({ type: "tool_result", tool_call_id: id, ...ids, error: "The person declined this call." });
     } else if (this.functionsFor(call.name)?.has(call.name)) {
       if (call.arguments === undefined) {
-        this.held().send({
-          type: "tool_result",
-          tool_call_id: id,
-          ...ids,
-          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
-        });
+        this.allowedShown.add(id);
       } else {
         void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
       }
@@ -861,8 +859,10 @@ export class Session {
           if (message["run"] === false || !functions?.has(text(message, "name"))) {
             continue;
           }
-          // A caller who already said yes on a voice call is not asked again.
-          const approval = message.approved === true ? undefined : functions.approval(text(message, "name"));
+          // A caller who already said yes, on a voice call or to the call shown in the
+          // conversation before it reached here, is not asked again.
+          const allowed = message.approved === true || this.allowedShown.delete(text(message, "id"));
+          const approval = allowed ? undefined : functions.approval(text(message, "name"));
           if (approval) {
             this.hold(message, approval);
             this.deliver(eventOf(message));
