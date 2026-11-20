@@ -276,6 +276,41 @@ func (s *LogAppSuite) TestTheAccessLineOfAHookNamingAnotherAppNamesNotFound() {
 	s.Equal("not_found", s.field(s.lineOf(id), "error_code"))
 }
 
+// Defect: a refusal made before the route logged the token of a token route in its path.
+func (s *LogAppSuite) TestTheAccessLineOfARefusalBeforeATokenRouteNamesNoSecret() {
+	for _, refused := range []struct {
+		name   string
+		client *testClient
+		method string
+		path   string
+		status int
+		route  string
+	}{
+		{"usage categories", s.serverClient.with(auth.UsageCategoriesHeader, "not a category!"), http.MethodPost, "/v1/phone/status/", http.StatusBadRequest, "/v1/phone/status/{token}"},
+	} {
+		token := s.utils.uuid()
+		id := s.utils.uuid()
+
+		status, _ := refused.client.with(RequestIDHeader, id).call(refused.method, refused.path+token, nil)
+
+		s.Require().Equal(refused.status, status, refused.name)
+		line := s.lineOf(id)
+		s.Contains(line, " path="+refused.route+" ", refused.name)
+		s.NotContains(line, token, refused.name)
+	}
+	no := false
+	s.useApp(s.data.createAppAdmitting(store.AppSettings{AllowAnonymous: &no}))
+	token := s.utils.uuid()
+	id := s.utils.uuid()
+
+	status, _ := s.anonymousClient.with(RequestIDHeader, id).call(http.MethodGet, "/v1/phone/answer/"+token, nil)
+
+	s.Require().Equal(http.StatusForbidden, status)
+	line := s.lineOf(id)
+	s.Contains(line, " path=/v1/phone/answer/{token} ")
+	s.NotContains(line, token)
+}
+
 func (s *LogAppSuite) TestTheAccessLineOfASuccessNamesNoErrorCode() {
 	line := s.sent(s.serverClient, http.MethodGet, "/v1/agents/skills", nil)
 
