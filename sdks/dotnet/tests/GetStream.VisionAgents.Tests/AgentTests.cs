@@ -331,6 +331,34 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task ACancelledTokenStopsTheCallerWaitingForAStalledSendButNotTheFrame()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        var thrown = new TaskCompletionSource();
+        var said = new TaskCompletionSource<JsonObject>();
+        router.OnSocket(Events, async peer =>
+        {
+            peer.Pause();
+            await thrown.Task.WaitAsync(TestRouter.Patience);
+            peer.Resume();
+            said.SetResult(await peer.ReceiveAsync("say"));
+        });
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
+        var cancel = TestContext.Current.CancellationToken;
+        var session = await agent.ChatAsync(cancellationToken: cancel);
+
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => session.SayAsync(new string('x', 32 << 20), caller.Token).WaitAsync(TestRouter.Patience, cancel));
+        thrown.SetResult();
+
+        Assert.Equal(32 << 20, (await said.Task.WaitAsync(TestRouter.Patience, cancel)).Text("text").Length);
+        await session.CloseAsync(cancel);
+    }
+
+    [Fact]
     public async Task AResponseIsCreatedInTheConversationTheAgentOpened()
     {
         await using var router = await TestRouter.StartAsync();

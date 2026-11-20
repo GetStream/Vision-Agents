@@ -324,15 +324,13 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("hands a function the call it runs for, and sends how it is going", async () => {
+  it("hands a function the call it runs for", async () => {
     let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
       run: (_input, toolCallContext) => {
         seen = toolCallContext;
-        toolCallContext.update("checking three airlines");
-        toolCallContext.say("Still looking, one moment.");
         return "found two";
       },
     });
@@ -349,18 +347,6 @@ describe("Session", () => {
       approved: true,
     });
 
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "checking three airlines",
-      verbatim: false,
-    });
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "Still looking, one moment.",
-      verbatim: true,
-    });
     assert.equal((await connection.next())["output"], "found two");
     assert.equal(seen?.id, "call_1");
     assert.equal(seen?.sessionId, "sess_1", "the session the call came over");
@@ -950,20 +936,30 @@ describe("Session", () => {
         await session.close();
       });
 
-      it("allowed with its arguments too long for the conversation to show, tells the model it couldn't run", async () => {
+      it("allowed without its arguments, runs it once the router sends the call, without asking again", async () => {
         const [session, connection] = await opened(refunds());
 
         session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(ran, [], "nothing to run it with yet");
 
-        assert.equal((await connection.next()).type, "tool_approval");
+        connection.send(refundCall);
+
         assert.deepEqual(await connection.next(), {
           type: "tool_result",
           tool_call_id: "call_1",
           request_id: "m1",
           turn_id: "t1",
-          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+          output: "Refunded A-1042",
         });
-        assert.deepEqual(ran, []);
+        assert.deepEqual(ran, ["A-1042"]);
+        assert.deepEqual(session.approvals, []);
         await session.close();
       });
 

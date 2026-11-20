@@ -353,7 +353,6 @@ agent.tools.register<{ flight_id: string }>({
   approval: { title: "Book flight {flight_id}?" },
   timeoutMs: 20_000,
   run: async ({ flight_id }, toolCallContext) => {
-    toolCallContext.update("checking seats");
     await toolCallContext.disallowInterruptions();
     return bookings.book(flight_id, { user: toolCallContext.user.id, key: toolCallContext.id });
   },
@@ -366,7 +365,7 @@ agent.tools.register<{ flight_id: string }>({
   longer fails.
 - `concurrency` caps how many calls to the tool run at once. A call over the cap waits its
   turn, and its timeout keeps counting while it waits. Every tool's calls together are capped
-  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares an agent's
+  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares the client's
   `tools` across every session it hosts, so the cap is the worker's.
 - `approval` is asked before each call runs. In writing the call waits in `session.approvals`
   until `session.decide(id, { allowed })` answers it; a page follows the list in
@@ -409,6 +408,29 @@ it again. Only the kind of caller that opened the session may change its tools (
 and an add or a removal whose answer was lost, or was a failure other than a 4xx refusal, keeps
 the function running until the name is added or removed again. `session.fork()` runs the
 functions the session runs when it forks, which are the tools the router copies to the fork.
+
+In React, `useTool` from `@stream-io/stream-agents/react` offers a component's own function
+while it is mounted, and withdraws it when it unmounts or the session or name changes:
+
+```tsx
+import { useTool } from "@stream-io/stream-agents/react";
+
+function CheckoutPage({ session }: { session: Session | undefined }) {
+  const [cart] = useCart();
+  const failure = useTool(session, {
+    name: "read_cart",
+    description: "What is in the person's cart right now",
+    parameters: z.object({}),
+    run: async () => JSON.stringify(cart),
+  });
+  // ...
+}
+```
+
+What the model is told of the tool is sent once per session and name; each call runs the latest
+`run`, so a re-render with new state sends nothing. A removal waits for the add before it, and
+an add that was refused, such as the 409 for a name the session already has, is not followed by
+one. The hook answers the last add or removal that failed, or undefined.
 
 ## Agent dispatch
 
@@ -463,23 +485,24 @@ written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the
 it, with this worker's credential acting for the user who wrote it. The photos sent with a
 message come in `images`, by URL, and `dispatch.answer` shows them to the model.
 
-A worker can also host tools for every session opened under an agent id, including one a
-browser opened, where the session's own process cannot reach what the tool needs:
+A worker can also host the app's tools, registered once on the client for every agent, so they
+run for any session, including one a browser opened, where the session's own process cannot
+reach what the tool needs:
 
 ```ts
-const agent = client.agent("my-agent");
-agent.tools.register({ name: "lookup", description: "Look up an order", run: lookup });
-dispatch.host(agent, { toolTimeoutMs: 60_000 });
+const client = new Client();
+client.tools.register({ name: "lookup", description: "Look up an order", timeoutMs: 60_000, run: lookup });
+await client.runDispatch();
 ```
 
-The router offers them to each session naming the agent and sends every call here. A hosted
-tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a voice
-call), is handed its `toolCallContext`, and fails when the router gives up on it. `run`
-works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
-refuses them.
+The router offers a tool to a session only where a tool group of its agent's agent.yaml names
+it, and sends every call here. A hosted tool takes the same `interruptible`, `timeoutMs` and
+`approval` (asked only on a voice call), is handed its `toolCallContext`, and fails when the
+router gives up on it. `runDispatch` rejects with `HostingRefusedError` if the router refuses
+them. A worker that also answers calls or messages hosts them with `dispatch.host(client)`
+before `run`.
 
-Tool names must be unique across the agents hosted by one worker. Use separate workers when
-agents need different implementations of a tool with the same name. `stop` also cancels a
+Tool names must be unique across the clients hosted by one worker. `stop` also cancels a
 socket upgrade still in progress; work already running is drained.
 
 Server side only. A worker is offered other people's callers, so anything that can open

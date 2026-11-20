@@ -17,7 +17,6 @@ use crate::client::Client;
 use crate::error::{Error, Result};
 use crate::responses::{AgentResponse, Responses};
 use crate::session::Session;
-use crate::sessions::AgentRef;
 use crate::socket::{Frame, Incoming, SocketSender};
 use crate::tool_call::{Holds, Line, ToolCallContext, to_run};
 use crate::tools::Tools;
@@ -152,10 +151,9 @@ fn images_of(frame: &Frame) -> Vec<InboundImage> {
 type CallHandler = Arc<dyn Fn(InboundCall) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 type MessageHandler = Arc<dyn Fn(InboundMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
-/// One set of functions this worker runs for every session under an agent id.
+/// One set of functions this worker runs for every agent of the app.
 #[derive(Clone)]
 struct Hosting {
-    agent_id: String,
     tools: Tools,
     tool_timeout: Option<Duration>,
 }
@@ -184,7 +182,7 @@ impl Hosting {
         let timeout_ms = self
             .tool_timeout
             .map_or(0, |timeout| timeout.as_millis() as u64);
-        json!({"type": "host_tools", "agent_id": self.agent_id, "tools": tools, "timeout_ms": timeout_ms})
+        json!({"type": "host_tools", "every_agent": true, "tools": tools, "timeout_ms": timeout_ms})
     }
 
     fn runs(&self, name: &str) -> bool {
@@ -291,36 +289,35 @@ impl Dispatch {
         self
     }
 
-    /// Runs the agent's [`tools`](AgentRef::tools) for every session opened under its name,
-    /// whoever opened it.
+    /// Runs the app's [`tools`](Client::tools) for every session they are offered to, whoever
+    /// opened it.
     ///
-    /// A session's own functions run in the process that opened it, which is no use to a
-    /// conversation opened from a browser. Hosting is the other direction: the router offers
-    /// these functions to each session naming the agent and sends every call to a worker
-    /// hosting them. `tool_timeout` is how long the router waits for one tool call to be
-    /// answered before telling the model it failed, not how long the worker runs; `None`
-    /// takes the router's default of 30 seconds. Call before [`Dispatch::run`].
+    /// The tools are registered once on the client, for every agent: the router offers one to
+    /// a session only where a tool group of its agent's agent.yaml names it, and sends every
+    /// call to a worker hosting it. [`Client::run_dispatch`] does this alone, for a worker
+    /// with no calls or messages to answer. `tool_timeout` is how long the router waits for
+    /// one tool call to be answered before telling the model it failed, not how long the
+    /// worker runs; `None` takes the router's default of 30 seconds. Call before
+    /// [`Dispatch::run`].
     ///
     /// ```no_run
     /// # async fn example(client: vision_agents::Client) -> vision_agents::Result<()> {
     /// use vision_agents::Dispatch;
     ///
-    /// let agent = client.agent("my-agent");
-    /// agent.tools.register(
+    /// client.tools().register(
     ///     "get_weather",
     ///     "The weather in a city",
     ///     serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}}),
     ///     async |arguments| Ok::<_, String>(format!("sunny in {}", arguments["city"])),
     /// );
-    /// let dispatch = Dispatch::new(client);
-    /// dispatch.host(&agent, None);
+    /// let dispatch = Dispatch::new(client.clone());
+    /// dispatch.host(&client, None);
     /// dispatch.run().await
     /// # }
     /// ```
-    pub fn host(&self, agent: &AgentRef, tool_timeout: Option<Duration>) -> &Self {
+    pub fn host(&self, client: &Client, tool_timeout: Option<Duration>) -> &Self {
         self.inner.hosted.lock().expect("hosted").push(Hosting {
-            agent_id: agent.name.clone(),
-            tools: agent.tools.clone(),
+            tools: client.tools().clone(),
             tool_timeout,
         });
         self
@@ -558,8 +555,7 @@ impl Dispatch {
                     failure = Some(Error::Failed {
                         operation: "dispatch".into(),
                         message: format!(
-                            "the router refused to host tools for agent {}: {}",
-                            frame.text("agent_id"),
+                            "the router refused to host tools: {}",
                             frame.text("reason")
                         ),
                     });

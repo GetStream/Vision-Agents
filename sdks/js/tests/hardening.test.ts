@@ -114,9 +114,9 @@ describe("production hardening", () => {
     assert.equal(session.state.get().kind, "ended");
   });
 
-  it("refuses two hosted agents whose tool names would select the wrong implementation", () => {
-    const first = api.agent("first");
-    const second = api.agent("second");
+  it("refuses two hosted clients whose tool names would select the wrong implementation", () => {
+    const first = new Client({ url: router.url, customerId: "local" });
+    const second = new Client({ url: router.url, customerId: "local" });
     first.tools.register({ name: "lookup", description: "First lookup", run: () => "first" });
     second.tools.register({ name: "lookup", description: "Second lookup", run: () => "second" });
     const worker = new Dispatch({ client: api }).host(first);
@@ -124,8 +124,8 @@ describe("production hardening", () => {
   });
 
   it("also refuses hosted tool collisions introduced after hosting", async () => {
-    const first = api.agent("first");
-    const second = api.agent("second");
+    const first = new Client({ url: router.url, customerId: "local" });
+    const second = new Client({ url: router.url, customerId: "local" });
     first.tools.register({ name: "lookup", description: "First lookup", run: () => "first" });
     const worker = new Dispatch({ client: api }).host(first).host(second);
     second.tools.register({ name: "lookup", description: "Second lookup", run: () => "second" });
@@ -133,9 +133,8 @@ describe("production hardening", () => {
   });
 
   it("finishes a pending tool hold when the worker is aborted", async () => {
-    const agent = api.agent("support");
     let aborted: boolean | undefined;
-    agent.tools.register({
+    api.tools.register({
       name: "write",
       description: "Write after holding the call",
       run: async (_input, context) => {
@@ -147,7 +146,7 @@ describe("production hardening", () => {
       },
     });
     const stop = new AbortController();
-    const worker = new Dispatch({ client: api }).host(agent);
+    const worker = new Dispatch({ client: api }).host(api);
     const running = worker.run(stop.signal);
     const connection = await router.socket();
     connection.send({ type: "ready" });

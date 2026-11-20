@@ -8,13 +8,14 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.agent_stats import AgentStats
 from ...models.error_response import ErrorResponse
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     from_: datetime.datetime,
     to: datetime.datetime,
+    agent: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -24,6 +25,8 @@ def _get_kwargs(
 
     json_to = to.isoformat()
     params["to"] = json_to
+
+    params["agent"] = agent
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -64,6 +67,11 @@ def _parse_response(
 
         return response_403
 
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -96,17 +104,23 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     from_: datetime.datetime,
     to: datetime.datetime,
+    agent: str | Unset = UNSET,
 ) -> Response[AgentStats | ErrorResponse]:
     """How the calling customer's agents ran, across all of them
 
-     The most agents that were running at once, and which tools they called: how often, how much each
-    call put in front of the model and how long it took.
+     The most agents that were running at once, and which tools they called: how often, in how many
+    sessions and after how many turns, how much each call put in front of the model, what the tool's
+    definition costs every turn that carries it and how long a call took.
+    With agent, the sessions, turns and tools are that agent config's alone; the peak is still every
+    agent's.
     One figure for the whole window rather than a row per bucket, because neither a peak nor a
     percentile can be summed out of smaller ones.
 
     Args:
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
+        agent (str | Unset): The id of an agent config: only its sessions are counted. Omitted is
+            every agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,6 +133,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         from_=from_,
         to=to,
+        agent=agent,
     )
 
     response = client.get_httpx_client().request(
@@ -133,17 +148,23 @@ def sync(
     client: AuthenticatedClient | Client,
     from_: datetime.datetime,
     to: datetime.datetime,
+    agent: str | Unset = UNSET,
 ) -> AgentStats | ErrorResponse | None:
     """How the calling customer's agents ran, across all of them
 
-     The most agents that were running at once, and which tools they called: how often, how much each
-    call put in front of the model and how long it took.
+     The most agents that were running at once, and which tools they called: how often, in how many
+    sessions and after how many turns, how much each call put in front of the model, what the tool's
+    definition costs every turn that carries it and how long a call took.
+    With agent, the sessions, turns and tools are that agent config's alone; the peak is still every
+    agent's.
     One figure for the whole window rather than a row per bucket, because neither a peak nor a
     percentile can be summed out of smaller ones.
 
     Args:
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
+        agent (str | Unset): The id of an agent config: only its sessions are counted. Omitted is
+            every agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,6 +178,7 @@ def sync(
         client=client,
         from_=from_,
         to=to,
+        agent=agent,
     ).parsed
 
 
@@ -165,17 +187,23 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     from_: datetime.datetime,
     to: datetime.datetime,
+    agent: str | Unset = UNSET,
 ) -> Response[AgentStats | ErrorResponse]:
     """How the calling customer's agents ran, across all of them
 
-     The most agents that were running at once, and which tools they called: how often, how much each
-    call put in front of the model and how long it took.
+     The most agents that were running at once, and which tools they called: how often, in how many
+    sessions and after how many turns, how much each call put in front of the model, what the tool's
+    definition costs every turn that carries it and how long a call took.
+    With agent, the sessions, turns and tools are that agent config's alone; the peak is still every
+    agent's.
     One figure for the whole window rather than a row per bucket, because neither a peak nor a
     percentile can be summed out of smaller ones.
 
     Args:
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
+        agent (str | Unset): The id of an agent config: only its sessions are counted. Omitted is
+            every agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -188,6 +216,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         from_=from_,
         to=to,
+        agent=agent,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -200,17 +229,23 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     from_: datetime.datetime,
     to: datetime.datetime,
+    agent: str | Unset = UNSET,
 ) -> AgentStats | ErrorResponse | None:
     """How the calling customer's agents ran, across all of them
 
-     The most agents that were running at once, and which tools they called: how often, how much each
-    call put in front of the model and how long it took.
+     The most agents that were running at once, and which tools they called: how often, in how many
+    sessions and after how many turns, how much each call put in front of the model, what the tool's
+    definition costs every turn that carries it and how long a call took.
+    With agent, the sessions, turns and tools are that agent config's alone; the peak is still every
+    agent's.
     One figure for the whole window rather than a row per bucket, because neither a peak nor a
     percentile can be summed out of smaller ones.
 
     Args:
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
+        agent (str | Unset): The id of an agent config: only its sessions are counted. Omitted is
+            every agent.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -225,5 +260,6 @@ async def asyncio(
             client=client,
             from_=from_,
             to=to,
+            agent=agent,
         )
     ).parsed

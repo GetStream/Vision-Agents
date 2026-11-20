@@ -238,6 +238,74 @@ void main() {
       await chat.close();
     });
 
+    test('a typed tool runs on the arguments its fromJson read', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.typed<_OrderLookup>(
+              name: 'lookup_order',
+              description: 'Look up an order.',
+              fromJson: _OrderLookup.fromJson,
+              run: (lookup) async => 'Order ${lookup.orderId}: ${lookup.items} items.',
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"lookup_order",'
+        r'"arguments":"{\"order_id\":\"A-1042\",\"items\":2}"}',
+      );
+
+      final result = await socket.next();
+      expect(result['output'], 'Order A-1042: 2 items.');
+      expect(result['error'], '');
+      await chat.close();
+    });
+
+    test('tells the model a typed tool failed when its arguments do not read', () async {
+      final ran = <_OrderLookup>[];
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.typed<_OrderLookup>(
+              name: 'lookup_order',
+              description: 'Look up an order.',
+              fromJson: _OrderLookup.fromJson,
+              run: (lookup) async {
+                ran.add(lookup);
+                return 'found';
+              },
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket
+        ..send(
+          '{"type":"tool_call","id":"missing","name":"lookup_order",'
+          r'"arguments":"{\"items\":2}"}',
+        )
+        ..send(
+          '{"type":"tool_call","id":"wrong_type","name":"lookup_order",'
+          r'"arguments":"{\"order_id\":\"A-1042\",\"items\":\"two\"}"}',
+        );
+
+      final results = {
+        for (final result in [await socket.next(), await socket.next()])
+          result['tool_call_id']: result,
+      };
+      for (final result in results.values) {
+        expect(result['output'], '');
+        expect(result['error'], isNotEmpty);
+      }
+      expect(results.keys, unorderedEquals(['missing', 'wrong_type']));
+      expect(ran, isEmpty);
+      await chat.close();
+    });
+
     test('answers with pictures as parts beside the words', () async {
       final chat = await agents.chat(
         SessionOptions(
@@ -315,6 +383,51 @@ void main() {
         await chat.close();
       },
     );
+
+    test('interrupts the current reply', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat.interrupt();
+
+      expect(await socket.next(), {'type': 'interrupt'});
+      await chat.close();
+      expect(await socket.next(), {'type': 'close'});
+    });
+
+    test('interrupts only the reply answering a request', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat.interrupt(requestId: 'm1');
+
+      expect(await socket.next(), {'type': 'interrupt', 'request_id': 'm1'});
+      await chat.close();
+      expect(await socket.next(), {'type': 'close'});
+    });
+
+    test('says something after what is in flight', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat.say('One moment.');
+
+      expect(await socket.next(), {'type': 'say', 'text': 'One moment.'});
+      await chat.close();
+      expect(await socket.next(), {'type': 'close'});
+    });
+
+    test('stops what is in flight before saying something', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      chat.say('Sorry, wrong order.', interrupt: true);
+
+      expect(await socket.next(), {'type': 'interrupt'});
+      expect(await socket.next(), {'type': 'say', 'text': 'Sorry, wrong order.'});
+      await chat.close();
+      expect(await socket.next(), {'type': 'close'});
+    });
 
     test('a picture tool that asks first sends its pictures once allowed', () async {
       final chat = await agents.chat(
@@ -416,6 +529,99 @@ void main() {
       expect((await socket.next())['tool_call_id'], 'c2');
       await chat.close();
     });
+
+    test(
+      'a call meant for another watcher is not run, and one approved by voice is not asked again',
+      () async {
+        final ran = <String>[];
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [
+              AgentTool(
+                name: 'lookup_order',
+                description: 'Look up an order.',
+                run: (_) async => 'found',
+              ),
+              AgentTool(
+                name: 'issue_refund',
+                description: 'Refund an order.',
+                approval: const ToolApproval(title: 'Refund it?'),
+                run: (_) async {
+                  ran.add('refund');
+                  return 'refunded';
+                },
+              ),
+            ],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket
+          ..send(
+            '{"type":"tool_call","id":"elsewhere","name":"lookup_order","arguments":"{}","run":false}',
+          )
+          ..send(
+            '{"type":"tool_call","id":"approved","name":"issue_refund","arguments":"{}","approved":true}',
+          )
+          ..send('{"type":"tool_call","id":"here","name":"lookup_order","arguments":"{}"}');
+
+        final answered = {
+          (await socket.next())['tool_call_id'],
+          (await socket.next())['tool_call_id'],
+        };
+        expect(answered, {'approved', 'here'});
+        expect(ran, ['refund']);
+        expect(chat.approvals.value, isEmpty);
+        await chat.close();
+      },
+    );
+
+    test(
+      'keeps each tool call\'s last state, and a handler hears its kind until cancelled',
+      () async {
+        final chat = await agents.chat();
+        final socket = await router.socket();
+        final progress = <String>[];
+        final finished = <String>[];
+        late StreamSubscription<AgentEvent> first;
+        first = chat.on(AgentEventKind.toolCallProgress, (event) {
+          progress.add(event['progress'] as String);
+          first.cancel();
+        });
+        chat.on(
+          AgentEventKind.toolCallFinished,
+          (event) => finished.add(event['tool_call_id'] as String),
+        );
+        const call =
+            '"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","started_at":"2026-11-18T12:00:00Z"';
+
+        socket
+          ..send('{"type":"tool_call.started",$call,"status":"waiting","duration_ms":0}')
+          ..send(
+            '{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":100,'
+            '"progress":"Searching for flights","approved_at":"2026-11-18T12:00:00.1Z"}',
+          )
+          ..send(
+            '{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,'
+            '"progress":"Comparing prices","approved_at":"2026-11-18T12:00:00.1Z"}',
+          )
+          ..send(
+            '{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,'
+            '"approved_at":"2026-11-18T12:00:00.1Z"}',
+          );
+        await until(() => chat.toolCalls.value['c1']?.status.isFinished ?? false);
+        await until(() => finished.isNotEmpty);
+
+        final last = chat.toolCalls.value['c1']!;
+        expect(last.status, ToolCallStatus.success);
+        expect(last.duration, const Duration(milliseconds: 300));
+        expect(last.progress, '', reason: 'the finished frame carries the whole state');
+        expect(last.approvedAt, DateTime.utc(2026, 11, 18, 12, 0, 0, 100));
+        expect(progress, ['Searching for flights']);
+        expect(finished, ['c1']);
+        await chat.close();
+      },
+    );
 
     test('a tool call the router cancelled is not answered', () async {
       final release = Completer<String>();
@@ -1556,4 +1762,13 @@ void main() {
       await chat.close();
     });
   });
+}
+
+class _OrderLookup {
+  _OrderLookup.fromJson(Map<String, Object?> json)
+    : orderId = json['order_id']! as String,
+      items = json['items']! as int;
+
+  final String orderId;
+  final int items;
 }

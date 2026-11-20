@@ -8,6 +8,7 @@ import 'generated/api.dart' as api;
 import 'guests.dart';
 import 'models.dart';
 import 'router.dart';
+import 'scheduled_tasks.dart';
 import 'sessions.dart';
 import 'tools.dart';
 import 'wire.dart';
@@ -17,7 +18,7 @@ import 'wire.dart';
 /// Two lines get a conversation going:
 ///
 ///     final agents = StreamAgents(url: Uri.parse('https://your-router'), customerId: 'acme');
-///     final chat = await agents.agent('docs').chat();
+///     final session = await agents.agent('docs').sessions.create();
 ///
 /// Opening a conversation, following it, reading back its turns, going back to one of them,
 /// branching off and ending it, a guest to do it as, and looking something up are the whole
@@ -49,7 +50,8 @@ final class StreamAgents {
     : _client = httpClient ?? http.Client(),
       _ownsClient = httpClient == null {
     _operations = api.Operations(HttpWire(backend, _client));
-    sessions = Sessions(_operations, userId: backend.userId);
+    sessions = Sessions(_operations, backend);
+    scheduledTasks = ScheduledTasks(_operations);
   }
 
   final Backend backend;
@@ -59,6 +61,9 @@ final class StreamAgents {
 
   /// This caller's conversations, whichever agent held them.
   late final Sessions sessions;
+
+  /// What agents said they would do for this user later: reminders, check-ins, reports.
+  late final ScheduledTasks scheduledTasks;
 
   /// One agent, by the name its config was stored under.
   Agent agent(String name) => Agent._(this, name);
@@ -73,19 +78,21 @@ final class StreamAgents {
       withUser(guest.id, token: backend.apiKey.isEmpty ? null : () async => guest.token);
 
   /// Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
+  /// [Sessions.create] with [SessionOptions.startVoice] false.
   ///
   /// The replies still come from the model with the same instructions, skills and knowledge a
   /// call would have, and arrive as deltas on the socket, which is already open when this
   /// returns.
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) =>
-      _follow(sessions, options, voice: false);
+      openSession(sessions, options, voice: false);
 
   /// Puts an agent on the session's own call, `agent:<session id>`, and follows it.
+  /// [Sessions.create] with [SessionOptions.startVoice] true.
   ///
   /// The agent joins as soon as this returns. Joining the same call from this device is what
   /// `VoiceSession.join` is for; this only starts the agent and gives you the state.
   Future<AgentSession> voice([SessionOptions options = const SessionOptions()]) =>
-      _follow(sessions, options, voice: true);
+      openSession(sessions, options, voice: true);
 
   /// Follows a session this caller already has, without creating one: after a relaunch, on
   /// another screen, or a fork. It is also how a conversation is carried on.
@@ -163,32 +170,6 @@ final class StreamAgents {
       _client.close();
     }
   }
-
-  Future<AgentSession> _follow(
-    Sessions sessions,
-    SessionOptions options, {
-    required bool voice,
-  }) async {
-    final session = AgentSession(
-      await openSession(sessions, options, voice: voice),
-      backend: backend,
-      sessions: sessions,
-      tools: options.tools,
-    );
-    try {
-      await session.start();
-    } on AgentsException {
-      // The agent is in the conversation whether or not anybody here can follow it, so it is
-      // stopped rather than left holding a call nobody is listening to.
-      try {
-        await sessions.stop(session.id);
-      } on AgentsException {
-        // Reporting why the socket did not open matters more than this.
-      }
-      rethrow;
-    }
-    return session;
-  }
 }
 
 /// A token about to expire is as good as expired by the time it reaches the router.
@@ -199,22 +180,20 @@ const _leeway = Duration(minutes: 1);
 /// The JavaScript SDK's `client.agent("docs")`: every session opened or listed here is this
 /// agent's, unless the options name another config.
 final class Agent {
-  Agent._(this._agents, this.name)
-    : sessions = Sessions(_agents._operations, agent: name, userId: _agents.backend.userId);
-
-  final StreamAgents _agents;
+  Agent._(StreamAgents agents, this.name)
+    : sessions = Sessions(agents._operations, agents.backend, agent: name);
 
   /// The name its config was stored under.
   final String name;
 
-  /// This agent's conversations.
+  /// This agent's conversations. `sessions.create` opens one and follows it.
   final Sessions sessions;
 
   /// Holds a conversation with this agent in writing.
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) =>
-      _agents._follow(sessions, options, voice: false);
+      openSession(sessions, options, voice: false);
 
   /// Puts this agent on the session's own call and follows it.
   Future<AgentSession> voice([SessionOptions options = const SessionOptions()]) =>
-      _agents._follow(sessions, options, voice: true);
+      openSession(sessions, options, voice: true);
 }
