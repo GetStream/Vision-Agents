@@ -815,6 +815,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A POST from a sandbox through a tunnel to an allowed domain no longer fails after a pause
 
 The router's sandbox proxy closed a tunnel to an allowed domain after 90 s with no traffic. That is also how long a Go client keeps a pooled connection, and the proxy's clock starts first. So a POST that a Go client sent on a kept connection near that limit could fail with `EOF`. The proxy now keeps such a tunnel for 4 min, as it keeps a connection to the proxy, so the client closes it first. The sandbox's TLS forwarder waits as long for a silent proxy (#2161, AI-2346).
+### A guardrail is no longer shown a tool's output as the caller's words
+
+The `conversation` a guardrail's check reads (classifier, judge and webhook) left out tool calls but not the result of a call held over an interruption, which reaches the model on the caller's side once it is in: a lookup's JSON reached the next turn's check as a `user:` line. That result, the note that silence declined a call, a summary of the call so far, and the cards of earlier episodes are now left out. In a channel where several people write, each person's line is their name and words (`user: Anya: I'm sick`), not the JSON envelope with their user id, and the same goes for a line of history the caller kept with names (AI-3408).
 ### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
 
 With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.
