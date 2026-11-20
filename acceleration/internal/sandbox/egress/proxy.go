@@ -43,9 +43,10 @@ const (
 	// tunnel: http.DefaultTransport's TLSHandshakeTimeout (net/http/transport.go).
 	handshakeTimeout = 10 * time.Second
 	// keepAliveTimeout closes a connection to the proxy, or to a grant's tunnel, that sends no
-	// next request, and a tunnel to an allowed domain that has carried no byte for it. It outlasts the idle limit of every client in the sandbox that pools one,
-	// so the client closes it first: a server that closes it as the client reuses it fails a
-	// request the client may not replay, such as a POST read in Go (net/http/transport.go,
+	// next request, and a tunnel to an allowed domain that has carried no byte for it. It
+	// outlasts the idle limit of every client in the sandbox that pools one, so the client
+	// closes it first: a server that closes it as the client reuses it fails a request the
+	// client may not replay, such as a POST read in Go (net/http/transport.go,
 	// shouldRetryRequest). The longest is libcurl's (curl, git), 118 s
 	// (https://curl.se/libcurl/c/CURLOPT_MAXAGE_CONN.html), and 4 min is twice it. Go's
 	// http.DefaultTransport keeps 90 s (net/http/transport.go, IdleConnTimeout), httpx 5 s
@@ -268,7 +269,8 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, session, hos
 }
 
 // KeepAliveTimeout is how long a connection to the proxy may sit with no request before the
-// server closes it: the one a grant's tunnel is given, and a tunnel to an allowed domain.
+// server closes it. A grant's tunnel gets the same limit, and so does a tunnel to an allowed domain
+// that carries no byte.
 func (p *Proxy) KeepAliveTimeout() time.Duration {
 	return p.keepAliveTimeout
 }
