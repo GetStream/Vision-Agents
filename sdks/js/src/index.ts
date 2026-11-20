@@ -27,7 +27,9 @@ export {
   type StreamUser,
   type TokenSource,
   type UserTokenOptions,
+  type HeaderWebSocketConstructor,
   type WebSocketConstructor,
+  type WebSocketInit,
   type WebSocketLike,
 } from "./backend.js";
 
@@ -141,6 +143,7 @@ export {
   type ToolConversation,
   type ToolLine,
   type ToolUser,
+  type ToolsOptions,
 } from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";

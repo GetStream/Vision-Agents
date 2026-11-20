@@ -799,6 +799,10 @@ func frameOf(event session.Event) (frame, bool) {
 		if len(typed.FloorChecks) > 0 {
 			measured["floor_checks"] = floorChecksOf(typed.FloorChecks)
 		}
+		// Only a turn a guardrail checked adds it, as a timeline entry does.
+		if typed.Guardrail != nil {
+			measured["guardrail"] = guardrailCheckOf(*typed.Guardrail)
+		}
 		return measured, true
 
 	case agent.ModelCall:

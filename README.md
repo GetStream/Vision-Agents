@@ -200,7 +200,9 @@ Set daily, weekly and monthly spend limits in
 USD on the organization, API keys, users, apps and teams.
 See [spend limits](https://getstream.io/agents/docs/spend-limits/).
 
-<!-- dashboard screenshot -->
+
+https://github.com/user-attachments/assets/7f4a028b-7cf3-4194-a894-fdbb72aa2109
+
 
 ## Connectors
 

@@ -286,6 +286,9 @@ from .get_conversation_messages_response_200 import GetConversationMessagesRespo
 from .granularity import Granularity
 from .greeting import Greeting
 from .greeting_mode import GreetingMode
+from .guardrail_check import GuardrailCheck
+from .guardrail_check_kind import GuardrailCheckKind
+from .guardrail_check_mode import GuardrailCheckMode
 from .guest_user import GuestUser
 from .guest_user_custom import GuestUserCustom
 from .guest_user_request import GuestUserRequest
@@ -944,6 +947,9 @@ __all__ = (
     "Granularity",
     "Greeting",
     "GreetingMode",
+    "GuardrailCheck",
+    "GuardrailCheckKind",
+    "GuardrailCheckMode",
     "GuestUser",
     "GuestUserCustom",
     "GuestUserRequest",

@@ -69,6 +69,28 @@ type Turn struct {
 	// Set on a turn that was not interrupted, it means the agent cut itself off.
 	AudioDroppedMs *float64 `json:"audio_dropped_ms,omitempty"`
 	Interrupted    bool     `json:"interrupted,omitempty"`
+	// Guardrail is the guardrail's check of the turn. Nil for a turn nothing screened.
+	Guardrail *GuardrailCheck `json:"guardrail,omitempty"`
+}
+
+// GuardrailCheck is one check a guardrail made of a turn, allowed or refused. A value the
+// check did not produce is absent: a webhook answers yes or no, and a check that failed
+// answered nothing.
+type GuardrailCheck struct {
+	// Kind is how the turn was checked: decision_model, llm or webhook.
+	Kind string `json:"kind"`
+	// Model is the "provider/model" that answered.
+	Model       string   `json:"model,omitempty"`
+	Probability *float64 `json:"probability,omitempty"`
+	Threshold   *float64 `json:"threshold,omitempty"`
+	Allowed     bool     `json:"allowed"`
+	LatencyMs   float64  `json:"latency_ms"`
+	// HeldMs is how long a reply the model had begun waited on the verdict.
+	HeldMs float64 `json:"held_ms,omitempty"`
+	// Mode is when the check ran: parallel or blocking.
+	Mode string `json:"mode"`
+	// Failed is a check that could not be made, whose turn was answered anyway.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // The kinds of FloorCheck: with the floor free, whether the caller has finished, or while the

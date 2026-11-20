@@ -252,11 +252,11 @@ describe("a token function", () => {
     // Long enough that a token signed again would carry another iat.
     t.mock.timers.tick(5 * 60 * 1000);
     const second = (await backend.headers())["Authorization"];
-    const socket = new URL(await backend.socketURL("/v1/dispatch")).searchParams.get("token");
+    const socket = (await backend.socketHeaders())?.["Authorization"];
 
     assert.ok(first);
     assert.equal(second, first);
-    assert.equal(`Bearer ${socket}`, first);
+    assert.equal(socket, first);
   });
 
   it("signs a new server token once the one it holds is about to expire", async (t) => {

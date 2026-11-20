@@ -547,7 +547,8 @@ export class Dispatch {
             toolCallContext,
           );
         } catch (cause) {
-          result["error"] = cause instanceof Error ? cause.message : String(cause);
+          // What the model is told is the tools' own choice (`onError`), since it may repeat it.
+          result["error"] = offer.tools.failure(name, id, cause);
         } finally {
           this.hostedCalls.delete(key);
           this.holds.forget(id);

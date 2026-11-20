@@ -2,7 +2,11 @@ package io.getstream.agents.android.core
 
 import java.util.UUID
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Instant
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /** One line of a conversation. */
 public data class Turn(
@@ -16,6 +20,17 @@ public data class Turn(
      * OpenUI is null until one of its statements is finished.
      */
     val ui: TurnUI? = null,
+    /**
+     * What the agent did on its way to the turn's text, in order: each round of the model's
+     * thinking on a written reply, and each tool it called. Empty on a participant's turn.
+     */
+    val steps: List<TurnStep> = emptyList(),
+    /**
+     * Whether the agent is done with the turn: it answered with no tools or work left to come, or
+     * it was interrupted. A turn whose tools are still running is not. Never set on a
+     * participant's turn.
+     */
+    val isDone: Boolean = false,
 ) {
     public sealed interface Speaker {
         /** A person, on the call or typing. Null when the router did not say who. */
@@ -26,6 +41,100 @@ public data class Turn(
     }
 
     public val isAgent: Boolean get() = speaker == Speaker.Agent
+
+    /**
+     * This turn with [delta] added to the round of thinking under way, or to a new one when the
+     * model did something else since: every round is numbered from `r1`, as a kept reply's steps
+     * are.
+     */
+    internal fun think(delta: String, began: Instant): Turn {
+        val last = steps.lastOrNull()
+        if (last is TurnStep.Reasoning && last.isStreaming) {
+            return copy(steps = steps.dropLast(1) + last.copy(text = last.text + delta))
+        }
+        val round = TurnStep.Reasoning(
+            id = "r${steps.count { it is TurnStep.Reasoning } + 1}",
+            isStreaming = true,
+            text = delta,
+            at = began,
+        )
+        return copy(steps = steps + round)
+    }
+
+    /** This turn with its round of thinking under way completed, or itself when none is. */
+    internal fun settled(at: Instant): Turn {
+        val last = steps.lastOrNull()
+        if (last !is TurnStep.Reasoning || !last.isStreaming) return this
+        return copy(steps = steps.dropLast(1) + last.copy(isStreaming = false, duration = at - last.at))
+    }
+
+    /**
+     * This turn with [call] begun, or itself when it already shows that call. A round of
+     * thinking's id is ours, `r1` and on, so a call the provider gave the same id is another step.
+     */
+    internal fun called(call: TurnStep.ToolCall): Turn =
+        if (steps.any { it is TurnStep.ToolCall && it.id == call.id }) this else copy(steps = steps + call)
+
+    /** This turn with its running call [id] changed as [change] says, or itself when it has none. */
+    internal fun changedCall(id: String, change: (TurnStep.ToolCall) -> TurnStep.ToolCall): Turn {
+        val index = steps.indexOfFirst {
+            it is TurnStep.ToolCall && it.id == id && it.status == TurnStep.ToolCall.Status.Running
+        }
+        if (index < 0) return this
+        val updated = steps.toMutableList()
+        updated[index] = change(updated[index] as TurnStep.ToolCall)
+        return copy(steps = updated)
+    }
+}
+
+/** One thing the agent did in a turn: a round of the model's thinking, or a call of a tool. */
+public sealed interface TurnStep {
+    /** `r1`, `r2` and on for a round of thinking; the call's id for a tool call. */
+    public val id: String
+
+    /** When it began. */
+    public val at: Instant
+
+    /** A round of the model's thinking on a written reply, which is read, never spoken. */
+    public data class Reasoning(
+        /** `r1`, `r2` and on, in the order the turn thought. */
+        override val id: String,
+        /** Whether the model is still thinking: until it writes, calls a tool or finishes. */
+        val isStreaming: Boolean,
+        /** The thinking so far. */
+        val text: String,
+        /**
+         * When the model began on it: when it was asked, or took the reply up again after writing,
+         * as a kept reply's step is timed. Not when its first words arrived, which a model that
+         * sends its thinking in one burst sends only at the end.
+         */
+        override val at: Instant,
+        /** How long the model thought, once it is done. */
+        val duration: Duration? = null,
+    ) : TurnStep
+
+    /** A call of a tool: what was called and how it went, not what it was given or gave. */
+    public data class ToolCall(
+        /** The call's id, which [AgentSession.decide] answers it by while it waits in `approvals`. */
+        override val id: String,
+        /** The tool. */
+        val name: String,
+        val status: Status,
+        /**
+         * What whoever runs it last said about how it is going (`tool_updated`), or the empty
+         * string.
+         */
+        val summary: String,
+        override val at: Instant,
+        /** How long it ran, once it is no longer running. */
+        val duration: Duration? = null,
+    ) : TurnStep {
+        public enum class Status(public val wire: String) {
+            Running("running"),
+            Completed("completed"),
+            Failed("failed"),
+        }
+    }
 }
 
 /**
@@ -60,6 +169,12 @@ public class Conversation private constructor(
      */
     private val uiWritten: Map<String, UiWritten>,
     /**
+     * When the model last took each agent turn in flight up again, by turn id: when it was asked,
+     * or went on after writing. A round of thinking is timed from it. Counted in equality, as
+     * [uiWritten] is, so that a frame that moves only this is still kept.
+     */
+    private val resumedAt: Map<String, Instant>,
+    /**
      * The agent turns with UI that were interrupted. Their UI still shows, but the router never
      * merges a patch onto it.
      */
@@ -69,14 +184,14 @@ public class Conversation private constructor(
         turns: List<Turn> = emptyList(),
         state: State = State.Idle,
         failure: String? = null,
-    ) : this(turns, state, failure, emptyMap(), emptySet())
+    ) : this(turns, state, failure, emptyMap(), emptyMap(), emptySet())
 
     /** This conversation with the given parts changed, and the UI being written kept. */
     public fun copy(
         turns: List<Turn> = this.turns,
         state: State = this.state,
         failure: String? = this.failure,
-    ): Conversation = Conversation(turns, state, failure, uiWritten, cut)
+    ): Conversation = Conversation(turns, state, failure, uiWritten, resumedAt, cut)
 
     public operator fun component1(): List<Turn> = turns
 
@@ -91,14 +206,19 @@ public class Conversation private constructor(
             state == other.state &&
             failure == other.failure &&
             uiWritten == other.uiWritten &&
+            resumedAt == other.resumedAt &&
             cut == other.cut
 
-    override fun hashCode(): Int = listOf(turns, state, failure, uiWritten, cut).hashCode()
+    override fun hashCode(): Int = listOf(turns, state, failure, uiWritten, resumedAt, cut).hashCode()
 
     override fun toString(): String = "Conversation(turns=$turns, state=$state, failure=$failure)"
 
     private fun writing(uiWritten: Map<String, UiWritten>): Conversation =
-        Conversation(turns, state, failure, uiWritten, cut)
+        Conversation(turns, state, failure, uiWritten, resumedAt, cut)
+
+    /** This conversation with agent turn [turnId] taken up again [at], or done with for null. */
+    private fun resumed(turnId: String, at: Instant?): Conversation =
+        Conversation(turns, state, failure, uiWritten, if (at == null) resumedAt - turnId else resumedAt + (turnId to at), cut)
 
     /** What a turn's UI block wrote, and how. */
     private data class UiWritten(val format: String, val version: String?, val mode: String, val text: String) {
@@ -151,19 +271,60 @@ public class Conversation private constructor(
 
             AgentEvent.Kind.Responding ->
                 copy(turns = turns + Turn(event.turnId, Turn.Speaker.Agent, "", at), state = State.Responding)
+                    .resumed(event.turnId, at)
 
+            // Writing ends the round of thinking under way, and the next one is timed from here.
             AgentEvent.Kind.ResponseDelta ->
-                write(event.turnId, event.text, at) { it + event.text }.copy(state = State.Responding)
+                (if (event.text.isEmpty()) this else amend(event.turnId) { it.settled(at) }.resumed(event.turnId, at))
+                    .write(event.turnId, event.text, at) { it + event.text }
+                    .copy(state = State.Responding)
+
+            // A round is timed from when the model was asked or went on, not from its first words.
+            AgentEvent.Kind.ReasoningDelta ->
+                if (event.text.isEmpty()) {
+                    this
+                } else {
+                    val began = resumedAt[event.turnId] ?: at
+                    amend(event.turnId, startingAt = at) { it.think(event.text, began) }
+                }
+
+            AgentEvent.Kind.ToolStarted -> {
+                val call = TurnStep.ToolCall(
+                    id = event.string("tool_call_id"),
+                    name = event.string("tool"),
+                    status = TurnStep.ToolCall.Status.Running,
+                    summary = "",
+                    at = at,
+                )
+                amend(event.turnId, startingAt = at) { it.settled(at).called(call) }
+            }
+
+            // Words to say as written are a line of the reply, not how the call is going.
+            AgentEvent.Kind.ToolUpdated ->
+                if (event["verbatim"].isTrue || event.text.isEmpty()) {
+                    this
+                } else {
+                    amend(event.turnId) { turn -> turn.changedCall(event.string("id")) { it.copy(summary = event.text) } }
+                }
+
+            AgentEvent.Kind.ToolRan -> {
+                val status = if (event.errorText.isEmpty()) TurnStep.ToolCall.Status.Completed else TurnStep.ToolCall.Status.Failed
+                amend(event.turnId) { turn ->
+                    turn.changedCall(event.string("tool_call_id")) { it.copy(status = status, duration = at - it.at) }
+                }
+            }
 
             AgentEvent.Kind.UiDelta -> {
                 val delta = event.string("delta")
                 val format = event.string("format")
+                // Writing UI ends the round of thinking under way, as writing text does.
+                val went = if (delta.isEmpty()) this else amend(event.turnId) { it.settled(at) }.resumed(event.turnId, at)
                 if (delta.isEmpty() || format.isEmpty()) {
-                    this
+                    went
                 } else {
                     val text = uiWritten[event.turnId]?.text.orEmpty() + delta
                     val written = UiWritten(event, format, text)
-                    val kept = writing(uiWritten + (event.turnId to written))
+                    val kept = went.writing(uiWritten + (event.turnId to written))
                     // Only the line still being written grew, so no statement finished: what shows
                     // is unchanged.
                     val shown = if (format == TurnUI.OPEN_UI && '\n' !in delta) {
@@ -190,10 +351,15 @@ public class Conversation private constructor(
 
             // The final text is authoritative: the deltas are what was being written, this is
             // what was said. An empty one adds nothing, which is what a spoken-only turn is.
-            AgentEvent.Kind.Responded ->
+            // A reply whose tools or work are still to come is carried on by a turn of its own.
+            AgentEvent.Kind.Responded -> {
+                val done = !event["pending_work"].isTrue
                 settleUi(event.turnId, at)
                     .let { if (event.text.isEmpty()) it else it.write(event.turnId, event.text, at) { event.text } }
+                    .resumed(event.turnId, null)
+                    .amend(event.turnId) { turn -> turn.settled(at).let { if (done) it.copy(isDone = true) else it } }
                     .copy(state = State.Idle)
+            }
 
             AgentEvent.Kind.Delegated -> copy(state = State.Working(working + event.string("skill")))
 
@@ -202,29 +368,56 @@ public class Conversation private constructor(
                 copy(state = if (left.isEmpty()) State.Responding else State.Working(left))
             }
 
-            AgentEvent.Kind.Interrupted -> settleUi(event.turnId, at).cutOff(event.turnId).copy(state = State.Idle)
+            AgentEvent.Kind.Interrupted -> ended(event.turnId, at).cutOff(event.turnId).copy(state = State.Idle)
 
             // The model writing the reply failing is the end of that reply, which may never be
-            // reported as responded. Anything else that fails, a tool, the voice or the
-            // transcriber, leaves the reply going, and the agent doing what it was doing.
-            AgentEvent.Kind.Error ->
-                copy(failure = event.errorText, state = if (endsTurn(event)) State.Idle else state)
+            // reported as responded, so it is done as an interrupted one is, and the router no
+            // more takes its UI as the base of a patch than an interrupted one's. Its error may
+            // not say which turn it ended, which is then the agent's latest one still going.
+            // Anything else that fails, a tool, the voice or the transcriber, leaves the reply
+            // going, and the agent doing what it was doing.
+            AgentEvent.Kind.Error -> {
+                val turnId = event.turnId.ifEmpty { turns.lastOrNull { it.isAgent && !it.isDone }?.id.orEmpty() }
+                val ends = endsTurn(event, turnId)
+                (if (event.string("code") == PROMPT_INJECTION) refused() else this)
+                    .let { if (ends && turnId.isNotEmpty()) it.ended(turnId, at).cutOff(turnId) else it }
+                    .copy(failure = event.errorText, state = if (ends) State.Idle else state)
+            }
 
             AgentEvent.Kind.Left -> copy(state = State.Ended)
 
             else -> this
         }
 
+    /**
+     * Agent turn [turnId] with nothing more of it to come: its round of thinking and its UI
+     * settled, and the turn done.
+     */
+    private fun ended(turnId: String, at: Instant): Conversation =
+        settleUi(turnId, at)
+            .resumed(turnId, null)
+            .amend(turnId) { it.settled(at).copy(isDone = true) }
+
     private val working: List<String>
         get() = (state as? State.Working)?.skills.orEmpty()
 
-    /** Whether an error ends the agent's turn in flight: it is the reply model's, and there is one. */
-    private fun endsTurn(event: AgentEvent): Boolean =
-        (state == State.Responding || state is State.Working) && event.string("context") in replyModels
+    /**
+     * Whether an error ends the agent's turn in flight: it is the reply model's, and there is one,
+     * either because the agent is answering or because agent turn [turnId] is still going, as one
+     * that streamed thinking with no `responding` before it is. Nothing ends once the conversation
+     * is over.
+     */
+    private fun endsTurn(event: AgentEvent, turnId: String): Boolean =
+        event.string("context") in replyModels &&
+            state != State.Ended &&
+            (state == State.Responding || state is State.Working || turns.any { it.id == turnId && it.isAgent && !it.isDone })
 
     private companion object {
         /** The `context` of an error from the model writing the reply, as text or as speech. */
         val replyModels = setOf("llm", "sts")
+
+        /** The `code` of an error for a reply the prompt injection screen refused. */
+        const val PROMPT_INJECTION = "prompt_injection"
 
         /** The events that show the agent works again, so whatever it last reported is over. */
         val recovered = setOf(AgentEvent.Kind.Heard, AgentEvent.Kind.Responding, AgentEvent.Kind.Spoke)
@@ -243,6 +436,39 @@ public class Conversation private constructor(
     }
 
     /**
+     * The prompt injection screen refused the reply being written. What it streamed before the
+     * verdict is not the answer, so its text and UI go, as they do from the kept conversation;
+     * its thinking and tool calls stay.
+     */
+    private fun refused(): Conversation {
+        val index = turns.indexOfLast { it.isAgent }
+        val turn = turns.getOrNull(index)?.takeUnless { it.isDone } ?: return this
+        val cleared = writing(uiWritten - turn.id)
+        if (turn.text.isEmpty() && turn.ui == null) return cleared
+        val updated = turns.toMutableList()
+        updated[index] = turn.copy(text = "", ui = null)
+        return cleared.copy(turns = updated)
+    }
+
+    /**
+     * Applies [change] to agent turn [turnId]. A turn this never saw begin is started [startingAt]
+     * when the event begins something, and left alone when it is null.
+     */
+    private fun amend(turnId: String, startingAt: Instant? = null, change: (Turn) -> Turn): Conversation {
+        val index = turns.indexOfLast { it.id == turnId && it.isAgent }
+        if (index < 0) {
+            if (startingAt == null) return this
+            return copy(turns = turns + change(Turn(turnId, Turn.Speaker.Agent, "", startingAt)))
+        }
+        val turn = turns[index]
+        val changed = change(turn)
+        if (changed == turn) return this
+        val updated = turns.toMutableList()
+        updated[index] = changed
+        return copy(turns = updated)
+    }
+
+    /**
      * Settles the UI of a turn that ended with no `ui_completed`, as an interrupted reply does:
      * the router dropped its UI block with the turn. What was written shows, but for a statement
      * it ended in the middle of, and the UI is complete, since nothing more of it will come.
@@ -257,7 +483,7 @@ public class Conversation private constructor(
         if (turns.none { it.id == turnId && it.isAgent && it.ui != null }) {
             this
         } else {
-            Conversation(turns, state, failure, uiWritten, cut + turnId)
+            Conversation(turns, state, failure, uiWritten, resumedAt, cut + turnId)
         }
 
     /**
@@ -464,3 +690,7 @@ public data class TurnUI(
         }
     }
 }
+
+/** Whether a field is JSON `true`, which is all a flag the router may leave out can be. */
+private val JsonElement.isTrue: Boolean
+    get() = (this as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull == true

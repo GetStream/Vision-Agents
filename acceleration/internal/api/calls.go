@@ -799,6 +799,9 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 		if checks := floorChecks[turn.TurnID]; len(checks) > 0 {
 			entry.FloorChecks = &checks
 		}
+		if turn.Guardrail != nil {
+			entry.Guardrail = guardrailCheckOf(*turn.Guardrail)
+		}
 
 		var until time.Time
 		if index+1 < len(turns) {
@@ -861,6 +864,27 @@ func floorChecksByTurn(turns []live.Turn, checks []live.CallEvent) map[string][]
 		byTurn[turn] = joined[max(0, len(joined)-floorChecksPerTurn):]
 	}
 	return byTurn
+}
+
+// guardrailCheckOf renders a guardrail's check of a turn for the wire, as a timeline entry
+// and a turn frame say it.
+func guardrailCheckOf(check live.GuardrailCheck) *GuardrailCheck {
+	rendered := &GuardrailCheck{
+		Kind:        check.Kind,
+		Model:       optional(check.Model),
+		Probability: check.Probability,
+		Threshold:   check.Threshold,
+		Allowed:     check.Allowed,
+		LatencyMs:   check.LatencyMs,
+		Mode:        check.Mode,
+	}
+	if check.HeldMs > 0 {
+		rendered.HeldMs = &check.HeldMs
+	}
+	if check.Failed {
+		rendered.Failed = &check.Failed
+	}
+	return rendered
 }
 
 // floorChecksOf renders floor-control checks for the wire.
@@ -1511,6 +1535,19 @@ func (FloorCheckKind) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "FloorCheckKind", "What a chorus-asr floor-control check asked: pause, with the floor free, whether the caller has finished; over_agent, while the agent was talking, whether the caller stops or shortens it, at a pause or while they talked on.", "pause", "over_agent")
 }
 
+// GuardrailCheck is the GuardrailCheck schema.
+type GuardrailCheck struct {
+	Allowed     bool     `json:"allowed" doc:"Whether the turn was answered. True for a check that failed, whose turn is answered anyway."`
+	Failed      *bool    `json:"failed,omitempty" doc:"True when the check could not be made (the model or the webhook failed or took too long) and the turn was answered anyway. Such a check has no probability. Absent for a check that answered."`
+	HeldMs      *float64 `json:"held_ms,omitempty" doc:"How long a reply the model had begun waited on the verdict, which is what a parallel check costs the caller. Absent when it did not wait, and in blocking mode, where the model is asked only after the verdict."`
+	Kind        string   `json:"kind" enum:"decision_model,llm,webhook" doc:"How the turn was checked: the guardrail.md's type."`
+	LatencyMs   float64  `json:"latency_ms" doc:"How long the check took, from asking to the verdict or the failure."`
+	Mode        string   `json:"mode" enum:"parallel,blocking" doc:"When the check ran: parallel, beside the model, or blocking, before the model was asked."`
+	Model       *string  `json:"model,omitempty" doc:"The provider and model that answered, as provider/model. Absent for a webhook, and for a check that failed."`
+	Probability *float64 `json:"probability,omitempty" minimum:"0" maximum:"1" doc:"The probability the model put on the turn going against the policy. Absent for a webhook, which answers yes or no, and for a check that failed."`
+	Threshold   *float64 `json:"threshold,omitempty" minimum:"0" maximum:"1" doc:"The guardrail.md's threshold: a probability at or above it refuses the turn. Absent for a webhook."`
+}
+
 // FloorCheck is the FloorCheck schema.
 type FloorCheck struct {
 	Acted     bool           `json:"acted" doc:"Whether the router acted on the ruling: with the floor free, the caller's turn ended on this check; while the agent talked, its stop or shorten was handed to the agent, which may still talk on over its own echo or a murmur, or the turn ended on it. False for a ruling to go on, and for one the router let go of, as for words since replaced."`
@@ -1561,6 +1598,7 @@ type TimelineEntry struct {
 	FirstAudibleFrameMs  *float64           `json:"first_audible_frame_ms,omitempty" doc:"Last transcript revision to the outgoing track taking the first frame of the reply that was not silence, which is when it could first be heard. Unlike roundtrip_ms it does not include the wait for a long first chunk to be queued. Absent where the edge does not report it." nullable:"true"`
 	FirstFrameQueuedMs   *float64           `json:"first_frame_queued_ms,omitempty" doc:"Last transcript revision to the first frame of the reply being queued for the outgoing track. Absent where the edge does not report it." nullable:"true"`
 	FloorChecks          *[]FloorCheck      `json:"floor_checks,omitempty" doc:"The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control."`
+	Guardrail            *GuardrailCheck    `json:"guardrail,omitempty" doc:"The guardrail's check of this turn, allowed or refused. Absent when no check ran: an agent with no guardrail, or a reply that carries no new words of the caller's. A written aside is no turn, so its check is not recorded."`
 	Heard                *string            `json:"heard,omitempty" doc:"What the caller said, when it can be matched to this exchange."`
 	Interrupted          *bool              `json:"interrupted,omitempty" doc:"Whether the caller talked over the answer."`
 	LlmTtftMs            *float64           `json:"llm_ttft_ms,omitempty" doc:"The wait between asking the model and its first token." nullable:"true"`
