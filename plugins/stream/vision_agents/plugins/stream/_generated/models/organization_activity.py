@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.activity_latency import ActivityLatency
     from ..models.activity_meter import ActivityMeter
     from ..models.activity_sessions import ActivitySessions
+    from ..models.activity_step_day import ActivityStepDay
 
 
 T = TypeVar("T", bound="OrganizationActivity")
@@ -44,6 +45,9 @@ class OrganizationActivity:
             so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of
             the true ones.
         sessions (ActivitySessions):
+        steps (list[ActivityStepDay] | None): Every step the organization's apps ever had a request answered in,
+            whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as
+            voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
         first_seen (datetime.datetime | Unset): When the first request of any area arrived, absent when none did.
         last_seen (datetime.datetime | Unset): When the last request of any area arrived, absent when none did.
     """
@@ -56,6 +60,7 @@ class OrganizationActivity:
     shards: list[str] | None
     latency: list[ActivityLatency] | None
     sessions: ActivitySessions
+    steps: list[ActivityStepDay] | None
     first_seen: datetime.datetime | Unset = UNSET
     last_seen: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -106,6 +111,16 @@ class OrganizationActivity:
 
         sessions = self.sessions.to_dict()
 
+        steps: list[dict[str, Any]] | None
+        if isinstance(self.steps, list):
+            steps = []
+            for steps_type_0_item_data in self.steps:
+                steps_type_0_item = steps_type_0_item_data.to_dict()
+                steps.append(steps_type_0_item)
+
+        else:
+            steps = self.steps
+
         first_seen: str | Unset = UNSET
         if not isinstance(self.first_seen, Unset):
             first_seen = self.first_seen.isoformat()
@@ -126,6 +141,7 @@ class OrganizationActivity:
                 "shards": shards,
                 "latency": latency,
                 "sessions": sessions,
+                "steps": steps,
             }
         )
         if first_seen is not UNSET:
@@ -141,6 +157,7 @@ class OrganizationActivity:
         from ..models.activity_latency import ActivityLatency
         from ..models.activity_meter import ActivityMeter
         from ..models.activity_sessions import ActivitySessions
+        from ..models.activity_step_day import ActivityStepDay
 
         d = dict(src_dict)
 
@@ -231,6 +248,28 @@ class OrganizationActivity:
 
         sessions = ActivitySessions.from_dict(d.pop("sessions"))
 
+        def _parse_steps(data: object) -> list[ActivityStepDay] | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                steps_type_0 = []
+                _steps_type_0 = data
+                for steps_type_0_item_data in _steps_type_0:
+                    steps_type_0_item = ActivityStepDay.from_dict(
+                        steps_type_0_item_data
+                    )
+
+                    steps_type_0.append(steps_type_0_item)
+
+                return steps_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[ActivityStepDay] | None, data)
+
+        steps = _parse_steps(d.pop("steps"))
+
         _first_seen = d.pop("first_seen", UNSET)
         first_seen: datetime.datetime | Unset
         if isinstance(_first_seen, Unset):
@@ -254,6 +293,7 @@ class OrganizationActivity:
             shards=shards,
             latency=latency,
             sessions=sessions,
+            steps=steps,
             first_seen=first_seen,
             last_seen=last_seen,
         )
