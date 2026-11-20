@@ -111,6 +111,21 @@ describe("Backend", () => {
     assert.equal(connection.headers["user-agent"], `stream-agents-js/${VERSION}`);
   });
 
+  it("names the SDK beside the credential a backend's socket carries in its headers", async () => {
+    // A backend holding the secret sends its credential as the upgrade's headers; the SDK's own
+    // go with it, or the router counts the socket as the API's.
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "shh" });
+    const opening = router.socket();
+
+    const socket = await Socket.dial(backend, "/v1/dispatch");
+    const connection = await opening;
+    socket.close();
+
+    assert.ok(connection.headers["authorization"]?.startsWith("Bearer "));
+    assert.equal(connection.headers["x-stream-client"], "sdk");
+    assert.equal(connection.headers["user-agent"], `stream-agents-js/${VERSION}`);
+  });
+
   it("opens a page's socket with the URL alone, as a browser takes protocols there", async () => {
     // A browser's WebSocket reads a second argument as protocols and throws on an object, so
     // every page socket would fail if it were given the headers.

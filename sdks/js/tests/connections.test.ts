@@ -403,17 +403,18 @@ describe("Connections", () => {
 
   it("is still reached through the deprecated actingFor, sending what it sent before userId", async () => {
     router.serve("GET", "/v1/agents/configs", { body: { items: [], has_more: false } });
-    // Each expected request is what the base commit (fa2a6a66d) sent for the same shape, read off its test router.
+    // Each expected request is what the base commit (fa2a6a66d) sent for the same shape, read off its test router,
+    // plus the X-Stream-Client every request has said since.
     const shapes: [BackendOptions, Record<string, string>][] = [
-      [{ apiKey: "k", apiSecret: "s" }, { "x-api-key": "k", "x-stream-user-id": "anya", "stream-auth-type": "server" }],
+      [{ apiKey: "k", apiSecret: "s" }, { "x-api-key": "k", "x-stream-client": "sdk", "x-stream-user-id": "anya", "stream-auth-type": "server" }],
       [
         { apiKey: "k", apiSecret: "s", authenticate: true },
-        { api_key: "k", "stream-auth-type": "jwt", "x-stream-user-id": "anya" },
+        { api_key: "k", "stream-auth-type": "jwt", "x-stream-client": "sdk", "x-stream-user-id": "anya" },
       ],
-      [{ customerId: "local" }, { "x-customer-id": "local", "x-stream-user-id": "anya" }],
+      [{ customerId: "local" }, { "x-customer-id": "local", "x-stream-client": "sdk", "x-stream-user-id": "anya" }],
       [
         { apiKey: "k", apiSecret: "s", userId: "jim" },
-        { "x-api-key": "k", "x-stream-user-id": "anya", "stream-auth-type": "server" },
+        { "x-api-key": "k", "x-stream-client": "sdk", "x-stream-user-id": "anya", "stream-auth-type": "server" },
       ],
     ];
     for (const [shape, expected] of shapes) {
