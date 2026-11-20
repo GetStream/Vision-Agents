@@ -172,6 +172,30 @@ type ActivityArea struct {
 	LastRefusalCode string `bun:"last_refusal_code"`
 }
 
+// ActivityAreaDay is the first UTC day some apps had a request answered, not refused, in an area.
+type ActivityAreaDay struct {
+	Area string    `bun:"area"`
+	Day  time.Time `bun:"day"`
+}
+
+// ActivityFirstAnswered is, by area, the first UTC day apps, at least one, had a request
+// answered, not refused, over every day recorded. An area with no request answered is absent.
+func (s *Store) ActivityFirstAnswered(ctx context.Context, apps []string) ([]ActivityAreaDay, error) {
+	var days []ActivityAreaDay
+	err := s.db.NewSelect().
+		TableExpr("customer_activity").
+		ColumnExpr("area, MIN(day) AS day").
+		Where("app_id IN (?)", bun.In(apps)).
+		Where("requests > refused").
+		Group("area").
+		Order("area").
+		Scan(ctx, &days)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: activity first answered: %w", err))
+	}
+	return days, nil
+}
+
 // ActivityAreas sums the activity of apps, at least one, from the UTC day of since on, by area
 // and client. The record keeps days, so the day since falls on is read whole.
 func (s *Store) ActivityAreas(ctx context.Context, apps []string, since time.Time) ([]ActivityArea, error) {

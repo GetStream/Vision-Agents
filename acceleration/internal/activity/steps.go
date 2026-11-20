@@ -2,6 +2,7 @@ package activity
 
 import (
 	"slices"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -25,4 +26,26 @@ func FurthestStep(areas []store.ActivityArea) string {
 		return ""
 	}
 	return Steps[furthest]
+}
+
+// ReachedStep is a step an organization reached, with the UTC day of its first request
+// answered in the step's area.
+type ReachedStep struct {
+	Step          string
+	FirstAnswered time.Time
+}
+
+// ReachedSteps are the steps of Steps that first has a day for, in the order of Steps, each with
+// that day. The areas of first that are no step are left out.
+func ReachedSteps(first []store.ActivityAreaDay) []ReachedStep {
+	var reached []ReachedStep
+	for _, step := range Steps {
+		for _, area := range first {
+			if area.Area == step {
+				reached = append(reached, ReachedStep{Step: step, FirstAnswered: area.Day})
+				break
+			}
+		}
+	}
+	return reached
 }
