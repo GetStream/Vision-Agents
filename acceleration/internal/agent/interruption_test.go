@@ -63,134 +63,146 @@ func (s *AgentSuite) TestARulingOnSettledWordsSaysWhatTookTheFloorAndFromWhom() 
 }
 
 func (s *AgentSuite) TestTheAgentsOwnLineHeardBackIsAnEcho() {
-	// Session 01a182c7: the words that cut the agent off were its own line.
-	s.logs = &logLines{}
-	spans := tracetest.NewSpanRecorder()
-	turnSpans().RegisterSpanProcessor(spans)
-	defer turnSpans().UnregisterSpanProcessor(spans)
-	s.join(true)
-	s.flow.then = []string{`{"disposition":"respond","floor":"stop"}`}
-	turn := s.replyGoingOut("I can hear you loud and clear.")
+	s.onFakeClock(func() {
+		// Session 01a182c7: the words that cut the agent off were its own line.
+		s.logs = &logLines{}
+		spans := tracetest.NewSpanRecorder()
+		turnSpans().RegisterSpanProcessor(spans)
+		defer turnSpans().UnregisterSpanProcessor(spans)
+		s.join(true)
+		s.flow.then = []string{`{"disposition":"respond","floor":"stop"}`}
+		turn := s.replyGoingOut("I can hear you loud and clear.")
 
-	s.says(nash, "I can hear you, loud and clear")
+		s.says(nash, "I can hear you, loud and clear")
 
-	logged := s.interruptedOnce()
-	s.Equal(echoMost, logged["echo"])
-	s.Equal(1.0, logged["echo_share"])
-	var traced []string
-	for _, span := range spans.Ended() {
-		if span.Name() != "agent.turn" {
-			continue
-		}
-		for _, attribute := range span.Attributes() {
-			if attribute.Key == "turn.id" && attribute.Value.AsString() == turn {
-				for _, attribute := range span.Attributes() {
-					traced = append(traced, string(attribute.Key)+"="+attribute.Value.Emit())
+		logged := s.interruptedOnce()
+		s.Equal(echoMost, logged["echo"])
+		s.Equal(1.0, logged["echo_share"])
+		var traced []string
+		for _, span := range spans.Ended() {
+			if span.Name() != "agent.turn" {
+				continue
+			}
+			for _, attribute := range span.Attributes() {
+				if attribute.Key == "turn.id" && attribute.Value.AsString() == turn {
+					for _, attribute := range span.Attributes() {
+						traced = append(traced, string(attribute.Key)+"="+attribute.Value.Emit())
+					}
 				}
 			}
 		}
-	}
-	s.Subset(traced, []string{"turn.interrupt.cause=settled", "turn.interrupt.ruler=primary", "turn.interrupt.echo=most"})
+		s.Subset(traced, []string{"turn.interrupt.cause=settled", "turn.interrupt.ruler=primary", "turn.interrupt.echo=most"})
+	})
 }
 
 func (s *AgentSuite) TestARulingWhileTheCallerIsStillTalkingSaysSo() {
-	s.logs = &logLines{}
-	s.join(true)
-	turn := s.replyGoingOut("")
+	s.onFakeClock(func() {
+		s.logs = &logLines{}
+		s.join(true)
+		turn := s.replyGoingOut("")
 
-	s.mutters(nash, "actually wait")
+		s.mutters(nash, "actually wait")
 
-	logged := s.interruptedOnce()
-	s.Equal(turn, logged["turn"])
-	s.Equal(causeTalking, logged["cause"])
-	s.Equal("primary", logged["ruler"])
-	s.Equal("actually wait", logged["words"])
-	s.Less(logged["took_ms"], 750.0, "the controller answered in time")
+		logged := s.interruptedOnce()
+		s.Equal(turn, logged["turn"])
+		s.Equal(causeTalking, logged["cause"])
+		s.Equal("primary", logged["ruler"])
+		s.Equal("actually wait", logged["words"])
+		s.Less(logged["took_ms"], 750.0, "the controller answered in time")
+	})
 }
 
 func (s *AgentSuite) TestAnOverlapNoModelRuledOnInTimeSaysTheDeadlineStoppedTheAgent() {
-	// Prod us-east4, 2026-10-28: every interruption was this, logged as nobody's ruling.
-	s.logs = &logLines{}
-	s.join(true)
-	deadline := testutil.ToFloat64(flowDecisions.WithLabelValues("wait", "deadline"))
-	counted := testutil.ToFloat64(interruptions.WithLabelValues(causeTalking, "deadline", echoNoWords))
-	turn := s.replyGoingOut("")
-	held := make(chan struct{})
-	defer close(held)
-	s.flow.mu.Lock()
-	s.flow.holdCreate = held
-	s.flow.mu.Unlock()
+	s.onFakeClock(func() {
+		// Prod us-east4, 2026-10-28: every interruption was this, logged as nobody's ruling.
+		s.logs = &logLines{}
+		s.join(true)
+		deadline := testutil.ToFloat64(flowDecisions.WithLabelValues("wait", "deadline"))
+		counted := testutil.ToFloat64(interruptions.WithLabelValues(causeTalking, "deadline", echoNoWords))
+		turn := s.replyGoingOut("")
+		held := make(chan struct{})
+		defer close(held)
+		s.flow.mu.Lock()
+		s.flow.holdCreate = held
+		s.flow.mu.Unlock()
 
-	s.mutters(nash, "actually wait")
+		s.mutters(nash, "actually wait")
 
-	logged := s.interruptedOnce()
-	s.Equal(turn, logged["turn"])
-	s.Equal(causeTalking, logged["cause"])
-	s.Equal("deadline", logged["ruler"])
-	s.GreaterOrEqual(logged["took_ms"], 750.0)
-	s.Equal(1.0, testutil.ToFloat64(flowDecisions.WithLabelValues("wait", "deadline"))-deadline)
-	s.Equal(1.0, testutil.ToFloat64(interruptions.WithLabelValues(causeTalking, "deadline", echoNoWords))-counted)
-	// The control: what the base sha (b64d358ce) does with the same overlap, measured there.
-	s.Equal(1, countOf[Interrupted](s.reported()))
-	s.Equal(1, s.voice.interrupted())
-	s.Equal(1, s.model.interrupted())
-	s.Len(s.flow.requests(), 2)
-	s.Len(s.model.requests(), 2)
-	overlap, _ := firstOf[OverlapDecided](s.reported())
-	s.Equal("stop", overlap.Action)
+		logged := s.interruptedOnce()
+		s.Equal(turn, logged["turn"])
+		s.Equal(causeTalking, logged["cause"])
+		s.Equal("deadline", logged["ruler"])
+		s.GreaterOrEqual(logged["took_ms"], 750.0)
+		s.Equal(1.0, testutil.ToFloat64(flowDecisions.WithLabelValues("wait", "deadline"))-deadline)
+		s.Equal(1.0, testutil.ToFloat64(interruptions.WithLabelValues(causeTalking, "deadline", echoNoWords))-counted)
+		// The control: what the base sha (b64d358ce) does with the same overlap, measured there.
+		s.Equal(1, countOf[Interrupted](s.reported()))
+		s.Equal(1, s.voice.interrupted())
+		s.Equal(1, s.model.interrupted())
+		s.Len(s.flow.requests(), 2)
+		s.Len(s.model.requests(), 2)
+		overlap, _ := firstOf[OverlapDecided](s.reported())
+		s.Equal("stop", overlap.Action)
+	})
 }
 
 func (s *AgentSuite) TestAReplyDroppedBeforeAnyWentOutSaysSo() {
-	s.logs = &logLines{}
-	s.join(true)
-	s.voice.silent = true
-	turn := s.answering("explain the menu")
+	s.onFakeClock(func() {
+		s.logs = &logLines{}
+		s.join(true)
+		s.voice.silent = true
+		turn := s.answering("explain the menu")
 
-	s.mutters(nash, "actually wait")
+		s.mutters(nash, "actually wait")
 
-	logged := s.interruptedOnce()
-	s.Equal(turn, logged["turn"])
-	s.Equal(causeUnheard, logged["cause"])
-	s.Equal("none", logged["ruler"])
-	s.Equal("actually wait", logged["words"])
-	s.Equal(0.0, logged["played_ms"], "none of it went out")
-	s.Equal(echoNoWords, logged["echo"], "the reply had said nothing")
-	s.NotContains(logged, "echo_share")
+		logged := s.interruptedOnce()
+		s.Equal(turn, logged["turn"])
+		s.Equal(causeUnheard, logged["cause"])
+		s.Equal("none", logged["ruler"])
+		s.Equal("actually wait", logged["words"])
+		s.Equal(0.0, logged["played_ms"], "none of it went out")
+		s.Equal(echoNoWords, logged["echo"], "the reply had said nothing")
+		s.NotContains(logged, "echo_share")
+	})
 }
 
 func (s *AgentSuite) TestAnInterruptByTheAPIHasNoWords() {
-	s.logs = &logLines{}
-	s.join(true)
-	counted := testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))
-	turn := s.replyGoingOut("Here is the menu.")
+	s.onFakeClock(func() {
+		s.logs = &logLines{}
+		s.join(true)
+		counted := testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))
+		turn := s.replyGoingOut("Here is the menu.")
 
-	s.agent.Interrupt()
+		s.agent.Interrupt()
 
-	logged := s.interruptedOnce()
-	s.Equal(turn, logged["turn"])
-	s.Equal(causeAPI, logged["cause"])
-	s.Equal("none", logged["ruler"])
-	s.Equal("", logged["words"])
-	s.Equal(echoNoWords, logged["echo"])
-	s.NotContains(logged, "echo_share", "no words is not a share of none")
-	s.Equal(1.0, testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))-counted)
+		logged := s.interruptedOnce()
+		s.Equal(turn, logged["turn"])
+		s.Equal(causeAPI, logged["cause"])
+		s.Equal("none", logged["ruler"])
+		s.Equal("", logged["words"])
+		s.Equal(echoNoWords, logged["echo"])
+		s.NotContains(logged, "echo_share", "no words is not a share of none")
+		s.Equal(1.0, testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))-counted)
+	})
 }
 
 func (s *AgentSuite) TestAnUtteranceTheVoiceFinishedAfterItsTurnWasAbandonedSaysSo() {
-	// Session 01a182c7, 13:52:20.366Z: the voice had synthesised the whole sentence, so its
-	// completion came 1 ms after the interruption, not cut, and was logged interrupted=false.
-	s.logs = &logLines{}
-	s.join(true)
-	turn := s.replyGoingOut("Here is the menu.")
-	s.agent.Interrupt()
-	s.interruptedOnce()
+	s.onFakeClock(func() {
+		// Session 01a182c7, 13:52:20.366Z: the voice had synthesised the whole sentence, so its
+		// completion came 1 ms after the interruption, not cut, and was logged interrupted=false.
+		s.logs = &logLines{}
+		s.join(true)
+		turn := s.replyGoingOut("Here is the menu.")
+		s.agent.Interrupt()
+		s.interruptedOnce()
 
-	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: turn, AudioDurationMs: 3520})
+		s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: turn, AudioDurationMs: 3520})
 
-	spoke := s.loggedOnce(finishedSpeaking)
-	s.Equal(turn, spoke["turn"])
-	s.Equal(false, spoke["synthesis_cut"], "the voice finished what it was asked to say")
-	s.Equal(true, spoke["turn_abandoned"], "but the caller did not hear it out")
+		spoke := s.loggedOnce(finishedSpeaking)
+		s.Equal(turn, spoke["turn"])
+		s.Equal(false, spoke["synthesis_cut"], "the voice finished what it was asked to say")
+		s.Equal(true, spoke["turn_abandoned"], "but the caller did not hear it out")
+	})
 }
 
 // nativeAgent is a speech-to-speech agent logging to s.logs, whose model's events are sent
@@ -215,105 +227,115 @@ func (s *AgentSuite) nativeAgent() chan<- sts.Event {
 }
 
 func (s *AgentSuite) TestANativeModelStoppingOnItsOwnHasNoWords() {
-	source := s.nativeAgent()
+	s.onFakeClock(func() {
+		source := s.nativeAgent()
 
-	pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
-	source <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
-	source <- sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: pcm}
-	source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
+		pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
+		source <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
+		source <- sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: pcm}
+		source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
 
-	logged := s.interruptedOnce()
-	s.Equal("r1", logged["turn"])
-	s.Equal(causeProvider, logged["cause"])
-	s.Equal("none", logged["ruler"])
-	s.Equal("", logged["words"])
-	s.Equal(echoNoWords, logged["echo"])
+		logged := s.interruptedOnce()
+		s.Equal("r1", logged["turn"])
+		s.Equal(causeProvider, logged["cause"])
+		s.Equal("none", logged["ruler"])
+		s.Equal("", logged["words"])
+		s.Equal(echoNoWords, logged["echo"])
+	})
 }
 
 func (s *AgentSuite) TestANativeReplyTheModelStoppedAndTheAPIInterruptedIsToldOnce() {
-	s.logs = &logLines{}
-	logger := slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	agent, err := New(Options{CustomerID: "acme", Edge: newLoopbackEdge(), STS: &stsrouter.Router{},
-		STSTarget: "openai/gpt-realtime-2", Logger: logger})
-	s.Require().NoError(err)
-	agent.ctx, agent.cancel = context.WithCancel(s.ctx)
-	s.T().Cleanup(func() { agent.Close() })
-	events := collect(agent)
-	source := make(chan sts.Event, 8)
-	// Nobody reads it: consumeSTS is behind, as it is while PublishAudio blocks, so the reply
-	// is still the one speaking when Agent.Interrupt comes.
-	behind := make(chan sts.Event, 8)
-	agent.pipe = newPipeline(agent.ctx, true)
-	agent.pipe.running.Add(1)
-	go agent.receiveSTS(agent.pipe, source, behind)
-	s.T().Cleanup(func() { close(source) })
-	agent.mu.Lock()
-	agent.speakingTurn = "r1"
-	agent.mu.Unlock()
-	agent.turns.started("r1", kindCaller)
-	api := testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))
+	s.onFakeClock(func() {
+		s.logs = &logLines{}
+		logger := slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		agent, err := New(Options{CustomerID: "acme", Edge: newLoopbackEdge(), STS: &stsrouter.Router{},
+			STSTarget: "openai/gpt-realtime-2", Logger: logger})
+		s.Require().NoError(err)
+		agent.ctx, agent.cancel = context.WithCancel(s.ctx)
+		s.T().Cleanup(func() { agent.Close() })
+		events := collect(agent)
+		source := make(chan sts.Event, 8)
+		// Nobody reads it: consumeSTS is behind, as it is while PublishAudio blocks, so the reply
+		// is still the one speaking when Agent.Interrupt comes.
+		behind := make(chan sts.Event, 8)
+		agent.pipe = newPipeline(agent.ctx, true)
+		agent.pipe.running.Add(1)
+		go agent.receiveSTS(agent.pipe, source, behind)
+		s.T().Cleanup(func() { close(source) })
+		agent.mu.Lock()
+		agent.speakingTurn = "r1"
+		agent.mu.Unlock()
+		agent.turns.started("r1", kindCaller)
+		api := testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))
 
-	source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
-	s.Equal(causeProvider, s.loggedOnce(interruptedLine)["cause"])
-	agent.Interrupt()
+		source <- sts.ResponseComplete{ResponseID: "r1", Generation: 1, Interrupted: true}
+		s.Equal(causeProvider, s.loggedOnce(interruptedLine)["cause"])
+		agent.Interrupt()
 
-	s.eventually(func() bool { return countOf[Interrupted](events.seen()) == 2 },
-		"both abandons are reported, as before the line existed")
-	s.Equal(causeProvider, s.interruptedOnce()["cause"])
-	s.Zero(testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))-api,
-		"the reply the model stopped is not counted again")
+		s.eventually(func() bool { return countOf[Interrupted](events.seen()) == 2 },
+			"both abandons are reported, as before the line existed")
+		s.Equal(causeProvider, s.interruptedOnce()["cause"])
+		s.Zero(testutil.ToFloat64(interruptions.WithLabelValues(causeAPI, "none", echoNoWords))-api,
+			"the reply the model stopped is not counted again")
+	})
 }
 
 func (s *AgentSuite) TestALineInterruptedAndThenRefusedIsToldOnce() {
-	s.logs = &logLines{}
-	s.join(false)
-	synthesizing, release := make(chan struct{}), make(chan struct{})
-	s.voice.mu.Lock()
-	s.voice.synthesizing, s.voice.synthesisRelease = synthesizing, release
-	s.voice.refuses = errors.New("socket closed")
-	s.voice.mu.Unlock()
-	refused := testutil.ToFloat64(interruptions.WithLabelValues(causeVoiceRefused, "none", echoNoWords))
-	said := make(chan error, 1)
-	go func() { said <- s.agent.Say(s.ctx, "Hi, thanks for getting in touch.") }()
+	s.onFakeClock(func() {
+		s.logs = &logLines{}
+		s.join(false)
+		synthesizing, release := make(chan struct{}), make(chan struct{})
+		s.voice.mu.Lock()
+		s.voice.synthesizing, s.voice.synthesisRelease = synthesizing, release
+		s.voice.refuses = errors.New("socket closed")
+		s.voice.mu.Unlock()
+		refused := testutil.ToFloat64(interruptions.WithLabelValues(causeVoiceRefused, "none", echoNoWords))
+		said := make(chan error, 1)
+		go func() { said <- s.agent.Say(s.ctx, "Hi, thanks for getting in touch.") }()
 
-	<-synthesizing
-	s.agent.Interrupt()
-	close(release)
-	s.Require().Error(<-said)
+		<-synthesizing
+		s.agent.Interrupt()
+		close(release)
+		s.Require().Error(<-said)
 
-	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 2 },
-		"both abandons are reported, as before the line existed")
-	s.Equal(causeAPI, s.interruptedOnce()["cause"])
-	s.Zero(testutil.ToFloat64(interruptions.WithLabelValues(causeVoiceRefused, "none", echoNoWords))-refused,
-		"the line the caller interrupted is not counted again")
+		s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 2 },
+			"both abandons are reported, as before the line existed")
+		s.Equal(causeAPI, s.interruptedOnce()["cause"])
+		s.Zero(testutil.ToFloat64(interruptions.WithLabelValues(causeVoiceRefused, "none", echoNoWords))-refused,
+			"the line the caller interrupted is not counted again")
+	})
 }
 
 func (s *AgentSuite) TestALineALostVoiceWasSayingSaysTheVoiceWasLost() {
-	// Partly heard: one none of which was heard is said by the next voice, not cut off.
-	s.logs = &logLines{}
-	turn := s.partlyHeardGreeting()
+	s.onFakeClock(func() {
+		// Partly heard: one none of which was heard is said by the next voice, not cut off.
+		s.logs = &logLines{}
+		turn := s.partlyHeardGreeting()
 
-	s.voice.emitter.Send(tts.Error{
-		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+		s.voice.emitter.Send(tts.Error{
+			Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+		})
+
+		logged := s.interruptedOnce()
+		s.Equal(turn, logged["turn"])
+		s.Equal(causeVoiceLost, logged["cause"])
+		s.Equal(echoNoWords, logged["echo"])
 	})
-
-	logged := s.interruptedOnce()
-	s.Equal(turn, logged["turn"])
-	s.Equal(causeVoiceLost, logged["cause"])
-	s.Equal(echoNoWords, logged["echo"])
 }
 
 func (s *AgentSuite) TestALineTheVoiceRefusedSaysSo() {
-	s.logs = &logLines{}
-	s.join(false)
-	s.voice.refuses = errors.New("text too long")
+	s.onFakeClock(func() {
+		s.logs = &logLines{}
+		s.join(false)
+		s.voice.refuses = errors.New("text too long")
 
-	s.Require().Error(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
+		s.Require().Error(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
 
-	logged := s.interruptedOnce()
-	said, _ := firstOf[Said](s.reported())
-	s.Equal(said.TurnID, logged["turn"])
-	s.Equal(causeVoiceRefused, logged["cause"])
+		logged := s.interruptedOnce()
+		said, _ := firstOf[Said](s.reported())
+		s.Equal(said.TurnID, logged["turn"])
+		s.Equal(causeVoiceRefused, logged["cause"])
+	})
 }
 
 func TestInterruptionSuite(t *testing.T) { suite.Run(t, new(InterruptionSuite)) }

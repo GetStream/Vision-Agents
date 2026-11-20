@@ -33,7 +33,9 @@ const writeGrace = 10 * time.Second
 // TurnRecordingSuite runs a whole exchange through the in-process loopback edge and
 // checks what it leaves behind, which is the part unit tests cannot reach.
 type TurnRecordingSuite struct {
-	AgentSuite
+	suite.Suite
+	// agents is the agent fixture, not embedded so its own tests are not run again here.
+	agents     *AgentSuite
 	pgStore    *store.Store
 	liveClient *live.Client
 	startedAt  time.Time
@@ -65,11 +67,13 @@ func (s *TurnRecordingSuite) SetupSuite() {
 }
 
 func (s *TurnRecordingSuite) SetupTest() {
-	s.AgentSuite.SetupTest()
+	s.agents = new(AgentSuite)
+	s.agents.SetT(s.T())
+	s.agents.SetupTest()
 	// A fresh agent per test, so one run's turns are not another's.
-	s.agentID = fmt.Sprintf("agent-test-%d", time.Now().UnixNano())
-	s.records = s.pgStore
-	s.live = s.liveClient
+	s.agents.agentID = fmt.Sprintf("agent-test-%d", time.Now().UnixNano())
+	s.agents.records = s.pgStore
+	s.agents.live = s.liveClient
 	s.startedAt = time.Now().Add(-time.Minute)
 }
 
@@ -83,18 +87,19 @@ func (s *TurnRecordingSuite) TearDownSuite() {
 }
 
 func (s *TurnRecordingSuite) TestAFinishedExchangeIsKeptAndCounted() {
-	s.join(true)
+	agents := s.agents
+	agents.join(true)
 
 	participant := stt.Participant{ID: "alice", UserID: "alice"}
-	s.speak(participant)
-	s.says(participant, "hello there")
+	agents.speak(participant)
+	agents.says(participant, "hello there")
 
-	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the agent never answered")
+	agents.eventually(func() bool { return len(agents.voice.spoken()) > 0 }, "the agent never answered")
 
 	// Closing drains the writer, so what follows is not racing it.
-	s.agent.Close()
+	agents.agent.Close()
 
-	turns, err := s.liveClient.CallTurns(context.Background(), "acme", s.agentID, s.startedAt, nil)
+	turns, err := s.liveClient.CallTurns(context.Background(), "acme", s.agents.agentID, s.startedAt, nil)
 	s.Require().NoError(err)
 	s.Require().Len(turns, 1, "one exchange, one turn")
 	s.Equal("acme", turns[0].CustomerID)
@@ -104,7 +109,7 @@ func (s *TurnRecordingSuite) TestAFinishedExchangeIsKeptAndCounted() {
 	s.False(turns[0].Interrupted)
 
 	stats, err := s.pgStore.CustomerTurnStats(
-		context.Background(), "acme", s.agentID, store.Hourly, s.startedAt.Add(-time.Hour), time.Now().Add(time.Hour))
+		context.Background(), "acme", s.agents.agentID, store.Hourly, s.startedAt.Add(-time.Hour), time.Now().Add(time.Hour))
 	s.Require().NoError(err)
 	s.Require().Len(stats, 1)
 	s.EqualValues(1, stats[0].TurnCount)
@@ -114,8 +119,8 @@ func (s *TurnRecordingSuite) TestAFinishedExchangeIsKeptAndCounted() {
 // TestPersistReportsAWriteTheDeadlineCut is what lets the recorder count a lost row: a
 // write whose context is gone must say so, whichever of the two stores it was meant for.
 func (s *TurnRecordingSuite) TestPersistReportsAWriteTheDeadlineCut() {
-	row := live.Turn{CustomerID: "acme", AgentID: s.agentID, TurnID: "turn-persist", StartedAt: time.Now().UTC()}
-	owner := routing.Owner{CustomerID: "acme", AgentID: s.agentID}
+	row := live.Turn{CustomerID: "acme", AgentID: s.agents.agentID, TurnID: "turn-persist", StartedAt: time.Now().UTC()}
+	owner := routing.Owner{CustomerID: "acme", AgentID: s.agents.agentID}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -137,7 +142,7 @@ func (s *TurnRecordingSuite) TestPersistReportsAWriteTheDeadlineCut() {
 // recorded and flushed by Close must be readable back from the live client.
 func (s *TurnRecordingSuite) TestDecisionsReachRedis() {
 	callID := fmt.Sprintf("call-decisions-%d", time.Now().UnixNano())
-	owner := routing.Owner{CustomerID: "acme", AgentID: s.agentID, CallID: callID}
+	owner := routing.Owner{CustomerID: "acme", AgentID: s.agents.agentID, CallID: callID}
 	r := newDecisionRecorder(s.liveClient, owner, slog.New(slog.DiscardHandler))
 	r.Record(Decided{Kind: "reply", Reason: "asked a question", TurnID: "turn-1", Text: "hello"})
 	r.Close()

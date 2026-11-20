@@ -25,29 +25,31 @@ func startsWith(sent, input []llm.Message) bool {
 }
 
 func (s *AgentSuite) TestEachRequestOpensWithTheOneBeforeItAcrossADeliveredAnswer() {
-	// What a provider caches is the prefix it read, so every request carries the one before
-	// it unchanged and the prompt every turn shares stays the same: the answer coming back
-	// is added after the conversation, and kept there.
-	s.delegates()
-	s.join(true)
-	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
-	s.model.then = []string{"That comes to 12.63."}
-	s.subagent.reply = []string{"It is 12.63."}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		// What a provider caches is the prefix it read, so every request carries the one before
+		// it unchanged and the prompt every turn shares stays the same: the answer coming back
+		// is added after the conversation, and kept there.
+		s.delegates()
+		s.join(true)
+		s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+		s.model.then = []string{"That comes to 12.63."}
+		s.subagent.reply = []string{"It is 12.63."}
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "what is 15% of 84.20")
-	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never spoken")
-	s.quiet()
-	s.says(participant, "thanks")
-	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the caller was never answered")
+		s.says(participant, "what is 15% of 84.20")
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never spoken")
+		s.quiet()
+		s.says(participant, "thanks")
+		s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the caller was never answered")
 
-	requests := s.model.requests()
-	for i := 1; i < len(requests); i++ {
-		s.Equal(requests[0].Instructions, requests[i].Instructions, "request %d", i)
-		s.True(startsWith(requests[i-1].Input, requests[i].Input), "request %d opens with request %d", i, i-1)
-	}
-	s.True(knows(requests[2], "It is 12.63."), "what came back stays in the conversation")
+		requests := s.model.requests()
+		for i := 1; i < len(requests); i++ {
+			s.Equal(requests[0].Instructions, requests[i].Instructions, "request %d", i)
+			s.True(startsWith(requests[i-1].Input, requests[i].Input), "request %d opens with request %d", i, i-1)
+		}
+		s.True(knows(requests[2], "It is 12.63."), "what came back stays in the conversation")
+	})
 }
 
 func (s *AgentSuite) TestAnExchangeThatCarriedANoteIsStillTheLastExchange() {
@@ -62,22 +64,24 @@ func (s *AgentSuite) TestAnExchangeThatCarriedANoteIsStillTheLastExchange() {
 }
 
 func (s *AgentSuite) TestAnEmptyReplyKeepsWhatItWasSent() {
-	// A reply that only hands work over says nothing, and still read the answer it was
-	// handed: kept, the model can pass it on next turn, and it is not owed twice.
-	s.delegates()
-	s.join(true)
-	s.model.reply = []string{`<ask skill="think">15% of 84.20</ask>`}
-	s.subagent.reply = []string{"It is 12.63."}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		// A reply that only hands work over says nothing, and still read the answer it was
+		// handed: kept, the model can pass it on next turn, and it is not owed twice.
+		s.delegates()
+		s.join(true)
+		s.model.reply = []string{`<ask skill="think">15% of 84.20</ask>`}
+		s.subagent.reply = []string{"It is 12.63."}
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "what is 15% of 84.20")
-	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer's turn never finished")
+		s.says(participant, "what is 15% of 84.20")
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer's turn never finished")
 
-	s.True(slices.ContainsFunc(s.agent.History(), func(m llm.Message) bool {
-		return harness.IsNote(m) && strings.Contains(m.Content, "12.63")
-	}), "what came back is in the conversation")
-	s.False(s.agent.harness.Pending(), "it was handed to a reply, which read it")
+		s.True(slices.ContainsFunc(s.agent.History(), func(m llm.Message) bool {
+			return harness.IsNote(m) && strings.Contains(m.Content, "12.63")
+		}), "what came back is in the conversation")
+		s.False(s.agent.harness.Pending(), "it was handed to a reply, which read it")
+	})
 }
 
 func (s *AgentSuite) TestCompactionRetellsTheHour() {
