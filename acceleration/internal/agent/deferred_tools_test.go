@@ -53,18 +53,20 @@ func (s *AgentSuite) TestNothingDeferredOffersNoSearchTool() {
 }
 
 func (s *AgentSuite) TestADeferredToolTheModelHasNotLoadedDoesNotRun() {
-	s.defersRefunds()
-	s.joinText()
+	s.onFakeClock(func() {
+		s.defersRefunds()
+		s.joinText()
 
-	s.model.reply = []string{"Refunding."}
-	s.model.then = []string{"Done."}
-	s.asksFor("refund_last_order", `{}`)
+		s.model.reply = []string{"Refunding."}
+		s.model.then = []string{"Done."}
+		s.asksFor("refund_last_order", `{}`)
 
-	_, err := s.agent.RespondTo(s.ctx, "I want my money back", nil, options.LLM{})
-	s.Require().NoError(err)
+		_, err := s.agent.RespondTo(s.ctx, "I want my money back", nil, options.LLM{})
+		s.Require().NoError(err)
 
-	s.eventually(func() bool { return len(s.model.requests()) >= 1 }, "the model was never asked")
-	s.never(func() bool { return len(s.runner.asked()) > 0 }, "a tool the model never loaded ran")
+		s.eventually(func() bool { return len(s.model.requests()) >= 1 }, "the model was never asked")
+		s.never(func() bool { return len(s.runner.asked()) > 0 }, "a tool the model never loaded ran")
+	})
 }
 
 func (s *AgentSuite) TestALoadedToolIsOfferedAfterEveryOther() {
