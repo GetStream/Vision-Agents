@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { Backend, Client, ConfigurationError, DEFAULT_URL, regionUrl, signToken } from "../src/index.js";
+import {
+  Backend,
+  Client,
+  ConfigurationError,
+  DEFAULT_URL,
+  Socket,
+  regionUrl,
+  signToken,
+  type BackendOptions,
+  type WebSocketInit,
+} from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -448,6 +458,95 @@ describe("Backend", () => {
     assert.equal(url.searchParams.get("token"), "t");
     assert.equal(url.searchParams.get("authorization"), null);
     assert.equal(url.searchParams.get("stream-auth-type"), null);
+  });
+
+  it("keeps a backend's own token out of a socket's URL, where access logs would keep it", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", apiSecret: "shh", userId: "ana" });
+
+    const url = new URL(await backend.socketURL("/v1/dispatch", { capacity: "2" }));
+    for (const name of ["token", "authorization", "api_key", "stream-auth-type"]) {
+      assert.equal(url.searchParams.get(name), null, `${name} is not in the URL`);
+    }
+    assert.equal(url.searchParams.get("user_id"), "ana");
+    assert.equal(url.searchParams.get("capacity"), "2");
+
+    const headers = await backend.socketHeaders();
+    assert.equal(headers?.["X-Api-Key"], "key");
+    assert.equal(claimsOf((headers?.["Authorization"] ?? "").replace("Bearer ", ""))["server"], true);
+    assert.equal(headers?.["Stream-Auth-Type"], undefined, "a socket never says it is a backend");
+  });
+
+  it("sends a proxied backend's socket credential as the headers the proxy reads", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", apiSecret: "shh", authenticate: true });
+
+    const url = new URL(await backend.socketURL("/v1/dispatch"));
+    assert.equal(url.searchParams.get("token"), null);
+    assert.equal(url.searchParams.get("authorization"), null);
+
+    const headers = await backend.socketHeaders();
+    assert.equal(headers?.["api_key"], "key");
+    assert.equal(headers?.["stream-auth-type"], "jwt");
+    assert.ok(headers?.["Authorization"]?.startsWith("Bearer "));
+  });
+
+  it("opens a backend's socket with its credential in the upgrade's headers", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", apiSecret: "shh" });
+    const arriving = router.socket();
+
+    const socket = await Socket.dial(backend, "/v1/dispatch");
+    const connection = await arriving;
+    assert.equal(connection.query.get("token"), null);
+    assert.equal(connection.headers["x-api-key"], "key");
+    assert.equal(claimsOf((connection.headers["authorization"] ?? "").replace("Bearer ", ""))["server"], true);
+    socket.close();
+  });
+
+  it("authenticates a socket opened from socketURL alone, as the README writes it", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", apiSecret: "shh" });
+    const arriving = router.socket();
+
+    const socket = await Socket.open(backend, await backend.socketURL("/v1/stt/stream"));
+    const connection = await arriving;
+    assert.equal(connection.query.get("token"), null);
+    assert.equal(claimsOf((connection.headers["authorization"] ?? "").replace("Bearer ", ""))["server"], true);
+    socket.close();
+  });
+
+  it("still takes the browser's own WebSocket class as the webSocket option", () => {
+    // A compile-time check as much as a runtime one: the DOM constructor takes subprotocols as
+    // its second argument, and a page passes it as it is.
+    const options: BackendOptions = { url: router.url, apiKey: "key", token: "t", webSocket: WebSocket };
+    assert.equal(new Backend(options).url, router.url);
+  });
+
+  it("takes a WebSocket class whose headers argument is required, and hands it the credential", async () => {
+    // Compile-time too: a class that requires `{ headers }` is accepted as the option.
+    const given: WebSocketInit[] = [];
+    const options: BackendOptions = {
+      url: router.url,
+      apiKey: "key",
+      apiSecret: "shh",
+      // Node's own WebSocket takes `{ headers }` at runtime, though its type says subprotocols.
+      webSocket: class extends WebSocket {
+        constructor(url: string, init: WebSocketInit) {
+          given.push(init);
+          super(url, init as unknown as string[]);
+        }
+      },
+    };
+    const arriving = router.socket();
+
+    const socket = await Socket.dial(new Backend(options), "/v1/dispatch");
+    await arriving;
+    assert.ok(given[0]?.headers?.["Authorization"]?.startsWith("Bearer "));
+    socket.close();
+  });
+
+  it("leaves a page's socket credential in the URL, the only place a browser can put it", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", token: "t" });
+
+    assert.equal(await backend.socketHeaders(), undefined);
+    assert.equal(new URL(await backend.socketURL("/v1/agents/sessions/x/events")).searchParams.get("token"), "t");
   });
 
   it("names the end user to a router reached by customer id", async () => {

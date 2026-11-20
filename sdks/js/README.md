@@ -922,8 +922,10 @@ for await (const message of socket.messages()) {
 }
 ```
 
-Credentials go in the query string, because a browser WebSocket carries no headers of its
-own. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
+A page's credentials go in the query string, because a browser WebSocket carries no headers of
+its own. A backend holding the secret sends its credential as headers instead, so its token, which
+speaks for the whole app, is never written into an access log with the URL; `Socket.open` adds
+them. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
 counterpart on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is how
 it reads a user's token.
 

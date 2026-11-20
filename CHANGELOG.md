@@ -5,6 +5,10 @@
 ### The Kotlin SDK shows an incognito session
 
 An incognito session has no Stream Chat channel, so `chat(context)` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (`TurnStep.Reasoning` and `TurnStep.ToolCall`, in order) and `isDone`, timing a round of reasoning from when the model was asked or went on, not from its first words, and `AgentEvent.Kind` has `ReasoningDelta` and `ToolUpdated`. A tool call whose id is also a round's (`r1`) is a step of its own, and an `error` with code `prompt_injection` clears the reply being written of what it streamed, its text and UI, keeping its steps, as the kept conversation does. `AgentSession.turnMessages`, a `Flow` of `TurnMessage.messages(conversation, approvals, userId, isConnected)`, is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as `ai_reasoning` and `ai_tool_call` types and fields for Stream Chat's `AIMessagePart.parts`, rounds numbered `r1`, `r2` across the reply, the whole of each round of thinking, the reply's UI under `ai_ui`, and an approval card (`awaiting_approval`) for the user `setUser` named. Deploy the router from #2090 first: an older one sends no reasoning, and a reply shows only its tool calls. `android_assistant` has an incognito toggle at the top right of a new chat, shown from `turnMessages`, approvals included, and never listed (AND-1984).
+### The Go SDK deprecates `Backend.ActingFor`
+
+Name the user on the call where it takes one: the `UserID` of a `client.Connections()` call's options (`client.ConnectionFilter{UserID: "alice"}`), the `XStreamUserId` of `acceleration.CreateScheduledTaskParams`, or, for another generated call, an `X-Stream-User-Id` set on that request with a per-call `acceleration.RequestEditorFn`. `client.Agent(...)` calls take no per-call user yet, so `ActingFor` is still how they act for one. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
+
 ### Swift's `SessionOptions` takes its tools in the initializer
 
 `agents.agent("support").sessions.create(SessionOptions(tools: [location]))` opens a session that answers its tools, the same call as Kotlin's `SessionOptions(tools = listOf(location))`, Dart's `SessionOptions(tools: [location])` and JavaScript's `sessions.create({ tools })`. `agents.chat(agent:tools:)` and `agents.voice(agent:tools:)` stay.
@@ -643,6 +647,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### A JavaScript backend sends its socket credential as headers
+
+A `Backend` holding the API secret put its token on every socket's URL, as `token` (and `authorization` behind the proxy): a token that speaks for the whole app, written into every access log between the process and the router. Such a backend now sends the same credential as headers on the upgrade, `X-Api-Key` and `Authorization` to a router reached directly and `api_key`, `stream-auth-type: jwt` and `Authorization` behind the proxy, and leaves it out of the URL; the socket still never says it is a backend. `backend.socketHeaders()` answers them, and `Socket.open(backend, url)` and `Socket.dial` send them. A `webSocket` option on such a backend is now called with a second argument, `{ headers }`, as Node's own WebSocket and the `ws` package take it; one that ignores it is refused by the router. A page, which has no secret and whose WebSocket sends no headers, keeps its user's token in the URL as before, and `WebSocketConstructor` is still the browser's `WebSocket`. `WebSocketInit` names the second argument, and the option also takes a `HeaderWebSocketConstructor`, a class that requires it.
+
 ### Tools are hosted from the client, not from an agent
 
 An agent handle no longer has tools to host: Go `client.Agent.Tools()`, Python `Agent.register` and `Agent.functions`, JavaScript `AgentHandle.tools`, Rust `AgentRef.tools` and PHP `AgentHandle::$tools` are gone. Register the tools on the client and run them with its `run_dispatch` (see above), and name each one in a tool group of the agents that use it. `Dispatch.host` takes the client in place of an agent in every SDK, and the hosting refusal no longer names an agent: JavaScript's `HostingRefusedError` and PHP's `HostingRefusedException` lose `agentId`, and PHP's `Dispatch::$hosting` is a boolean. A session's own tools stay: Go `SessionOptions.Tools`, Python `SessionOptions(tools=...)`, and the in-process `Agent`'s tools in JavaScript, .NET, Ruby and Go's `agents` package.
@@ -783,6 +791,14 @@ A tool call waiting for the person to allow it went to the channel only in live 
 ### The JavaScript SDK answers a tool's question from a reopened app
 
 `AgentChat.decide` reads the call's step under `custom` in stream-chat 10, where it found no call to answer. A call allowed from the conversation before it reached this session, such as one a reopened app shows from history, now runs once the router sends it, instead of failing because the conversation keeps no arguments for it (AI-3392).
+
+### The JavaScript SDK runs a tool call it already answered only once
+
+A call allowed from the conversation with its arguments ran at once, and ran again when the router sent the waiting call to the session's socket: twice for a call it sent as already approved, and asked about again otherwise. A declined one was asked about again too. A `Session` now skips a call it has answered, run or is running, or is already asking about, and runs a call allowed without its arguments once the router sends it, as before.
+
+### The JavaScript SDK keeps a guest in localStorage, not a cookie
+
+`guestUser` remembered the guest, its token and the secret that renews it in a cookie, which the browser sent with every request to the app's own site, into its server's and its CDN's logs, and over plain http. It now keeps the guest in localStorage. A guest remembered in the cookie by an earlier version is moved to localStorage the first time it is read, so it stays the same guest with the same history, and any guest written to localStorage clears the cookie, so a fresh guest for the next person at the keyboard never leaves the previous one's behind in it. The cookie is only a fallback, for a page whose localStorage is missing, blocked or full, and is `Secure` on an https page. A guest the router minted is handed back even when it cannot be remembered, so a full localStorage no longer loses a renewed guest whose old secret the router has already spent. `browserStore()` returns the new store, and a `GuestStore` passed in is used as before.
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 

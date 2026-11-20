@@ -25,6 +25,9 @@ on:
       - 'examples/voice_agents/swift_assistant/a2ui/instructions.md'
   pull_request:
     branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'sdks/go/**'
       - 'sdks/js/**'
@@ -54,6 +57,7 @@ concurrency:
 jobs:
   # Every step runs after a failure (`!cancelled()`), so each SDK reports its result.
   sdks:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # For the Go SDK, the only Go here: it is installed on its own, with no go.work, by Go as
     # old as its go directive, so it is checked that way too. GOTOOLCHAIN=local keeps 1.25

@@ -69,14 +69,18 @@ a mistake that actually happened.
   `.agents/skills/pr-review/scripts/generated.sh <repo root> origin/main`.
 - **CI runs the integration suites.** `Integration (router)` (`.github/workflows/integration.yml`)
   runs each package in its matrix in its own job, on a PR that changes `acceleration/**` (not
-  only `.md`), `go.work`, `go.work.sum` or the workflow. Do not repeat those packages locally:
-  run the suites you touched, and read CI for the rest.
+  only `.md`), `go.work`, `go.work.sum` or the workflow, once the PR is ready: a draft runs no
+  CI workflow, and `gh pr ready` starts it. Do not repeat those packages locally: run the suites
+  you touched, and read CI for the rest after the PR is marked ready.
   - CI leaves out the vendor suites that need API keys (tts, stt, llm, sts, search, imagegen,
     detection). CI also leaves out `imagerouter` and `dlc` (AI-2040), and the Postgres packages
     `internal/campaign`, `internal/phone/outcome`, `internal/searchrouter` and
     `internal/simulation`. Run those by hand when you touch them, and list the runs in the PR.
   - The check is not required on `main`. When it ran, wait for it to pass before you merge.
-    A check that did not run leaves nothing to wait for.
+    A check that did not run leaves nothing to wait for. A check `skipping` on a draft is not a
+    pass: it did not run.
+  - Push, wait until the push's runs are listed, then `gh pr ready`. Both events share one
+    concurrency group, so a draft run created after the ready run would cancel it.
 
 ## Review and merge one PR at a time
 
@@ -104,7 +108,7 @@ Authors may write in parallel. Reviews and merges run one PR at a time.
 - **Use a smaller model for mechanical work**: a rebase whose conflicts are only in docs, watching
   CI, editing a PR body.
 - **Test only what changed while iterating.** Run the touched suites and the mutation checks. Before
-  the final review, read CI's `Integration (router)` check and run by hand the suites it leaves
-  out. The reviewer does not repeat either.
+  the final review, mark the PR ready, read CI's `Integration (router)` check and run by hand
+  the suites it leaves out. The reviewer does not repeat either.
 - **Ask the first reviewer to find everything.** Later rounds look only at the delta.
 - **Wait for an agent's report.** Do not read its raw transcript file.
