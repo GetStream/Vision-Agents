@@ -377,8 +377,8 @@ func (s *Store) FailChannelInbound(ctx context.Context, claimed ChannelInbound, 
 // lockChannelInboundDelivery locks claimed's delivery until tx ends, so of two messages of it
 // given up at once on two routers, the second sees what the first did.
 func lockChannelInboundDelivery(ctx context.Context, tx bun.Tx, claimed ChannelInbound) error {
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"channel_thread_inbound/"+claimed.CustomerID+"/"+claimed.ConnectorID+"/"+claimed.Forward.ID); err != nil {
+	key := "channel_thread_inbound/" + claimed.CustomerID + "/" + claimed.ConnectorID + "/" + claimed.Forward.ID
+	if err := lockUntilCommit(ctx, tx, key, 0); err != nil {
 		return fmt.Errorf("store: fail channel inbound: %w", err)
 	}
 	return nil

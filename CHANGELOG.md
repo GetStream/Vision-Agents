@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Python, Go, Ruby and Rust SDKs refuse a user on a device's connections call
+
+A client that holds a user's token (`as_user`, `SetUser`) and names `user_id` on a connections call now fails at once with the SDK's configuration error, the way the JavaScript and PHP SDKs do, instead of sending the call for the router's 403. A device acts only as its own user: name the user from a backend that holds the API secret. A call naming no user, and a client on a router that trusts the customer id, work as before. A Go `Backend` with the API secret and a `UserID` that names another user on a connections call now acts for that user with the app's token, as the other SDKs do, instead of signing a token for its own user that the proxy refused.
+
 ### The Rust SDK connects a user's own accounts
 
 `Client::connections()` creates, authorizes, reads, lists and deletes connections: `create(&NewConnection { connector, label, user_id })`, `authorize(id, &AuthorizeOptions { return_url, user_id })` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(&ConnectionFilter { connector, user_id })` (every page) and `delete(id, user_id)`. A user given goes out as both the owner and `X-Stream-User-Id`; `None` is the app's own connection and leaves the client's own `ClientOptions::user_id` as it is.
@@ -811,6 +815,21 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A POST from a sandbox through a tunnel to an allowed domain no longer fails after a pause
 
 The router's sandbox proxy closed a tunnel to an allowed domain after 90 s with no traffic. That is also how long a Go client keeps a pooled connection, and the proxy's clock starts first. So a POST that a Go client sent on a kept connection near that limit could fail with `EOF`. The proxy now keeps such a tunnel for 4 min, as it keeps a connection to the proxy, so the client closes it first. The sandbox's TLS forwarder waits as long for a silent proxy (#2161, AI-2346).
+### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
+
+With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.
+
+### A caller who goes on before hearing any of the reply is answered
+
+While a reply was still being written, with none of it heard, chorus-asr was told the agent was talking. It could then rule the caller's next words as said over the agent and let it talk through them, while the router dropped that reply as unheard: both turns went unanswered. A reply nobody has heard no longer counts as the agent talking.
+
+### A request the agent stopped for is answered
+
+When chorus-asr ruled a stop on a caller's whole sentence, such as "Okay. So can you tell me a story about Amsterdam?", the agent stopped and the sentence was set aside as the stop's own words: nobody answered it. The words a stop was ruled on are now put to the reply model, which answers them, or opens with `[ignore]` when they only told the agent to stop.
+
+### The reply model gives chorus-asr's ignores a second opinion
+
+Chorus-asr hears the audio but not the conversation, so with the agent quiet it can take a caller's short answer for background speech. Words chorus-asr ignored on a quiet floor are now put to the reply model, which is told what chorus-asr made of them and opens its reply with `[respond]` or `[ignore]`. A reply that opens with `[respond]` is what the caller hears, so no second request is made; one that opens with `[ignore]` says nothing, as before. The same holds over the agent: real words chorus-asr lets the agent talk through, such as "Can you stop?", are put to the reply model, and its `[respond]` stops the agent, which then answers them. A murmur is not asked about, nor anything said while the reply is still being written. Chorus-asr still decides alone when a turn ends and when to shorten the agent. `unified_replies` is not needed for this, and still applies only to agents without chorus-asr.
 
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 

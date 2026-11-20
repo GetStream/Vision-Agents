@@ -90,7 +90,7 @@ func (s *Store) InTrunkGroup(ctx context.Context, group TrunkGroup, fn func(ctx 
 	}
 	key := "stream_trunks:" + group.CustomerID + ":" + strconv.FormatInt(group.StreamAppPK, 10) + ":" + group.Vendor
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))", key, trunkGroupLockSeed); err != nil {
+		if err := lockUntilCommit(ctx, tx, key, trunkGroupLockSeed); err != nil {
 			return stack.Wrap(fmt.Errorf("store: lock trunk group: %w", err))
 		}
 		return fn(ctx, &TrunkGroupTx{ctx: ctx, tx: tx, group: group})

@@ -4,7 +4,7 @@ module GetStream
   module VisionAgents
     # The accounts the app and its users hold at connectors, such as a user's Linear: what an
     # agent's tools reach that account through. Server side only: the router refuses a user's
-    # token.
+    # token, and a client holding one is refused naming a user before anything is sent.
     #
     # Every method takes the user as user_id:, named once per call. It goes to the router as
     # the owner and in X-Stream-User-Id alike, so the two never differ, whoever the client acts
@@ -32,9 +32,10 @@ module GetStream
       # @param label [String] tells the owner's connections to the same connector apart.
       # @return [Hash] the Connection, pending until an account is connected.
       def create(connector, label: nil, user_id: nil)
-        owner = user_id.to_s.empty? ? { type: "app" } : { type: "user", user_id: user_id }
+        user = named(user_id)
+        owner = user.empty? ? { type: "app" } : { type: "user", user_id: user }
         @client.post(CONNECTIONS, body: { connector_id: connector, label: presence(label), owner: owner },
-                                  user_id: user_id.to_s)
+                                  user_id: user)
       end
 
       # Starts the provider's consent for a connection: a first one for a pending connection,
@@ -47,14 +48,14 @@ module GetStream
       # @return [Hash] the Authorization: launch_url, handoff_token and expires_at.
       def authorize(id, return_url: nil, user_id: nil)
         @client.post("#{CONNECTION}/authorizations", path: { id: id }, body: { return_url: presence(return_url) },
-                                                     user_id: user_id.to_s)
+                                                     user_id: named(user_id))
       end
 
       # One connection, the user's or the app's.
       #
       # @return [Hash] the Connection.
       def get(id, user_id: nil)
-        @client.get(CONNECTION, path: { id: id }, user_id: user_id.to_s)
+        @client.get(CONNECTION, path: { id: id }, user_id: named(user_id))
       end
 
       # Every connection of the user's, or of the app's without one, newest first, read page by
@@ -63,10 +64,11 @@ module GetStream
       # @param connector [String] keeps one connector's. nil is every connector's.
       # @return [Array<Hash>] the Connections.
       def list(connector: nil, user_id: nil)
-        query = { owner_type: user_id.to_s.empty? ? "app" : "user", connector_id: presence(connector), limit: PAGE }
+        user = named(user_id)
+        query = { owner_type: user.empty? ? "app" : "user", connector_id: presence(connector), limit: PAGE }
         items = []
         loop do
-          page = @client.get(CONNECTIONS, query: query, user_id: user_id.to_s)
+          page = @client.get(CONNECTIONS, query: query, user_id: user)
           items.concat(page["items"] || [])
           query[:cursor] = page["next_cursor"]
           return items unless page["has_more"] && !query[:cursor].to_s.empty?
@@ -76,10 +78,23 @@ module GetStream
       # Disconnects a connection, the user's or the app's, and drops its credentials. One an
       # agent config binds as its fixed connection is refused with a 409.
       def delete(id, user_id: nil)
-        @client.delete(CONNECTION, path: { id: id }, user_id: user_id.to_s)
+        @client.delete(CONNECTION, path: { id: id }, user_id: named(user_id))
       end
 
       private
+
+      # The user a call names, or ConfigurationError for a device naming one: it holds its own
+      # user's token, which the router refuses here, so the call is refused before it is sent.
+      def named(user_id)
+        user = user_id.to_s
+        if !user.empty? && !@client.server_side?
+          raise ConfigurationError,
+                "a user's connections keep the app's credential, which only a backend holds; a device " \
+                "holds its user's token (as_user) and acts only as that user, so leave user_id off"
+        end
+
+        user
+      end
 
       def presence(value)
         value.to_s.empty? ? nil : value

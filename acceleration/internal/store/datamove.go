@@ -775,8 +775,8 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	locked, through := "", ""
 	switch table {
 	case "agent_logs":
-		locked, through = "WITH locked AS (SELECT pg_advisory_xact_lock(hashtextextended(?, 731))) ", "locked, "
-		args = append([]any{customerID}, args...)
+		locked, through = "WITH locked AS (SELECT pg_advisory_xact_lock(hashtextextended(?, ?))) ", "locked, "
+		args = append([]any{customerID, agentLogLockSeed}, args...)
 	case "requests":
 		locked, through = "WITH logged AS (SELECT set_config('router.request_logged', 'on', true)) ", "logged, "
 	}
