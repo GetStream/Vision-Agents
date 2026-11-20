@@ -17,7 +17,8 @@ class Teams:
     """The organization's teams. Server side only.
 
     A team has no members list: a user is in the team its token names, from
-    ``create_user_token(..., team=...)`` or ``for_user(..., team=...)``. A team's spend is
+    ``create_user_token(..., team=...)``, or the client's own, ``Client(team=...)``, for the
+    work it runs with ``user_id=``. A team's spend is
     the spend of the work those tokens ran, across the organization or within one app.
     """
 

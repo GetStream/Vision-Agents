@@ -5,7 +5,7 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional, Sequence, Union
 
 from ._errors import raise_refusal
@@ -452,6 +452,15 @@ class Backend:
                 str(self.api_secret),
             )
         return self._server_token()
+
+
+def acting_for(backend: Backend, user_id: str) -> Backend:
+    """A copy of ``backend`` acting for ``user_id``, or for nobody when it is empty.
+
+    It keeps the app's credential and drops the user the backend was built for: behind the
+    proxy that user would be signed a token of their own instead.
+    """
+    return replace(backend, user_id="", user={}, acting_for=user_id)
 
 
 def category_claims(
