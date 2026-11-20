@@ -412,3 +412,45 @@ func (s *DigestSuite) TestAnOrganizationsFirstAnsweredConversationIsListedWithTh
 		"  • `" + sameDay + "`   0 days after its first request",
 	})), strings.Split(strings.TrimSuffix(first, "\nActive orgs: 7 (day before: 4)"), "\n"), digest)
 }
+
+// days are the UTC days table holds rows of, oldest first.
+func (s *DigestSuite) days(table string) []string {
+	var days []string
+	s.Require().NoError(s.db.DB().NewSelect().TableExpr(table).ColumnExpr("DISTINCT day::text").
+		OrderExpr("1").Scan(s.ctx, &days))
+	return days
+}
+
+// Defect: a keep other than 400 days, the day on its edge deleted, the digests' days kept for
+// good, or a delete on every check rather than once a day. The days are written out rather than
+// computed: 401 days before 10 Mar 2026 is 2 Feb 2025.
+func (s *DigestSuite) TestActivityPastFourHundredDaysIsDeletedOnceADay() {
+	pinned := organization()
+	for _, daysAgo := range []int{401, 400, 399, 0} {
+		s.active(pinned, activity.AreaAgentSetup, daysAgo, 1, 0)
+	}
+	for _, day := range []time.Time{time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), time.Date(2025, 2, 3, 0, 0, 0, 0, time.UTC)} {
+		claimed, err := s.db.ClaimActivityDigest(s.ctx, day, stale)
+		s.Require().NoError(err)
+		s.Require().True(claimed)
+	}
+
+	s.router().Start()
+	s.checked(0)
+	s.Equal([]string{"2025-02-03", "2025-02-04", "2026-03-10"}, s.days("customer_activity"))
+	s.Equal([]string{"2025-02-03", "2026-03-09"}, s.days("activity_digests"), "the day before's posted by the check")
+
+	s.active(organization(), activity.AreaAgentSetup, 401, 1, 0)
+	s.checked(s.reads.Load())
+	s.Equal([]string{"2025-02-02", "2025-02-03", "2025-02-04", "2026-03-10"}, s.days("customer_activity"),
+		"written after the day's delete, so kept until the next day's")
+
+	next := today.AddDate(0, 0, 1)
+	s.clock.Store(&next)
+	s.Require().Eventually(func() bool {
+		return slices.Equal(s.days("customer_activity"), []string{"2025-02-04", "2026-03-10"})
+	}, settleFor, time.Millisecond, "the day before 400 days ago went too")
+	s.Require().Eventually(func() bool {
+		return slices.Equal(s.days("activity_digests"), []string{"2026-03-09", "2026-03-10"})
+	}, settleFor, time.Millisecond)
+}

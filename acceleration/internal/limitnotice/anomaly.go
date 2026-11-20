@@ -59,7 +59,8 @@ type AnomalyOptions struct {
 // Anomalies tells the operator, in the money limit notices' channel, of each organization whose
 // spend today is anomalyFactor times its median day of the anomalyDays before, once per
 // organization and day. Every router runs one, and the one holding the deployment's cost anomaly
-// lock does the check; the others try the lock again at the next tick.
+// lock does the check; the others try the lock again at the next tick. The holder also deletes
+// the activity past its keep, once a day (prune).
 type Anomalies struct {
 	store       *store.Store
 	lock        *store.ShipLock
@@ -75,6 +76,9 @@ type Anomalies struct {
 	// the checking goroutine uses them.
 	baselines   map[string]int64
 	baselineDay time.Time
+	// prunedDay is the UTC day this router last deleted the activity past its keep. Only the
+	// checking goroutine uses it.
+	prunedDay time.Time
 
 	stop context.CancelFunc
 	done chan struct{}
@@ -154,6 +158,7 @@ func (a *Anomalies) check(ctx context.Context) {
 	if a.digest {
 		a.postDigest(checking, now)
 	}
+	a.prune(checking, now)
 	if err := a.note(checking, now); err != nil {
 		a.lock.Release()
 		if ctx.Err() == nil {
@@ -170,6 +175,27 @@ func (a *Anomalies) check(ctx context.Context) {
 	}
 	for _, anomaly := range anomalies {
 		a.post(checking, anomaly)
+	}
+}
+
+// prune deletes the activity past its keep (store.PruneActivity) once per UTC day: the rows
+// age out a day at a time, so one delete a day keeps up. One that failed is tried again at the
+// next check. A router that takes the lock later the same day deletes again, and finds nothing.
+func (a *Anomalies) prune(ctx context.Context, now time.Time) {
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if a.prunedDay.Equal(today) {
+		return
+	}
+	pruned, err := a.store.PruneActivity(ctx, now)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.logger.Error("could not delete the activity past its keep, trying again", "in", a.every, "error", err)
+		}
+		return
+	}
+	a.prunedDay = today
+	if pruned > 0 {
+		a.logger.Info("deleted the activity past its keep", "rows", pruned)
 	}
 }
 

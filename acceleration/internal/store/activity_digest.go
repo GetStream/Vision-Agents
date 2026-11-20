@@ -115,6 +115,28 @@ WHERE activity_digests.posted_at IS NULL
 	return affected > 0, nil
 }
 
+// activityKeepDays is how many UTC days before today's customer_activity and activity_digests
+// keep: 13 months and a margin, so staff can set a month beside the same month a year before.
+// Kept no longer than that need, as GDPR's storage limitation asks (Art. 5(1)(e),
+// https://eur-lex.europa.eu/eli/reg/2016/679/oj).
+const activityKeepDays = 400
+
+// PruneActivity deletes the activity rows and activity digests of the UTC days more than
+// activityKeepDays before now's, and returns how many rows it deleted.
+func (s *Store) PruneActivity(ctx context.Context, now time.Time) (int, error) {
+	before := now.UTC().AddDate(0, 0, -activityKeepDays).Format(time.DateOnly)
+	var pruned int64
+	for _, table := range []string{"customer_activity", "activity_digests"} {
+		result, err := s.db.NewDelete().TableExpr(table).Where("day < ?::date", before).Exec(ctx)
+		if err != nil {
+			return 0, stack.Wrap(fmt.Errorf("store: prune %s: %w", table, err))
+		}
+		deleted, _ := result.RowsAffected()
+		pruned += deleted
+	}
+	return int(pruned), nil
+}
+
 // MarkActivityDigestPosted records that the activity digest of day, a UTC day, was posted.
 func (s *Store) MarkActivityDigestPosted(ctx context.Context, day time.Time) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE activity_digests SET posted_at = now() WHERE day = ?::date",
