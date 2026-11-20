@@ -1149,6 +1149,8 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtThe
 
 	s.GreaterOrEqual(sandboxEnd, idle)
 	s.GreaterOrEqual(hostEnd, idle)
+	s.Less(sandboxEnd, 2*idle, "closed at the idle timeout, not a multiple of it")
+	s.Less(hostEnd, 2*idle, "closed at the idle timeout, not a multiple of it")
 }
 
 // TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen: past the idle timeout, bytes in one
