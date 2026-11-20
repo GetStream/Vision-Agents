@@ -98,9 +98,10 @@ func limitNotices(settings config.Config, configs *appconfig.Store, logger *slog
 }
 
 // costAnomalies is what posts to ROUTER_LIMITS_SLACK_CHANNEL when an organization's spend today
-// jumps past its own baseline, and each day the day before's activity digest, or nil when that or its token is unset or there is no Postgres
-// to read the spend from. It runs whatever the limits' mode: work is priced and recorded with
-// limits off too.
+// jumps past its own baseline, and each day the day before's activity digest, and deletes the
+// activity past its keep, or nil when there is no Postgres. With that channel or its token unset
+// it posts nothing and still deletes. It runs whatever the limits' mode: work is priced and
+// recorded with limits off too.
 func costAnomalies(settings config.Config, db *store.Store, logger *slog.Logger) *limitnotice.Anomalies {
 	options, ok := costAnomalyOptions(settings, db, logger)
 	if !ok {
@@ -110,16 +111,23 @@ func costAnomalies(settings config.Config, db *store.Store, logger *slog.Logger)
 }
 
 // costAnomalyOptions is how costAnomalies configures the check, and false when it does not run.
+// Without a Slack token and channel it has no Poster, so the check only deletes old activity:
+// the retention does not depend on Slack.
 func costAnomalyOptions(settings config.Config, db *store.Store, logger *slog.Logger) (limitnotice.AnomalyOptions, bool) {
 	token := strings.TrimSpace(settings.Limits.SlackToken)
 	channel := strings.TrimSpace(settings.Limits.SlackChannel)
-	if token == "" || channel == "" || db == nil {
+	if db == nil {
 		return limitnotice.AnomalyOptions{}, false
 	}
-	return limitnotice.AnomalyOptions{
-		Store: db, Poster: limitnotice.NewSlack(token, channel), Environment: sandboxEnvironment(),
-		Links: limitnotice.Links{Staff: settings.Limits.StaffURL}, Logger: logger, Digest: true,
-	}, true
+	options := limitnotice.AnomalyOptions{Store: db, Logger: logger}
+	if token == "" || channel == "" {
+		return options, true
+	}
+	options.Poster = limitnotice.NewSlack(token, channel)
+	options.Environment = sandboxEnvironment()
+	options.Links = limitnotice.Links{Staff: settings.Limits.StaffURL}
+	options.Digest = true
+	return options, true
 }
 
 // usageCounters connects to the Redis the usage service keeps its spend counters in, or nil

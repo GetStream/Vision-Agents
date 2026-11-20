@@ -38,7 +38,8 @@ const (
 	anomalyTimeout = 2 * time.Minute
 )
 
-// AnomalyOptions configure Anomalies. Store and Poster are required.
+// AnomalyOptions configure Anomalies. Store is required. Without a Poster the check posts and
+// notes nothing and only deletes the activity past its keep.
 type AnomalyOptions struct {
 	Store  *store.Store
 	Poster Poster
@@ -155,10 +156,13 @@ func (a *Anomalies) check(ctx context.Context) {
 	if !held {
 		return
 	}
-	if a.digest {
+	if a.digest && a.poster != nil {
 		a.postDigest(checking, now)
 	}
 	a.prune(checking, now)
+	if a.poster == nil {
+		return
+	}
 	if err := a.note(checking, now); err != nil {
 		a.lock.Release()
 		if ctx.Err() == nil {

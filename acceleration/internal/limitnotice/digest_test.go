@@ -459,6 +459,41 @@ func (s *DigestSuite) TestActivityPastFourHundredDaysIsDeletedOnceADay() {
 	}, settleFor, time.Millisecond)
 }
 
+// Defect: the delete needed a Slack to post to, so a deployment without one kept every row; or a
+// check with nowhere to post still posted, or noted anomalies nobody would hear of.
+func (s *DigestSuite) TestActivityIsDeletedWithoutASlackAndNothingIsPosted() {
+	pinned := organization()
+	for _, daysAgo := range []int{401, 399, 1} {
+		s.active(pinned, activity.AreaAgentSetup, daysAgo, 1, 0)
+	}
+	claimed, err := s.db.ClaimActivityDigest(s.ctx, time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), stale)
+	s.Require().NoError(err)
+	s.Require().True(claimed)
+	for daysAgo, cost := range []int64{40_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000, 4_000_000} {
+		s.Require().NoError(s.db.RecordRequest(s.ctx, &store.Request{
+			Modality: "llm", CustomerID: "app-" + pinned, OrganizationID: pinned, Provider: "openai", Model: "m",
+			StartedAt: time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC).AddDate(0, 0, -daysAgo), CostMicros: cost,
+			Billable: true, Success: true,
+		}))
+	}
+
+	anomalies := NewAnomalies(AnomalyOptions{
+		Store: s.db, Logger: slog.New(slog.DiscardHandler), Every: 20 * time.Millisecond, Digest: true,
+		Now: func() time.Time {
+			s.reads.Add(1)
+			return *s.clock.Load()
+		},
+	})
+	s.T().Cleanup(anomalies.Close)
+	anomalies.Start()
+	s.checked(0)
+
+	s.Equal([]string{"2025-02-04", "2026-03-09"}, s.days("customer_activity"))
+	s.Empty(s.days("activity_digests"), "the old day's digest went, none was posted for the day before")
+	s.Empty(s.days("cost_anomaly_notices"), "a spike today, and nothing noted that nobody would be told of")
+	s.Empty(s.slack.posts())
+}
+
 // Defect: the keep counted from the clock's own date rather than the UTC day: at 01:00 on 11
 // Mar in UTC+14 it is still 10 Mar in UTC, so 3 Feb 2025 is 400 days back and stays.
 func (s *DigestSuite) TestTheKeepCountsFromTheUTCDayWhateverTheClocksZone() {
