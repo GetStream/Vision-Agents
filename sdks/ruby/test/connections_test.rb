@@ -173,4 +173,56 @@ class TestConnections < LocalRouterTest
     assert_equal 404, error.status
     assert_equal "getConnection", error.operation
   end
+
+  # Api key and its user's token, no secret.
+  def device
+    VA::Client.new(url: @router.url, api_key: "key", token: "jean-token", authenticate: false)
+  end
+
+  def test_a_device_naming_a_user_is_refused_before_sending
+    calls = {
+      create: -> { device.connections.create("linear", user_id: "alice") },
+      authorize: -> { device.connections.authorize("conn_1", user_id: "alice") },
+      get: -> { device.connections.get("conn_1", user_id: "alice") },
+      list: -> { device.connections.list(user_id: "alice") },
+      delete: -> { device.connections.delete("conn_1", user_id: "alice") }
+    }
+
+    calls.each do |name, call|
+      error = assert_raises(VA::ConfigurationError, name.to_s, &call)
+      assert_match(/acts only as that user/, error.message)
+    end
+    %i[get post delete].each { |method| assert_empty @router.seen(method, %r{\A/v1/agents/connections}) }
+  end
+
+  def test_a_device_naming_no_user_sends_what_it_always_did
+    @router.on(:get, "#{CONNECTIONS}/conn_1", body: { "id" => "conn_1" })
+    @router.on(:get, CONNECTIONS, body: { "items" => [], "has_more" => false })
+
+    [nil, ""].each do |user|
+      device.connections.get("conn_1", user_id: user)
+      device.connections.list(user_id: user)
+    end
+
+    sent = @router.seen(:get, %r{\A/v1/agents/connections})
+    assert_equal 4, sent.size
+    sent.each do |request|
+      assert_equal "Bearer jean-token", request.headers["authorization"]
+      assert_equal "jwt", request.headers["stream-auth-type"]
+      refute request.headers.key?("x-stream-user-id")
+    end
+  end
+
+  def test_a_customer_id_client_still_names_a_user
+    @router.on(:post, CONNECTIONS, status: 201, body: { "id" => "conn_1" })
+    page = VA::Client.new(url: @router.url, customer_id: CUSTOMER).as_user("jean", "jean-token")
+
+    page.connections.create("linear", user_id: "alice")
+
+    request = @router.last(:post, CONNECTIONS)
+    assert_equal({ "type" => "user", "user_id" => "alice" }, request.json["owner"])
+    assert_equal "alice", request.headers["x-stream-user-id"]
+    assert_equal CUSTOMER, request.headers["x-customer-id"]
+    refute request.headers.key?("authorization")
+  end
 end

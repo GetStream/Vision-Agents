@@ -318,62 +318,66 @@ func (s *AgentSuite) TestAMoveOntoAModelThatAnswersNothingIsRefusedRatherThanGoi
 }
 
 func (s *AgentSuite) TestASessionCanMoveOffAModelThatFailsEveryTurn() {
-	w := s.joinSwappable()
-	alice := stt.Participant{ID: "alice"}
-	broken := w.model("stub")
-	broken.mu.Lock()
-	broken.refuses = errors.New("400 Bad Request: model version is deactivated")
-	broken.mu.Unlock()
+	s.onFakeClock(func() {
+		w := s.joinSwappable()
+		alice := stt.Participant{ID: "alice"}
+		broken := w.model("stub")
+		broken.mu.Lock()
+		broken.refuses = errors.New("400 Bad Request: model version is deactivated")
+		broken.mu.Unlock()
 
-	s.speak(alice)
-	s.eventually(func() bool {
-		s.agent.mu.Lock()
-		_, listening := s.agent.listeners[alice.ID]
-		s.agent.mu.Unlock()
-		return listening && len(w.listener().transcribed()) > 0
-	}, "nobody listened")
-	w.listener().emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "hello", Language: "en", Confidence: 1})
-	s.eventually(func() bool { return countOf[Error](s.reported()) > 0 }, "the failure was never reported")
+		s.speak(alice)
+		s.eventually(func() bool {
+			s.agent.mu.Lock()
+			_, listening := s.agent.listeners[alice.ID]
+			s.agent.mu.Unlock()
+			return listening && len(w.listener().transcribed()) > 0
+		}, "nobody listened")
+		w.listener().emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "hello", Language: "en", Confidence: 1})
+		s.eventually(func() bool { return countOf[Error](s.reported()) > 0 }, "the failure was never reported")
 
-	moving, cancel := context.WithTimeout(s.ctx, settleFor)
-	defer cancel()
-	s.Require().NoError(s.agent.SetSettings(moving, Settings{
-		LLMTarget: "other/other-model", STTTarget: "stub/stub-model", TTSTarget: "stub/stub-model",
-	}), "a failed turn is over, so the move does not wait for the caller to talk over it")
-	// The failed turn was spoken too, as the apology for it.
-	s.hears(w, alice, "are you there", 2)
-	s.Len(w.model("other").turns(), 1)
+		moving, cancel := context.WithTimeout(s.ctx, settleFor)
+		defer cancel()
+		s.Require().NoError(s.agent.SetSettings(moving, Settings{
+			LLMTarget: "other/other-model", STTTarget: "stub/stub-model", TTSTarget: "stub/stub-model",
+		}), "a failed turn is over, so the move does not wait for the caller to talk over it")
+		// The failed turn was spoken too, as the apology for it.
+		s.hears(w, alice, "are you there", 2)
+		s.Len(w.model("other").turns(), 1)
+	})
 }
 
 func (s *AgentSuite) TestASessionMovesOntoASpeechToSpeechModelAndBackWithoutLeavingTheCall() {
-	w := s.joinSwappable()
-	alice := stt.Participant{ID: "alice"}
-	s.hears(w, alice, "my name is Ada", 1)
+	s.onFakeClock(func() {
+		w := s.joinSwappable()
+		alice := stt.Participant{ID: "alice"}
+		s.hears(w, alice, "my name is Ada", 1)
 
-	native := cascadeOnStub
-	native.STSTarget = "openai/gpt-realtime-2"
-	s.Require().NoError(s.agent.SetSettings(s.ctx, native))
+		native := cascadeOnStub
+		native.STSTarget = "openai/gpt-realtime-2"
+		s.Require().NoError(s.agent.SetSettings(s.ctx, native))
 
-	s.True(s.agent.Native())
-	s.Nil(s.agent.LLM())
-	speech := w.conversing()
-	s.Require().NotNil(speech)
-	s.Contains(speech.instructions, "Caller: my name is Ada", "the model taking over is told the conversation so far")
-	s.Contains(speech.instructions, "You: Hello there.")
-	s.speak(alice)
-	s.eventually(func() bool { heard, _ := speech.hearing(); return heard > 0 }, "the caller's audio never reached the new model")
+		s.True(s.agent.Native())
+		s.Nil(s.agent.LLM())
+		speech := w.conversing()
+		s.Require().NotNil(speech)
+		s.Contains(speech.instructions, "Caller: my name is Ada", "the model taking over is told the conversation so far")
+		s.Contains(speech.instructions, "You: Hello there.")
+		s.speak(alice)
+		s.eventually(func() bool { heard, _ := speech.hearing(); return heard > 0 }, "the caller's audio never reached the new model")
 
-	s.Require().NoError(s.agent.SetSettings(s.ctx, cascadeOnStub))
+		s.Require().NoError(s.agent.SetSettings(s.ctx, cascadeOnStub))
 
-	s.False(s.agent.Native())
-	_, closed := speech.hearing()
-	s.True(closed, "the speech-to-speech model is closed once the session moved off it")
-	s.hears(w, alice, "are you still there", 2)
-	requests := w.model("stub").turns()
-	s.Require().Len(requests, 1)
-	s.Equal("my name is Ada", harness.WithoutNotes(requests[0].Input)[0].Content, "the cascade picks the conversation back up")
-	s.Equal(2, countOf[ModelsChanged](s.reported()))
-	s.edge.mu.Lock()
-	defer s.edge.mu.Unlock()
-	s.False(s.edge.left, "the call is never left")
+		s.False(s.agent.Native())
+		_, closed := speech.hearing()
+		s.True(closed, "the speech-to-speech model is closed once the session moved off it")
+		s.hears(w, alice, "are you still there", 2)
+		requests := w.model("stub").turns()
+		s.Require().Len(requests, 1)
+		s.Equal("my name is Ada", harness.WithoutNotes(requests[0].Input)[0].Content, "the cascade picks the conversation back up")
+		s.Equal(2, countOf[ModelsChanged](s.reported()))
+		s.edge.mu.Lock()
+		defer s.edge.mu.Unlock()
+		s.False(s.edge.left, "the call is never left")
+	})
 }

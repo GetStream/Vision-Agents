@@ -450,28 +450,30 @@ func (s *AgentSuite) TestAColdTransferBringsTheHumanOnAndTheAgentLeaves() {
 }
 
 func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
-	// The summary is spoken on the call rather than privately, so it only means anything
-	// once there is somebody new to hear it.
-	s.onACall()
-	s.join(false)
-	s.agent.prompt = "Hand callers who want a person to +15550001111."
-	s.model.reply = []string{"One moment."}
-	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		// The summary is spoken on the call rather than privately, so it only means anything
+		// once there is somebody new to hear it.
+		s.onACall()
+		s.join(false)
+		s.agent.prompt = "Hand callers who want a person to +15550001111."
+		s.model.reply = []string{"One moment."}
+		s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "I want to speak to a person")
-	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+		s.says(participant, "I want to speak to a person")
+		s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
 
-	s.never(func() bool { return s.spokenText("Alice needs a refund") },
-		"the summary was said to an empty seat")
+		s.never(func() bool { return s.spokenText("Alice needs a refund") },
+			"the summary was said to an empty seat")
 
-	// The human answering is the agent hearing a voice it has not heard before.
-	s.speak(stt.Participant{ID: "human"})
+		// The human answering is the agent hearing a voice it has not heard before.
+		s.speak(stt.Participant{ID: "human"})
 
-	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
-		"the human was never introduced to the caller")
-	s.eventually(s.left, "the agent stayed on a call it had handed over")
+		s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
+			"the human was never introduced to the caller")
+		s.eventually(s.left, "the agent stayed on a call it had handed over")
+	})
 }
 
 // offerDestinations replaces the transfer tool with one that names who can be reached.
@@ -533,40 +535,44 @@ func (s *AgentSuite) TestADestinationNameIgnoresCaseAndSpaces() {
 }
 
 func (s *AgentSuite) TestAnUnknownDestinationDialsNothingAndNamesTheValidOnes() {
-	s.onACall()
-	s.offerDestinations(
-		Destination{Name: "Sales", Number: "+15550001111"},
-		Destination{Name: "Support", Number: "+15550002222"},
-	)
-	s.join(false)
-	s.model.reply = []string{"One moment."}
-	s.asksFor("transfer", `{"destination":"Billing"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "billing please")
+	s.onFakeClock(func() {
+		s.onACall()
+		s.offerDestinations(
+			Destination{Name: "Sales", Number: "+15550001111"},
+			Destination{Name: "Support", Number: "+15550002222"},
+		)
+		s.join(false)
+		s.model.reply = []string{"One moment."}
+		s.asksFor("transfer", `{"destination":"Billing"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "billing please")
 
-	ran := s.awaitToolRan()
-	s.Contains(ran.Result, "Sales")
-	s.Contains(ran.Result, "Support")
-	s.NotContains(ran.Result, "+1555")
-	s.Empty(s.line.attempted())
-	s.never(s.left, "the agent left a call it never transferred")
+		ran := s.awaitToolRan()
+		s.Contains(ran.Result, "Sales")
+		s.Contains(ran.Result, "Support")
+		s.NotContains(ran.Result, "+1555")
+		s.Empty(s.line.attempted())
+		s.never(s.left, "the agent left a call it never transferred")
+	})
 }
 
 func (s *AgentSuite) TestWithDestinationsANumberIsNeverDialled() {
-	s.onACall()
-	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
-	s.join(false)
-	s.agent.prompt = "Hand callers who want a person to +15550009999."
-	s.model.reply = []string{"One moment."}
-	s.asksFor("transfer", `{"to":"+15550009999"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "put me through")
+	s.onFakeClock(func() {
+		s.onACall()
+		s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+		s.join(false)
+		s.agent.prompt = "Hand callers who want a person to +15550009999."
+		s.model.reply = []string{"One moment."}
+		s.asksFor("transfer", `{"to":"+15550009999"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "put me through")
 
-	s.awaitToolRan()
-	s.Empty(s.line.attempted(), "a number the model supplied was dialled though destinations are set")
-	s.never(s.left, "the agent left a call it never transferred")
+		s.awaitToolRan()
+		s.Empty(s.line.attempted(), "a number the model supplied was dialled though destinations are set")
+		s.never(s.left, "the agent left a call it never transferred")
+	})
 }
 
 func (s *AgentSuite) TestAFailedTransferToADestinationDoesNotTellTheModelTheNumber() {
@@ -602,23 +608,25 @@ func (s *AgentSuite) TestAColdDestinationDropsTheSummary() {
 }
 
 func (s *AgentSuite) TestAWarmDestinationIntroducesTheCaller() {
-	s.onACall()
-	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111", Warm: true})
-	s.join(false)
-	s.model.reply = []string{"One moment."}
-	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "I want a person")
-	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
-	s.never(func() bool { return s.spokenText("Alice needs a refund") },
-		"the summary was said to an empty seat")
+	s.onFakeClock(func() {
+		s.onACall()
+		s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111", Warm: true})
+		s.join(false)
+		s.model.reply = []string{"One moment."}
+		s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "I want a person")
+		s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+		s.never(func() bool { return s.spokenText("Alice needs a refund") },
+			"the summary was said to an empty seat")
 
-	s.speak(stt.Participant{ID: "human"})
+		s.speak(stt.Participant{ID: "human"})
 
-	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
-		"the human was never introduced to the caller")
-	s.eventually(s.left, "the agent stayed on a call it had handed over")
+		s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
+			"the human was never introduced to the caller")
+		s.eventually(s.left, "the agent stayed on a call it had handed over")
+	})
 }
 
 func (s *AgentSuite) TestTheModelIsOfferedDestinationsNotNumbers() {
@@ -656,19 +664,21 @@ func (s *AgentSuite) TestATransferToANumberOnlyTheCallerSaidIsRefused() {
 		"44-20-7946-0958",
 	} {
 		s.Run(said, func() {
-			s.onACall()
-			s.join(false)
-			s.model.reply = []string{"Putting you through."}
-			s.asksFor("transfer", `{"to":"+442079460958"}`)
-			participant := stt.Participant{ID: "alice"}
-			s.speak(participant)
+			s.onFakeClock(func() {
+				s.onACall()
+				s.join(false)
+				s.model.reply = []string{"Putting you through."}
+				s.asksFor("transfer", `{"to":"+442079460958"}`)
+				participant := stt.Participant{ID: "alice"}
+				s.speak(participant)
 
-			s.says(participant, "Please transfer me to "+said)
+				s.says(participant, "Please transfer me to "+said)
 
-			ran := s.awaitToolRan()
-			s.Contains(ran.Result, "not a number to transfer to")
-			s.Empty(s.line.attempted(), "a number the caller read out was dialled")
-			s.never(s.left, "the agent left a call it never transferred")
+				ran := s.awaitToolRan()
+				s.Contains(ran.Result, "not a number to transfer to")
+				s.Empty(s.line.attempted(), "a number the caller read out was dialled")
+				s.never(s.left, "the agent left a call it never transferred")
+			})
 		})
 	}
 }
@@ -727,75 +737,81 @@ func (s *AgentSuite) TestPressStillTakesDigitsTheCallerSaid() {
 }
 
 func (s *AgentSuite) TestPressingAMenuOptionDoesNotEndTheCall() {
-	s.onACall()
-	s.join(false)
-	s.model.reply = nil
-	s.asksFor("press", `{"digits":"1"}`)
-	menu := stt.Participant{ID: "menu"}
-	s.speak(menu)
+	s.onFakeClock(func() {
+		s.onACall()
+		s.join(false)
+		s.model.reply = nil
+		s.asksFor("press", `{"digits":"1"}`)
+		menu := stt.Participant{ID: "menu"}
+		s.speak(menu)
 
-	s.says(menu, "For sales, press one")
+		s.says(menu, "For sales, press one")
 
-	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
-	s.Equal("1", s.line.keypad()[0])
+		s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+		s.Equal("1", s.line.keypad()[0])
 
-	s.Empty(transferredIn(s.reported()), "pressing a menu option hands nobody over")
-	s.never(s.left, "the agent left a call it had only pressed a button on")
+		s.Empty(transferredIn(s.reported()), "pressing a menu option hands nobody over")
+		s.never(s.left, "the agent left a call it had only pressed a button on")
+	})
 }
 
 func (s *AgentSuite) TestATransferThatFailsIsToldToTheModelRatherThanEndingTheCall() {
-	// A caller promised a person, on a transfer that did not happen, is owed an apology
-	// rather than a silent call.
-	s.onACall()
-	s.line.transferErr = errors.New("the trunk is down")
-	s.join(false)
-	s.agent.prompt = "Hand callers who want a person to +15550001111."
-	s.model.reply = []string{"Putting you through."}
-	s.model.then = []string{"Sorry, I could not put you through."}
-	s.asksFor("transfer", `{"to":"+15550001111"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		// A caller promised a person, on a transfer that did not happen, is owed an apology
+		// rather than a silent call.
+		s.onACall()
+		s.line.transferErr = errors.New("the trunk is down")
+		s.join(false)
+		s.agent.prompt = "Hand callers who want a person to +15550001111."
+		s.model.reply = []string{"Putting you through."}
+		s.model.then = []string{"Sorry, I could not put you through."}
+		s.asksFor("transfer", `{"to":"+15550001111"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "I want a person")
+		s.says(participant, "I want a person")
 
-	ran := s.awaitToolRan()
-	s.Require().Error(ran.Err)
-	s.Contains(ran.Result, "did not work", "the model has to be told so it can say so")
+		ran := s.awaitToolRan()
+		s.Require().Error(ran.Err)
+		s.Contains(ran.Result, "did not work", "the model has to be told so it can say so")
 
-	s.never(s.left, "the agent left a call it never transferred")
-	s.Contains(s.history(), llm.Message{
-		Role:       llm.ToolResult,
-		Content:    ran.Result,
-		ToolCallID: "call-1",
+		s.never(s.left, "the agent left a call it never transferred")
+		s.Contains(s.history(), llm.Message{
+			Role:       llm.ToolResult,
+			Content:    ran.Result,
+			ToolCallID: "call-1",
+		})
+		s.eventually(func() bool {
+			return s.spokenText("could not put you through")
+		}, "the caller was left in silence by a transfer that never happened")
 	})
-	s.eventually(func() bool {
-		return s.spokenText("could not put you through")
-	}, "the caller was left in silence by a transfer that never happened")
 }
 
 func (s *AgentSuite) TestAToolThatKeepsFailingIsNotAnsweredForever() {
-	// The apology for a failed tool is a turn like any other, so a model that answers it
-	// by trying the tool again would have the agent talking to itself until the money
-	// ran out.
-	s.onACall()
-	s.line.transferErr = errors.New("the trunk is down")
-	s.join(false)
-	s.agent.prompt = "Hand callers who want a person to +15550001111."
-	s.model.reply = []string{"Putting you through."}
-	s.model.keepCalling = true
-	s.asksFor("transfer", `{"to":"+15550001111"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		// The apology for a failed tool is a turn like any other, so a model that answers it
+		// by trying the tool again would have the agent talking to itself until the money
+		// ran out.
+		s.onACall()
+		s.line.transferErr = errors.New("the trunk is down")
+		s.join(false)
+		s.agent.prompt = "Hand callers who want a person to +15550001111."
+		s.model.reply = []string{"Putting you through."}
+		s.model.keepCalling = true
+		s.asksFor("transfer", `{"to":"+15550001111"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "I want a person")
+		s.says(participant, "I want a person")
 
-	// The apology is allowed to reach for the tool once more, in case the model has
-	// thought better of the number it used. What it cannot do is keep going.
-	s.eventually(func() bool { return len(s.line.attempted()) == 2 },
-		"the model never answered the failure at all")
-	s.never(func() bool {
-		return len(s.line.attempted()) > 2
-	}, "a failing transfer was retried without the caller saying anything")
+		// The apology is allowed to reach for the tool once more, in case the model has
+		// thought better of the number it used. What it cannot do is keep going.
+		s.eventually(func() bool { return len(s.line.attempted()) == 2 },
+			"the model never answered the failure at all")
+		s.never(func() bool {
+			return len(s.line.attempted()) > 2
+		}, "a failing transfer was retried without the caller saying anything")
+	})
 }
 
 func (s *AgentSuite) TestATurnThatCalledAToolIsRememberedWithTheCallOnIt() {
@@ -890,27 +906,29 @@ func (s *AgentSuite) TestACallersOwnToolsAreOfferedWithoutTelephony() {
 }
 
 func (s *AgentSuite) TestACallersOwnToolIsRunByThemAndItsAnswerReachesTheConversation() {
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"Let me check."}
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		s.ownsTools("order 12 ships tomorrow")
+		s.join(false)
+		s.model.reply = []string{"Let me check."}
+		s.asksFor("lookup_order", `{"order":"12"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "where is my order")
+		s.says(participant, "where is my order")
 
-	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the caller was never asked")
-	s.Equal(`{"order":"12"}`, s.runner.asked()[0].Arguments)
+		s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the caller was never asked")
+		s.Equal(`{"order":"12"}`, s.runner.asked()[0].Arguments)
 
-	ran := s.awaitToolRan()
-	s.Require().NoError(ran.Err)
-	s.Equal("order 12 ships tomorrow", ran.Result)
-	s.Contains(s.history(), llm.Message{
-		Role:       llm.ToolResult,
-		Content:    "order 12 ships tomorrow",
-		ToolCallID: "call-1",
+		ran := s.awaitToolRan()
+		s.Require().NoError(ran.Err)
+		s.Equal("order 12 ships tomorrow", ran.Result)
+		s.Contains(s.history(), llm.Message{
+			Role:       llm.ToolResult,
+			Content:    "order 12 ships tomorrow",
+			ToolCallID: "call-1",
+		})
+		s.never(s.left, "answering a question is not a reason to hang up")
 	})
-	s.never(s.left, "answering a question is not a reason to hang up")
 }
 
 func (s *AgentSuite) TestWhatAToolFoundOutIsSpokenRatherThanWaitedOn() {
@@ -1245,60 +1263,62 @@ func unanswered(messages []llm.Message) string {
 }
 
 func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTurn() {
-	// The call goes on after the interruption, so it is answered at once with a note that
-	// its result will follow; the next turn is not held, and the result comes as a message
-	// of its own once it is in.
-	s.ownsTools("")
-	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
-	s.join(true)
-	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
-	release := sync.OnceFunc(func() { close(runner.release) })
-	defer release()
-	s.agent.options.ToolRunner = runner
-	s.model.reply = []string{"Let me check the order."}
-	s.model.then = []string{"Fifteen."}
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "where is my order")
-	select {
-	case <-runner.began:
-	case <-time.After(settleFor):
-		s.FailNow("tool did not start")
-	}
-	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
-	s.replyWentOut()
-	s.mutters(participant, "stop cancel that lookup")
-	s.eventually(func() bool {
-		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
-	},
-		"the interrupted call was not answered")
-	s.True(slices.ContainsFunc(s.history(), func(m llm.Message) bool {
-		return strings.Contains(m.Content, `<drop skill="lookup_order"/>`)
-	}), "the answer names the tool the model would drop")
-	s.flow.then = nil
-	s.says(participant, "what is seven plus eight")
-	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
+	s.onFakeClock(func() {
+		// The call goes on after the interruption, so it is answered at once with a note that
+		// its result will follow; the next turn is not held, and the result comes as a message
+		// of its own once it is in.
+		s.ownsTools("")
+		s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+		s.join(true)
+		runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(runner.release) })
+		defer release()
+		s.agent.options.ToolRunner = runner
+		s.model.reply = []string{"Let me check the order."}
+		s.model.then = []string{"Fifteen."}
+		s.asksFor("lookup_order", `{"order":"12"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "where is my order")
+		select {
+		case <-runner.began:
+		case <-time.After(settleFor):
+			s.FailNow("tool did not start")
+		}
+		s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+		s.replyWentOut()
+		s.mutters(participant, "stop cancel that lookup")
+		s.eventually(func() bool {
+			return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+		},
+			"the interrupted call was not answered")
+		s.True(slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return strings.Contains(m.Content, `<drop skill="lookup_order"/>`)
+		}), "the answer names the tool the model would drop")
+		s.flow.then = nil
+		s.says(participant, "what is seven plus eight")
+		s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
 
-	s.model.mu.Lock()
-	next := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
-	s.model.mu.Unlock()
-	s.Empty(unanswered(next), "the next turn replayed a call without its result")
-	s.Equal(llm.User, next[len(next)-1].Role)
+		s.model.mu.Lock()
+		next := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
+		s.model.mu.Unlock()
+		s.Empty(unanswered(next), "the next turn replayed a call without its result")
+		s.Equal(llm.User, next[len(next)-1].Role)
 
-	release()
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the call never answered")
-	lateMessage := func(m llm.Message) bool { return strings.Contains(m.Content, "order 12 ships tomorrow") }
-	s.eventually(func() bool { return slices.ContainsFunc(s.history(), lateMessage) },
-		"the late result never reached the conversation")
-	history := s.history()
-	late := history[slices.IndexFunc(history, lateMessage)]
-	s.Empty(unanswered(history), "the late result broke the conversation")
-	s.Equal(llm.User, late.Role)
-	s.True(late.Typed, "a tool's result, on the caller's side, is no caller's speech")
-	s.Equal(fmt.Sprintf(lateResult, "lookup_order", "call-1")+"\norder 12 ships tomorrow", late.Content)
-	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 3 },
-		"the late result was left for the caller to ask about")
+		release()
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the call never answered")
+		lateMessage := func(m llm.Message) bool { return strings.Contains(m.Content, "order 12 ships tomorrow") }
+		s.eventually(func() bool { return slices.ContainsFunc(s.history(), lateMessage) },
+			"the late result never reached the conversation")
+		history := s.history()
+		late := history[slices.IndexFunc(history, lateMessage)]
+		s.Empty(unanswered(history), "the late result broke the conversation")
+		s.Equal(llm.User, late.Role)
+		s.True(late.Typed, "a tool's result, on the caller's side, is no caller's speech")
+		s.Equal(fmt.Sprintf(lateResult, "lookup_order", "call-1")+"\norder 12 ships tomorrow", late.Content)
+		s.eventually(func() bool { return countOf[Responded](s.reported()) >= 3 },
+			"the late result was left for the caller to ask about")
+	})
 }
 
 func (s *AgentSuite) TestAWaitToolNobodyInterruptedIsAnsweredOnceAsBefore() {
@@ -1407,188 +1427,200 @@ func lateResultsIn(messages []llm.Message) []string {
 }
 
 func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
-	// The late result is the caller's message, so it must not come between the next
-	// turn's call and that call's result: a provider refuses the call then.
-	runner := s.heldCalls("call-1", "call-2")
-	s.interruptsWaitCallsThenCalls(runner,
-		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
-		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
+	s.onFakeClock(func() {
+		// The late result is the caller's message, so it must not come between the next
+		// turn's call and that call's result: a provider refuses the call then.
+		runner := s.heldCalls("call-1", "call-2")
+		s.interruptsWaitCallsThenCalls(runner,
+			[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
+			llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
 
-	close(runner.release["call-1"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
-	s.Empty(lateResultsIn(s.history()), "the late result came while the next call was still running")
+		close(runner.release["call-1"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
+		s.Empty(lateResultsIn(s.history()), "the late result came while the next call was still running")
 
-	close(runner.release["call-2"])
-	s.eventually(func() bool {
+		close(runner.release["call-2"])
+		s.eventually(func() bool {
+			s.model.mu.Lock()
+			defer s.model.mu.Unlock()
+			return len(s.model.asked) == 3
+		}, "the second call's result was never sent")
+
 		s.model.mu.Lock()
-		defer s.model.mu.Unlock()
-		return len(s.model.asked) == 3
-	}, "the second call's result was never sent")
-
-	s.model.mu.Lock()
-	asked := append([]llm.ResponseParams(nil), s.model.asked...)
-	s.model.mu.Unlock()
-	for i, request := range asked {
-		s.Empty(unanswered(harness.WithoutNotes(request.Input)), "request %d replayed a call without its result", i)
-	}
-	last := harness.WithoutNotes(asked[2].Input)
-	s.Equal(llm.ToolResult, last[len(last)-2].Role)
-	s.Equal("call-2", last[len(last)-2].ToolCallID)
-	// Typed and Router: no caller said it (llm.Message.Typed, Router), which no provider reads.
-	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true,
-		Router: true},
-		last[len(last)-1])
+		asked := append([]llm.ResponseParams(nil), s.model.asked...)
+		s.model.mu.Unlock()
+		for i, request := range asked {
+			s.Empty(unanswered(harness.WithoutNotes(request.Input)), "request %d replayed a call without its result", i)
+		}
+		last := harness.WithoutNotes(asked[2].Input)
+		s.Equal(llm.ToolResult, last[len(last)-2].Role)
+		s.Equal("call-2", last[len(last)-2].ToolCallID)
+		// Typed and Router: no caller said it (llm.Message.Typed, Router), which no provider reads.
+		s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true,
+			Router: true},
+			last[len(last)-1])
+	})
 }
 
 func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
-	// The next turn's call is interrupted and answered, which closes the open call: the
-	// late result that already came must go into the history then, not wait for a result
-	// that is already there.
-	runner := s.heldCalls("call-1", "call-2")
-	s.interruptsWaitCallsThenCalls(runner,
-		[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
-		llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
-	close(runner.release["call-1"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
+	s.onFakeClock(func() {
+		// The next turn's call is interrupted and answered, which closes the open call: the
+		// late result that already came must go into the history then, not wait for a result
+		// that is already there.
+		runner := s.heldCalls("call-1", "call-2")
+		s.interruptsWaitCallsThenCalls(runner,
+			[]llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}},
+			llm.ToolCall{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`})
+		close(runner.release["call-1"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the first call never answered")
 
-	participant := stt.Participant{ID: "alice"}
-	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
-	s.replyWentOut()
-	s.mutters(participant, "stop that too")
-	s.eventually(func() bool {
-		answered := 0
-		for _, m := range s.history() {
-			if strings.HasPrefix(m.Content, stillRunning) {
-				answered++
+		participant := stt.Participant{ID: "alice"}
+		s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+		s.replyWentOut()
+		s.mutters(participant, "stop that too")
+		s.eventually(func() bool {
+			answered := 0
+			for _, m := range s.history() {
+				if strings.HasPrefix(m.Content, stillRunning) {
+					answered++
+				}
 			}
-		}
-		return answered == 2
-	}, "the second call was not answered")
-	s.flow.then = nil
-	s.model.mu.Lock()
-	s.model.then = []string{"Fifteen."}
-	s.model.mu.Unlock()
-	s.says(participant, "what is seven plus eight")
-	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the third turn never spoke")
+			return answered == 2
+		}, "the second call was not answered")
+		s.flow.then = nil
+		s.model.mu.Lock()
+		s.model.then = []string{"Fifteen."}
+		s.model.mu.Unlock()
+		s.says(participant, "what is seven plus eight")
+		s.eventually(func() bool { return s.spokenText("Fifteen") }, "the third turn never spoke")
 
-	s.model.mu.Lock()
-	last := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
-	s.model.mu.Unlock()
-	s.Equal([]string{fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"}, lateResultsIn(last))
+		s.model.mu.Lock()
+		last := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
+		s.model.mu.Unlock()
+		s.Equal([]string{fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"}, lateResultsIn(last))
 
-	close(runner.release["call-2"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "the second call never answered")
+		close(runner.release["call-2"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "the second call never answered")
+	})
 }
 
 func (s *AgentSuite) TestALateResultWaitsForEveryCallOfTheNextTurn() {
-	// The next turn asks for two calls and one is answered: the history still ends in an
-	// open call, so the late result waits for the other.
-	s.ownsTools("")
-	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
-	s.join(true)
-	runner := s.heldCalls("call-1", "call-2", "call-3")
-	s.agent.options.ToolRunner = runner
-	s.model.reply = []string{"Let me check the order."}
-	s.model.then = []string{"Checking."}
-	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "where is my order")
-	s.began(runner, "call-1")
-	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
-	s.replyWentOut()
-	s.mutters(participant, "stop cancel that lookup")
-	s.eventually(func() bool {
-		for _, m := range s.history() {
-			if strings.HasPrefix(m.Content, stillRunning) {
-				return true
+	s.onFakeClock(func() {
+		// The next turn asks for two calls and one is answered: the history still ends in an
+		// open call, so the late result waits for the other.
+		s.ownsTools("")
+		s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+		s.join(true)
+		runner := s.heldCalls("call-1", "call-2", "call-3")
+		s.agent.options.ToolRunner = runner
+		s.model.reply = []string{"Let me check the order."}
+		s.model.then = []string{"Checking."}
+		s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`}}
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "where is my order")
+		s.began(runner, "call-1")
+		s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+		s.replyWentOut()
+		s.mutters(participant, "stop cancel that lookup")
+		s.eventually(func() bool {
+			for _, m := range s.history() {
+				if strings.HasPrefix(m.Content, stillRunning) {
+					return true
+				}
 			}
+			return false
+		}, "the call was not answered")
+		s.flow.then = nil
+		s.model.mu.Lock()
+		s.model.calls = []llm.ToolCall{
+			{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
+			{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
 		}
-		return false
-	}, "the call was not answered")
-	s.flow.then = nil
-	s.model.mu.Lock()
-	s.model.calls = []llm.ToolCall{
-		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
-		{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
-	}
-	s.model.keepCalling = true
-	s.model.mu.Unlock()
-	s.says(participant, "and my other two orders")
-	s.began(runner, "call-2")
-	s.began(runner, "call-3")
-	s.model.mu.Lock()
-	s.model.keepCalling = false
-	s.model.mu.Unlock()
+		s.model.keepCalling = true
+		s.model.mu.Unlock()
+		s.says(participant, "and my other two orders")
+		s.began(runner, "call-2")
+		s.began(runner, "call-3")
+		s.model.mu.Lock()
+		s.model.keepCalling = false
+		s.model.mu.Unlock()
 
-	close(runner.release["call-2"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
-	close(runner.release["call-1"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
-	s.Empty(lateResultsIn(s.history()), "the late result came while call-3 was still running")
+		close(runner.release["call-2"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
+		close(runner.release["call-1"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
+		s.Empty(lateResultsIn(s.history()), "the late result came while call-3 was still running")
 
-	close(runner.release["call-3"])
-	s.eventually(func() bool { return len(lateResultsIn(s.history())) == 1 }, "the late result was never added")
-	s.Empty(unanswered(s.history()))
+		close(runner.release["call-3"])
+		s.eventually(func() bool { return len(lateResultsIn(s.history())) == 1 }, "the late result was never added")
+		s.Empty(unanswered(s.history()))
+	})
 }
 
 func (s *AgentSuite) TestLateResultsHeldBackComeInTheOrderTheyCame() {
-	runner := s.heldCalls("call-1", "call-2", "call-3", "call-4")
-	s.interruptsWaitCallsThenCalls(runner,
-		[]llm.ToolCall{
-			{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
-			{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
-			{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
-		},
-		llm.ToolCall{ID: "call-4", Name: "lookup_order", Arguments: `{"order":"15"}`})
+	s.onFakeClock(func() {
+		runner := s.heldCalls("call-1", "call-2", "call-3", "call-4")
+		s.interruptsWaitCallsThenCalls(runner,
+			[]llm.ToolCall{
+				{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`},
+				{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"13"}`},
+				{ID: "call-3", Name: "lookup_order", Arguments: `{"order":"14"}`},
+			},
+			llm.ToolCall{ID: "call-4", Name: "lookup_order", Arguments: `{"order":"15"}`})
 
-	close(runner.release["call-2"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
-	close(runner.release["call-1"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
-	close(runner.release["call-4"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 3 }, "call-4 never answered")
-	close(runner.release["call-3"])
-	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 4 }, "call-3 never answered")
+		close(runner.release["call-2"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "call-2 never answered")
+		close(runner.release["call-1"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 2 }, "call-1 never answered")
+		close(runner.release["call-4"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 3 }, "call-4 never answered")
+		close(runner.release["call-3"])
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 4 }, "call-3 never answered")
 
-	late := func(id string) string { return fmt.Sprintf(lateResult, "lookup_order", id) + "\n" + id + " result" }
-	s.Equal([]string{late("call-2"), late("call-1"), late("call-3")}, lateResultsIn(s.history()))
-	s.Empty(unanswered(s.history()))
+		late := func(id string) string { return fmt.Sprintf(lateResult, "lookup_order", id) + "\n" + id + " result" }
+		s.Equal([]string{late("call-2"), late("call-1"), late("call-3")}, lateResultsIn(s.history()))
+		s.Empty(unanswered(s.history()))
+	})
 }
 
 func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
-	// The digits are the whole point of the tool and the menu is what answers next, so
-	// talking over it would be talking to nobody.
-	s.onACall()
-	s.join(false)
-	s.model.reply = []string{"One moment."}
-	s.model.then = []string{"I pressed four for you."}
-	s.asksFor("press", `{"digits":"4"}`)
-	menu := stt.Participant{ID: "menu"}
-	s.speak(menu)
+	s.onFakeClock(func() {
+		// The digits are the whole point of the tool and the menu is what answers next, so
+		// talking over it would be talking to nobody.
+		s.onACall()
+		s.join(false)
+		s.model.reply = []string{"One moment."}
+		s.model.then = []string{"I pressed four for you."}
+		s.asksFor("press", `{"digits":"4"}`)
+		menu := stt.Participant{ID: "menu"}
+		s.speak(menu)
 
-	s.says(menu, "For accounts, press four")
+		s.says(menu, "For accounts, press four")
 
-	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
-	s.never(func() bool { return s.spokenText("pressed four") },
-		"the agent talked over the menu it had just pressed at")
+		s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+		s.never(func() bool { return s.spokenText("pressed four") },
+			"the agent talked over the menu it had just pressed at")
+	})
 }
 
 func (s *AgentSuite) TestPressingAMenuOptionSilentlyIsNotGivenAFillerEither() {
-	// Filling the pause is for a caller who asked a question. A menu did not ask one and
-	// is not listening, so a wordless press has to stay wordless.
-	s.onACall()
-	s.join(false)
-	s.model.reply = []string{}
-	s.asksFor("press", `{"digits":"4"}`)
-	menu := stt.Participant{ID: "menu"}
-	s.speak(menu)
+	s.onFakeClock(func() {
+		// Filling the pause is for a caller who asked a question. A menu did not ask one and
+		// is not listening, so a wordless press has to stay wordless.
+		s.onACall()
+		s.join(false)
+		s.model.reply = []string{}
+		s.asksFor("press", `{"digits":"4"}`)
+		menu := stt.Participant{ID: "menu"}
+		s.speak(menu)
 
-	s.says(menu, "For accounts, press four")
+		s.says(menu, "For accounts, press four")
 
-	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
-	s.never(func() bool { return s.spokenText("moment") || s.spokenText("check") },
-		"the agent talked over the menu it had just pressed at")
+		s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+		s.never(func() bool { return s.spokenText("moment") || s.spokenText("check") },
+			"the agent talked over the menu it had just pressed at")
+	})
 }
 
 func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
@@ -1740,43 +1772,45 @@ func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
 }
 
 func (s *AgentSuite) TestASpokenInterruptionLeavesAToolRunningUntilTheModelDropsIt() {
-	s.ownsTools("")
-	s.join(true)
-	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
-	s.agent.options.ToolRunner = runner
-	s.model.reply = []string{"Let me check the order."}
-	s.model.then = []string{`<drop skill="lookup_order"/>Okay, I have stopped that.`}
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "where is my order")
-	select {
-	case <-runner.began:
-	case <-time.After(settleFor):
-		s.FailNow("tool did not start")
-	}
-	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
-	s.replyWentOut()
-	s.mutters(participant, "hello?")
-	s.eventually(func() bool {
-		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
-	}, "the interrupted call was not answered")
-	select {
-	case <-runner.stopped:
-		s.FailNow("talking over the agent cancelled what the caller had asked for")
-	default:
-	}
+	s.onFakeClock(func() {
+		s.ownsTools("")
+		s.join(true)
+		runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+		s.agent.options.ToolRunner = runner
+		s.model.reply = []string{"Let me check the order."}
+		s.model.then = []string{`<drop skill="lookup_order"/>Okay, I have stopped that.`}
+		s.asksFor("lookup_order", `{"order":"12"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "where is my order")
+		select {
+		case <-runner.began:
+		case <-time.After(settleFor):
+			s.FailNow("tool did not start")
+		}
+		s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+		s.replyWentOut()
+		s.mutters(participant, "hello?")
+		s.eventually(func() bool {
+			return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+		}, "the interrupted call was not answered")
+		select {
+		case <-runner.stopped:
+			s.FailNow("talking over the agent cancelled what the caller had asked for")
+		default:
+		}
 
-	s.flow.then = nil
-	s.says(participant, "never mind, cancel that lookup")
-	select {
-	case <-runner.stopped:
-	case <-time.After(settleFor):
-		s.FailNow("the model dropped the tool and it kept running")
-	}
-	s.eventually(func() bool { return s.spokenText("stopped that") }, "the withdrawal was not answered")
-	s.never(func() bool { return countOf[Responded](s.reported()) > 2 },
-		"a dropped tool still earned a reply of its own")
+		s.flow.then = nil
+		s.says(participant, "never mind, cancel that lookup")
+		select {
+		case <-runner.stopped:
+		case <-time.After(settleFor):
+			s.FailNow("the model dropped the tool and it kept running")
+		}
+		s.eventually(func() bool { return s.spokenText("stopped that") }, "the withdrawal was not answered")
+		s.never(func() bool { return countOf[Responded](s.reported()) > 2 },
+			"a dropped tool still earned a reply of its own")
+	})
 }
 
 func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() {
@@ -1810,37 +1844,39 @@ func (s *AgentSuite) TestASpokenInterruptionCancelsAToolWhoseBindingAsksForIt() 
 }
 
 func (s *AgentSuite) TestAToolResultLandingAfterAnInterruptionIsStillSpoken() {
-	s.ownsTools("")
-	s.join(true)
-	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
-	release := sync.OnceFunc(func() { close(runner.release) })
-	defer release()
-	s.agent.options.ToolRunner = runner
-	s.model.reply = []string{"Let me check the order."}
-	s.model.then = []string{"It ships tomorrow."}
-	s.asksFor("lookup_order", `{"order":"12"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "where is my order")
-	select {
-	case <-runner.began:
-	case <-time.After(settleFor):
-		s.FailNow("tool did not start")
-	}
-	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
-	s.replyWentOut()
-	s.mutters(participant, "hello? are you there?")
-	s.eventually(func() bool {
-		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
-	}, "the interrupted call was not answered")
+	s.onFakeClock(func() {
+		s.ownsTools("")
+		s.join(true)
+		runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(runner.release) })
+		defer release()
+		s.agent.options.ToolRunner = runner
+		s.model.reply = []string{"Let me check the order."}
+		s.model.then = []string{"It ships tomorrow."}
+		s.asksFor("lookup_order", `{"order":"12"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "where is my order")
+		select {
+		case <-runner.began:
+		case <-time.After(settleFor):
+			s.FailNow("tool did not start")
+		}
+		s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+		s.replyWentOut()
+		s.mutters(participant, "hello? are you there?")
+		s.eventually(func() bool {
+			return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+		}, "the interrupted call was not answered")
 
-	release()
+		release()
 
-	// The controller keeps ruling that "hello? are you there?" is unfinished, so the result
-	// is not said over those words: it goes with the reply to them once patience runs out.
-	s.Require().Eventually(func() bool { return s.spokenText("ships tomorrow") },
-		defaultPatience+settleFor, 5*time.Millisecond,
-		"the result came back after the interruption and was never said")
+		// The controller keeps ruling that "hello? are you there?" is unfinished, so the result
+		// is not said over those words: it goes with the reply to them once patience runs out.
+		s.Require().Eventually(func() bool { return s.spokenText("ships tomorrow") },
+			defaultPatience+settleFor, 5*time.Millisecond,
+			"the result came back after the interruption and was never said")
+	})
 }
 
 func (s *AgentSuite) TestAChainOfToolsIsFollowedToItsAnswerOnACall() {
@@ -1940,53 +1976,57 @@ func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
 }
 
 func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"It ships tomorrow morning."}
-	call := llm.ToolCall{ID: "lookup", Name: "lookup_order", Arguments: `{}`}
-	s.agent.mu.Lock()
-	s.agent.history = []llm.Message{
-		{Role: llm.User, Content: "where is my order"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
-	}
-	s.agent.generating = true
-	s.agent.mu.Unlock()
-	s.agent.runTool(harness.ToolRequested{TurnID: "lookup-turn", Call: call})
+	s.onFakeClock(func() {
+		s.ownsTools("order 12 ships tomorrow")
+		s.join(false)
+		s.model.reply = []string{"It ships tomorrow morning."}
+		call := llm.ToolCall{ID: "lookup", Name: "lookup_order", Arguments: `{}`}
+		s.agent.mu.Lock()
+		s.agent.history = []llm.Message{
+			{Role: llm.User, Content: "where is my order"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+		}
+		s.agent.generating = true
+		s.agent.mu.Unlock()
+		s.agent.runTool(harness.ToolRequested{TurnID: "lookup-turn", Call: call})
 
-	s.Require().NoError(s.agent.SimpleResponse(context.Background(), "What time tomorrow?"))
+		s.Require().NoError(s.agent.SimpleResponse(context.Background(), "What time tomorrow?"))
 
-	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the new question was never answered")
-	input := harness.WithoutNotes(s.model.requests()[0].Input)
-	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
-	s.Equal("What time tomorrow?", input[len(input)-1].Content)
-	model := s.model
-	s.never(func() bool { return len(model.requests()) > 1 }, "a result already included in the answer was spoken again")
+		s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the new question was never answered")
+		input := harness.WithoutNotes(s.model.requests()[0].Input)
+		s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
+		s.Equal("What time tomorrow?", input[len(input)-1].Content)
+		model := s.model
+		s.never(func() bool { return len(model.requests()) > 1 }, "a result already included in the answer was spoken again")
+	})
 }
 
 func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt() {
-	s.speculates = true
-	s.ownsTools("order 12 ships tomorrow")
-	s.join(false)
-	s.model.reply = []string{"It ships tomorrow morning."}
-	s.agent.mu.Lock()
-	s.agent.history = []llm.Message{
-		{Role: llm.User, Content: "where is my order"},
-		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "lookup", Name: "lookup_order", Arguments: `{}`}}},
-		{Role: llm.ToolResult, ToolCallID: "lookup", Content: "order 12 ships tomorrow"},
-	}
-	s.agent.toolReply = true
-	s.agent.mu.Unlock()
-	ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
+	s.onFakeClock(func() {
+		s.speculates = true
+		s.ownsTools("order 12 ships tomorrow")
+		s.join(false)
+		s.model.reply = []string{"It ships tomorrow morning."}
+		s.agent.mu.Lock()
+		s.agent.history = []llm.Message{
+			{Role: llm.User, Content: "where is my order"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "lookup", Name: "lookup_order", Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "lookup", Content: "order 12 ships tomorrow"},
+		}
+		s.agent.toolReply = true
+		s.agent.mu.Unlock()
+		ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
 
-	s.agent.speculate(s.agent.harness, ready, false, false)
-	s.Require().True(s.agent.adoptSpeculation(ready, ""))
+		s.agent.speculate(s.agent.harness, ready, false, false)
+		s.Require().True(s.agent.adoptSpeculation(ready, ""))
 
-	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
-	input := harness.WithoutNotes(s.model.requests()[0].Input)
-	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
-	s.Equal("What time tomorrow?", input[len(input)-1].Content)
-	model := s.model
-	s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
+		s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
+		input := harness.WithoutNotes(s.model.requests()[0].Input)
+		s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
+		s.Equal("What time tomorrow?", input[len(input)-1].Content)
+		model := s.model
+		s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
+	})
 }
 
 // stubEnder is the call's hang-up with no call behind it: it counts the times it was asked.
@@ -2059,25 +2099,27 @@ func (s *AgentSuite) TestEndCallWithoutAConditionIsGivenTheDefault() {
 }
 
 func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
-	// Hanging up the moment the model asks drops the goodbye still on its way out, and the
-	// caller hears the line go dead mid-sentence.
-	s.onACall()
-	s.ender = &stubEnder{}
-	s.join(false)
-	s.edge.holdSpeech(true)
-	s.model.reply = []string{"Thanks, goodbye!"}
-	s.asksFor("end_call", `{}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		// Hanging up the moment the model asks drops the goodbye still on its way out, and the
+		// caller hears the line go dead mid-sentence.
+		s.onACall()
+		s.ender = &stubEnder{}
+		s.join(false)
+		s.edge.holdSpeech(true)
+		s.model.reply = []string{"Thanks, goodbye!"}
+		s.asksFor("end_call", `{}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "that's all, thanks")
-	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
-	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended while the goodbye was going out")
+		s.says(participant, "that's all, thanks")
+		s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+		s.never(func() bool { return s.ender.ends() > 0 }, "the call ended while the goodbye was going out")
 
-	s.edge.holdSpeech(false)
-	s.eventually(func() bool { return s.ender.ends() == 1 }, "the call was never ended")
-	s.eventually(s.left, "the agent stayed on a call it ended")
-	s.Equal(1, s.ender.ends())
+		s.edge.holdSpeech(false)
+		s.eventually(func() bool { return s.ender.ends() == 1 }, "the call was never ended")
+		s.eventually(s.left, "the agent stayed on a call it ended")
+		s.Equal(1, s.ender.ends())
+	})
 }
 
 func (s *AgentSuite) TestACallerSpeakingOnceTheGoodbyeWasHeardStillEndsTheCall() {
@@ -2098,35 +2140,37 @@ func (s *AgentSuite) TestACallerSpeakingOnceTheGoodbyeWasHeardStillEndsTheCall()
 }
 
 func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsTold() {
-	// The model is told plainly that the call is still open, rather than that hanging up
-	// failed, so it answers the caller and can end the call again later.
-	s.onACall()
-	s.ender = &stubEnder{}
-	s.join(true)
-	s.edge.holdSpeech(true)
-	s.model.reply = []string{"Thanks, goodbye!"}
-	s.asksFor("end_call", `{}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "that's all, thanks")
-	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
-	s.replyWentOut()
-	// The goodbye is said as the model writes it, and the call to end_call comes after it in
-	// the same reply: words over the goodbye before the call is taken up cut a reply that
-	// never asked to hang up.
-	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "end_call never began")
+	s.onFakeClock(func() {
+		// The model is told plainly that the call is still open, rather than that hanging up
+		// failed, so it answers the caller and can end the call again later.
+		s.onACall()
+		s.ender = &stubEnder{}
+		s.join(true)
+		s.edge.holdSpeech(true)
+		s.model.reply = []string{"Thanks, goodbye!"}
+		s.asksFor("end_call", `{}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "that's all, thanks")
+		s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+		s.replyWentOut()
+		// The goodbye is said as the model writes it, and the call to end_call comes after it in
+		// the same reply: words over the goodbye before the call is taken up cut a reply that
+		// never asked to hang up.
+		s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "end_call never began")
 
-	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
-	s.mutters(participant, "oh wait, one more thing")
+		s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+		s.mutters(participant, "oh wait, one more thing")
 
-	s.eventually(func() bool {
-		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
-			return m.Role == llm.ToolResult && m.Content == endCallCancelled
-		})
-	}, "the model was never told the call is still open")
-	s.edge.holdSpeech(false)
-	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
-	s.False(s.left(), "the agent left a caller still talking")
+		s.eventually(func() bool {
+			return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+				return m.Role == llm.ToolResult && m.Content == endCallCancelled
+			})
+		}, "the model was never told the call is still open")
+		s.edge.holdSpeech(false)
+		s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
+		s.False(s.left(), "the agent left a caller still talking")
+	})
 }
 
 // Talking over the goodbye cancels the hang-up and then drops the goodbye, which leaves the
