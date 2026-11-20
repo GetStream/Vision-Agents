@@ -72,8 +72,9 @@ public struct SessionOptions: Sendable {
     /// leaves them in. Reopening the session keeps it.
     public var ui: Bool?
 
-    public init(agent: String? = nil) {
+    public init(agent: String? = nil, tools: [AgentTool] = []) {
         self.init(agent: agent, deviceZone: TimeZone.current.identifier)
+        self.tools = tools
     }
 
     /// Options whose zone starts as `deviceZone` rather than this device's, for a test.

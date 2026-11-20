@@ -2,6 +2,10 @@
 
 ## Features
 
+### Swift's `SessionOptions` takes its tools in the initializer
+
+`agents.agent("support").sessions.create(SessionOptions(tools: [location]))` opens a session that answers its tools, the same call as Kotlin's `SessionOptions(tools = listOf(location))`, Dart's `SessionOptions(tools: [location])` and JavaScript's `sessions.create({ tools })`. `agents.chat(agent:tools:)` and `agents.voice(agent:tools:)` stay.
+
 ### A tool is registered once for the app, and each agent's agent.yaml enables it
 
 Every server SDK's client has a tool registry for the whole app, and one call runs it for every agent: Go `client.Tools().Add(...)` and `client.RunDispatch(ctx)`, Python `client.tools.register(...)` and `await client.run_dispatch()`, JavaScript `client.tools.register(...)` and `await client.runDispatch()`, .NET `client.Tools.Register(...)` and `await client.RunDispatchAsync()`, Ruby `client.tools.register(...)` and `client.run_dispatch`, Rust `client.tools().register(...)` and `client.run_dispatch().await`, PHP `$client->tools->register(...)` and `$client->runDispatch()`. A worker that also answers calls or messages hosts them with `dispatch.host(client)`. A session is offered one of those tools only when a tool group of its agent's `agent.yaml` names it, and a tool of the same name an agent hosts itself wins. A worker asks for this with `every_agent: true` on its `host_tools` frame; one naming neither an agent nor `every_agent` is still refused, so a forgotten agent id never offers tools to every agent.
