@@ -21,10 +21,20 @@ const (
 	digestSettle = 5 * activity.DefaultInterval
 	// digestListMax is how many organizations one list of the digest names; the rest are
 	// counted. Slack truncates a message's text past 40,000 characters
-	// (https://docs.slack.dev/reference/methods/chat.postMessage), and a line is at most about
-	// 1,000: an id of up to 255, every area of the 14 with its clients, and a Staff link. Two
-	// lists of 15 stay inside it.
+	// (https://docs.slack.dev/reference/methods/chat.postMessage). A line of the new
+	// organizations is at most about 1,000: an id of up to 255, every area of the 14 with its
+	// clients, and a Staff link. A line of the other lists names no area: the id and its link,
+	// at most about 650. Fifteen of each come to about 44,000 at worst, every id 255 long;
+	// Slack then cuts the last lines.
 	digestListMax = 15
+	// stuckRequests is how many requests an organization's apps make in a day before their
+	// refused share can list it as stuck: fewer are a failed probe or two, not a customer held
+	// back. A judgement call, to tune.
+	stuckRequests = 10
+	// stuckRefusedPercent is the share of an organization's requests, in percent, refused in a
+	// day that lists it as stuck: well above the few lookups of something missing that a
+	// working integration has refused. A judgement call, to tune.
+	stuckRefusedPercent = 25
 )
 
 // DayDigest is what organizations did with Agents on one UTC day.
@@ -34,6 +44,9 @@ type DayDigest struct {
 	Organizations []OrganizationDay
 	// ActiveBefore is how many organizations' apps made a request the day before Day.
 	ActiveBefore int
+	// FirstConversations are the organizations whose apps had a conversation answered for the
+	// first time on Day.
+	FirstConversations []store.FirstAnswer
 }
 
 // OrganizationDay is what one organization's apps did on the digest's day.
@@ -72,6 +85,13 @@ func (o OrganizationDay) counts() (requests, refused int64) {
 func (o OrganizationDay) allRefused() bool {
 	requests, refused := o.counts()
 	return refused == requests
+}
+
+// stuck says at least stuckRefusedPercent of the organization's requests were refused, of at
+// least stuckRequests, and not all of them: allRefused lists those.
+func (o OrganizationDay) stuck() bool {
+	requests, refused := o.counts()
+	return requests >= stuckRequests && refused*100 >= requests*stuckRefusedPercent && refused < requests
 }
 
 // refusalCode is the code that ended the most of the organization's refused requests, as far
@@ -140,13 +160,16 @@ func digestMessage(environment string, links Links, digest DayDigest) string {
 	}
 	fmt.Fprintf(&b, "Agents yesterday (%s, %s)", digest.Day.UTC().Format("2 Jan"), name)
 
-	var fresh, refused []OrganizationDay
+	var fresh, refused, stuck []OrganizationDay
 	for _, organization := range digest.Organizations {
 		if organization.New {
 			fresh = append(fresh, organization)
 		}
 		if organization.allRefused() {
 			refused = append(refused, organization)
+		}
+		if organization.stuck() {
+			stuck = append(stuck, organization)
 		}
 	}
 	fmt.Fprintf(&b, "\nNew orgs (first request yesterday): %d", len(fresh))
@@ -168,13 +191,28 @@ func digestMessage(environment string, links Links, digest DayDigest) string {
 		return fmt.Sprintf("%s   %s%s", organizationName(links, organization.ID), countOf(requests),
 			inParentheses(organization.refusalCode()))
 	})
+	// The two lists below are left out when empty, so a day with none reads as it did before them.
+	if len(stuck) > 0 {
+		fmt.Fprintf(&b, "\nStuck: %d", len(stuck))
+		writeList(&b, stuck, func(organization OrganizationDay) string {
+			requests, refused := organization.counts()
+			return fmt.Sprintf("%s   %d%% of %s refused%s", organizationName(links, organization.ID), refused*100/requests,
+				countOf(requests), inParentheses(organization.refusalCode()))
+		})
+	}
+	if len(digest.FirstConversations) > 0 {
+		fmt.Fprintf(&b, "\nFirst conversation: %d", len(digest.FirstConversations))
+		writeList(&b, digest.FirstConversations, func(first store.FirstAnswer) string {
+			return fmt.Sprintf("%s   %s after its first request", organizationName(links, first.OrganizationID), daysOf(first.Days))
+		})
+	}
 	fmt.Fprintf(&b, "\nActive orgs: %d (day before: %d)", len(digest.Organizations), digest.ActiveBefore)
 	return b.String()
 }
 
 // writeList writes a line for each of the first digestListMax organizations, and how many more
 // there are.
-func writeList(b *strings.Builder, organizations []OrganizationDay, line func(OrganizationDay) string) {
+func writeList[T any](b *strings.Builder, organizations []T, line func(T) string) {
 	for _, organization := range organizations[:min(len(organizations), digestListMax)] {
 		b.WriteString("\n  • " + line(organization))
 	}
@@ -197,6 +235,14 @@ func countOf(requests int64) string {
 		return "1 request"
 	}
 	return fmt.Sprintf("%d requests", requests)
+}
+
+// daysOf is a number of days, in words.
+func daysOf(days int) string {
+	if days == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", days)
 }
 
 // inParentheses is " (text)", or nothing for no text.
@@ -255,5 +301,11 @@ func (a *Anomalies) dayDigest(ctx context.Context, day time.Time) (DayDigest, er
 	if err != nil {
 		return DayDigest{}, err
 	}
-	return DayDigest{Day: day, Organizations: organizationDays(areas), ActiveBefore: before}, nil
+	firstConversations, err := a.store.FirstAnswers(ctx, activity.AreaConversations, day)
+	if err != nil {
+		return DayDigest{}, err
+	}
+	return DayDigest{
+		Day: day, Organizations: organizationDays(areas), ActiveBefore: before, FirstConversations: firstConversations,
+	}, nil
 }

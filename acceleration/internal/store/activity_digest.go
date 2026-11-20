@@ -42,6 +42,41 @@ func (s *Store) DayActivity(ctx context.Context, day time.Time) ([]OrganizationD
 	return areas, nil
 }
 
+// FirstAnswer is an organization whose apps had a request of an area answered for the first
+// time on a day.
+type FirstAnswer struct {
+	OrganizationID string `bun:"organization_id"`
+	// Days is how many days before that day the organization's apps made their first request,
+	// of any area, refused ones included.
+	Days int `bun:"days"`
+}
+
+// FirstAnswers are the organizations whose apps had a request of area answered, not refused,
+// on day, a UTC day, and on no earlier day, by organization. Rows that name no organization
+// are left out, as in DayActivity.
+func (s *Store) FirstAnswers(ctx context.Context, area string, day time.Time) ([]FirstAnswer, error) {
+	date := day.UTC().Format(time.DateOnly)
+	var answers []FirstAnswer
+	err := s.db.NewSelect().
+		TableExpr("customer_activity AS ca").
+		ColumnExpr("ca.organization_id").
+		ColumnExpr("?::date - (SELECT MIN(any_area.day) FROM customer_activity AS any_area"+
+			" WHERE any_area.organization_id = ca.organization_id) AS days", date).
+		Where("ca.day = ?::date", date).
+		Where("ca.area = ?", area).
+		Where("ca.requests > ca.refused").
+		Where("ca.organization_id <> ''").
+		Where("NOT EXISTS (SELECT 1 FROM customer_activity AS earlier WHERE earlier.organization_id = ca.organization_id"+
+			" AND earlier.area = ca.area AND earlier.day < ca.day AND earlier.requests > earlier.refused)").
+		Group("ca.organization_id").
+		Order("ca.organization_id").
+		Scan(ctx, &answers)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: first answers: %w", err))
+	}
+	return answers, nil
+}
+
 // ActiveOrganizations is how many organizations' apps made a request on day, a UTC day,
 // refused ones included.
 func (s *Store) ActiveOrganizations(ctx context.Context, day time.Time) (int, error) {
