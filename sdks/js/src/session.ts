@@ -1032,8 +1032,8 @@ export class Session {
     // Answered by this session from here on, also once it has finished and left `running`: the
     // same call delivered again afterwards is not run again.
     this.answered.add(id);
+    const functions = this.functionsFor(name);
     try {
-      const functions = this.functionsFor(name);
       if (!functions) {
         throw new Error(`${name} was asked for, and no tools are registered`);
       }
@@ -1041,7 +1041,8 @@ export class Session {
       const toolCallContext = toolCallContextOf(frame, this.id, line, this.ending.signal);
       result["output"] = await functions.call(name, text(frame, "arguments"), cancel.signal, toolCallContext);
     } catch (cause) {
-      result["error"] = cause instanceof Error ? cause.message : String(cause);
+      // What the model is told is the tools' own choice (`onError`), since it may repeat it.
+      result["error"] = functions ? functions.failure(name, id, cause) : (cause as Error).message;
     } finally {
       this.running.delete(id);
       this.holds.forget(id);

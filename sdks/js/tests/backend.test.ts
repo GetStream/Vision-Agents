@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { inspect } from "node:util";
 
 import {
   Backend,
@@ -540,6 +541,29 @@ describe("Backend", () => {
     await arriving;
     assert.ok(given[0]?.headers?.["Authorization"]?.startsWith("Bearer "));
     socket.close();
+  });
+
+  it("never prints the secret or a token minted from it, logged or serialised", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "key", apiSecret: "shh-very-secret", userId: "ana" });
+    const minted = ((await backend.headers())["Authorization"] ?? "").replace("Bearer ", "");
+    const client = new Client(backend);
+
+    for (const shown of [inspect(client, { depth: Infinity }), JSON.stringify(backend)]) {
+      assert.ok(!shown.includes("shh-very-secret"), shown);
+      assert.ok(minted && !shown.includes(minted), "the minted token is not printed");
+      assert.ok(shown.includes(router.url) && shown.includes("ana"), "where it goes and for whom still are");
+    }
+  });
+
+  it("never prints a page's token, handed in or answered by a function", async () => {
+    const handed = new Client({ url: router.url, apiKey: "key" });
+    await handed.setUser({ id: "ana" }, "tok-handed-in-123");
+    const fetched = new Backend({ url: router.url, apiKey: "key", token: async () => "tok-from-function-456" });
+    await fetched.headers();
+
+    for (const shown of [inspect(handed, { depth: Infinity }), JSON.stringify(handed.backend), inspect(fetched), JSON.stringify(fetched)]) {
+      assert.ok(!shown.includes("tok-handed-in-123") && !shown.includes("tok-from-function-456"), shown);
+    }
   });
 
   it("leaves a page's socket credential in the URL, the only place a browser can put it", async () => {

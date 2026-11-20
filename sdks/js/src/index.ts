@@ -143,6 +143,7 @@ export {
   type ToolConversation,
   type ToolLine,
   type ToolUser,
+  type ToolsOptions,
 } from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";

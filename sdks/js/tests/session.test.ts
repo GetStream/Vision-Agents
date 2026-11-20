@@ -267,6 +267,51 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("tells the model what onError says of a failure, so a connection string never reaches it", async () => {
+    class DatabaseError extends Error {}
+    const tools = new Tools({
+      onError: (error, call) => (error instanceof DatabaseError ? `${call.name} could not reach its data` : String((error as Error).message)),
+    })
+      .register({
+        name: "lookup",
+        description: "Look something up",
+        run: () => {
+          throw new DatabaseError("connect ECONNREFUSED postgres://app:s3cr3t@db.internal:5432/orders");
+        },
+      })
+      .register({
+        name: "send",
+        description: "Send it",
+        run: () => {
+          throw new Error("An email needs someone to go to.");
+        },
+      });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "lookup", arguments: "{}" });
+    assert.equal((await connection.next())["error"], "lookup could not reach its data");
+    connection.send({ type: "tool_call", id: "call_2", name: "send", arguments: "{}" });
+    assert.equal((await connection.next())["error"], "An email needs someone to go to.", "words meant for the model go through");
+    await session.close();
+  });
+
+  it("cuts a long failure to 1 KiB, and says only that a tool failed when its onError throws", async () => {
+    const long = "x".repeat(5_000);
+    const tools = new Tools()
+      .register({ name: "dump", description: "Dump", run: () => { throw new Error(long); } });
+    const hooked = new Tools({ onError: () => { throw new Error("the hook broke"); } })
+      .register({ name: "secret", description: "Secret", run: () => { throw new Error("token=abc123"); } });
+    const [session, connection] = await opened(tools);
+    connection.send({ type: "tool_call", id: "call_1", name: "dump", arguments: "{}" });
+    assert.equal((await connection.next())["error"], `${long.slice(0, 1024)}…`);
+    await session.close();
+
+    const [other, line] = await opened(hooked);
+    line.send({ type: "tool_call", id: "call_2", name: "secret", arguments: "{}" });
+    assert.equal((await line.next())["error"], "secret failed");
+    await other.close();
+  });
+
   it("leaves a call for a tool held elsewhere to whoever holds it", async () => {
     const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
     const [session, connection] = await opened(tools);

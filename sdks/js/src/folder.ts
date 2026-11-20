@@ -100,8 +100,8 @@ export async function loadFolder(path: string): Promise<Folder> {
     instructions,
     ...(uiInstructions ? { uiInstructions } : {}),
     guardrail: (await maybeRead(join(path, GUARDRAIL_FILE))).trim(),
-    skills: await loadSkills(join(path, SKILLS_DIR)),
-    knowledge: await loadKnowledge(join(path, KNOWLEDGE_DIR)),
+    skills: await loadSkills(join(path, SKILLS_DIR), await realpath(path)),
+    knowledge: await loadKnowledge(join(path, KNOWLEDGE_DIR), await realpath(path)),
     knowledgeURLs: parsePages(
       await maybeRead(join(path, KNOWLEDGE_DIR, KNOWLEDGE_URLS_FILE)),
       join(path, KNOWLEDGE_DIR, KNOWLEDGE_URLS_FILE),
@@ -155,12 +155,16 @@ async function loadSimulations(
  * Reads skills/: a skill is either a markdown file, or a folder holding a SKILL.md and
  * whatever files it comes with, nested as deep as they are.
  */
-async function loadSkills(path: string): Promise<Skill[]> {
+async function loadSkills(path: string, root: string): Promise<Skill[]> {
+  await insideAgent(root, path);
   const entries = (await readdir(path, { withFileTypes: true }).catch(missing)) ?? [];
   const skills: Skill[] = [];
   const declared = new Map<string, string>();
 
   for (const entry of entries.sort((one, other) => one.name.localeCompare(other.name))) {
+    if (skipped(entry.name)) {
+      continue;
+    }
     let name = entry.name;
     let file = join(path, name);
     if (entry.isDirectory()) {
@@ -171,6 +175,8 @@ async function loadSkills(path: string): Promise<Skill[]> {
       continue;
     }
 
+    // A skill folder's SKILL.md may itself be a link, which a walk of its other files never sees.
+    await insideAgent(root, file);
     const content = await readFile(file, "utf8").catch(missing);
     if (content === undefined) {
       throw new ConfigurationError(
@@ -187,7 +193,7 @@ async function loadSkills(path: string): Promise<Skill[]> {
 
     const skill = parseSkill(name, content, file);
     if (entry.isDirectory()) {
-      const files = await loadSkillFiles(join(path, entry.name));
+      const files = await loadSkillFiles(join(path, entry.name), root);
       if (Object.keys(files).length > 0) {
         skill.files = files;
       }
@@ -197,8 +203,11 @@ async function loadSkills(path: string): Promise<Skill[]> {
   return skills;
 }
 
-/** Reads every file in a skill folder but its SKILL.md, by slash path relative to the folder. */
-async function loadSkillFiles(path: string): Promise<Record<string, string>> {
+/**
+ * Reads every file in a skill folder but its SKILL.md, by slash path relative to the folder.
+ * `root` is the agent directory's real path, which no file read here may be outside of.
+ */
+async function loadSkillFiles(path: string, root: string): Promise<Record<string, string>> {
   const files: Record<string, string> = {};
   const text = new TextDecoder("utf-8", { fatal: true });
 
@@ -211,6 +220,9 @@ async function loadSkillFiles(path: string): Promise<Record<string, string>> {
       }
       if (entry.isDirectory()) {
         await walk(file);
+        continue;
+      }
+      if (!(await syncedFile(root, file, entry))) {
         continue;
       }
       const raw = await readFile(file);
@@ -229,11 +241,50 @@ async function loadSkillFiles(path: string): Promise<Record<string, string>> {
 }
 
 /**
- * Whether a file or folder in a skill folder is left behind: hidden ones such as .DS_Store,
- * and the __pycache__ that running a skill's Python scripts locally leaves.
+ * Whether a file or folder in a skill or knowledge folder is left behind: hidden ones such as
+ * .DS_Store, .git or a .env, and what running a skill's scripts locally leaves, __pycache__ and
+ * node_modules.
  */
 function skipped(name: string): boolean {
-  return name.startsWith(".") || name === "__pycache__";
+  return name.startsWith(".") || name === "__pycache__" || name === "node_modules";
+}
+
+/**
+ * Whether an entry a walk found that is not a directory is a file to sync, refusing a symbolic
+ * link that leads out of the agent directory `root`: what is synced is what the directory holds,
+ * never a file elsewhere on the machine a link was left pointing at. A link to a directory is not
+ * followed, so a link back up the tree cannot make a walk go round.
+ */
+async function syncedFile(root: string, file: string, entry: { isSymbolicLink(): boolean }): Promise<boolean> {
+  if (!entry.isSymbolicLink()) {
+    return true;
+  }
+  const target = await realpath(file).catch(missing);
+  if (target === undefined) {
+    throw new ConfigurationError(`${file} is a link to nothing`);
+  }
+  if (leaves(root, target)) {
+    throw new ConfigurationError(`${file} links outside the agent directory`);
+  }
+  return !(await stat(target)).isDirectory();
+}
+
+/**
+ * Refuses `path` when it resolves outside the agent directory `root`, as a `skills/` or
+ * `knowledge/` that is itself a link would, taking every file under it along. A path that does
+ * not exist passes, for whoever reads it to say so.
+ */
+async function insideAgent(root: string, path: string): Promise<void> {
+  const target = await realpath(path).catch(missing);
+  if (target !== undefined && leaves(root, target)) {
+    throw new ConfigurationError(`${path} links outside the agent directory`);
+  }
+}
+
+/** Whether `target` is outside `root`, both real paths. */
+function leaves(root: string, target: string): boolean {
+  const inside = relative(root, target);
+  return inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
 }
 
 /**
@@ -326,7 +377,7 @@ function cutFrontmatter(content: string): [frontmatter: string, body: string] {
   return [rest.slice(0, end), rest.slice(end + 4).replace(/^[-\r\n]+/, "")];
 }
 
-async function loadKnowledge(path: string): Promise<{ source: string; text: string }[]> {
+async function loadKnowledge(path: string, root: string): Promise<{ source: string; text: string }[]> {
   const info = await stat(path).catch(missing);
   if (!info) {
     return [];
@@ -334,6 +385,7 @@ async function loadKnowledge(path: string): Promise<{ source: string; text: stri
   if (!info.isDirectory()) {
     throw new ConfigurationError(`${path} is not a directory`);
   }
+  await insideAgent(root, path);
 
   const documents: { source: string; text: string }[] = [];
   const declaration = join(path, KNOWLEDGE_URLS_FILE);
@@ -342,11 +394,14 @@ async function loadKnowledge(path: string): Promise<{ source: string; text: stri
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries.sort((one, other) => one.name.localeCompare(other.name))) {
       const file = join(directory, entry.name);
+      if (skipped(entry.name)) {
+        continue;
+      }
       if (entry.isDirectory()) {
         await walk(file);
         continue;
       }
-      if (!READABLE.has(extname(entry.name).toLowerCase())) {
+      if (!READABLE.has(extname(entry.name).toLowerCase()) || !(await syncedFile(root, file, entry))) {
         continue;
       }
       // Only the declaration at the root is a declaration; deeper, urls.yaml is a document
@@ -1579,8 +1634,7 @@ async function readInsideFolder(root: string, rel: string): Promise<{ text: stri
   if (!targetReal) {
     throw new ConfigurationError(`${full} does not exist`);
   }
-  const relCheck = relative(rootReal, targetReal);
-  if (relCheck === ".." || relCheck.startsWith(`..${sep}`) || isAbsolute(relCheck)) {
+  if (leaves(rootReal, targetReal)) {
     throw new ConfigurationError(`ui path ${JSON.stringify(rel)} leaves the agent directory`);
   }
   const info = await stat(targetReal);

@@ -21,6 +21,12 @@ const MINTED_LIMIT = 64;
 /** How many times a request safe to send twice is retried when nothing says. */
 const DEFAULT_MAX_RETRIES = 2;
 
+/** How long a request waits for the router to start answering when nothing says. */
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+/** The longest delay a timer takes, 2^31 - 1 milliseconds; a longer one fires at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /**
  * Where a router with no proxy in front of it reads the team and usage categories, the team
  * as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
@@ -276,6 +282,14 @@ export interface BackendOptions {
    * 0 reports the first failure.
    */
   maxRetries?: number;
+  /**
+   * How long a request waits for the router to start answering, in milliseconds, before it is
+   * given up as one that never arrived: a connection that went quiet without closing, as one
+   * does across a network change, would otherwise leave the call pending for good. Once the
+   * answer has begun it is not timed, so an event stream or a long download runs on. Defaults to
+   * 60 seconds; 0 waits as long as it takes.
+   */
+  timeoutMs?: number;
   /** Used for every request. Defaults to the global fetch. */
   fetch?: typeof fetch;
   /**
@@ -305,6 +319,8 @@ export class Backend {
   readonly usageCategories: readonly string[];
   /** How many times a transient failure of a request safe to send twice is retried. */
   readonly maxRetries: number;
+  /** How long a request waits for the router to start answering, or 0 for as long as it takes. */
+  readonly timeoutMs: number;
   /** Whether the router is told the customer rather than shown a credential. */
   private readonly byCustomer: boolean;
   /**
@@ -366,6 +382,14 @@ export class Backend {
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) {
       throw new ConfigurationError(`maxRetries is a count of retries, not ${String(options.maxRetries)}`);
+    }
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // A timer longer than about 24.8 days overflows and fires at once, which would time every
+    // request out immediately rather than never: 0 is how to say no limit.
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 0 || this.timeoutMs > MAX_TIMER_MS) {
+      throw new ConfigurationError(
+        `timeoutMs is a number of milliseconds up to ${MAX_TIMER_MS}, or 0 for no limit, not ${String(options.timeoutMs)}`,
+      );
     }
     this.authenticate =
       options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || hosted(this.url));
@@ -726,6 +750,34 @@ export class Backend {
   }
 
   /**
+   * What this backend shows when it is logged or serialised: where it goes and who it is acting
+   * for, never the secret, a token handed in or one minted from the secret. Those are held in
+   * fields TypeScript calls private, which `JSON.stringify` and Node's `console.log` print all the
+   * same, and a logged client is the commonest way a credential ends up in a log. A browser's
+   * devtools show fields whatever this says, but a page holds no secret.
+   */
+  toJSON(): Record<string, unknown> {
+    return {
+      url: this.url,
+      ...(this.customerId ? { customerId: this.customerId } : {}),
+      ...(this.apiKey ? { apiKey: this.apiKey } : {}),
+      authenticate: this.authenticate,
+      serverSide: this.serverSide,
+      ...(this.userId ? { userId: this.userId } : {}),
+      ...(this.actsFor ? { actsFor: this.actsFor } : {}),
+      ...(this.team ? { team: this.team } : {}),
+      ...(this.usageCategories.length > 0 ? { usageCategories: [...this.usageCategories] } : {}),
+      ...(this.apiSecret ? { apiSecret: REDACTED } : {}),
+      ...(this.token ? { token: REDACTED } : {}),
+    };
+  }
+
+  /** What Node's `console.log` and `util.inspect` show: the same as `toJSON`. */
+  [Symbol.for("nodejs.util.inspect.custom")](): Record<string, unknown> {
+    return this.toJSON();
+  }
+
+  /**
    * Opens a socket with the runtime's WebSocket, or the one that was passed in, sending
    * `headers` where there are any.
    */
@@ -900,6 +952,9 @@ export class Backend {
     this.fetching = undefined;
   }
 }
+
+/** What a credential is shown as where it is held but must not be printed. */
+export const REDACTED = "[redacted]";
 
 const CATEGORIES_BESIDE_TOKEN =
   "a token handed in carries the team and usage categories it was signed with; " +
