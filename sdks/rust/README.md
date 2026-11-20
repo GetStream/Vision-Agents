@@ -519,6 +519,43 @@ and a session is counted under one team at most:
 3. The agent's tag: `tags: team: finance` in its `agent.yaml` counts that agent's sessions
    under the team.
 
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through. A backend creates one for a user, sends the user's browser to the provider's consent,
+and reads whether it connected:
+
+```rust
+use vision_agents::{AuthorizeOptions, ConnectionFilter, NewConnection};
+
+let connections = api.connections();
+let alice = Some("alice".to_string());
+let connection = connections
+    .create(&NewConnection { connector: "linear".into(), user_id: alice.clone(), ..Default::default() })
+    .await?;
+let consent = connections
+    .authorize(&connection.id, &AuthorizeOptions {
+        return_url: Some("https://app.example.com/settings".into()),
+        user_id: alice.clone(),
+    })
+    .await?;
+// Open consent.launch_url in a popup from a page of the return URL's origin, and post it
+// consent.handoff_token. The attempt ends at consent.expires_at.
+
+let connection = connections.get(&connection.id, Some("alice")).await?; // pending until alice consents
+let theirs = connections
+    .list(&ConnectionFilter { user_id: alice.clone(), ..Default::default() })
+    .await?;
+connections.delete(&connection.id, Some("alice")).await?;
+```
+
+Each call names its user once, as `user_id`, and the SDK sends it as the owner and as
+`X-Stream-User-Id`, so the two never differ. Another user's connection is not found, the same
+as one that does not exist. An app's connection is reached by every call of a backend, one
+naming a user included, but `list` with a user lists only that user's. Leave `user_id` as
+`None` for the app's own connection, which any of its agents may be bound to; the client then
+keeps acting for whoever `ClientOptions::user_id` names, if anyone.
+
 ## Stream
 
 There is no Stream server SDK here. The official `getstream` crate is a preview that pulls in
