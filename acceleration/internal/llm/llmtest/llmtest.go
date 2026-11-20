@@ -87,6 +87,13 @@ func (s *Script) Fail(err error, context string) {
 	s.Done()
 }
 
+// TimeOut ends the response as one that ran past a deadline, the way a provider reports it:
+// timed out, and failed with the deadline (openai.go, anthropic/messages.go, openaicompat.go).
+func (s *Script) TimeOut() {
+	s.write(func(w *llm.ResponseWriter) { w.TimedOut() })
+	s.Fail(context.DeadlineExceeded, "read")
+}
+
 // Cancel ends the response as abandoned before it finished, the way a provider ends a stream
 // whose context was cancelled: with no failure (openai.go, anthropic/messages.go,
 // openaicompat.go all report context.Canceled as ResponseWriter.Cancelled).
