@@ -2,6 +2,9 @@
 
 ## Features
 
+### The Kotlin SDK shows an incognito session
+
+An incognito session has no Stream Chat channel, so `chat(context)` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (`TurnStep.Reasoning` and `TurnStep.ToolCall`, in order) and `isDone`, timing a round of reasoning from when the model was asked or went on, not from its first words, and `AgentEvent.Kind` has `ReasoningDelta` and `ToolUpdated`. A tool call whose id is also a round's (`r1`) is a step of its own, and an `error` with code `prompt_injection` clears the reply being written of what it streamed, its text and UI, keeping its steps, as the kept conversation does. `AgentSession.turnMessages`, a `Flow` of `TurnMessage.messages(conversation, approvals, userId, isConnected)`, is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as `ai_reasoning` and `ai_tool_call` types and fields for Stream Chat's `AIMessagePart.parts`, rounds numbered `r1`, `r2` across the reply, the whole of each round of thinking, the reply's UI under `ai_ui`, and an approval card (`awaiting_approval`) for the user `setUser` named. Deploy the router from #2090 first: an older one sends no reasoning, and a reply shows only its tool calls. `android_assistant` has an incognito toggle at the top right of a new chat, shown from `turnMessages`, approvals included, and never listed (AND-1984).
 ### The Go SDK deprecates `Backend.ActingFor`
 
 Name the user on the call where it takes one: the `UserID` of a `client.Connections()` call's options (`client.ConnectionFilter{UserID: "alice"}`), the `XStreamUserId` of `acceleration.CreateScheduledTaskParams`, or, for another generated call, an `X-Stream-User-Id` set on that request with a per-call `acceleration.RequestEditorFn`. `client.Agent(...)` calls take no per-call user yet, so `ActingFor` is still how they act for one. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
@@ -665,6 +668,10 @@ A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Sa
 ### Python, .NET and Rust: an agent no longer syncs its directory on its own
 
 A Python agent used to store its directory on the router when it joined a call, and a .NET or Rust agent before its first session. In a container that meant a sync on each new container's first call, in the call path, and an overwrite of what was edited in the dashboard or through the API on every restart. Now a session runs on whatever config is stored under the agent's name, and the directory is stored only when asked: Python `await agent.sync()` (which calls the new `LLM.sync()`, implemented by `Accelerated` and doing nothing for an LLM that keeps no config on a router), .NET `await agent.SyncAsync()`, Rust `agent.sync().await` (which still finds the directory `Agent::new` names). Call it before the agent takes calls, e.g. as a deploy step; an agent that was never synced fails to join with a message saying so. Python's `ensure_agent` is gone: use `sync_agent` or `agent.sync()`. Python's `sync_agent` now reads `.agent_sync` as the other SDKs do, so a sync of files unchanged since the last sync sends nothing and returns the stored config (AI-3354).
+
+### Kotlin: `Turn` has `steps` and `isDone`
+
+`Turn` takes two new last parameters, `steps` and `isDone`, both with defaults, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt. Kotlin calls of the constructor and `copy` need only the rebuild. `Turn` has no `@JvmOverloads`, so Java passes both to its constructor, an empty list and `false` for a turn as it was before. `AgentEvent.Kind` gains `ReasoningDelta` and `ToolUpdated`, so a `when` over it with no `else` needs the two cases (AND-1984).
 
 ### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
 
