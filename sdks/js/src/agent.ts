@@ -212,6 +212,12 @@ export interface Folder {
   /** What agent.yaml declares. */
   settings?: Declaration;
   instructions: string;
+  /**
+   * agent.yaml's `ui:` compiled into what teaches the model to answer with UI. Undefined
+   * without one. It is synced apart from `instructions`, so a session opened with `ui: false`
+   * is not told it.
+   */
+  uiInstructions?: string;
   guardrail: string;
   skills: Skill[];
   knowledge: { source: string; text: string }[];
@@ -229,7 +235,11 @@ export interface Folder {
 export interface AgentOptions {
   /** What the agent is called. It names the stored config and is who it appears as. */
   name?: string;
-  /** The system prompt. It reaches the backend with `sync`: a session runs on the stored config's. */
+  /**
+   * The system prompt. It reaches the backend with `sync`: a session runs on the stored config's.
+   * It takes the place of the folder's instructions.md only: what the folder's agent.yaml `ui:`
+   * teaches is synced apart from it, as `ui_instructions`, whatever is given here.
+   */
   instructions?: string;
   /**
    * A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose.
@@ -295,6 +305,7 @@ export interface ChatOptions extends CallOptions {
  */
 export class Agent {
   readonly name: string;
+  /** The system prompt, without the UI agent.yaml's `ui:` teaches, which syncs apart. */
   readonly instructions: string;
   readonly userId: string;
   readonly tools: Tools;
@@ -548,10 +559,14 @@ export class Agent {
     const simulations = this.folder?.simulations;
     const tags = { ...declared.tags, ...this.options.costTracking };
     const pages = this.folder?.knowledgeURLs ?? [];
+    const uiInstructions = this.folder?.uiInstructions;
 
     const body: Omit<Schemas["SyncAgentRequest"], "hash"> = {
       name: this.name,
       ...(this.instructions ? { instructions: this.instructions } : {}),
+      // Left out without a ui:, so a directory with none keeps the fingerprint it had before
+      // the UI was synced apart from the instructions.
+      ...(uiInstructions ? { ui_instructions: uiInstructions } : {}),
       ...(this.guardrail ? { guardrail: this.guardrail } : {}),
       // config_id is the config these belong to, and the config is written by this same
       // request, so the router fills it in from what it just stored.
@@ -587,8 +602,14 @@ export class Agent {
       const [stored] = await this.client.get("/v1/agents/configs", {
         query: { name: this.name },
       });
-      // A config deleted since the stamp was written is synced again rather than trusted.
-      if (stored?.name === this.name && stored.sync_hash === hash) {
+      // A config deleted since the stamp was written is synced again rather than trusted. So
+      // is one missing the UI the stamp covers: a router older than ui_instructions takes the
+      // sync and drops them, which the stamp cannot tell.
+      if (
+        stored?.name === this.name &&
+        stored.sync_hash === hash &&
+        (!uiInstructions || Boolean(stored.ui_instructions))
+      ) {
         return { unchanged: true, config: stored };
       }
     }
@@ -597,6 +618,23 @@ export class Agent {
     const result = await this.client.post("/v1/agents/sync", {
       body: { ...body, ...(connectors ? { connectors } : {}), hash },
     });
+    if (uiInstructions && !result.config.ui_instructions) {
+      // A router older than ui_instructions took the sync and dropped them. The UI is synced
+      // in the instructions instead, as it was before, so the agent keeps it. Its own
+      // fingerprint, and no stamp, so the next sync asks again and moves the UI apart once
+      // the router knows the field.
+      const { ui_instructions: _dropped, ...rest } = body;
+      const joined = {
+        ...rest,
+        instructions: rest.instructions ? `${rest.instructions}\n\n${uiInstructions}` : uiInstructions,
+      };
+      const joinedHash = await fingerprint(
+        declared.connectors ? { ...joined, connectors: declared.connectors } : joined,
+      );
+      return await this.client.post("/v1/agents/sync", {
+        body: { ...joined, ...(connectors ? { connectors } : {}), hash: joinedHash },
+      });
+    }
     await stamp?.write(hash);
     return result;
   }

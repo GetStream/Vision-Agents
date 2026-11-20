@@ -3,11 +3,9 @@ description: Reads the team's issues and your own calendar and files, and makes 
 mode: text
 llm: llm-fast
 # This agent has dozens of tools, and some servers write a page of instructions and examples
-# into a tool's description. progressive offers each tool by the first line of its
-# description instead, and the first call to a tool returns the rest without running it,
-# which costs one more model turn per tool used. Off when left out.
-tools:
-  progressive: true
+# into a tool's description. loading: summary offers each of a connector's tools by the first
+# line of its description instead, and the first call to a tool returns the rest without
+# running it, which costs one more model turn per tool used. full when left out.
 # Sentry, GitHub, HubSpot and Salesforce are the company's accounts, connected once on
 # the dashboard. connection: company is that connection's label, resolved when the folder
 # syncs, so every conversation uses it. A name alone is a session binding: the agent asks
@@ -18,22 +16,33 @@ tools:
 # configured on the router: ask about an issue and the login works.
 connectors:
   - name: sentry
+    loading: summary
     connection: company
     tools: [find_organizations, find_projects, search_issues, search_errors, get_sentry_resource, analyze_issue_with_seer, update_issue]
   - name: github
+    loading: summary
     connection: company
   - name: hubspot
+    loading: summary
     connection: company
   - name: salesforce
+    loading: summary
     connection: company
   - name: linear
+    loading: summary
     tools: [list_issues, get_issue, save_issue, list_comments, save_comment, list_projects, get_project, list_cycles, list_teams, list_users, list_issue_statuses]
-  - google_calendar
-  - google_drive
-  - google_docs
-  - calendly
-  - calcom
-  - slack
+  - name: google_calendar
+    loading: summary
+  - name: google_drive
+    loading: summary
+  - name: google_docs
+    loading: summary
+  - name: calendly
+    loading: summary
+  - name: calcom
+    loading: summary
+  - name: slack
+    loading: summary
 # Blender for the render skill, in the router's Daytona sandbox.
 sandbox: daytona
 sandbox_options:

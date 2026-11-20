@@ -5,6 +5,7 @@ import { LiveReasoning } from "./reasoning.js";
 import type { CreateResponseOptions, ImageSource, UIAction } from "./responses.js";
 import { messageField } from "./message-field.js";
 import type { Session, ToolDecision } from "./session.js";
+import { TurnMessages } from "./turn-messages.js";
 
 /** How many messages are read at a time, unless `pageSize` says otherwise. */
 export const AGENT_CHAT_PAGE_SIZE = 30;
@@ -424,7 +425,8 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
       await (opened === undefined ? session.delete() : session.close()).catch(() => undefined);
       throw new Error("The conversation was closed");
     }
-    if (!this.reader) {
+    // An incognito session keeps no channel: its messages are made from its socket instead.
+    if (!this.reader && session.conversationId) {
       try {
         const { channel } = await session.chat();
         await this.follow(channel);
@@ -449,17 +451,23 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
     this.stopFollowingSession?.();
     // A failure reported before this session was followed belongs to an earlier one.
     const since = session.conversation.get().failureAt;
+    const unkept = session.conversationId ? undefined : new TurnMessages(session.created.user_id, this.reasoning);
     const update = () => {
       const current = this.state.getLatestValue();
       const activity = activityOf(session, since);
       const activityChanged = !sameActivity(activity, current.activity);
-      const uiChanged = this.liveUI.observeTurns((session.conversation.get() as { turns?: readonly Turn[] }).turns);
-      const overlaid = uiChanged && this.rawMessages.length > 0 ? this.liveUI.overlay(this.rawMessages) : undefined;
-      const messagesChanged = overlaid !== undefined && overlaid !== current.messages;
-      if (activityChanged || messagesChanged) {
+      let shown: readonly M[] | undefined;
+      if (unkept) {
+        shown = unkept.messages(session.conversation.get()) as unknown as readonly M[];
+      } else {
+        const uiChanged = this.liveUI.observeTurns((session.conversation.get() as { turns?: readonly Turn[] }).turns);
+        shown = uiChanged && this.rawMessages.length > 0 ? this.liveUI.overlay(this.rawMessages) : undefined;
+      }
+      const messages = shown && !sameMessages(shown, current.messages) ? shown : undefined;
+      if (activityChanged || messages) {
         this.state.partialNext({
           ...(activityChanged ? { activity } : {}),
-          ...(messagesChanged ? { messages: overlaid } : {}),
+          ...(messages ? { messages } : {}),
         });
       }
     };
@@ -491,6 +499,11 @@ function activityOf(session: Session, since: number): AgentActivity | undefined 
   return undefined;
 }
 
+/** Whether two lists hold the same messages in the same order, so there is nothing to show afresh. */
+function sameMessages(a: readonly object[], b: readonly object[]): boolean {
+  return a === b || (a.length === b.length && a.every((message, index) => message === b[index]));
+}
+
 function sameActivity(a: AgentActivity | undefined, b: AgentActivity | undefined): boolean {
   if (a === undefined || b === undefined || a.kind !== b.kind) {
     return a === b;
@@ -512,20 +525,26 @@ function sameActivity(a: AgentActivity | undefined, b: AgentActivity | undefined
 function callShown(messages: readonly AgentChatMessage[], id: string): Pick<ToolDecision, "call"> {
   for (const message of messages) {
     const attachments = messageField(message, "attachments");
-    const step = (Array.isArray(attachments) ? (attachments as Partial<Record<string, unknown>>[]) : []).find(
-      (part) => part?.["type"] === "ai_tool_call" && part["id"] === id,
+    // An attachment's own fields are under its `custom` in stream-chat 10, as a message's are.
+    const step = (Array.isArray(attachments) ? (attachments as unknown[]) : []).find(
+      (part): part is object =>
+        typeof part === "object" &&
+        part !== null &&
+        messageField(part, "type") === "ai_tool_call" &&
+        messageField(part, "id") === id,
     );
-    if (!step || typeof step["name"] !== "string" || step["status"] !== "awaiting_approval") {
+    const name = step && messageField(step, "name");
+    if (!step || typeof name !== "string" || messageField(step, "status") !== "awaiting_approval") {
       continue;
     }
     const runtime = messageField(message, "support_runtime") as Record<string, unknown> | undefined;
     const requestId = runtime?.["command_id"];
     const turnId = runtime?.["turn_id"];
     // Kept as JSON on the step, and left off one too long to show.
-    const args = step["arguments"];
+    const args = messageField(step, "arguments");
     return {
       call: {
-        name: step["name"],
+        name,
         ...(args === undefined ? {} : { arguments: typeof args === "string" ? args : JSON.stringify(args) }),
         ...(typeof requestId === "string" && requestId ? { requestId } : {}),
         ...(typeof turnId === "string" && turnId ? { turnId } : {}),

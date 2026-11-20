@@ -133,6 +133,16 @@ type ToolApproval struct {
 	DeclineTitle   string
 }
 
+// ToolTitle is what a call of the tool called name is shown doing: title, the one its tool
+// declared, or for the runtime's own search, which has no caller to title it, "Searching the
+// web". Other untitled calls are left to the clients, which name them from the tool.
+func ToolTitle(name, title string) string {
+	if title == "" && (name == "search" || name == "web_search") {
+		return "Searching the web"
+	}
+	return title
+}
+
 // DescribeTools records the caller's tools for this session.
 func (c *Conversation) DescribeTools(tools map[string]ToolDisplay) {
 	c.mu.Lock()
@@ -191,12 +201,7 @@ func (c *Conversation) called(m *Message, e toolCall) {
 	}
 	started := e.startedAt.UTC()
 	part := Part{Type: partToolCall, V: partVersion, ID: e.id, Status: "running", Name: e.name,
-		DisplayTitle: display.Title, Executor: "server", StartedAt: &started}
-	// The runtime's own search has no caller to title it. Other untitled calls are left to
-	// the clients, which name them from the tool.
-	if part.DisplayTitle == "" && (e.name == "search" || e.name == "web_search") {
-		part.DisplayTitle = "Searching the web"
-	}
+		DisplayTitle: ToolTitle(e.name, display.Title), Executor: "server", StartedAt: &started}
 	if display.Client {
 		part.Executor = "client"
 		record := c.data.Commands[m.CommandID]
@@ -469,6 +474,39 @@ func (c *Conversation) DecideApproval(e agent.ToolApprovalDecided) bool {
 	m.Saved = false
 	c.publish(*m)
 	return true
+}
+
+// approvalExpired is the line a reply ends with when it ended while a call still waited for a
+// person to allow it (ExpireApprovals): why the call did not run, and what to do next.
+const approvalExpired = "The approval expired before anyone answered, so that step did not run. Ask again if you still need it."
+
+// ExpireApprovals has the reply being written, if it ends with a call still waiting for a person
+// to allow it, decline that call as one nobody allowed in time and say so (expire). It is for a
+// reply whose session closes with its turn: the call is stopped then, and the model gets no round
+// to say why it did not run. Until the reply ends, an answer still reaches the call.
+func (c *Conversation) ExpireApprovals() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if m := c.data.Current; m != nil {
+		c.expiring = m.ID
+	}
+}
+
+// expire declines each call of m still waiting for a person, with the summary a call nobody
+// allowed in time gets (session.holdForApproval), and ends m's text with approvalExpired when
+// one did.
+func expire(m *Message, now time.Time) {
+	expired := false
+	for _, part := range m.Parts {
+		expired = decided(m, part.ID, false, "Not allowed in time", now) || expired
+	}
+	if !expired {
+		return
+	}
+	if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
+		m.Text += "\n\n"
+	}
+	m.Text += approvalExpired
 }
 
 // toolStep is the step of the call id on m, or nil.

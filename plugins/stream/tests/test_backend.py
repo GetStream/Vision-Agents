@@ -277,7 +277,12 @@ class TestTeamsAndCategories:
             url="http://router", api_key="key", api_secret="secret", team="ops"
         )
 
-        alice = api.for_user("user-42", team="finance")
+        with pytest.warns(DeprecationWarning, match="user_id") as caught:
+            alice = api.for_user("user-42", team="finance")
+
+        # Attributed to the caller: the default filters show a DeprecationWarning only
+        # when it points at the code that called, not at the SDK.
+        assert caught[0].filename == __file__
 
         assert alice.server_side
         headers = alice.backend.headers
@@ -294,6 +299,21 @@ class TestTeamsAndCategories:
         assert bob.backend.team is None
         assert USAGE_CATEGORIES_HEADER not in bob.backend.headers
 
+    def test_agent_and_router_without_a_user_keep_the_proxy_token_user_of_the_client(
+        self,
+    ):
+        api = stream.Client(
+            url="http://router",
+            api_key="key",
+            api_secret="secret",
+            user_id="jean",
+            authenticate=True,
+        )
+
+        for backend in (api.router("clinic").backend, api.agent("docs")._backend):
+            claims = _claims(backend.headers["Authorization"].removeprefix("Bearer "))
+            assert claims["user_id"] == "jean"
+
     def test_for_user_behind_the_proxy_is_a_server_token_naming_the_user(self):
         api = stream.Client(
             url="http://router", api_key="key", api_secret="secret", authenticate=True
@@ -306,6 +326,30 @@ class TestTeamsAndCategories:
         assert claims["server"] is True
         assert "user_id" not in claims
         assert claims["team"] == "finance"
+
+    def test_a_user_named_on_the_call_is_what_for_user_was(self):
+        def client(team: str) -> stream.Client:
+            return stream.Client(
+                url="http://router",
+                api_key="key",
+                api_secret="secret",
+                team=team,
+                authenticate=True,
+            )
+
+        with pytest.warns(DeprecationWarning):
+            before = client("ops").for_user("user-42", team="finance").backend.headers
+        after = client("finance").router("clinic", user_id="user-42").backend.headers
+
+        assert after["X-Stream-User-Id"] == before["X-Stream-User-Id"] == "user-42"
+        signed = [
+            _claims(headers["Authorization"].removeprefix("Bearer "))
+            for headers in (before, after)
+        ]
+        for claims in signed:
+            claims.pop("iat")
+            claims.pop("exp")
+        assert signed == [{"server": True, "team": "finance"}] * 2
 
     def test_for_user_is_server_side_only(self):
         device = stream.Client(url="http://router", api_key="key", token="jean-token")

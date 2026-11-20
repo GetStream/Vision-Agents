@@ -5,6 +5,7 @@ import {
   type TokenSource,
   type UserTokenOptions,
 } from "./backend.js";
+import { Connections } from "./connections.js";
 import { ConfigurationError, errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
@@ -16,6 +17,7 @@ import {
   type GuestStore,
   type GuestUserOptions,
 } from "./guests.js";
+import { Dispatch } from "./dispatch.js";
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
 import { Router, type RouterOptions } from "./router.js";
@@ -24,6 +26,7 @@ import { Simulations } from "./simulations.js";
 import { SpendLimits } from "./spend-limits.js";
 import { StreamPeers, type StreamClients } from "./stream.js";
 import { Teams } from "./teams.js";
+import { Tools } from "./tools.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -141,6 +144,13 @@ export class Client {
   readonly spendLimits: SpendLimits;
   /** The organization's teams and their spend limits. Server side only. */
   readonly teams: Teams;
+  /** The accounts the app and its users hold at connectors, such as a user's Linear. Server side only. */
+  readonly connections: Connections;
+  /**
+   * The app's tools, registered once for every agent and run by `runDispatch`. An agent is
+   * offered one only where a tool group of its agent.yaml names it.
+   */
+  readonly tools = new Tools();
   /** @internal The chat and video clients this client's sessions share. */
   readonly peers: StreamPeers;
 
@@ -151,6 +161,7 @@ export class Client {
     this.scheduledTasks = new ScheduledTasks(this);
     this.spendLimits = new SpendLimits(this);
     this.teams = new Teams(this, this.spendLimits);
+    this.connections = new Connections(this);
     this.peers = new StreamPeers(this.backend);
   }
 
@@ -246,6 +257,22 @@ export class Client {
    */
   agent(name: string): AgentHandle {
     return new AgentHandle(this, name);
+  }
+
+  /**
+   * Runs the app's tools for every session they are offered to, whoever opened it, until
+   * `signal` aborts. A tool's own `timeoutMs` is how long the router waits for one of its
+   * calls; without one it waits 30 seconds. A worker that also answers calls or messages
+   * hosts the tools with `dispatch.host(client)` instead.
+   *
+   * ```ts
+   * const client = new Client();
+   * client.tools.register({ name: "weather_lookup", description: "Look up the weather", run });
+   * await client.runDispatch();
+   * ```
+   */
+  runDispatch(signal?: AbortSignal): Promise<void> {
+    return new Dispatch({ client: this }).host(this).run(signal);
   }
 
   /**
@@ -351,8 +378,14 @@ export class Client {
         request.headers = { ...request.headers, "Content-Type": "application/json" };
         request.body = JSON.stringify(body);
       }
-      if (signal) {
-        request.signal = signal;
+      // Timed only until the answer begins: the timer is cleared once fetch resolves, so the
+      // body that follows, an event stream above all, is read for as long as it takes.
+      const { timeoutMs } = this.backend;
+      const late = timeoutMs > 0 ? new AbortController() : undefined;
+      const timer = late ? setTimeout(() => late.abort(), timeoutMs) : undefined;
+      const stops = [signal, late?.signal].filter((each): each is AbortSignal => each !== undefined);
+      if (stops.length > 0) {
+        request.signal = stops.length === 1 ? stops[0]! : AbortSignal.any(stops);
       }
       try {
         return await this.backend.request(url.toString(), request);
@@ -363,8 +396,14 @@ export class Client {
           throw signal.reason ?? cause;
         }
         // A request that never arrived is reported as such rather than as a status, because
-        // a caller retrying on a network failure and one retrying on a 500 are different.
-        throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`, { cause });
+        // a caller retrying on a network failure and one retrying on a 500 are different. One
+        // the router did not start answering in time is the same: it may never have arrived.
+        const why = late?.signal.aborted
+          ? `the router did not start answering within ${timeoutMs} ms`
+          : `could not reach the router: ${String(cause)}`;
+        throw new RouterError(0, operation, why, { cause });
+      } finally {
+        clearTimeout(timer);
       }
     };
 

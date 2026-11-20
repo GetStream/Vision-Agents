@@ -383,8 +383,8 @@ func storedWindows(ctx context.Context, db bun.IDB, wanted []UsageWindow) ([]Usa
 func (l *Ledger) PruneWindows(ctx context.Context, cutoff time.Time) (int64, error) {
 	var deleted int64
 	for {
-		result, err := l.db.NewRaw(`DELETE FROM usage_windows WHERE ctid IN (
-			SELECT ctid FROM usage_windows WHERE window_end < ? LIMIT ?)`, cutoff, pruneBatch).Exec(ctx)
+		ended := l.db.NewSelect().Model((*UsageWindow)(nil)).Column("ctid").Where("window_end < ?", cutoff).Limit(pruneBatch)
+		result, err := l.db.NewDelete().Model((*UsageWindow)(nil)).Where("ctid IN (?)", ended).Exec(ctx)
 		if err != nil {
 			return deleted, fmt.Errorf("ledger: prune windows: %w", err)
 		}

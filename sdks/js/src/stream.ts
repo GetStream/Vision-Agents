@@ -58,6 +58,14 @@ export function registerChat(StreamChat: ChatConstructor, version?: ChatVersion)
   registered.chatVersion = version;
 }
 
+/**
+ * Whether the stream-chat `@stream-io/stream-agents/chat` registered keeps a message's own
+ * fields under `custom`, as 10 does, rather than top level, as 9 does.
+ */
+export function chatKeepsCustom(): boolean {
+  return takesCustom(registered.chatVersion);
+}
+
 /** Called by `@stream-io/stream-agents/video`. */
 export function registerVideo(StreamVideoClient: VideoConstructor): void {
   registered.video = StreamVideoClient;

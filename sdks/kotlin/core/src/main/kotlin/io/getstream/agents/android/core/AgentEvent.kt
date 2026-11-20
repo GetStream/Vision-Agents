@@ -7,8 +7,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 
 /** Who said something. */
 public data class Participant(
@@ -67,7 +69,32 @@ public data class AgentEvent(
             arguments = string("arguments"),
             requestId = string("request_id"),
             turnId = turnId,
+            run = (this["run"] as? JsonPrimitive)?.booleanOrNull ?: true,
+            approved = (this["approved"] as? JsonPrimitive)?.booleanOrNull ?: false,
         )
+
+    /**
+     * The call's whole state on a `tool_call.started`, `tool_call.progress` or
+     * `tool_call.finished`, or null for any other event.
+     */
+    public val toolCallState: ToolCallState?
+        get() {
+            if (kind != Kind.ToolCallStarted && kind != Kind.ToolCallProgress && kind != Kind.ToolCallFinished) return null
+            val id = string("tool_call_id").ifEmpty { return null }
+            return ToolCallState(
+                id = id,
+                tool = string("tool"),
+                turnId = turnId,
+                status = ToolCallState.Status.entries.firstOrNull { it.wire == string("status") }
+                    ?: ToolCallState.Status.Unknown,
+                progress = string("progress"),
+                startedAt = instantOrNull(string("started_at")),
+                durationMs = (this["duration_ms"] as? JsonPrimitive)?.longOrNull ?: 0,
+                approvedAt = instantOrNull(string("approved_at")),
+                rejectedAt = instantOrNull(string("rejected_at")),
+                error = string("error"),
+            )
+        }
 
     /**
      * A connector tool call the provider refused because the person's own connection lacks
@@ -103,6 +130,7 @@ public data class AgentEvent(
         Decision("decision"),
         Responding("responding"),
         ResponseDelta("response_delta"),
+        ReasoningDelta("reasoning_delta"),
         Responded("responded"),
         UiDelta("ui_delta"),
         UiCompleted("ui_completed"),
@@ -114,8 +142,13 @@ public data class AgentEvent(
         TaskCancelled("task_cancelled"),
         ToolCall("tool_call"),
         ToolCancel("tool_cancel"),
+        ToolHeld("tool_held"),
         ToolStarted("tool_started"),
+        ToolUpdated("tool_updated"),
         ToolRan("tool_ran"),
+        ToolCallStarted("tool_call.started"),
+        ToolCallProgress("tool_call.progress"),
+        ToolCallFinished("tool_call.finished"),
         Transferred("transferred"),
         Pressed("pressed"),
         LookedUp("looked_up"),
@@ -141,6 +174,10 @@ public data class AgentEvent(
         /** Repeated on the answer, so a result cannot be adopted by another request or turn. */
         val requestId: String,
         val turnId: String,
+        /** Whether this device is the one to run it: every watcher is sent every call. */
+        val run: Boolean = true,
+        /** Whether the person already said yes to it, on a voice call, so nobody asks again. */
+        val approved: Boolean = false,
     ) {
         /** The arguments decoded, or an empty object if the model wrote something else. */
         public val argumentValues: JsonObject
@@ -151,6 +188,41 @@ public data class AgentEvent(
             } catch (_: IllegalArgumentException) {
                 JsonObject(emptyMap())
             }
+    }
+
+    /** One tool call as the session last reported it, whichever process runs it. */
+    public data class ToolCallState(
+        /** The call's `tool_call_id`. */
+        val id: String,
+        val tool: String,
+        val turnId: String,
+        val status: Status,
+        /** The last thing said about the call while it runs, such as "Searching for flights", or the question it waits on. */
+        val progress: String,
+        val startedAt: Instant?,
+        /** From [startedAt] to this report; once finished, how long the call took. */
+        val durationMs: Long,
+        /** When a person allowed the call. */
+        val approvedAt: Instant?,
+        /** When a person declined the call, or its wait for them passed. */
+        val rejectedAt: Instant?,
+        /** Why a failed call failed, or what a declined one shows. */
+        val error: String,
+    ) {
+        /** Where a call stands. [Unknown] is a status the router added after this SDK shipped. */
+        public enum class Status(public val wire: String) {
+            InProgress("in_progress"),
+            /** Held for a person's approval. */
+            Waiting("waiting"),
+            Success("success"),
+            Failed("failed"),
+            Cancelled("cancelled"),
+            Unknown(""),
+            ;
+
+            /** Whether the call is over. */
+            public val isFinished: Boolean get() = this == Success || this == Failed || this == Cancelled
+        }
     }
 
     /** The access a connector tool call needs, and where the person grants it. */

@@ -86,10 +86,23 @@ func newMessages(options Options) (*LLM, error) {
 		client: anthropic.NewClient(clientOptions...),
 		// Every current Claude model reads images. High is the API's own default effort,
 		// so naming it changes nothing for a request that names none.
-		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model)},
+		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model), ToolChoices: toolChoices(options.Model)},
 		systemTurns:  takesSystemTurns(options.Model),
 		inFlight:     map[uint64]context.CancelFunc{},
 	}, nil
+}
+
+// unforcedToolModels answer tool_choice any or tool with a 400, so a request that needs a
+// tool called is refused before it goes out rather than halfway through a call. Checked live
+// on 19 November 2026; Haiku 5.5 still takes both.
+var unforcedToolModels = []string{"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"}
+
+// toolChoices are the tool choices a model honours, or nil for all of them.
+func toolChoices(model string) []string {
+	if slices.Contains(unforcedToolModels, datedModel.ReplaceAllString(model, "")) {
+		return []string{"auto", "none"}
+	}
+	return nil
 }
 
 // systemTurnModels take a system message after a user turn mid-conversation and follow it,
@@ -99,13 +112,31 @@ func newMessages(options Options) (*LLM, error) {
 // model, measured or not, is told on the user's side, as it always was.
 var systemTurnModels = []string{"claude-opus-5-5", "claude-opus-5"}
 
-// efforts are the output_config efforts a model takes: low, medium and high, which Opus,
-// Sonnet and Haiku 5.5 each answered with a 200 on 2026-11-13.
-func efforts(model string) []string {
-	if strings.HasPrefix(model, "claude-") {
-		return []string{"low", "medium", "high"}
+// xhighModels and maxModels take the efforts above high, by the API's effort page
+// (platform.claude.com/docs/en/build-with-claude/effort): xhigh and max on the first, max
+// alone on the second. Any other Claude model gets low, medium and high.
+var (
+	xhighModels = []string{
+		"claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5",
+		"claude-opus-4-8", "claude-opus-4-7",
 	}
-	return nil
+	maxModels = []string{"claude-mythos-preview", "claude-opus-4-6", "claude-sonnet-4-6"}
+)
+
+// efforts are the output_config efforts a model takes.
+func efforts(model string) []string {
+	if !strings.HasPrefix(model, "claude-") {
+		return nil
+	}
+	family := datedModel.ReplaceAllString(model, "")
+	isFamily := func(prefix string) bool { return strings.HasPrefix(family, prefix) }
+	switch {
+	case slices.ContainsFunc(xhighModels, isFamily):
+		return []string{"low", "medium", "high", "xhigh", "max"}
+	case slices.ContainsFunc(maxModels, isFamily):
+		return []string{"low", "medium", "high", "max"}
+	}
+	return []string{"low", "medium", "high"}
 }
 
 // defaultEffort is the API's own default for a model that takes an effort.
@@ -497,8 +528,8 @@ func (l *LLM) params(request llm.ResponseParams) anthropic.MessageNewParams {
 	case "none":
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}
 	case "required":
-		// Claude Opus 5.5 and Sonnet 5.5 answer this with a 400, which is still better than
-		// answering it as auto.
+		// The unforcedToolModels never get here: Validate refuses required for them, which is
+		// still better than answering it as auto.
 		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}
 	}
 

@@ -19,6 +19,10 @@ import SwiftUI
 /// A new conversation has no session until it is first written or talked to, which opens one.
 /// The router keeps a conversation in Chat and cannot rewind it, so a reply is not written
 /// again and a message is not edited: asking for either asks the question again.
+///
+/// An incognito conversation has no channel: its session keeps nothing. Its messages are the
+/// session's turns, as its socket carries them (`turnMessages`), with every step and the whole
+/// of the reply's thinking, and they are gone once the conversation closes.
 @MainActor
 @Observable
 final class AgentChat: AIConversationTransport {
@@ -58,6 +62,11 @@ final class AgentChat: AIConversationTransport {
 
     /// The conversation to carry on, or nil for a new one.
     @ObservationIgnored private let sessionID: String?
+    /// Whether a new conversation keeps nothing: no channel, no list, nothing remembered.
+    @ObservationIgnored private let isIncognito: Bool
+    /// The session followed, and an incognito conversation as its socket last left it.
+    @ObservationIgnored private var followed: AgentSession?
+    @ObservationIgnored private var unkept = Conversation()
     @ObservationIgnored private var feed: AIConversationFeed<AgentMessage>?
     @ObservationIgnored private var channel: ChatChannelController?
     @ObservationIgnored private var events: EventsController?
@@ -77,8 +86,9 @@ final class AgentChat: AIConversationTransport {
     /// again, such as after scrolling back to it, does not bring its tool twice.
     @ObservationIgnored private var brought: Set<String> = []
 
-    init(sessionID: String?) {
+    init(sessionID: String?, isIncognito: Bool = false) {
         self.sessionID = sessionID
+        self.isIncognito = isIncognito
         ui = makeUI()
     }
 
@@ -196,20 +206,21 @@ final class AgentChat: AIConversationTransport {
     }
 
     /// Closes the session. A new conversation's that was opened while its first message was
-    /// written, and never used, is deleted, so it is not left in the list.
+    /// written, and never used, is deleted, so it is not left in the list. An incognito one has
+    /// nothing kept to delete.
     func close() async {
         if let opening {
             _ = try? await opening.value
         }
         guard let session else { return }
         await session.close()
-        if sessionID == nil, usedSessionID == nil {
+        if sessionID == nil, usedSessionID == nil, !isIncognito {
             try? await Assistant.sessions.delete(session.id)
         }
     }
 
     /// Carries on the conversation's session, or starts one for a new conversation, and opens
-    /// its channel.
+    /// its channel, which an incognito one has none of.
     private func start() async throws -> AgentSession {
         let session: AgentSession
         if let sessionID {
@@ -223,22 +234,33 @@ final class AgentChat: AIConversationTransport {
             if UserDefaults.standard.object(forKey: SettingsScreen.cardsKey) as? Bool == false {
                 options.ui = false
             }
-            session = try await Assistant.agents.chat(options)
+            if isIncognito {
+                options.incognito = true
+            }
+            session = try await Assistant.agents.sessions.create(options)
         }
-        let channel = try await session.chat()
-        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
-            channel.synchronize { error in
-                if let error { done.resume(throwing: error) } else { done.resume() }
+        if !isIncognito {
+            do {
+                let channel = try await session.chat()
+                try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+                    channel.synchronize { error in
+                        if let error { done.resume(throwing: error) } else { done.resume() }
+                    }
+                }
+                read(channel)
+            } catch {
+                // A session opened just now has nobody else to stop it.
+                if sessionID == nil { await session.close() }
+                throw error
             }
         }
-        follow(session, channel: channel)
-        await session.start()
+        follow(session)
         self.session = session
         publish()
         return session
     }
 
-    private func follow(_ session: AgentSession, channel: ChatChannelController) {
+    private func read(_ channel: ChatChannelController) {
         self.channel = channel
         // The client's events rather than the channel's list: the list can fold several live
         // updates into one, and each update carries its own window of the reply's thinking.
@@ -246,19 +268,33 @@ final class AgentChat: AIConversationTransport {
         self.events = events
         channel.delegate = self
         events.delegate = self
-        // Published from the main actor, which is where the session changes.
+    }
+
+    private func follow(_ session: AgentSession) {
+        followed = session
+        // Published from the main actor, which is where the session changes. Each comes before
+        // the session holds it, so the value is what is read.
         session.$conversation
             .sink { [weak self] conversation in MainActor.assumeIsolated { self?.sessionChanged(conversation) } }
             .store(in: &following)
         session.$approvals
-            .sink { [weak self] approvals in MainActor.assumeIsolated { self?.approvals = approvals } }
+            .sink { [weak self] approvals in MainActor.assumeIsolated { self?.approvalsChanged(approvals) } }
             .store(in: &following)
     }
 
     /// Tells the conversation what the channel holds: its messages, each reply with the whole
     /// of its thinking and, while it is written, the UI the socket streamed for it, and whether
-    /// there are older ones.
+    /// there are older ones. An incognito conversation's messages are its session's turns.
     private func publish() {
+        if isIncognito {
+            guard let followed else { return }
+            let messages = TurnMessage.messages(
+                of: unkept, approvals: approvals, userID: followed.session.userID,
+                isConnected: followed.isConnected)
+            feed?.update(messages: messages.map(AgentMessage.init))
+            feed?.update(hasOlderMessages: false)
+            return
+        }
         guard let channel else { return }
         let messages = Array(channel.messages.reversed())
         let live = liveUI.overlay(messages)
@@ -270,7 +306,10 @@ final class AgentChat: AIConversationTransport {
     /// takes long, such as one that runs a skill.
     private func sessionChanged(_ conversation: Conversation) {
         sessionFailure = conversation.failure
-        if liveUI.observe(conversation) {
+        if isIncognito {
+            unkept = conversation
+            publish()
+        } else if liveUI.observe(conversation) {
             // A reply's UI grows a statement at a time: the reply makes room for each, and its
             // text gives way to the UI, rather than jumping.
             withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.35)) {
@@ -291,6 +330,15 @@ final class AgentChat: AIConversationTransport {
         guard activity != self.activity else { return }
         self.activity = activity
         feed?.update(activity: activity)
+    }
+
+    /// Follows the calls waiting for the person, which an incognito conversation shows on their
+    /// steps itself.
+    private func approvalsChanged(_ approvals: [ToolApprovalRequest]) {
+        self.approvals = approvals
+        if isIncognito {
+            publish()
+        }
     }
 
     /// Tells the agent what the person did in the UI of a reply, such as tapping a place on its
@@ -346,37 +394,54 @@ extension ChatMessage {
     }
 }
 
-/// A message of the conversation as Stream's AI components show it.
+/// A message of the conversation as Stream's AI components show it: one of the channel's, or
+/// of an incognito conversation, which no channel keeps.
 struct AgentMessage: AIMessage {
-    let message: ChatMessage
+    let id: String
+    let role: AIMessageRole
+    let text: String
+    let isGenerating: Bool
     let parts: [AIMessagePart]
-    private let reasoning: LiveReasoning
-    /// The message's custom data, with the UI the socket streamed for it while it is written.
-    private let customData: [String: RawJSON]
-
-    init(_ message: ChatMessage, reasoning: LiveReasoning, customData: [String: RawJSON]? = nil) {
-        self.message = message
-        self.reasoning = reasoning
-        self.customData = customData ?? message.extraData
-        parts = message.parts
-    }
-
-    var id: String { message.id }
-    var role: AIMessageRole { message.isAgentReply ? .assistant : .user }
-    var text: String { message.text }
-    var isGenerating: Bool { message.isGenerating }
+    let attachments: [AIMessageAttachment]
     /// The UI the agent wrote for the reply, which shows in place of its text.
-    var uiDocument: AIUIDocument? { AIUIDocument(customData: customData) }
-    var attachments: [AIMessageAttachment] {
-        message.imageAttachments.map { .image($0.imageURL, name: $0.title) }
+    let uiDocument: AIUIDocument?
+    private let reasoning: LiveReasoning
+    /// The whole of each round of an incognito reply's thinking, by its step.
+    private let thinking: [String: String]
+
+    /// One of the channel's messages, with the UI the socket streamed for it while it is written
+    /// in `customData`.
+    init(_ message: ChatMessage, reasoning: LiveReasoning, customData: [String: RawJSON]? = nil) {
+        id = message.id
+        role = message.isAgentReply ? .assistant : .user
+        text = message.text
+        isGenerating = message.isGenerating
+        parts = message.parts
+        attachments = message.imageAttachments.map { .image($0.imageURL, name: $0.title) }
             + message.fileAttachments.map {
                 .file($0.assetURL, name: $0.title, size: $0.file.size, mimeType: $0.file.mimeType)
             }
+        uiDocument = AIUIDocument(customData: customData ?? message.extraData)
+        self.reasoning = reasoning
+        thinking = [:]
     }
 
-    /// A step keeps only the opening of its thinking; the whole of it came with the live
+    /// One of an incognito conversation's, whose steps and thinking are its session's.
+    init(_ message: TurnMessage) {
+        id = message.id
+        role = message.isAgentReply ? .assistant : .user
+        text = message.text
+        isGenerating = message.isGenerating
+        parts = AIMessagePart.parts(from: message.steps.map { ($0.type, $0.payload) })
+        attachments = []
+        uiDocument = AIUIDocument(customData: message.customData)
+        reasoning = LiveReasoning()
+        thinking = message.reasoning
+    }
+
+    /// A stored step keeps only the opening of its thinking; the whole of it came with the live
     /// updates, while the reply was being written.
     func reasoningText(for step: AIReasoningPart) -> String? {
-        reasoning[message: message.id, step: step.id]
+        thinking[step.id] ?? reasoning[message: id, step: step.id]
     }
 }

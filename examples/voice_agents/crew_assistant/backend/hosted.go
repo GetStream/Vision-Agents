@@ -8,15 +8,13 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
-// hostedAgent is the agent the restaurant's tools are hosted under: the router offers them to
-// every session of it and sends their calls here.
-type hostedAgent struct {
-	name  string
+// restaurantTools are the tools this backend hosts for every agent: the router offers them to
+// the sessions of crew_assistant, whose tool group names them, and sends their calls here.
+type restaurantTools struct {
 	tools *tools.Registry
 }
 
-func (a hostedAgent) Name() string           { return a.name }
-func (a hostedAgent) Tools() *tools.Registry { return a.tools }
+func (r restaurantTools) Tools() *tools.Registry { return r.tools }
 
 type (
 	none         struct{}
@@ -173,7 +171,7 @@ func (s *server) hostedTools(simulationUser string) (*tools.Registry, error) {
 			"Drafts a repair ticket for the owner to review and submit. The phone asks the person first.",
 			func(ctx context.Context, in ticket) (any, error) {
 				return forUser(func(userID string) (any, error) {
-					return s.crew.ticket(userID, in.Asset, in.Summary, in.Details, in.Priority)
+					return s.crew.ticket(userID, in.Asset, in.Summary, in.Details, in.Priority, "", "")
 				})(ctx)
 			}),
 		tools.Register(registry, "book_check_in",

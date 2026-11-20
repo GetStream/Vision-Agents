@@ -178,8 +178,12 @@ func (s *Store) LinkedPhone(ctx context.Context, customerID string, app int64, u
 		Phone string     `bun:"phone"`
 		Since *time.Time `bun:"since"`
 	}
-	err := s.db.NewRaw(`SELECT up.phone, `+historyBoundary+` AS since FROM user_phones AS up `+historyJoin+`
-WHERE up.customer_id = ? AND up.stream_app_pk = ? AND up.user_id = ?`, customerID, s.linkApp(app), userID).Scan(ctx, &rows)
+	err := s.db.NewSelect().Model((*UserPhone)(nil)).
+		Column("up.phone").
+		ColumnExpr(historyBoundary+" AS since").
+		Join(historyJoin).
+		Where("up.customer_id = ? AND up.stream_app_pk = ? AND up.user_id = ?", customerID, s.linkApp(app), userID).
+		Scan(ctx, &rows)
 	if err != nil {
 		return "", nil, false, stack.Wrap(fmt.Errorf("store: linked phone: %w", err))
 	}
@@ -411,15 +415,19 @@ const reachedAt = `regexp_replace(cm.address, '^` + retiredPrefix + `[^:]*:', ''
 // counts as on: it writes the same episodes, which a session reads once the config turns on.
 // In tx, under the link's lock.
 func (s *Store) retireHistory(ctx context.Context, tx bun.Tx, link UserPhone) error {
-	_, err := tx.NewRaw(`UPDATE contact_map AS cm
-SET address = ?4 || cm.id || ':' || cm.address, updated_at = ?5
-WHERE cm.customer_id = ?0
-	AND cm.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0 AND (ac.episode_cards OR ac.episode_cards_record))
-	AND cm.kind = ?1 AND cm.address = ?2
-	AND COALESCE(NULLIF(cm.stream_app_pk, ?3), 0) = ?6
-	AND EXISTS (SELECT 1 FROM episodes AS ep WHERE ep.contact_id = cm.id)`,
-		link.CustomerID, ContactPhone, link.Phone, s.streamPins().deployment(), retiredPrefix, time.Now().UTC(),
-		link.StreamAppPK).
+	writesCards := tx.NewSelect().Model((*AgentConfig)(nil)).
+		Column("ac.id").
+		Where("ac.customer_id = ?", link.CustomerID).
+		Where("ac.episode_cards OR ac.episode_cards_record")
+	withEpisode := tx.NewSelect().Model((*Episode)(nil)).ColumnExpr("1").Where("ep.contact_id = cm.id")
+	_, err := tx.NewUpdate().Model((*ContactMapEntry)(nil)).
+		Set("address = ? || cm.id || ':' || cm.address", retiredPrefix).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("cm.customer_id = ?", link.CustomerID).
+		Where("cm.agent_config_id IN (?)", writesCards).
+		Where("cm.kind = ? AND cm.address = ?", ContactPhone, link.Phone).
+		Where("COALESCE(NULLIF(cm.stream_app_pk, ?), 0) = ?", s.streamPins().deployment(), link.StreamAppPK).
+		Where("EXISTS (?)", withEpisode).
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: retire a linked number's history: %w", err))

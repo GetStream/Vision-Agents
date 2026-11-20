@@ -1,8 +1,10 @@
 // Between the generated wire types and the hand-written public ones. Not exported.
 
+import 'errors.dart';
 import 'generated/api.dart' as api;
 import 'models.dart';
 import 'tools.dart';
+import 'wire.dart' show parseRouterDate;
 
 Session sessionOf(api.Session wire) => Session(
   id: wire.id,
@@ -98,7 +100,10 @@ api.CreateSessionRequest createRequestOf(
   custom: options.custom,
   incognito: options.incognito,
   modelOverwrites: overwritesOf(options.modelOverwrites),
-  tools: options.tools.isEmpty ? null : [for (final tool in options.tools) sessionToolOf(tool)],
+  // Unwatched, nothing here answers a call, so no tool is declared.
+  tools: !options.watch || options.tools.isEmpty
+      ? null
+      : [for (final tool in options.tools) sessionToolOf(tool)],
   tags: options.tags.isEmpty ? null : options.tags,
   returnUrl: _set(options.returnUrl),
   // The router remembers only for a user id, and a device only ever means its own user.
@@ -179,3 +184,86 @@ T _named<T extends Enum>(List<T> values, String? wire, T fallback) {
   }
   return fallback;
 }
+
+ScheduledTask scheduledTaskOf(api.ScheduledTask wire) => ScheduledTask(
+  id: wire.id,
+  title: wire.title,
+  instructions: wire.instructions,
+  schedule: ScheduledTaskSchedule(
+    at: wire.schedule.at,
+    after: wire.schedule.inValue,
+    repeat: wire.schedule.repeat,
+    timezone: wire.schedule.timezone,
+    until: wire.schedule.until,
+    description: wire.schedule.description ?? '',
+  ),
+  deliverTo: wire.deliverTo,
+  quietHours: switch (wire.quietHours) {
+    null => null,
+    final hours => ScheduledTaskQuietHours(start: hours.start, end: hours.end),
+  },
+  state: _named(ScheduledTaskState.values, wire.state, ScheduledTaskState.unknown),
+  nextRunAt: _dateOrNull(wire.nextRunAt, 'ScheduledTask.next_run_at'),
+  upcoming: [for (final at in wire.upcoming) _date(at, 'ScheduledTask.upcoming')],
+  lastRunAt: _dateOrNull(wire.lastRunAt, 'ScheduledTask.last_run_at'),
+  consecutiveFailures: wire.consecutiveFailures,
+  createdBy: _named(ScheduledTaskCreatedBy.values, wire.createdBy, ScheduledTaskCreatedBy.unknown),
+  sessionId: wire.sessionId,
+  configId: wire.configId,
+  custom: wire.custom ?? const {},
+  createdAt: wire.createdAt,
+  updatedAt: wire.updatedAt,
+);
+
+ScheduledTaskRun scheduledTaskRunOf(api.ScheduledTaskRun wire) => ScheduledTaskRun(
+  id: wire.id,
+  taskId: wire.taskId,
+  scheduledFor: _date(wire.scheduledFor, 'ScheduledTaskRun.scheduled_for'),
+  trigger: _named(ScheduledTaskRunTrigger.values, wire.trigger, ScheduledTaskRunTrigger.unknown),
+  state: _named(ScheduledTaskRunState.values, wire.state, ScheduledTaskRunState.unknown),
+  deliveredTo: wire.deliveredTo,
+  sessionId: wire.sessionId,
+  attempts: wire.attempts,
+  startedAt: wire.startedAt,
+  finishedAt: wire.finishedAt,
+  error: wire.error ?? '',
+);
+
+/// A change to a task as the router takes one. Its instructions are a backend's to change.
+api.UpdateScheduledTaskRequest updateTaskRequestOf({
+  String? title,
+  ScheduledTaskSchedule? schedule,
+  ScheduledTaskNext? next,
+  List<String>? deliverTo,
+  ScheduledTaskQuietHours? quietHours,
+}) => api.UpdateScheduledTaskRequest(
+  title: title,
+  schedule: switch (schedule) {
+    null => null,
+    final schedule => api.ScheduledTaskSchedule(
+      at: schedule.at,
+      inValue: schedule.after,
+      repeat: schedule.repeat,
+      timezone: schedule.timezone,
+      until: schedule.until,
+    ),
+  },
+  next: switch (next) {
+    null => null,
+    ScheduledTaskNextAt(:final at) => api.ScheduledTaskNext(at: at),
+    ScheduledTaskNextAfter(:final duration) => api.ScheduledTaskNext(inValue: duration),
+  },
+  deliverTo: deliverTo,
+  quietHours: switch (quietHours) {
+    null => null,
+    final hours => api.ScheduledTaskQuietHours(start: hours.start, end: hours.end),
+  },
+);
+
+/// A timestamp the router wrote as a plain string, refused by name when it is not one.
+DateTime _date(String value, String at) =>
+    parseRouterDate(value) ?? (throw UnreadableException('$at is not a timestamp'));
+
+/// The same, where empty or absent means there is none.
+DateTime? _dateOrNull(String? value, String at) =>
+    value == null || value.isEmpty ? null : _date(value, at);

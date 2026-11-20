@@ -18,12 +18,16 @@ import kotlin.time.Instant
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -31,6 +35,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 private const val SESSION = """{"id":"s1","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"live","modality":"text","created_at":"2026-09-24T04:03:19Z","text":true}"""
+@Serializable
+private data class WeatherLookup(val location: String)
+
 private const val ASKED = """{"id":"r1","session_id":"s1","status":"running","created_at":"2026-09-24T04:03:19Z"}"""
 
 /** Socket tests run in real time, because what they wait for is a real connection. */
@@ -174,6 +181,57 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `opening a session watches it and answers its tools`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "Order A-1042: two wool throws." }
+
+        val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup)))
+
+        assertTrue(chat.isConnected.value)
+        assertEquals("/v1/agents/sessions/s1/events", router.handshakes.single().path)
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"r1","turn_id":"t1"}"""))
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("c1"), answer["tool_call_id"])
+        assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `an agent's chat with tools still answers them`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "Order A-1042: two wool throws." }
+
+        val chat = agents.agent("docs").chat(lookup)
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"r1","turn_id":"t1"}"""))
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `a session opened unwatched has no socket, and its turns go through responses`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "" }
+
+        val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup), watch = false))
+
+        val created = router.requests.single { it.path == "/v1/agents/sessions" }
+        assertFalse("tools" in Json.parseToJsonElement(created.body).jsonObject.keys)
+        assertTrue(router.handshakes.isEmpty())
+        assertFalse(chat.isConnected.value)
+        val refused = assertFailsWith<AgentsException.Configuration> { chat.say("hello") }
+        assertTrue("watch = false" in refused.message.orEmpty(), refused.message)
+        assertTrue("responses.create" in refused.message.orEmpty(), refused.message)
+        assertFailsWith<AgentsException.Configuration> { chat.addTools(listOf(lookup)) }
+
+        val asked = chat.responses.create("What are your hours?")
+        assertEquals("r1", asked.id)
+        assertEquals("POST /v1/agents/sessions/s1/responses", router.requests.last().let { "${it.method} ${it.path}" })
+
+        chat.close()
+        assertEquals("POST /v1/agents/sessions/s1/stop", router.requests.last().let { "${it.method} ${it.path}" })
+        assertTrue(router.handshakes.isEmpty())
+    }
+
+    @Test
     fun `a tool that throws tells the model it did not work, since it is mid-sentence waiting`() = runBlocking {
         val broken = AgentTool("lookup_order", "Look up an order.") { error("the orders database is down") }
         val chat = agents.chat(SessionOptions(tools = listOf(broken)))
@@ -183,6 +241,26 @@ class AgentSessionTest {
         val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
         assertEquals(JsonPrimitive("the orders database is down"), answer["error"])
         assertEquals(JsonPrimitive(""), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `a typed tool called without a required argument tells the model which one`() = runBlocking {
+        val ran = AtomicBoolean(false)
+        val weather = AgentTool.typed<WeatherLookup>("weather_lookup", "Look up the weather.") {
+            ran.set(true)
+            "sunny in ${it.location}"
+        }
+        val chat = agents.chat(SessionOptions(tools = listOf(weather)))
+
+        router.script.send(
+            Script.Send("""{"type":"tool_call","id":"c1","name":"weather_lookup","arguments":"{\"city\":\"Boulder\"}","request_id":"","turn_id":""}"""),
+        )
+
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertTrue("'location'" in answer["error"]!!.jsonPrimitive.content, answer.toString())
+        assertEquals(JsonPrimitive(""), answer["output"])
+        assertFalse(ran.get())
         chat.close()
     }
 
@@ -217,6 +295,55 @@ class AgentSessionTest {
         chat.say("still there?")
 
         assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        chat.close()
+    }
+
+    @Test
+    fun `a call meant for another watcher is not run, and one already approved is not asked again`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "found" }
+        val refund = AgentTool("issue_refund", "Refund an order.", approval = AgentTool.Approval("Refund it?")) { "refunded" }
+        val chat = agents.chat(SessionOptions(tools = listOf(lookup, refund)))
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"elsewhere","name":"lookup_order","arguments":"{}","run":false}"""))
+        router.script.send(Script.Send("""{"type":"tool_call","id":"approved","name":"issue_refund","arguments":"{}","approved":true}"""))
+        router.script.send(Script.Send("""{"type":"tool_call","id":"here","name":"lookup_order","arguments":"{}"}"""))
+
+        val answered = setOf(router.nextSent(), router.nextSent())
+            .map { Json.parseToJsonElement(it).jsonObject["tool_call_id"]?.jsonPrimitive?.content }
+            .toSet()
+        assertEquals(setOf("approved", "here"), answered)
+        assertTrue(chat.approvals.value.isEmpty())
+        chat.close()
+    }
+
+    @Test
+    fun `the session keeps each call's last state, and a handler hears its kind until cancelled`() = runBlocking {
+        val chat = agents.chat()
+        val progress = CopyOnWriteArrayList<String>()
+        val finished = CopyOnWriteArrayList<String>()
+        lateinit var first: kotlinx.coroutines.Job
+        first = chat.on(AgentEvent.Kind.ToolCallProgress) {
+            progress += it.string("progress")
+            first.cancel()
+        }
+        chat.on(AgentEvent.Kind.ToolCallFinished) { finished += it.string("tool_call_id") }
+        val call = """"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","started_at":"2026-11-18T12:00:00Z""""
+
+        router.script.send(Script.Send("""{"type":"tool_call.started",$call,"status":"waiting","duration_ms":0}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":100,"progress":"Searching for flights","approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,"progress":"Comparing prices","approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,"approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        until { chat.toolCalls.value["c1"]?.status?.isFinished == true }
+
+        val last = chat.toolCalls.value.getValue("c1")
+        assertEquals(AgentEvent.ToolCallState.Status.Success, last.status)
+        assertEquals(300, last.durationMs)
+        assertEquals("", last.progress, "the finished frame carries the whole state")
+        assertEquals(Instant.parse("2026-11-18T12:00:00.1Z"), last.approvedAt)
+        assertEquals(last, chat.toolCall("c1").first())
+        until { finished.isNotEmpty() }
+        assertEquals(listOf("Searching for flights"), progress.toList())
+        assertEquals(listOf("c1"), finished.toList())
         chat.close()
     }
 
@@ -376,17 +503,289 @@ class AgentSessionTest {
         chat.close()
     }
 
+    /** `c1` as an approval card restored from the channel shows it, which this session's socket was never asked. */
+    private val shownRefund = ShownToolCall(
+        "c1",
+        "issue_refund",
+        """{"order_id":"A-1042","reason":"it arrived unopened"}""",
+        requestId = "m1",
+        turnId = "t1",
+    )
+
+    @Test
+    fun `a call shown from the conversation, allowed, is answered on its turn and runs here`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = true)
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"Refunded A-1042","error":"","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation, declined, never runs and the model is told so`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = false, summary = "Kept the order")
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":false,"summary":"Kept the order","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"","error":"The person declined this call.","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation of a tool this session lacks, allowed, is left to whoever has it`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(CopyOnWriteArrayList()))))
+
+        chat.decide(shownRefund.copy(name = "get_location"), allowed = true)
+        chat.say("still there?")
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown without its arguments, allowed, runs once the router sends it`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund.copy(arguments = null), allowed = true)
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        router.script.send(Script.Send(refundCall))
+
+        assertEquals(
+            """{"type":"tool_result","tool_call_id":"c1","output":"Refunded A-1042","error":"","request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(listOf("A-1042"), ran)
+        assertEquals(emptyList(), chat.approvals.value)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation, allowed, is neither asked about nor run again when the router sends it`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = true)
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(JsonPrimitive("Refunded A-1042"), Json.parseToJsonElement(router.nextSent()).jsonObject["output"])
+
+        router.script.send(Script.Send(refundCall))
+        router.script.send(Script.Send(refundCall.dropLast(1) + ""","approved":true}"""))
+        readPast(chat)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        assertEquals(emptyList(), chat.approvals.value)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation, declined, is not asked about again when the router sends it`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = false)
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(JsonPrimitive("tool_result"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+
+        router.script.send(Script.Send(refundCall))
+        readPast(chat)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(emptyList(), chat.approvals.value)
+        assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation that already ran here is not run again`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        // Allowed out loud, so the router sent it as already approved and it ran at once.
+        router.script.send(Script.Send(refundCall.dropLast(1) + ""","approved":true}"""))
+        assertEquals(JsonPrimitive("Refunded A-1042"), Json.parseToJsonElement(router.nextSent()).jsonObject["output"])
+        chat.decide(shownRefund, allowed = true)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    /** Waits until the session has read every frame the router sent before, and answered what it could. */
+    private suspend fun readPast(chat: AgentSession) = coroutineScope {
+        val seen = async(start = CoroutineStart.UNDISPATCHED) { chat.events().first { it.type == "read_past" } }
+        router.script.send(Script.Send("""{"type":"read_past"}"""))
+        seen.await()
+    }
+
+    @Test
+    fun `a call shown from the conversation answered twice, such as a double tap, is answered and run once`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = true)
+        chat.decide(shownRefund, allowed = true)
+        chat.decide(shownRefund, allowed = false)
+
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(JsonPrimitive("tool_result"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        chat.say("still there?")
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation that the session holds is answered as the one it holds, once`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        router.script.send(Script.Send(refundCall))
+        chat.approvals.first { it.isNotEmpty() }
+        chat.decide(shownRefund.copy(arguments = null, requestId = "", turnId = ""), allowed = true)
+
+        assertEquals(emptyList(), chat.approvals.value)
+        // The request and turn, and the arguments it runs with, are the socket's own.
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(JsonPrimitive("Refunded A-1042"), Json.parseToJsonElement(router.nextSent()).jsonObject["output"])
+        chat.decide(shownRefund, allowed = true)
+        chat.say("still there?")
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call the router cancelled while its card showed is not answered from the card`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        router.script.send(Script.Send(refundCall))
+        chat.approvals.first { it.isNotEmpty() }
+        router.script.send(Script.Send("""{"type":"tool_cancel","id":"c1","request_id":"m1","turn_id":"t1"}"""))
+        chat.approvals.first { it.isEmpty() }
+        chat.decide(shownRefund, allowed = true)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(emptyList(), ran)
+        chat.close()
+    }
+
+    @Test
+    fun `a call the session holds, answered at once by id and as shown, is approved once`() = runBlocking {
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(CopyOnWriteArrayList()))))
+
+        router.script.send(Script.Send(refundCall))
+        chat.approvals.first { it.isNotEmpty() }
+        coroutineScope {
+            repeat(8) { i ->
+                launch(Dispatchers.Default) {
+                    if (i % 2 == 0) chat.decide("c1", allowed = true) else chat.decide(shownRefund, allowed = true)
+                }
+            }
+        }
+        chat.say("still there?")
+
+        var approvals = 0
+        while (true) {
+            val sent = router.nextSent()
+            if (sent == """{"type":"say","text":"still there?"}""") break
+            if (Json.parseToJsonElement(sent).jsonObject["type"] == JsonPrimitive("tool_approval")) approvals++
+        }
+        assertEquals(1, approvals)
+        chat.close()
+    }
+
+    @Test
+    fun `an incognito session's reply shows from its socket, and its call asks the signed-in person on its step`() = runBlocking {
+        agents.setUser(User("jlahey"), "token")
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(incognito = true, tools = listOf(refund(ran))))
+        val created = router.requests.single { it.method == "POST" && it.path == "/v1/agents/sessions" }
+        assertEquals(JsonPrimitive(true), Json.parseToJsonElement(created.body).jsonObject["incognito"])
+        chat.responses.create("Refund A-1042, it arrived unopened")
+
+        router.script.send(Script.Send("""{"type":"responding","turn_id":"t1"}"""))
+        router.script.send(Script.Send("""{"type":"reasoning_delta","turn_id":"t1","text":"They want a refund."}"""))
+        router.script.send(
+            Script.Send("""{"type":"tool_started","tool_call_id":"c1","tool":"issue_refund","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}"""),
+        )
+        router.script.send(Script.Send(refundCall))
+        val asking = withTimeout(5.seconds) {
+            chat.turnMessages.first { it.lastOrNull()?.steps?.lastOrNull()?.fields?.get("status") == "awaiting_approval" }
+        }
+
+        assertEquals(listOf(false, true), asking.map { it.isAgentReply })
+        assertEquals("Refund A-1042, it arrived unopened", asking.first().text)
+        val reply = asking.last()
+        assertTrue(reply.isGenerating)
+        assertEquals(listOf("ai_reasoning", "ai_tool_call"), reply.steps.map { it.type })
+        assertEquals(mapOf("r1" to "They want a refund."), reply.reasoning)
+        val step = reply.steps.last().fields
+        // The person signed in here, whom Stream's approver matches, not the agent on the session.
+        assertEquals("jlahey", step["target_user_id"])
+        assertEquals(
+            mapOf("title" to "Refund order A-1042?", "reason" to "it arrived unopened", "allow_title" to "Refund"),
+            step["approval"],
+        )
+
+        chat.decide("c1", allowed = true)
+
+        assertEquals(
+            """{"type":"tool_approval","tool_call_id":"c1","allowed":true,"request_id":"m1","turn_id":"t1"}""",
+            router.nextSent(),
+        )
+        assertEquals(JsonPrimitive("tool_result"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        val answered = chat.turnMessages.first()
+        assertEquals("running", answered.last().steps.last().fields["status"], "no longer waiting once answered")
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
     /** A tool that asks first, so whether a call of it is answered here shows in [AgentSession.approvals] at once. */
     private fun reserve(title: String) = AgentTool("reserve_table", "Reserve a table.", approval = AgentTool.Approval(title)) { "Reserved." }
 
     /**
      * The question a call of `reserve_table` waits on here, or null when no tool here answers it.
      * Read once the session has seen the call, which it holds for the person before passing it on.
+     * A call answered here is not asked about again, so a later probe after one was answered names
+     * another [id].
      */
-    private suspend fun heldFor(chat: AgentSession): String? = coroutineScope {
+    private suspend fun heldFor(chat: AgentSession, id: String = "c1"): String? = coroutineScope {
         val seen = async(start = CoroutineStart.UNDISPATCHED) { chat.events().first { it.type == "tool_call" } }
         router.script.send(
-            Script.Send("""{"type":"tool_call","id":"c1","name":"reserve_table","arguments":"{}","request_id":"r1","turn_id":"t1"}"""),
+            Script.Send("""{"type":"tool_call","id":"$id","name":"reserve_table","arguments":"{}","request_id":"r1","turn_id":"t1"}"""),
         )
         seen.await()
         chat.approvals.value.singleOrNull()?.approval?.title
@@ -522,7 +921,7 @@ class AgentSessionTest {
             ),
             chat.toolRequests(),
         )
-        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        assertEquals("Reserve at the Ritz?", heldFor(chat, id = "c2"))
         chat.close()
     }
 
@@ -546,7 +945,7 @@ class AgentSessionTest {
             ),
             chat.toolRequests(),
         )
-        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        assertEquals("Reserve at the Ritz?", heldFor(chat, id = "c2"))
         chat.close()
     }
 
@@ -718,6 +1117,20 @@ class AgentSessionTest {
         assertEquals("not your session", refused.reason)
         assertEquals("https://getstream.io/agents/docs/api/errors/#forbidden", refused.docUrl)
         assertEquals("req-3", refused.requestId)
+    }
+
+    @Test
+    fun `a session whose socket is refused is stopped, and the refusal is what the caller hears`() = runBlocking {
+        router.refuseHandshake = Reply(403, envelope("permission", "forbidden", "not your session"))
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.agent("docs").sessions.create() }
+
+        assertEquals(403, refused.status)
+        assertEquals("forbidden", refused.code)
+        assertEquals(
+            listOf("POST /v1/agents/sessions", "POST /v1/agents/sessions/s1/stop"),
+            router.requests.map { "${it.method} ${it.path}" },
+        )
     }
 
     @Test

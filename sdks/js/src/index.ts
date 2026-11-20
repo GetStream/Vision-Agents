@@ -28,7 +28,9 @@ export {
   type StreamUser,
   type TokenSource,
   type UserTokenOptions,
+  type HeaderWebSocketConstructor,
   type WebSocketConstructor,
+  type WebSocketInit,
   type WebSocketLike,
 } from "./backend.js";
 
@@ -42,6 +44,16 @@ export {
 } from "./client.js";
 
 export { AgentHandle } from "./handle.js";
+
+export {
+  Connections,
+  type Authorization,
+  type AuthorizationOptions,
+  type Connection,
+  type ConnectionFilter,
+  type ConnectionOptions,
+  type ConnectionUser,
+} from "./connections.js";
 
 export { Memories } from "./memories.js";
 
@@ -142,6 +154,7 @@ export {
   type ToolConversation,
   type ToolLine,
   type ToolUser,
+  type ToolsOptions,
 } from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";
@@ -156,11 +169,15 @@ export {
 } from "./ui-catalog.js";
 
 export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
+export { ToolCalls, type ToolCallState, type ToolCallStatus } from "./tool-calls.js";
 export {
   Conversation,
   mergeOpenUIStatements,
   type ConversationRecord,
+  type ReasoningStep,
+  type ToolStep,
   type Turn,
+  type TurnStep,
   type TurnUI,
 } from "./conversation.js";
 

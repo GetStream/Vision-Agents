@@ -600,6 +600,24 @@ async fn a_directory_is_synced_once_and_then_only_read_back() {
 }
 
 #[tokio::test]
+async fn an_agent_named_after_a_directory_syncs_that_directory() {
+    let server = Server::start().await;
+    synced(&server);
+    let root = tempfile::tempdir().unwrap();
+    jean(root.path());
+    let path = root.path().to_str().unwrap();
+    let agent = Agent::new(path).client(server.client());
+
+    agent.sync().await.unwrap();
+
+    let body = server.request(Method::POST, "/v1/agents/sync").body;
+    assert_eq!(
+        (body["name"].as_str(), body["instructions"].as_str()),
+        (Some(path), Some("You are Jean."))
+    );
+}
+
+#[tokio::test]
 async fn what_a_directory_leaves_to_dispatch_is_synced_as_written() {
     let server = Server::start().await;
     synced(&server);
@@ -796,7 +814,7 @@ async fn cost_tracking_is_part_of_what_a_directory_is_synced_under() {
 }
 
 #[tokio::test]
-async fn an_agent_read_from_a_directory_is_stored_before_its_first_session() {
+async fn an_agent_read_from_a_directory_opens_its_sessions_on_the_stored_config_without_syncing() {
     let server = Server::start().await;
     synced(&server);
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
@@ -815,13 +833,27 @@ async fn an_agent_read_from_a_directory_is_stored_before_its_first_session() {
         .map(|seen| seen.path)
         .filter(|path| path.starts_with("/v1"))
         .collect();
-    assert_eq!(order, ["/v1/agents/sync", "/v1/agents/sessions"]);
+    assert_eq!(order, ["/v1/agents/sessions"]);
     let sent = server.request(Method::POST, "/v1/agents/sessions").body;
     assert_eq!(sent["agent"], "jean");
     assert!(sent.get("instructions").is_none());
+}
+
+#[tokio::test]
+async fn a_session_for_an_agent_never_synced_says_to_sync_it() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions",
+        404,
+        refusal("not_found", "not_found", "there is no agent called support"),
+    );
+
+    let refused = agent(&server, "support").chat().await.unwrap_err();
+
     assert_eq!(
-        server.request(Method::POST, "/v1/agents/sync").body["instructions"],
-        "You are Jean."
+        refused.to_string(),
+        "createSession: 404: there is no agent called support; store it with agent.sync() first"
     );
 }
 

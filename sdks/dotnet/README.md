@@ -80,7 +80,6 @@ for as its first argument:
 agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the caller",
     async (toolCallContext, booking, cancellationToken) =>
     {
-        await toolCallContext.UpdateAsync("checking seats", cancellationToken);
         await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
         return await BookAsync(booking.FlightId, toolCallContext.User.Id, idempotencyKey: toolCallContext.Id);
     },
@@ -98,9 +97,7 @@ agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the call
 
 `toolCallContext.Id` is the id the model gave the call, which a call sent again keeps, so it is
 the key to make a side effect happen once; `SessionId`, `TurnId`, `User` and `Conversation` say
-where it came from. `UpdateAsync(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `SayAsync(text)` has it say `text` as written,
-which a speech-to-speech model may paraphrase. `DisallowInterruptionsAsync` keeps the call going
+where it came from. `DisallowInterruptionsAsync` keeps the call going
 from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when the
 router had already cancelled it. A cancelled call has its token cancelled and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.
@@ -178,21 +175,21 @@ showing it the photos sent with it (`Images`, by URL), and
 is cancelled, after the work in hand has finished. A connection the router drops is opened
 again, telling the router how much is still being handled.
 
-A worker can also host an agent's tools for every session opened under that agent, including
-sessions opened from a browser. The router sends each call here. Handlers are optional:
+A worker can also host the app's tools, registered once on the client for every agent, for any
+session, including sessions opened from a browser. The router offers a tool to a session only
+where a tool group of its agent's agent.yaml names it, and sends each call here:
 
 ```csharp
 using var client = new VisionAgentsClient();
-var agent = client.Agent("my-agent");
-agent.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
+client.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
     (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
-await new Dispatch(new DispatchOptions { Client = client }).Host(agent, toolTimeout: TimeSpan.FromMinutes(1)).RunAsync(stopping);
+await client.RunDispatchAsync(stopping);
 ```
 
 A hosted tool takes the same `interruptible`, `timeout` and `approval` (asked on a voice call),
 can take its call, and is cancelled when the router gives up on it. If the router refuses the
-tools, `RunAsync` throws `InvalidOperationException` with the
-reason.
+tools, `RunDispatchAsync` throws `InvalidOperationException` with the reason. A worker that also
+answers calls or messages hosts them with `dispatch.Host(client)` before `RunAsync`.
 
 ## An agent written down as a directory
 
@@ -217,8 +214,9 @@ await agent.Knowledge.AddUrlAsync("https://example.com/pricing", title: "Pricing
 
 `SyncAsync` sends the directory in one request. The fingerprint is the one the Go and
 Python SDKs take, so `.agent_sync` written by any of them is read back by this one, and an
-unchanged directory is only read back. A key `agent.yaml` does not know is refused. Joining
-syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
+unchanged directory is only read back. A key `agent.yaml` does not know is refused. Nothing
+syncs on its own: a session runs on the config stored under the agent's `Name`, so call
+`SyncAsync` before the agent takes calls, e.g. as a deploy step. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
 a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
 
 `floor_control:` is the model that controls the agent's floor, and how long a caller may wait
@@ -382,6 +380,31 @@ and a session is counted under one team at most:
 What the router answers is in micros too: `Usd.FromMicros(limit.LimitMicros)` prints as
 `$20000.00`. Work a limit refuses is a `RouterException` of 402 `spend_limit_reached`, or 429
 `user_limit_reached` for one end user's. Spend limits and teams are server side only.
+
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through. A backend creates one for a user, sends the user's browser to the provider's consent,
+and reads whether it connected:
+
+```csharp
+var connections = api.Connections;
+var connection = await connections.CreateAsync("linear", new NewConnectionOptions { UserId = "alice" });
+var consent = await connections.AuthorizeAsync(connection.Id,
+    new AuthorizeOptions { ReturnUrl = "https://app.example.com/settings", UserId = "alice" });
+// Open consent.LaunchUrl in a popup from a page of the return URL's origin, and post it
+// consent.HandoffToken. The attempt ends at consent.ExpiresAt.
+
+connection = await connections.GetAsync(connection.Id, userId: "alice"); // Status is pending until alice consents
+var hers = await connections.ListAsync(new ConnectionFilter { UserId = "alice" });
+await connections.DeleteAsync(connection.Id, userId: "alice");
+```
+
+Each call takes the user (`GetAsync` and `DeleteAsync` as `userId`, the others as the `UserId` of their options), and the SDK sends it as the owner and as `X-Stream-User-Id`, so the
+two never differ. Another user's connection is not found, the same as one that does not exist.
+An app's connection is reached by every call of a backend, one naming a user included, but
+`ListAsync` with a `UserId` lists only that user's. Leave the user out for the app's own
+connection, which any of its agents may be bound to. Connections are server side only.
 
 ## Working on this package
 

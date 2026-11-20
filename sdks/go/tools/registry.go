@@ -21,6 +21,9 @@ type Function struct {
 	// Parameters is the JSON Schema object describing the arguments. Every call's arguments
 	// are held to it before the function runs.
 	Parameters map[string]any
+	// DisplayTitle is what a call is doing, in words for the people in the conversation.
+	// Empty shows none.
+	DisplayTitle string
 	// Interruptible is whether the caller talking over the agent cancels a call.
 	Interruptible bool
 	// Timeout bounds one call. Zero leaves it to the session.

@@ -221,6 +221,21 @@ foreach ($watch as $event) {
 }
 ```
 
+When every argument is a string, `Tools::strings` writes the schema, from each argument's
+description by its name. Every argument is required unless you pass the list that is (the mobile
+SDKs' `AgentTool.strings` requires none by default):
+
+```php
+use GetStream\VisionAgents\Tools;
+
+$client->tools->register(
+    name: 'weather_lookup',
+    description: 'Look up the current weather for a location',
+    parameters: Tools::strings(['location' => 'a city or region']),
+    run: fn (array $args): string => weatherIn($args['location']),
+);
+```
+
 A tool runs while the session is watched, in its own fiber. What it throws is sent to the
 model as the tool's error. `register` also takes `displayTitle:`, what the reply's tool call
 shows, and `executor: 'client'` for a tool a person's device runs instead.
@@ -235,7 +250,6 @@ $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
     'properties' => ['flight_id' => ['type' => 'string']],
 ], function (ToolCallContext $toolCallContext, array $args): string {
-    $toolCallContext->update('checking seats');
     $toolCallContext->disallowInterruptions();
     return $bookings->book($args['flight_id'], user: $toolCallContext->user->id, key: $toolCallContext->id);
 }, timeout: 20, approval: 'Book flight {flight_id}?');
@@ -254,9 +268,7 @@ $agent->tools->register('book_flight', 'Book a flight for the caller', [
 
 `$toolCallContext->id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `sessionId`, `turnId`, `user` and `conversation`
-say where it came from. `update($text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say($text)` has it say `$text` as written,
-which a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going
+say where it came from. `disallowInterruptions()` keeps the call going
 from then on, for a write that must not stop halfway, and throws `CallNotHeldException` when
 the router had already cancelled it. A PHP fiber cannot be stopped from outside, so a call that
 was cancelled or ran out of time keeps running with `$toolCallContext->cancelled()` true, and
@@ -325,24 +337,25 @@ worker's server credential acting for the writer.
 
 ### Hosted tools
 
-A worker can also run an agent's tools for every session opened under it, including sessions
-opened from a browser. Hosting alone is enough to `run()`.
+A worker can also run the app's tools, registered once on the client for every agent, for any
+session, including sessions opened from a browser. The router offers a tool to a session only
+where a tool group of its agent's agent.yaml names it.
 
 ```php
-$agent = $client->agent('my-agent');
-$agent->tools->register('get_weather', 'The weather in a city', [
+$client->tools->register('get_weather', 'The weather in a city', [
     'type' => 'object',
     'properties' => ['city' => ['type' => 'string']],
 ], fn (array $args): string => weatherIn($args['city']));
 
-$dispatch->host($agent, toolTimeoutMs: 0); // 0: the router waits its default 30 seconds per tool call
-$dispatch->run();
+$client->runDispatch();
 ```
 
 Each call runs in its own fiber. A hosted tool takes the same `interruptible:`, `timeout:` and
 `approval:` (asked on a voice call), can take its call, and is cancelled when the router gives
-up on it. A refusal throws `HostingRefusedException`, and
-`$dispatch->hosting` lists the agent ids the router accepted.
+up on it; without its own `timeout:` the router waits 30 seconds for a call. A refusal throws
+`HostingRefusedException`. A worker that also answers calls or messages hosts the tools with
+`$dispatch->host($client)` before `run()`, and `$dispatch->hosting` says whether the router
+accepted them.
 
 ## Guests
 
@@ -444,6 +457,33 @@ is in micros too: `(string) Usd::micros($limit->limitMicros)` is `$20000.00`. Wo
 refuses is a `RouterException` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one
 end user's. `$client->teams` also has `list`, `removeLimit` and `usage`, and
 `$client->spendLimits` has `get`, `setNote`, `update` and `usage`.
+
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through (server side only). A backend creates one for a user, sends the user's browser to the
+provider's consent, and reads whether it connected:
+
+```php
+$connections = $client->connections;
+$connection = $connections->create(new NewConnection('linear', userId: 'ada'));
+$consent = $connections->authorize($connection->id, new AuthorizeOptions('https://app.example.com/settings', userId: 'ada'));
+// Open $consent->launchUrl in a popup from a page of the return URL's origin, and post it
+// $consent->handoffToken. The attempt ends at $consent->expiresAt.
+
+$connection = $connections->get($connection->id, userId: 'ada'); // status is pending until ada consents
+$hers = $connections->list(new ConnectionFilter(userId: 'ada'));
+$connections->delete($connection->id, userId: 'ada');
+```
+
+Each call takes the user as `userId`: a parameter of `get` and `delete`, a field of `NewConnection`,
+`AuthorizeOptions` and `ConnectionFilter` for the calls with more options, so a user id never takes the
+place of a label, return URL or connector. The SDK sends it as the owner and as
+`X-Stream-User-Id`, so the two never differ. Another user's connection is not found, the same as
+one that does not exist. An app's connection is reached by every call of a backend, one naming a
+user included, but `list` with a user lists only that user's. Leave the user out for the
+app's own connection, which any of its agents may be bound to; `new ConnectionFilter(connectorId: 'linear')`
+keeps one connector's. `Backend::onBehalfOf` is deprecated: pass `userId` to the call instead.
 
 ## Shapes and failures
 

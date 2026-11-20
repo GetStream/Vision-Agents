@@ -56,7 +56,6 @@ from .agent_review import AgentReview
 from .agent_role import AgentRole
 from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
-from .agent_tools import AgentTools
 from .agent_user import AgentUser
 from .agent_user_request import AgentUserRequest
 from .analyze_reviews_request import AnalyzeReviewsRequest
@@ -287,6 +286,9 @@ from .get_conversation_messages_response_200 import GetConversationMessagesRespo
 from .granularity import Granularity
 from .greeting import Greeting
 from .greeting_mode import GreetingMode
+from .guardrail_check import GuardrailCheck
+from .guardrail_check_kind import GuardrailCheckKind
+from .guardrail_check_mode import GuardrailCheckMode
 from .guest_user import GuestUser
 from .guest_user_custom import GuestUserCustom
 from .guest_user_request import GuestUserRequest
@@ -596,6 +598,11 @@ from .timeline_entry import TimelineEntry
 from .tool_approval_answer import ToolApprovalAnswer
 from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
+from .tool_call_frame_type import ToolCallFrameType
+from .tool_call_state import ToolCallState
+from .tool_call_status import ToolCallStatus
+from .tool_group import ToolGroup
+from .tool_loading import ToolLoading
 from .tool_result_command import ToolResultCommand
 from .tool_result_command_type import ToolResultCommandType
 from .tool_stats import ToolStats
@@ -716,7 +723,6 @@ __all__ = (
     "AgentRole",
     "AgentScheduling",
     "AgentStats",
-    "AgentTools",
     "AgentUser",
     "AgentUserRequest",
     "AnalyzeReviewsRequest",
@@ -941,6 +947,9 @@ __all__ = (
     "Granularity",
     "Greeting",
     "GreetingMode",
+    "GuardrailCheck",
+    "GuardrailCheckKind",
+    "GuardrailCheckMode",
     "GuestUser",
     "GuestUserCustom",
     "GuestUserRequest",
@@ -1250,6 +1259,11 @@ __all__ = (
     "ToolApprovalAnswer",
     "ToolApprovalCommand",
     "ToolApprovalCommandType",
+    "ToolCallFrameType",
+    "ToolCallState",
+    "ToolCallStatus",
+    "ToolGroup",
+    "ToolLoading",
     "ToolResultCommand",
     "ToolResultCommandType",
     "ToolStats",

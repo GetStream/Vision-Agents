@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/schema"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -86,38 +86,60 @@ func (s *Store) RecordActivity(ctx context.Context, deltas []ActivityDelta) erro
 	return nil
 }
 
+// activityUpsert is one customer_activity row as writeActivity upserts it.
+type activityUpsert struct {
+	bun.BaseModel `bun:"table:customer_activity,alias:act"`
+
+	OrganizationID  activityOrganization `bun:"organization_id,notnull"`
+	AppID           string               `bun:"app_id,pk"`
+	Area            string               `bun:"area,pk"`
+	Client          string               `bun:"client,pk"`
+	Day             string               `bun:"day,pk"`
+	Requests        int64                `bun:"requests,notnull"`
+	Refused         int64                `bun:"refused,notnull"`
+	LastRefusalCode string               `bun:"last_refusal_code,nullzero"`
+	LastRefusalAt   time.Time            `bun:"last_refusal_at,nullzero"`
+	FirstAt         time.Time            `bun:"first_at,notnull"`
+	LastAt          time.Time            `bun:"last_at,notnull"`
+}
+
+// activityOrganization is the organization a row is written with: the one its delta names, or,
+// when it names none, the one app_organizations holds for its app, or none.
+type activityOrganization struct {
+	named, appID string
+}
+
+// AppendQuery writes o as the SQL expression that picks it, so bun puts it in the row's VALUES.
+func (o activityOrganization) AppendQuery(gen schema.QueryGen, b []byte) ([]byte, error) {
+	return gen.AppendQuery(b, "COALESCE(NULLIF(?, ''), (SELECT organization_id FROM app_organizations WHERE app_id = ?), '')",
+		o.named, o.appID), nil
+}
+
 // writeActivity upserts the rows of keys in one statement.
 func writeActivity(ctx context.Context, tx bun.Tx, folded map[activityKey]*ActivityDelta, keys []activityKey) error {
-	rows := make([]string, 0, len(keys))
-	args := make([]any, 0, len(keys)*12)
+	rows := make([]activityUpsert, 0, len(keys))
 	for _, key := range keys {
 		delta := folded[key]
-		var refusedAt *time.Time
-		if !delta.LastRefusalAt.IsZero() {
-			refusedAt = &delta.LastRefusalAt
-		}
-		rows = append(rows, "(COALESCE(NULLIF(?, ''), (SELECT organization_id FROM app_organizations WHERE app_id = ?), ''),"+
-			" ?, ?, ?, ?::date, ?, ?, NULLIF(?, ''), ?::timestamptz, ?, ?)")
-		args = append(args, delta.OrganizationID, key.appID, key.appID, key.area, key.client, key.day,
-			delta.Requests, delta.Refused, delta.LastRefusalCode, refusedAt, delta.FirstAt, delta.LastAt)
+		rows = append(rows, activityUpsert{
+			OrganizationID: activityOrganization{delta.OrganizationID, key.appID},
+			AppID:          key.appID, Area: key.area, Client: key.client, Day: key.day,
+			Requests: delta.Requests, Refused: delta.Refused, LastRefusalCode: delta.LastRefusalCode,
+			LastRefusalAt: delta.LastRefusalAt, FirstAt: delta.FirstAt, LastAt: delta.LastAt,
+		})
 	}
-	query := `
-INSERT INTO customer_activity (organization_id, app_id, area, client, day, requests, refused,
-    last_refusal_code, last_refusal_at, first_at, last_at)
-VALUES ` + strings.Join(rows, ", ") + `
-ON CONFLICT (app_id, area, client, day) DO UPDATE SET
-    organization_id = EXCLUDED.organization_id,
-    requests = customer_activity.requests + EXCLUDED.requests,
-    refused = customer_activity.refused + EXCLUDED.refused,
-    last_refusal_code = CASE
-        WHEN customer_activity.last_refusal_at IS NULL
-            OR EXCLUDED.last_refusal_at >= customer_activity.last_refusal_at
+	_, err := tx.NewInsert().Model(&rows).
+		On("CONFLICT (app_id, area, client, day) DO UPDATE").
+		Set("organization_id = EXCLUDED.organization_id").
+		Set("requests = act.requests + EXCLUDED.requests").
+		Set("refused = act.refused + EXCLUDED.refused").
+		Set(`last_refusal_code = CASE
+        WHEN act.last_refusal_at IS NULL OR EXCLUDED.last_refusal_at >= act.last_refusal_at
         THEN EXCLUDED.last_refusal_code
-        ELSE customer_activity.last_refusal_code END,
-    last_refusal_at = GREATEST(customer_activity.last_refusal_at, EXCLUDED.last_refusal_at),
-    first_at = LEAST(customer_activity.first_at, EXCLUDED.first_at),
-    last_at = GREATEST(customer_activity.last_at, EXCLUDED.last_at)`
-	_, err := tx.ExecContext(ctx, query, args...)
+        ELSE act.last_refusal_code END`).
+		Set("last_refusal_at = GREATEST(act.last_refusal_at, EXCLUDED.last_refusal_at)").
+		Set("first_at = LEAST(act.first_at, EXCLUDED.first_at)").
+		Set("last_at = GREATEST(act.last_at, EXCLUDED.last_at)").
+		Exec(ctx)
 	return err
 }
 
