@@ -28,6 +28,7 @@ export {
   type TokenSource,
   type UserTokenOptions,
   type WebSocketConstructor,
+  type WebSocketInit,
   type WebSocketLike,
 } from "./backend.js";
 

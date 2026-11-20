@@ -98,7 +98,13 @@ export async function guestUser(
         ...(options.custom ? { custom: options.custom } : {}),
       },
     });
-    store?.write(JSON.stringify(minted));
+    try {
+      store?.write(JSON.stringify(minted));
+    } catch {
+      // Remembering it failed, but the router has minted it, and on a refresh spent the secret
+      // it replaced: the guest is handed back so this page can go on as them, rather than lost
+      // to a failure the person cannot do anything about.
+    }
     return minted;
   })();
   pending?.set(key, minting);
@@ -173,39 +179,108 @@ function expired(guest: Guest): boolean {
 }
 
 /**
- * The browser's own storage, cookie first.
+ * The browser's own storage, localStorage first.
  *
- * A cookie outlives a tab and is shared across them, which is what "the same visitor" means
- * to a person. localStorage is the fallback for a context that has no cookies, and neither is
- * available on a server, where this is undefined and nothing is remembered.
+ * Both outlive a tab and are shared across them, which is what "the same visitor" means to a
+ * person. localStorage is preferred because what is kept is the guest's token and the secret
+ * that renews it, and a cookie would send both with every request to the app's own site, into
+ * its server's and its CDN's logs. A guest remembered in a cookie by an earlier version is
+ * moved into localStorage the first time it is read, so it stays the same guest. The cookie is
+ * the fallback for a page whose localStorage is missing or blocked, and neither is available on
+ * a server, where this is undefined and nothing is remembered.
  */
 export function browserStore(): GuestStore | undefined {
   const document = (globalThis as { document?: { cookie: string } }).document;
-  if (document) {
-    let store = browserStores.get(document);
-    if (!store) {
-      store = cookieStore(document);
-      browserStores.set(document, store);
-    }
-    return store;
+  const storage = localStorageOf(globalThis as { localStorage?: Storage });
+  const host = storage ?? document;
+  if (!host) {
+    return undefined;
   }
-  const storage = (globalThis as { localStorage?: Storage }).localStorage;
-  if (storage) {
-    let store = browserStores.get(storage);
+  let store = browserStores.get(host);
+  if (!store) {
+    const cookie = document && typeof document.cookie === "string" ? cookieStore(document) : undefined;
+    store = storage ? localStore(storage, cookie) : cookie;
     if (!store) {
-      store = {
-        read: () => storage.getItem(GUEST_STORAGE_KEY) ?? undefined,
-        write: (value) => storage.setItem(GUEST_STORAGE_KEY, value),
-        clear: () => storage.removeItem(GUEST_STORAGE_KEY),
-      };
-      browserStores.set(storage, store);
+      return undefined;
     }
-    return store;
+    browserStores.set(host, store);
   }
-  return undefined;
+  return store;
+}
+
+/** The page's localStorage, or undefined where there is none or reading it throws, as a blocked one does. */
+function localStorageOf(global: { localStorage?: Storage }): Storage | undefined {
+  try {
+    const storage = global.localStorage;
+    // Touched once, because a sandboxed frame or blocked site data throws on use rather than on read.
+    storage?.getItem(GUEST_STORAGE_KEY);
+    return storage ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * localStorage, taking over a guest an earlier version left in `cookie`.
+ *
+ * The cookie only ever holds what localStorage could not: a guest from before, which a read
+ * moves across, or one whose write localStorage refused, as a full one does. Whatever is written
+ * successfully clears it, so a guest minted fresh for the next person at the keyboard never
+ * leaves the previous one's token behind in it, to be sent with every request and read back
+ * once localStorage is cleared.
+ */
+function localStore(storage: Storage, cookie: GuestStore | undefined): GuestStore {
+  const clearCookie = () => {
+    if (cookie?.read() !== undefined) {
+      cookie.clear();
+    }
+  };
+  return {
+    read() {
+      const held = storage.getItem(GUEST_STORAGE_KEY) ?? undefined;
+      if (held !== undefined || !cookie) {
+        return held;
+      }
+      const carried = cookie.read();
+      if (carried !== undefined) {
+        try {
+          storage.setItem(GUEST_STORAGE_KEY, carried);
+          cookie.clear();
+        } catch {
+          // localStorage refused it; the cookie goes on holding it rather than lose the guest.
+        }
+      }
+      return carried;
+    },
+    write(value) {
+      try {
+        storage.setItem(GUEST_STORAGE_KEY, value);
+      } catch (cause) {
+        // A full localStorage refuses the write after the router has already spent the
+        // refresh secret this guest replaced, so the guest is kept in the cookie instead, and
+        // the stale entry dropped so a read finds the cookie's rather than the spent one.
+        if (!cookie) {
+          throw cause;
+        }
+        storage.removeItem(GUEST_STORAGE_KEY);
+        cookie.write(value);
+        return;
+      }
+      clearCookie();
+    },
+    clear() {
+      storage.removeItem(GUEST_STORAGE_KEY);
+      clearCookie();
+    },
+  };
 }
 
 function cookieStore(document: { cookie: string }): GuestStore {
+  // Secure wherever the page is served over https, so the token never goes out in the clear;
+  // left off a localhost page served over http, which could not set a Secure cookie at all.
+  const secure = (globalThis as { location?: { protocol?: string } }).location?.protocol === "https:"
+    ? "; Secure"
+    : "";
   return {
     read() {
       for (const pair of document.cookie.split(";")) {
@@ -219,13 +294,12 @@ function cookieStore(document: { cookie: string }): GuestStore {
     write(value) {
       const expires = new Date(Date.now() + COOKIE_DAYS * 86_400_000).toUTCString();
       // SameSite=Lax rather than Strict: the guest has to survive arriving from a link,
-      // which is how most of them arrive. No Secure flag, because this has to work on a
-      // localhost page too, and what the cookie holds is a token scoped to one guest.
+      // which is how most of them arrive.
       document.cookie =
-        `${GUEST_STORAGE_KEY}=${encodeURIComponent(value)}; path=/; expires=${expires}; SameSite=Lax`;
+        `${GUEST_STORAGE_KEY}=${encodeURIComponent(value)}; path=/; expires=${expires}; SameSite=Lax${secure}`;
     },
     clear() {
-      document.cookie = `${GUEST_STORAGE_KEY}=; path=/; max-age=0; SameSite=Lax`;
+      document.cookie = `${GUEST_STORAGE_KEY}=; path=/; max-age=0; SameSite=Lax${secure}`;
     },
   };
 }
