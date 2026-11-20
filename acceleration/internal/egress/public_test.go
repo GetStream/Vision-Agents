@@ -444,7 +444,8 @@ func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
 	origin := s.startOrigin(closeAtReuse, 0, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
-	s.send(client, http.MethodGet, nil)
+	_, err := s.send(client, http.MethodGet, nil)
+	s.Require().NoError(err)
 
 	status, err := s.send(client, http.MethodGet, nil)
 
@@ -459,12 +460,13 @@ func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
 	origin := s.startOrigin(0, dropAfterRead, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
-	s.send(client, http.MethodGet, nil)
+	_, err := s.send(client, http.MethodGet, nil)
+	s.Require().NoError(err)
 
-	_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+	_, err = s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
 
 	s.Require().Error(err)
-	s.Equal(int32(2), origin.read.Load())
+	s.Equal(int32(2), origin.read.Load(), "the GET, and the POST once")
 }
 
 // GETs to an HTTP/1.1 origin share one connection.
@@ -555,9 +557,9 @@ type origin struct {
 	held                []net.Conn
 }
 
-// startOrigin starts an HTTP/1.1 origin, or an HTTP/2 one with http2. With reuse set, the first connection answers its first request and then does what
-// reuse names with the next request on it. With second set, the second request the origin gets is read in full and
-// the connection closed without an answer.
+// startOrigin starts an HTTP/1.1 origin, or an HTTP/2 one with http2. With reuse set, the first connection answers
+// its first request and then does what reuse names with the next request on it. With second set, the second
+// request the origin gets is read in full and the connection closed without an answer.
 func (s *EgressSuite) startOrigin(reuse, second int, http2 bool) *origin {
 	o := &origin{}
 	var first atomic.Bool
