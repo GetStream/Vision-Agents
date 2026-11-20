@@ -71,7 +71,7 @@ type ActivityArea struct {
 // ActivityStepDay is a step an organization reached and the day it first did.
 type ActivityStepDay struct {
 	Step          string `json:"step" enum:"dashboard_reads,agent_setup,workers,conversations,voice_video,phone_sms" doc:"The step, one of furthest_step's but none and steady_use."`
-	FirstAnswered string `json:"first_answered" format:"date" doc:"The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on."`
+	FirstAnswered string `json:"first_answered" format:"date" doc:"The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on."`
 }
 
 // ActivityMeter is what an organization's apps' work of one modality came to.
@@ -126,7 +126,7 @@ type OrganizationActivity struct {
 	OrganizationId string            `json:"organization_id" doc:"The organization."`
 	Since          time.Time         `json:"since" doc:"The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on."`
 	FurthestStep   ActivityStep      `json:"furthest_step"`
-	Steps          []ActivityStepDay `json:"steps" doc:"Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused."`
+	Steps          []ActivityStepDay `json:"steps" doc:"Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused."`
 	FirstSeen      *time.Time        `json:"first_seen,omitempty" doc:"When the first request of any area arrived, absent when none did."`
 	LastSeen       *time.Time        `json:"last_seen,omitempty" doc:"When the last request of any area arrived, absent when none did."`
 	Areas          []ActivityArea    `json:"areas" doc:"Every area and client the organization's apps made requests in, by area then client."`
@@ -167,6 +167,10 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 	if err != nil {
 		return nil, err
 	}
+	firsts, err := s.store.ActivityFirstAnswered(ctx, apps)
+	if err != nil {
+		return nil, err
+	}
 	days, err := s.store.ActivityDays(ctx, apps, since, []string{activity.AreaConversations, activity.AreaModelAPI})
 	if err != nil {
 		return nil, err
@@ -192,7 +196,7 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		OrganizationId: request.OrgID,
 		Since:          since.UTC(),
 		FurthestStep:   furthestStep(areas, days),
-		Steps:          reachedSteps(areas),
+		Steps:          reachedSteps(firsts),
 		Areas:          make([]ActivityArea, 0, len(areas)),
 		Meters:         make([]ActivityMeter, 0, len(uses)),
 		Shards:         s.store.MeterShards(),
@@ -268,9 +272,9 @@ func furthestStep(areas []store.ActivityArea, days int) ActivityStep {
 	return activityStepNone
 }
 
-// reachedSteps is every step areas reached, with the day each first had a request answered.
-func reachedSteps(areas []store.ActivityArea) []ActivityStepDay {
-	reached := activity.ReachedSteps(areas)
+// reachedSteps is every step first has a day for, with the day each first had a request answered.
+func reachedSteps(first []store.ActivityAreaDay) []ActivityStepDay {
+	reached := activity.ReachedSteps(first)
 	steps := make([]ActivityStepDay, 0, len(reached))
 	for _, step := range reached {
 		steps = append(steps, ActivityStepDay{Step: step.Step, FirstAnswered: step.FirstAnswered.Format(time.DateOnly)})

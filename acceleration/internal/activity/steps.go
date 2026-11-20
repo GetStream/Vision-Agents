@@ -35,23 +35,16 @@ type ReachedStep struct {
 	FirstAnswered time.Time
 }
 
-// ReachedSteps are the steps of Steps that areas reached, in the order of Steps, each with the
-// earliest day any client of its area had a request answered. As in FurthestStep, an area
-// whose every request was refused was not reached.
-func ReachedSteps(areas []store.ActivityArea) []ReachedStep {
-	firsts := make(map[string]time.Time)
-	for _, area := range areas {
-		if area.FirstAnswered.IsZero() {
-			continue
-		}
-		if held, found := firsts[area.Area]; !found || area.FirstAnswered.Before(held) {
-			firsts[area.Area] = area.FirstAnswered
-		}
-	}
+// ReachedSteps are the steps of Steps that first has a day for, in the order of Steps, each with
+// that day. The areas of first that are no step are left out.
+func ReachedSteps(first []store.ActivityAreaDay) []ReachedStep {
 	var reached []ReachedStep
 	for _, step := range Steps {
-		if day, found := firsts[step]; found {
-			reached = append(reached, ReachedStep{Step: step, FirstAnswered: day})
+		for _, area := range first {
+			if area.Area == step {
+				reached = append(reached, ReachedStep{Step: step, FirstAnswered: area.Day})
+				break
+			}
 		}
 	}
 	return reached

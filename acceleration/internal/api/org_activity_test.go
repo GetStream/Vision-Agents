@@ -271,17 +271,25 @@ func (s *OrganizationActivitySuite) TestStepsListEveryStepAnsweredWithItsFirstDa
 	}, answer.Steps)
 }
 
-// Defect: a step's first day read from before since, so a read of the last days says a step
-// was first answered before them.
-func (s *OrganizationActivitySuite) TestAStepsFirstDayIsReadFromSinceOn() {
+// Defect: a step's first day, or the step itself, bounded by since, so an organization older than
+// the window reads as first answered inside it, or a step it only took before the window is lost.
+func (s *OrganizationActivitySuite) TestAStepsFirstDayAndTheStepsListedReachBeyondSince() {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
+	ago := func(n int) time.Time { return today.Add(-time.Duration(n) * 24 * time.Hour) }
 	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
-		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, today.Add(-5*24*time.Hour), 1, 0),
-		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, today.Add(-24*time.Hour), 1, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, ago(45), 1, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, ago(1), 1, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, ago(45), 1, 0),
 	}))
 
-	s.Equal([]ActivityStepDay{{Step: activity.AreaAgentSetup, FirstAnswered: today.Add(-24 * time.Hour).Format(time.DateOnly)}},
-		s.readAt(today.Add(-2*24*time.Hour)).Steps)
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Equal([]ActivityStepDay{
+		{Step: activity.AreaAgentSetup, FirstAnswered: ago(45).Format(time.DateOnly)},
+		{Step: activity.AreaConversations, FirstAnswered: ago(45).Format(time.DateOnly)},
+	}, answer.Steps)
+	s.Equal(activityStepConversations, answer.FurthestStep, "the window still decides the furthest step")
+	s.Equal([]string{activity.AreaConversations}, areaNames(answer), "the window still decides the areas")
 }
 
 // Defect: an app of another organization whose id equals this organization's id is summed into
