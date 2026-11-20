@@ -1,7 +1,9 @@
 // Package alerts checks named conditions in the process that can see them, and sends one
 // Sentry event per condition that holds at most once per interval, which Sentry's alert rules
 // route by the usage_alert tag. Without a Sentry DSN an alert is only logged, at ERROR, which
-// it always is too.
+// it always is too. Every check also sets the gauge router_alert_holds{alert,level} to what
+// the condition holds at that check, whatever the limit sends, so a monitor outside Sentry
+// can page on the level page ones.
 package alerts
 
 import (
@@ -14,7 +16,19 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
+
+// holds is what each condition held at its last check: 1 or 0 for a Check, the number of
+// items for Items. It is one gauge per process, which each loop sets for its own conditions,
+// so the router's two loops must not share a name. An item (an app, a model) is no label: it
+// would add a series per customer.
+var holds = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "router_alert_holds",
+	Help: "What each usage alert held at its last check: 1 or 0, or the number of items it holds for, " +
+		"whether or not the limit let its Sentry event out, by alert and level (page or warn).",
+}, []string{"alert", "level"})
 
 // Level is how loud an alert is.
 type Level string
@@ -126,7 +140,8 @@ func (l *Loop) Run(ctx context.Context) {
 	}
 }
 
-// check sends each condition that holds and was not sent within the limit.
+// check sets each condition's gauge and sends each condition that holds and was not sent
+// within the limit.
 func (l *Loop) check() {
 	now := l.options.Now()
 	for _, condition := range l.conditions {
@@ -134,8 +149,13 @@ func (l *Loop) check() {
 			l.checkItems(now, condition)
 			continue
 		}
-		holds, extra := condition.Check(now)
-		if !holds {
+		held, extra := condition.Check(now)
+		value := 0.0
+		if held {
+			value = 1
+		}
+		holds.WithLabelValues(condition.Name, string(condition.Level)).Set(value)
+		if !held {
 			continue
 		}
 		if last, ok := l.sent[condition.Name]; ok && now.Sub(last) < l.options.Limit {
@@ -150,6 +170,7 @@ func (l *Loop) check() {
 // order so the events of one check go out the same way every time.
 func (l *Loop) checkItems(now time.Time, condition Condition) {
 	held := condition.Items(now)
+	holds.WithLabelValues(condition.Name, string(condition.Level)).Set(float64(len(held)))
 	for _, item := range slices.Sorted(maps.Keys(held)) {
 		key := condition.Name + ":" + item
 		if last, ok := l.sent[key]; ok && now.Sub(last) < l.options.Limit {

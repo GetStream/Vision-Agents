@@ -24,7 +24,13 @@ const meteringAlertEvery = time.Hour
 func startMeteringAlerts(ctx context.Context, source, shard string, logger *slog.Logger) (stop func()) {
 	return startAlerts(ctx, alerts.New(alerts.Options{
 		Logger: logger, Source: source, Tags: map[string]string{"shard": shard}, Every: usageAlertEvery, Limit: meteringAlertEvery,
-	}, slices.Concat(routing.MeteringAlerts(meteringAlertEvery), mem0.Alerts(meteringAlertEvery), keypool.Alerts(meteringAlertEvery))...))
+	}, meteringConditions()...))
+}
+
+// meteringConditions are the metering loop's conditions. Their names are apart from the usage
+// loop's: both loops set the process's one router_alert_holds gauge, by name.
+func meteringConditions() []alerts.Condition {
+	return slices.Concat(routing.MeteringAlerts(meteringAlertEvery), mem0.Alerts(meteringAlertEvery), keypool.Alerts(meteringAlertEvery))
 }
 
 // startAlerts runs the loop until the returned function stops it, which waits for its last

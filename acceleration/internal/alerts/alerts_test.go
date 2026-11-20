@@ -3,6 +3,7 @@ package alerts
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"maps"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -360,4 +362,110 @@ func (s *AlertsSuite) TestWithoutADescriptionTheMessagesAreAsTheyWere() {
 	s.Require().Len(events, 2)
 	s.Equal("usage alert: missing a", events[0].Message)
 	s.Equal("usage alert: lost", events[1].Message)
+}
+
+// What a minute's limit lets out of a condition and an item condition that hold at every 15 s
+// tick for two minutes, two items of which one comes and goes, and one that never holds. The
+// expected events are what the loop sent before it kept a gauge.
+func (s *AlertsSuite) TestTheEventsSentAndTheirLimitAreAsTheyWere() {
+	start := time.Now()
+	now := start
+	ticks := 0
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	},
+		Condition{Name: "lost", Level: Page, Check: func(time.Time) (bool, map[string]any) { return true, nil }},
+		Condition{Name: "quiet", Level: Page, Check: func(time.Time) (bool, map[string]any) { return false, nil }},
+		Condition{Name: "missing", Level: Warn, Items: func(time.Time) map[string]map[string]any {
+			held := map[string]map[string]any{"a": nil}
+			if ticks%2 == 1 {
+				held["b"] = nil
+			}
+			return held
+		}},
+	)
+	for ; ticks <= 8; ticks++ {
+		now = start.Add(time.Duration(ticks) * 15 * time.Second)
+		loop.check()
+	}
+
+	var sent []string
+	for _, event := range s.sent() {
+		sent = append(sent, event.Fingerprint...)
+	}
+	s.Equal([]string{
+		"usage_alert:lost", "usage_missing:a", // 0 s
+		"usage_missing:b",                     // 15 s
+		"usage_alert:lost", "usage_missing:a", // 60 s
+		"usage_missing:b",                     // 75 s
+		"usage_alert:lost", "usage_missing:a", // 120 s
+	}, sent)
+}
+
+// clocked is a loop over conditions with a minute's limit, on a clock the test moves.
+func (s *AlertsSuite) clocked(now *time.Time, conditions ...Condition) *Loop {
+	return New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return *now },
+	}, conditions...)
+}
+
+// gauge reads the holds gauge of an alert at a level. Each test names its alerts afresh: the
+// gauge is the process's, which every test's loop sets.
+func gauge(name string, level Level) float64 {
+	return testutil.ToFloat64(holds.WithLabelValues(name, string(level)))
+}
+
+func (s *AlertsSuite) TestTheGaugeIsWhatTheConditionHoldsAtEveryCheckWhateverTheLimitSends() {
+	name := "held_" + rand.Text()
+	var held atomic.Bool
+	start := time.Now()
+	now := start
+	loop := s.clocked(&now, Condition{Name: name, Level: Page, Check: func(time.Time) (bool, map[string]any) { return held.Load(), nil }})
+
+	held.Store(true)
+	s.ticks(loop, &now, start, 0)
+	s.Equal(1.0, gauge(name, Page))
+	s.ticks(loop, &now, start, 15*time.Second)
+	s.Equal(1.0, gauge(name, Page), "still held, though the limit sends nothing")
+	held.Store(false)
+	s.ticks(loop, &now, start, 30*time.Second)
+	s.Equal(0.0, gauge(name, Page), "no longer held")
+	held.Store(true)
+	s.ticks(loop, &now, start, 45*time.Second)
+	s.Equal(1.0, gauge(name, Page), "held again within the limit")
+
+	s.Len(s.sent(), 1, "the limit let one event out")
+	s.Equal(0.0, gauge(name, Warn), "the series is the condition's level alone")
+}
+
+func (s *AlertsSuite) TestAWarningSetsTheGaugeOfItsLevel() {
+	name := "warned_" + rand.Text()
+	now := time.Now()
+	loop := s.clocked(&now, Condition{Name: name, Level: Warn, Check: func(time.Time) (bool, map[string]any) { return true, nil }})
+
+	loop.check()
+
+	s.Equal(1.0, gauge(name, Warn))
+	s.Equal(0.0, gauge(name, Page))
+}
+
+func (s *AlertsSuite) TestTheGaugeOfAnItemConditionIsTheNumberOfItemsItHoldsFor() {
+	name := "items_" + rand.Text()
+	held := map[string]map[string]any{"a": nil, "b": nil, "c": nil}
+	start := time.Now()
+	now := start
+	loop := s.clocked(&now, Condition{Name: name, Level: Page, Items: func(time.Time) map[string]map[string]any { return held }})
+
+	s.ticks(loop, &now, start, 0)
+	s.Equal(3.0, gauge(name, Page))
+	delete(held, "c")
+	s.ticks(loop, &now, start, 15*time.Second)
+	s.Equal(2.0, gauge(name, Page), "the items still held, though the limit sends none of them")
+	held = nil
+	s.ticks(loop, &now, start, 30*time.Second)
+	s.Equal(0.0, gauge(name, Page), "no item held")
+
+	s.Len(s.sent(), 3, "the limit let each item out once")
 }
