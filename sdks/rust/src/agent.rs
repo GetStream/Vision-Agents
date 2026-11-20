@@ -3,7 +3,6 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use serde_json::{Map, Value};
-use tokio::sync::Mutex;
 
 use crate::client::Client;
 use crate::dispatch::{Dispatch, InboundCall, InboundMessage};
@@ -53,17 +52,14 @@ pub struct Agent {
     watch: WatchOptions,
     client: OnceLock<Client>,
     stream: OnceLock<StreamApp>,
-    /// Whether the agent's directory has been looked for and stored, which happens once.
-    ensured: Mutex<bool>,
 }
 
 impl Agent {
     /// An agent run from the config stored under `config`.
     ///
     /// If a directory of that name is found (`examples/*/<config>`, `agents/<config>` or
-    /// `<config>`, from the working directory up), it is stored before the first session
-    /// opens, and only when it changed since `.agent_sync` was written. Anything set here as
-    /// well wins over what the config says, for these sessions only.
+    /// `<config>`, from the working directory up), [`Agent::sync`] stores it; a session never
+    /// does. Anything set here as well wins over what the config says, for these sessions only.
     pub fn new(config: impl Into<String>) -> Self {
         let config = config.into();
         let mut agent = Agent::named(config.clone());
@@ -98,7 +94,6 @@ impl Agent {
             watch: WatchOptions::default(),
             client: OnceLock::new(),
             stream: OnceLock::new(),
-            ensured: Mutex::new(false),
         }
     }
 
@@ -416,20 +411,27 @@ impl Agent {
     /// everything in it, and `.agent_sync` records it, so a sync of a directory nothing has
     /// touched only reads the stored config back. An agent spelled out in code has its
     /// skills and config written by name, editing whatever is already stored under it.
-    /// Server side only.
+    /// Nothing syncs on its own: call this before the agent takes calls. Server side only.
     pub async fn sync(&self) -> Result<types::AgentConfig> {
         if let Some(harness) = &self.harness {
             harness.validate()?;
         }
-        match &self.folder {
-            Some(folder) => self.sync_folder(folder).await,
+        if let Some(folder) = &self.folder {
+            return self.sync_folder(folder).await;
+        }
+        let found = self.config.as_ref().and_then(|config| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|here| Folder::find(config, here))
+        });
+        match found {
+            Some(path) => self.sync_folder(&Folder::load(path)?).await,
             None => self.sync_config().await,
         }
     }
 
     /// Renders the agent's configuration into a session and opens it.
     async fn open(&self, overrides: types::CreateSessionRequest) -> Result<Session> {
-        self.ensure().await?;
         let request = types::CreateSessionRequest {
             user_id: Some(self.user_id.clone()),
             user_name: Some(self.name.clone()),
@@ -446,31 +448,20 @@ impl Agent {
             self.watch,
         )
         .await
-    }
-
-    /// Stores the agent's directory before its first session, if it has one and it changed.
-    async fn ensure(&self) -> Result<()> {
-        let mut ensured = self.ensured.lock().await;
-        if *ensured {
-            return Ok(());
-        }
-        if let Some(folder) = &self.folder {
-            if folder::read_stamp(&folder.path) != self.folder_hash(folder) {
-                self.sync_folder(folder).await?;
+        .map_err(|error| match error {
+            // The router answers a session 404 only when no config is stored under the name.
+            Error::Router(mut failure)
+                if failure.operation == "createSession"
+                    && failure.status == 404
+                    && self.config.is_some() =>
+            {
+                failure
+                    .message
+                    .push_str("; store it with agent.sync() first");
+                Error::Router(failure)
             }
-        } else if let Some(config) = &self.config {
-            let found = std::env::current_dir()
-                .ok()
-                .and_then(|here| Folder::find(config, here));
-            if let Some(path) = found {
-                let folder = Folder::load(path)?;
-                if folder::read_stamp(&folder.path) != self.folder_hash(&folder) {
-                    self.sync_folder(&folder).await?;
-                }
-            }
-        }
-        *ensured = true;
-        Ok(())
+            other => other,
+        })
     }
 
     fn fold(&mut self, folder: Folder) {
@@ -784,6 +775,8 @@ async fn connector_bindings(
             policy: None,
             require_approval: None,
             sandbox: None,
+            loading: None,
+            output_retention: None,
             timeout_ms: None,
         });
     }

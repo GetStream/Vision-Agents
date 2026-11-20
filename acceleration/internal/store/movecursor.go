@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // MoveCursor is where a copy of an app from another deployment stands here.
@@ -17,31 +19,39 @@ type MoveCursor struct {
 	ReadAt time.Time
 }
 
+// dataMoveCursor is MoveCursor as data_move_cursors holds it.
+type dataMoveCursor struct {
+	bun.BaseModel `bun:"table:data_move_cursors,alias:dmc"`
+
+	CustomerID string    `bun:"customer_id,pk"`
+	Source     string    `bun:"source,pk"`
+	Cursor     *int64    `bun:"cursor"`
+	ReadAt     time.Time `bun:"read_at,notnull"`
+}
+
 // MoveCursor answers where the copy of a customer from a source stands here, nil when none was
 // ever started.
 func (s *Store) MoveCursor(ctx context.Context, customerID, source string) (*MoveCursor, error) {
-	var saved MoveCursor
-	err := s.db.QueryRowContext(ctx, "SELECT cursor, read_at FROM data_move_cursors WHERE customer_id = ? AND source = ?",
-		customerID, source).Scan(&saved.Cursor, &saved.ReadAt)
+	var saved dataMoveCursor
+	err := s.db.NewSelect().Model(&saved).Where("customer_id = ? AND source = ?", customerID, source).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: move cursor: %w", err)
 	}
-	return &saved, nil
+	return &MoveCursor{Cursor: saved.Cursor, ReadAt: saved.ReadAt}, nil
 }
 
 // SaveMoveCursor records where the copy of a customer from a source stands here: the cursor the
 // source was read up to at readAt, or nil for a copy that has started and not finished. A cursor
 // never moves back: of two runs at once, the one that read less cannot undo the other.
 func (s *Store) SaveMoveCursor(ctx context.Context, customerID, source string, cursor *int64, readAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO data_move_cursors (customer_id, source, cursor, read_at) VALUES (?, ?, ?, ?)
-ON CONFLICT (customer_id, source) DO UPDATE SET
-  cursor = CASE WHEN EXCLUDED.cursor IS NULL THEN NULL ELSE GREATEST(data_move_cursors.cursor, EXCLUDED.cursor) END,
-  read_at = CASE WHEN EXCLUDED.cursor IS NULL THEN EXCLUDED.read_at ELSE GREATEST(data_move_cursors.read_at, EXCLUDED.read_at) END`,
-		customerID, source, cursor, readAt)
+	_, err := s.db.NewInsert().Model(&dataMoveCursor{CustomerID: customerID, Source: source, Cursor: cursor, ReadAt: readAt}).
+		On("CONFLICT (customer_id, source) DO UPDATE").
+		Set("cursor = CASE WHEN EXCLUDED.cursor IS NULL THEN NULL ELSE GREATEST(dmc.cursor, EXCLUDED.cursor) END").
+		Set("read_at = CASE WHEN EXCLUDED.cursor IS NULL THEN EXCLUDED.read_at ELSE GREATEST(dmc.read_at, EXCLUDED.read_at) END").
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save move cursor: %w", err)
 	}

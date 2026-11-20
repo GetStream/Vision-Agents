@@ -20,6 +20,18 @@ final readonly class ToolStats
         public int $failed,
         public float $p99Ms,
         public string $tool,
+        // Turns a session took before its first call, on average: 0 is a call on the first turn. Null on the row over...
+        public float $avgTurnsBeforeUse,
+        // What the tool's whole definition, its name, description and schema, costs every turn that carries it, estim...
+        public int $definitionTokens,
+        // How the latest call had the tool offered: full, summary or deferred. Empty when no call recorded it, as cal...
+        public string $loading,
+        // Sessions that called it, out of the window's sessions, from 0 to 1. Null when no session took a turn.
+        public float $sessionShare,
+        // Sessions that called it at least once.
+        public int $sessions,
+        // What its definition costs offered as a summary. Null unless its loading is summary.
+        public int $summaryTokens,
     ) {
     }
 
@@ -35,6 +47,12 @@ final readonly class ToolStats
             failed: Json::int($data, 'failed'),
             p99Ms: Json::float($data, 'p99_ms'),
             tool: Json::string($data, 'tool'),
+            avgTurnsBeforeUse: Json::float($data, 'avg_turns_before_use'),
+            definitionTokens: Json::int($data, 'definition_tokens'),
+            loading: Json::string($data, 'loading'),
+            sessionShare: Json::float($data, 'session_share'),
+            sessions: Json::int($data, 'sessions'),
+            summaryTokens: Json::int($data, 'summary_tokens'),
         );
     }
 
@@ -52,6 +70,12 @@ final readonly class ToolStats
         $out['failed'] = $this->failed;
         $out['p99_ms'] = $this->p99Ms;
         $out['tool'] = $this->tool;
+        $out['avg_turns_before_use'] = $this->avgTurnsBeforeUse;
+        $out['definition_tokens'] = $this->definitionTokens;
+        $out['loading'] = $this->loading;
+        $out['session_share'] = $this->sessionShare;
+        $out['sessions'] = $this->sessions;
+        $out['summary_tokens'] = $this->summaryTokens;
         return $out;
     }
 }

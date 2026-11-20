@@ -142,9 +142,12 @@ func boundShipping(ctx context.Context, tx bun.Tx) error {
 func (s *Store) Unshipped(ctx context.Context) (int64, time.Duration, error) {
 	var rows int64
 	var oldest float64
-	err := s.shard.QueryRowContext(ctx,
-		"SELECT count(*), COALESCE(EXTRACT(EPOCH FROM now() - min(started_at)), 0)::float8 FROM requests WHERE to_ship AND organization_id <> ''",
-	).Scan(&rows, &oldest)
+	err := s.shard.NewSelect().Model((*Request)(nil)).
+		ColumnExpr("count(*)").
+		ColumnExpr("COALESCE(EXTRACT(EPOCH FROM now() - min(r.started_at)), 0)::float8").
+		Where("r.to_ship").
+		Where("r.organization_id <> ''").
+		Scan(ctx, &rows, &oldest)
 	if err != nil {
 		return 0, 0, stack.Wrap(fmt.Errorf("store: unshipped: %w", err))
 	}
@@ -168,21 +171,27 @@ func (s *Store) Reship(ctx context.Context, since time.Time, rejected bool) (int
 	if !last.Valid {
 		return 0, nil
 	}
-	filter, args := "shipped_at IS NOT NULL AND shipped_at < ?", []any{started}
-	if rejected {
-		filter, args = "ship_error <> ''", nil
-	}
 	var queued int64
 	for {
+		batch := s.shard.NewSelect().Model((*Request)(nil)).
+			Column("r.id").
+			Where("r.id > ? AND r.started_at >= ?", last.Int64, since).
+			Where("r.usage_id IS NOT NULL AND NOT r.to_ship").
+			Order("r.id").
+			Limit(reshipBatch)
+		if rejected {
+			batch.Where("r.ship_error <> ''")
+		} else {
+			batch.Where("r.shipped_at IS NOT NULL AND r.shipped_at < ?", started)
+		}
 		var ids []int64
-		err := s.shard.NewRaw(`
-WITH batch AS (
-    SELECT id FROM requests
-    WHERE id > ? AND started_at >= ? AND usage_id IS NOT NULL AND NOT to_ship AND `+filter+`
-    ORDER BY id LIMIT ?
-)
-UPDATE requests AS r SET to_ship = true, ship_error = '' FROM batch WHERE r.id = batch.id
-RETURNING r.id`, append(append([]any{last.Int64, since}, args...), reshipBatch)...).Scan(ctx, &ids)
+		err := s.shard.NewUpdate().With("batch", batch).Model((*Request)(nil)).
+			TableExpr("batch").
+			Set("to_ship = true").
+			Set("ship_error = ''").
+			Where("r.id = batch.id").
+			Returning("r.id").
+			Scan(ctx, &ids)
 		if err != nil {
 			return queued, stack.Wrap(fmt.Errorf("store: reship: %w", err))
 		}

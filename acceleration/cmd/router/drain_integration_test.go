@@ -393,6 +393,100 @@ func (s *DrainSuite) TestADrainingRouterStopsSayingItTakesTrunkCallsOver() {
 	}
 }
 
+// A draining router's sessions go on carrying hosted calls to the node their worker moved to,
+// so it goes on hearing the replies; and its peers route work to its still-connected workers
+// until their offers lapse, so it goes on taking that work.
+func (s *DrainSuite) TestADrainingRouterStillHearsTheRepliesToWorkItCarriedElsewhere() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	chat := chattest.NewServer(s.T())
+	setDevKEK(s.T(), "drain-key")
+	settings := config.Defaults()
+	settings.Postgres.DSN = s.dsn
+	settings.Auth.Mode = string(auth.NoAuth)
+	settings.Redis.Addr = address
+	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
+	settings.Stream.AppID = 1
+	settings.Shutdown.Drain = time.Minute
+	for _, address := range []*string{&settings.Addr, &settings.Node.Listen} {
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		s.Require().NoError(err)
+		*address = free.Addr().String()
+		s.Require().NoError(free.Close())
+	}
+	// An episode card held in flight is what keeps the router draining.
+	agent := store.AgentConfig{CustomerID: "customer-" + uuid.NewString(), Name: "chat-" + uuid.NewString(),
+		Mode: store.AgentModeText, LLM: "llm-flow", EpisodeCards: true}
+	s.Require().NoError(s.db.CreateAgentConfig(s.ctx, &agent))
+	waiting, release := chat.Hold("/message")
+	settings.Node.Advertise = settings.Node.Listen
+	hearing := func() bool {
+		// The node's hosted requests and hosted replies channels.
+		channels, err := client.Do(s.ctx, client.B().PubsubChannels().Pattern("*:hosted:*:"+settings.Node.Advertise).Build()).AsStrSlice()
+		s.NoError(err)
+		return len(channels) == 2
+	}
+
+	stopped := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = run(settings, slog.New(slog.DiscardHandler))
+		close(stopped)
+	}()
+	s.T().Cleanup(func() {
+		release()
+		if isClosed(stopped) {
+			return
+		}
+		s.NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+		select {
+		case <-stopped:
+		case <-time.After(30 * time.Second):
+			s.Fail("the router did not stop on SIGTERM")
+		}
+	})
+	s.Require().Eventually(func() bool { return serving(settings.Addr) }, 15*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(hearing, 10*time.Second, 20*time.Millisecond, "the running router hears no hosted requests or replies")
+	body := fmt.Sprintf(`{"type":"message.new","app_id":1,"channel_id":%q,"channel_type":"agent","created_at":%q,
+"channel_custom":{"agent_config_id":%q},"channel":{"members":[{"user_id":"anya_123"}]},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
+		"chat-"+uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano), agent.ID, "message-"+uuid.NewString())
+	mac := hmac.New(sha256.New, []byte(settings.Stream.APISecret))
+	mac.Write([]byte(body))
+	request, err := http.NewRequest(http.MethodPost, "http://"+settings.Addr+chathooks.MessageHookPath, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Signature", hex.EncodeToString(mac.Sum(nil)))
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	select {
+	case <-waiting:
+	case <-time.After(15 * time.Second):
+		s.Require().Fail("the router never wrote the card")
+	}
+
+	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+	s.Require().Eventually(func() bool { return !serving(settings.Addr) }, 5*time.Second, 20*time.Millisecond,
+		"the router never started draining")
+	s.Require().Never(func() bool { return !hearing() }, time.Second, 20*time.Millisecond,
+		"a draining router stopped hearing hosted requests or the replies its sessions still wait on")
+	s.Require().True(serving(settings.Node.Listen), "the drain ended before the check, so stopping alone withdrew the router")
+	release()
+
+	select {
+	case <-stopped:
+		s.Require().NoError(runErr)
+	case <-time.After(30 * time.Second):
+		s.Require().Fail("the drain did not end with the card")
+	}
+}
+
 // thread links a thread channel of customer's, on a connector the router has no scheme for.
 func (s *DrainSuite) thread(customer string) store.ChannelThread {
 	thread := store.ChannelThread{

@@ -99,9 +99,35 @@ public sealed class VisionAgentsClient : IDisposable
     internal HttpClient Http => _http;
 
     /// <summary>
+    /// The app's tools, registered once for every agent and run by <see cref="RunDispatchAsync"/>.
+    /// An agent is offered one only where a tool group of its agent.yaml names it.
+    /// </summary>
+    public Tools Tools { get; private init; } = new();
+
+    /// <summary>
     /// An agent addressed by the config it is stored under. No request is made.
     /// </summary>
     public Agent Agent(string config) => new(new AgentOptions { Config = config, Client = this });
+
+    /// <summary>
+    /// Runs the app's <see cref="Tools"/> for every session they are offered to, whoever opened
+    /// it, until <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    /// <remarks>
+    /// A tool's own timeout is how long the router waits for one of its calls; without one it
+    /// waits 30 seconds. A worker that also answers calls or messages hosts the tools with
+    /// <see cref="Dispatch.Host"/> instead.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var client = new VisionAgentsClient();
+    /// client.Tools.Register&lt;Weather, string&gt;("get_weather", "Get the current weather for a city",
+    ///     (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));
+    /// await client.RunDispatchAsync();
+    /// </code>
+    /// </example>
+    public Task RunDispatchAsync(CancellationToken cancellationToken = default) =>
+        new Dispatch(new DispatchOptions { Client = this }).Host(this).RunAsync(cancellationToken);
 
     /// <summary>
     /// A client acting for one end user, holding the token that proves it.
@@ -121,14 +147,14 @@ public sealed class VisionAgentsClient : IDisposable
         {
             throw new ConfigurationException($"there is no token for {userId} to hold");
         }
-        return new VisionAgentsClient(_http, Backend.As(userId, token), owns: false);
+        return new VisionAgentsClient(_http, Backend.As(userId, token), owns: false) { Tools = Tools };
     }
 
     /// <summary>
     /// This client's own credential, speaking for an end user: their conversations are
     /// reached, and what is written there is still the server's.
     /// </summary>
-    internal VisionAgentsClient ActingFor(string userId) => new(_http, Backend.Acting(userId), owns: false);
+    internal VisionAgentsClient ActingFor(string userId) => new(_http, Backend.Acting(userId), owns: false) { Tools = Tools };
 
     /// <summary>A client acting for a guest, which is what their conversations belong to.</summary>
     public VisionAgentsClient AsGuest(GuestUser guest) => AsUser(guest.Id, guest.Token);

@@ -67,9 +67,10 @@ class Policy:
                 records none of it; a duration such as 12h or 30d (at least 1h, at most 3650d) keeps it that long after the call
                 and then takes it out, within minutes. The item stays, with its tool name, its time, its call id and whether it
                 failed, so a session's items read in the same order and tool usage still counts the call. Left out, or empty, it
-                is kept as long as the session. The shortest of the organization's, the app's and the agent config's
-                tools.output_retention applies, so an agent can shorten it and never lengthen it. It applies to tool calls
-                recorded after it is set. Deleting a session deletes all of it at once. Example: 30d.
+                is kept as long as the session. The shortest of the organization's, the app's and the output_retention of the
+                agent config's tool group or connector binding the tool is in applies, so an agent can shorten it and never
+                lengthen it. It applies to tool calls recorded after it is set. Deleting a session deletes all of it at once.
+                Example: 30d.
     """
 
     allowed_models: list[str] | Unset = UNSET

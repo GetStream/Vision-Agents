@@ -671,6 +671,15 @@ class Agent:
         )
         self._warmed_up = True
 
+    async def sync(self) -> None:
+        """Store the agent's directory as the config its sessions run from.
+
+        Nothing syncs on its own: a session runs on whatever config is stored, so call
+        this before the agent takes calls, e.g. as a deploy step. Does nothing when the
+        agent's LLM keeps no config on a router.
+        """
+        await self.llm.sync()
+
     @asynccontextmanager
     async def join(
         self,

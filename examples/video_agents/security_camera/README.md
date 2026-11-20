@@ -90,10 +90,11 @@ Roboflow, Settings, API.
 ```bash
 cd examples/video_agents/security_camera
 uv sync
-uv run security_camera.py run
+uv run security_camera.py
 ```
 
-`run` prints a call URL and opens the demo page on it. Turn the camera on and try:
+It stores this directory with `agent.sync()`, then prints a call URL and opens the demo page
+on it. Turn the camera on and try:
 
 1. Put a box in view. The agent says a package appeared.
 2. Face the camera and say "remember me as Sam". Leave, come back: it greets Sam.

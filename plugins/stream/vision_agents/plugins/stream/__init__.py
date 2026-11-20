@@ -37,7 +37,7 @@ from ._generated.models import (
 from .account import OrganizationAccount, Usage
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions, Memories
-from .config import define_agent, define_skills, ensure_agent, sync_agent
+from .config import define_agent, define_skills, sync_agent
 from .detection import (
     ChangeGate,
     DetectionProcessor,
@@ -144,7 +144,6 @@ __all__ = [
     "define_agent",
     "define_router",
     "define_skills",
-    "ensure_agent",
     "iou",
     "load",
     "sync_agent",

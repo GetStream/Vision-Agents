@@ -33,13 +33,13 @@ dependencies:
 final agents = StreamAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
 
 // In writing. No call is joined, nothing is transcribed or spoken.
-final chat = await agents.agent('support').chat();
-await chat.responses.create('What are your opening hours?');
-// chat.conversation.value is the transcript and what the agent is doing, and
-// chat.conversation.stream says each time it changes. The question shows there at once.
+final session = await agents.agent('support').sessions.create();
+await session.responses.create('What are your opening hours?');
+// session.conversation.value is the transcript and what the agent is doing, and
+// session.conversation.stream says each time it changes. The question shows there at once.
 
 // The Stream Chat channel the conversation is kept in.
-final channel = await chat.chat();
+final channel = await session.chat();
 
 // Out loud. The agent joins a call and so does this device.
 final voice = await VoiceSession.start(agents, agent: 'support');
@@ -98,7 +98,7 @@ final lookup = AgentTool(
   run: (arguments) async => Orders.local.find('${arguments['order_id']}'),
 );
 
-final chat = await agents.agent('support').chat(SessionOptions(tools: [lookup]));
+final session = await agents.agent('support').sessions.create(SessionOptions(tools: [lookup]));
 ```
 
 `displayTitle` is what the people in a conversation kept in Stream Chat see while it runs, and
@@ -149,8 +149,8 @@ since the dashboard, where it goes otherwise, cannot be opened on a phone. "Not 
 person did not connect.
 
 ```dart
-final chat = await agents.chat(SessionOptions(returnUrl: 'com.example.app:/connected'));
-chat.declineLogin(toolCallId);
+final session = await agents.sessions.create(SessionOptions(returnUrl: 'com.example.app:/connected'));
+session.declineLogin(toolCallId);
 ```
 
 ### Remembering the user
@@ -162,7 +162,7 @@ recalled. `timezone` is the IANA zone the agent reads dates in; Dart's `DateTime
 is an abbreviation, so read the zone with a plugin such as `flutter_timezone`.
 
 ```dart
-final chat = await agents.agent('support').chat(
+final session = await agents.agent('support').sessions.create(
   const SessionOptions(
     memory: SessionMemory(filter: {'topic': 'billing'}),
     timezone: 'Europe/Amsterdam',
@@ -177,9 +177,9 @@ final chat = await agents.agent('support').chat(
 the `id` of an `AgentResponse`, not the `turnId` a socket event carries:
 
 ```dart
-final turns = (await chat.responses.list()).items;
-await chat.rewind(turns.first.id);
-final branch = await chat.fork(ForkOptions(responseId: turns.first.id));
+final turns = (await session.responses.list()).items;
+await session.rewind(turns.first.id);
+final branch = await session.fork(ForkOptions(responseId: turns.first.id));
 await branch.start();
 ```
 
@@ -194,7 +194,7 @@ Those are all a device may change; instructions and models are its backend's. An
 is renamed through `sessions`:
 
 ```dart
-await chat.update(title: 'Refund for order A-1042');
+await session.update(title: 'Refund for order A-1042');
 await agents.sessions.update(endedId, title: 'Refund', custom: {'topic': 'billing'});
 ```
 
@@ -204,8 +204,8 @@ await agents.sessions.update(endedId, title: 'Refund', custom: {'topic': 'billin
 it is still listed and can be forked. `delete` takes it away, turns and memories included.
 
 ```dart
-await chat.close();
-await agents.sessions.delete(chat.id);
+await session.close();
+await agents.sessions.delete(session.id);
 ```
 
 ### Guests, finding conversations, looking something up
@@ -243,7 +243,7 @@ final refunds = await support.search('refund', filter: {'project_id': 'billing'}
 
 final pinned = await asGuest.sessions.pin(found.items.first.id); // pinned.pinnedAt is set
 await asGuest.sessions.unpin(pinned.id);
-await chat.pin(); // a session being held pins itself, as does chat.update(pinned: true)
+await session.pin(); // a session being held pins itself, as does session.update(pinned: true)
 
 // The router comes from the client; what it routes to lives in the "healthcare" config.
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
