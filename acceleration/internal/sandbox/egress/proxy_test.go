@@ -1074,10 +1074,11 @@ func (l smallBufferListener) Accept() (net.Conn, error) {
 	return conn, nil
 }
 
-// blindTunnel opens a tunnel to an allowed domain on a proxy whose idle timeout is idle, to a host
-// that is a bare listener: the sandbox's end and the host's. Every socket on the way has
-// smallBuffers. asked is the time just before the CONNECT is written, the earliest the proxy can
-// start its idle timer: a wait measured from it cannot run short on a correct proxy.
+// blindTunnel opens a tunnel to an allowed domain on a proxy whose keep-alive timeout, the tunnel's
+// idle timeout, is idle, to a host that is a bare listener: the sandbox's end and the host's.
+// Every socket on the way has smallBuffers. asked is the time just before the CONNECT is written,
+// the earliest the proxy can start its idle timer: a wait measured from it cannot run short on a
+// correct proxy.
 func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn, asked time.Time) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
@@ -1085,7 +1086,7 @@ func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn, as
 	s.answerAt(listener.Addr().String())
 	s.allow("outside.test")
 	s.proxy = httptest.NewUnstartedServer(s.newProxy(s.store, func(options *egress.Options) {
-		options.IdleTimeout = idle
+		options.KeepAliveTimeout = idle
 		dial := options.Dial
 		options.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 			conn, err := dial(ctx, network, address)
@@ -1306,6 +1307,117 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtT
 				idle+margin, poll, "the tunnel was not closed in time")
 		})
 	}
+}
+
+// distantConn is the sandbox's end of its connection to the proxy, latency away from the proxy:
+// what the proxy sends, its close included, reaches the client latency after the proxy sent it.
+// So a request the client writes within latency of the proxy's close goes into a tunnel that is
+// already closed, as on the network between a sandbox and the router.
+type distantConn struct {
+	net.Conn
+	latency  time.Duration
+	arrivals chan arrival
+	// pending and end are what the client has not read yet of the last arrival.
+	pending []byte
+	end     error
+}
+
+// arrival is one read on the proxy's side of the network: its bytes or its end, and when.
+type arrival struct {
+	data []byte
+	end  error
+	at   time.Time
+}
+
+// distant reads conn as it arrives, and hands each read to the client latency later.
+func distant(conn net.Conn, latency time.Duration) *distantConn {
+	c := &distantConn{Conn: conn, latency: latency, arrivals: make(chan arrival, 64)}
+	go func() {
+		for {
+			buffer := make([]byte, 32<<10)
+			n, err := conn.Read(buffer)
+			c.arrivals <- arrival{data: buffer[:n], end: err, at: time.Now()}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return c
+}
+
+func (c *distantConn) Read(p []byte) (int, error) {
+	if len(c.pending) == 0 && c.end == nil {
+		next := <-c.arrivals
+		time.Sleep(time.Until(next.at.Add(c.latency)))
+		c.pending, c.end = next.data, next.end
+	}
+	if len(c.pending) > 0 {
+		n := copy(p, c.pending)
+		c.pending = c.pending[n:]
+		return n, nil
+	}
+	return 0, c.end
+}
+
+// TestAGoClientReusesItsPooledTunnelToAnAllowedDomainUpToItsOwnIdleLimit is AI-2346: a Go client
+// pools its connection through a blind tunnel to a host that keeps it, and reuses it just before
+// its own idle limit. The proxy's idle clock starts when it reads the host's last byte, the
+// client's once that byte has crossed the network to it, so a proxy limit no longer than the
+// client's closes the tunnel first; the client's POST then goes into the closed tunnel, and
+// net/http does not send a POST again (transport.go, shouldRetryRequest). The proxy's limit
+// outlasts the client's, so the client reuses the connection it pooled and the host gets both.
+func (s *ProxySuite) TestAGoClientReusesItsPooledTunnelToAnAllowedDomainUpToItsOwnIdleLimit() {
+	const (
+		// clientIdle stands for http.DefaultTransport's IdleConnTimeout (90 s), and keepAlive for
+		// the proxy's keepAliveTimeout (4 min), in the same ratio: 8/3.
+		clientIdle = 1800 * time.Millisecond
+		keepAlive  = clientIdle * 8 / 3
+		// latency: one way between the sandbox and the proxy. Chosen, not measured: past the
+		// scheduler delays of a loaded machine, so the client reads the answer that much after
+		// the proxy forwarded it.
+		latency = 600 * time.Millisecond
+		// early: how long before its own idle limit the client reuses the connection. Half of
+		// latency, so a proxy that closed at the client's limit counted from its own read has
+		// closed by then, and the client has not yet seen the close.
+		early = latency / 2
+	)
+	s.allow("outside.test")
+	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) {
+		options.KeepAliveTimeout = keepAlive
+	}))
+	s.T().Cleanup(s.proxy.Close)
+	client := s.direct()
+	transport := client.Transport.(*http.Transport)
+	transport.IdleConnTimeout = clientIdle
+	dialer := &net.Dialer{}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return distant(conn, latency), nil
+	}
+	var reused []bool
+	post := func() error {
+		request := s.request(http.MethodPost, "https://outside.test/echo", "Bearer "+s.placeholder, "a write net/http does not replay")
+		request = request.WithContext(httptrace.WithClientTrace(request.Context(), &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { reused = append(reused, info.Reused) }}))
+		response, _, err := s.send(client, request)
+		if err == nil {
+			s.Equal(http.StatusOK, response.StatusCode)
+		}
+		return err
+	}
+	s.Require().NoError(post())
+	// The client has read the whole answer: it pools the connection from here.
+	pooled := time.Now()
+	time.Sleep(time.Until(pooled.Add(clientIdle - early)))
+
+	err := post()
+
+	s.Require().NoError(err, "the proxy closed the tunnel the client still pooled")
+	s.Equal([]bool{false, true}, reused, "the second POST went on the pooled connection")
+	s.Len(s.outside.authorizations(), 2)
 }
 
 // TestAHostWithATrailingDotIsTheHostWithout: matched and dialed as the host without it, and a
@@ -1693,14 +1805,14 @@ func (s *ProxySuite) TestASilentOrIdleTunnelIsClosed() {
 	s.ErrorIs(idleEnd, io.EOF)
 }
 
-// TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTimeout: a connection a client keeps
-// for its next request is held for the keep-alive timeout, not the blind tunnels' shorter idle
-// timeout, so a client that reuses it within its own idle limit (Go's 90 s, libcurl's 118 s)
-// is answered rather than finding it closed. The waits are bounded by the 5 s conn deadline.
-func (s *ProxySuite) TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTimeout() {
-	const idle, keepAlive = 200 * time.Millisecond, 1500 * time.Millisecond
+// TestAGrantsTunnelIsHeldUntilTheKeepAliveTimeout: a connection a client keeps for its next
+// request is held for the keep-alive timeout, so a client that reuses it within its own idle
+// limit (Go's 90 s, libcurl's 118 s) is answered rather than finding it closed. The waits are
+// bounded by the 5 s conn deadline.
+func (s *ProxySuite) TestAGrantsTunnelIsHeldUntilTheKeepAliveTimeout() {
+	const pause, keepAlive = 600 * time.Millisecond, 1500 * time.Millisecond
 	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) {
-		options.IdleTimeout, options.KeepAliveTimeout = idle, keepAlive
+		options.KeepAliveTimeout = keepAlive
 	}))
 	s.T().Cleanup(s.proxy.Close)
 	conn := s.tunnel(&tls.Config{})
@@ -1715,8 +1827,8 @@ func (s *ProxySuite) TestAGrantsTunnelOutlastsTheIdleTimeoutUntilTheKeepAliveTim
 		s.Require().Equal(http.StatusOK, response.StatusCode)
 	}
 	get()
-	// Idle past the idle timeout, and short of the keep-alive timeout.
-	time.Sleep(3 * idle)
+	// Idle, short of the keep-alive timeout.
+	time.Sleep(pause)
 
 	// The wait counts from before the request: the proxy arms its keep-alive deadline once it has
 	// answered, and a clock read after the answer starts late on a client scheduled after that,
