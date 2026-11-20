@@ -37,6 +37,14 @@ describe("Backend", () => {
     await assert.rejects(() => backend.headers(), ConfigurationError);
   });
 
+  it("offers acting for a user only through the deprecated actingFor, not a second method", () => {
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    // @ts-expect-error speakingFor is not on Backend's published type
+    assert.equal(backend.speakingFor, undefined);
+    assert.equal(typeof backend.actingFor, "function");
+    assert.equal(backend.actingFor("ana").actsFor, "ana");
+  });
+
   it("goes to the hosted router, through the proxy, when nothing names another", () => {
     const backend = new Backend({ apiKey: "vak_live_x", token: "token-for-jim" });
 
