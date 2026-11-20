@@ -539,6 +539,34 @@ func (s *EgressSuite) TestTheDefaultClientSendsPostsOnOneConnection() {
 	s.Equal(int32(1), origin.conns.Load())
 }
 
+// NewUnpooledClient is the opt-in: the same policy as NewClient, with POSTs on a connection each. The test swaps
+// defaultPolicy for one that dials the test origin.
+func (s *EgressSuite) TestNewUnpooledClientSendsEachPostOnANewConnectionAndNewClientDoesNot() {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	saved := defaultPolicy
+	defaultPolicy = testPolicy(origin.server, publicAnswers())
+	defer func() { defaultPolicy = saved }()
+
+	for range 2 {
+		_, err := s.send(NewUnpooledClient(5*time.Second, nil), http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(2), origin.conns.Load(), "each unpooled client sends on its own connection")
+	unpooled := NewUnpooledClient(5*time.Second, nil)
+	for range 3 {
+		_, err := s.send(unpooled, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(5), origin.conns.Load(), "three POSTs of one unpooled client: three connections")
+	pooled := NewClient(5*time.Second, nil)
+	for range 3 {
+		_, err := s.send(pooled, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(6), origin.conns.Load(), "three POSTs of one NewClient client: one connection")
+}
+
 // reusesAConnection sends a GET and then request to a fresh HTTP/1.1 origin, and reports whether request went on
 // the GET's connection.
 func (s *EgressSuite) reusesAConnection(request *http.Request) bool {
