@@ -807,6 +807,11 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
 
 With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.
+
+### `unified_replies` gives chorus-asr's ignores a second opinion
+
+Chorus-asr hears the audio but not the conversation, so with the agent quiet it can take a caller's short answer for background speech. With `unified_replies` on, words chorus-asr ignored on a quiet floor are put to the reply model, which is told what chorus-asr made of them and opens with `[respond]` or `[ignore]`. If it agrees, nothing is said, as before. Chorus-asr still decides alone when to stop or shorten the agent, when a turn ends, and everything said while the agent is talking.
+
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 
 The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.

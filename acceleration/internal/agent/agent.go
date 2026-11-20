@@ -211,7 +211,8 @@ type Options struct {
 	SpeculativeReplies bool
 	// UnifiedReplies has the reply to a settled turn on a quiet floor open with a tag
 	// ruling on it, in place of the flow controller. Acting on chorus-asr, its floor rules
-	// instead.
+	// instead, and the reply rules only on words the floor ignored with the agent quiet
+	// (secondOpinion).
 	UnifiedReplies bool
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
@@ -2207,7 +2208,7 @@ func (a *Agent) ask(ready candidate) {
 		FirstPause:   a.converse.firstPause(ready),
 	}
 	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, ready.Utterance, tools)
-	if a.speculate(current, ready, speaking, anotherVoice) {
+	if a.speculate(current, ready, speaking, anotherVoice, false) {
 		return
 	}
 	if err := current.Decide(turn); err != nil {
@@ -3887,6 +3888,9 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 			}
 			flowDecisions.WithLabelValues(disposition, ruler).Inc()
 			flowDecisionSeconds.WithLabelValues(ruler).Observe(typed.TookMs / 1000)
+			if a.secondOpinion(current, typed) {
+				continue
+			}
 			a.act(a.converse.Ruled(typed, a.floor()))
 			// An answer took the reply started for these words; any other ruling leaves it
 			// unwanted.
