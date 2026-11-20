@@ -441,9 +441,11 @@ func (s *DigestSuite) TestActivityPastFourHundredDaysIsDeletedOnceADay() {
 	s.Equal([]string{"2025-02-03", "2026-03-09"}, s.days("activity_digests"), "the day before's posted by the check")
 
 	s.active(organization(), activity.AreaAgentSetup, 401, 1, 0)
+	later := today.Add(8 * time.Hour)
+	s.clock.Store(&later)
 	s.checked(s.reads.Load())
 	s.Equal([]string{"2025-02-02", "2025-02-03", "2025-02-04", "2026-03-10"}, s.days("customer_activity"),
-		"written after the day's delete, so kept until the next day's")
+		"written after the day's delete, so kept until the next day's, though checked later that day")
 
 	next := today.AddDate(0, 0, 1)
 	s.clock.Store(&next)
@@ -453,4 +455,18 @@ func (s *DigestSuite) TestActivityPastFourHundredDaysIsDeletedOnceADay() {
 	s.Require().Eventually(func() bool {
 		return slices.Equal(s.days("activity_digests"), []string{"2026-03-09", "2026-03-10"})
 	}, settleFor, time.Millisecond)
+}
+
+// Defect: the keep counted from the clock's own date rather than the UTC day: at 01:00 on 11
+// Mar in UTC+14 it is still 10 Mar in UTC, so 3 Feb 2025 is 400 days back and stays.
+func (s *DigestSuite) TestTheKeepCountsFromTheUTCDayWhateverTheClocksZone() {
+	pinned := organization()
+	s.active(pinned, activity.AreaAgentSetup, 401, 1, 0)
+	s.active(pinned, activity.AreaAgentSetup, 400, 1, 0)
+
+	pruned, err := s.db.PruneActivity(s.ctx, time.Date(2026, 3, 11, 1, 0, 0, 0, time.FixedZone("UTC+14", 14*60*60)))
+	s.Require().NoError(err)
+
+	s.Equal(1, pruned)
+	s.Equal([]string{"2025-02-03"}, s.days("customer_activity"))
 }
