@@ -507,3 +507,58 @@ func (s *DigestSuite) TestTheKeepCountsFromTheUTCDayWhateverTheClocksZone() {
 	s.Equal(1, pruned)
 	s.Equal([]string{"2025-02-03"}, s.days("customer_activity"))
 }
+
+// Only the router that holds the cost anomaly lock deletes: another router's check leaves the old
+// rows, and the holder's next check deletes them.
+func (s *DigestSuite) TestOnlyTheRouterHoldingTheLockDeletesTheActivity() {
+	pinned := organization()
+	s.active(pinned, activity.AreaAgentSetup, 401, 1, 0)
+	s.active(pinned, activity.AreaAgentSetup, 0, 1, 0)
+	elsewhere := s.db.CostAnomalyLock()
+	held, err := elsewhere.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.Require().True(held)
+
+	s.router().Start()
+	s.checked(0)
+	s.Equal([]string{"2025-02-02", "2026-03-10"}, s.days("customer_activity"), "another router holds the lock")
+
+	elsewhere.Release()
+	s.Require().Eventually(func() bool {
+		return slices.Equal(s.days("customer_activity"), []string{"2026-03-10"})
+	}, settleFor, time.Millisecond)
+}
+
+// A delete that failed is tried again at the next check the same day, not the next day. The
+// suite's database is its own, so the delete is made to fail by renaming one of its tables.
+func (s *DigestSuite) TestADeleteThatFailedIsTriedAgainTheSameDay() {
+	pinned := organization()
+	s.active(pinned, activity.AreaAgentSetup, 401, 1, 0)
+	s.active(pinned, activity.AreaAgentSetup, 0, 1, 0)
+	_, err := s.db.DB().ExecContext(s.ctx, "ALTER TABLE activity_digests RENAME TO activity_digests_renamed")
+	s.Require().NoError(err)
+	renamed := true
+	s.T().Cleanup(func() {
+		if renamed {
+			_, _ = s.db.DB().ExecContext(s.ctx, "ALTER TABLE activity_digests_renamed RENAME TO activity_digests")
+		}
+	})
+	anomalies := NewAnomalies(AnomalyOptions{
+		Store: s.db, Logger: slog.New(slog.DiscardHandler), Every: 20 * time.Millisecond,
+		Now: func() time.Time {
+			s.reads.Add(1)
+			return *s.clock.Load()
+		},
+	})
+	s.T().Cleanup(anomalies.Close)
+	anomalies.Start()
+	s.checked(0)
+	_, err = s.db.DB().ExecContext(s.ctx, "ALTER TABLE activity_digests_renamed RENAME TO activity_digests")
+	s.Require().NoError(err)
+	renamed = false
+	_, err = s.db.DB().ExecContext(s.ctx, "INSERT INTO activity_digests (day) VALUES ('2025-02-01')")
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool {
+		return len(s.days("activity_digests")) == 0
+	}, settleFor, time.Millisecond, "the failed delete is tried again at the next check")
+}
