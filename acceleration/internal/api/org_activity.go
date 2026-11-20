@@ -68,6 +68,12 @@ type ActivityArea struct {
 	LastRefusalCode string    `json:"last_refusal_code" doc:"The error code of the latest refusal, empty when there was none."`
 }
 
+// ActivityStepDay is a step an organization reached and the day it first did.
+type ActivityStepDay struct {
+	Step          string `json:"step" enum:"dashboard_reads,agent_setup,workers,conversations,voice_video,phone_sms" doc:"The step, one of furthest_step's but none and steady_use."`
+	FirstAnswered string `json:"first_answered" format:"date" doc:"The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on."`
+}
+
 // ActivityMeter is what an organization's apps' work of one modality came to.
 type ActivityMeter struct {
 	Meter        string `json:"meter" doc:"The modality, such as llm, tts, runtime or sandbox."`
@@ -120,6 +126,7 @@ type OrganizationActivity struct {
 	OrganizationId string            `json:"organization_id" doc:"The organization."`
 	Since          time.Time         `json:"since" doc:"The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on."`
 	FurthestStep   ActivityStep      `json:"furthest_step"`
+	Steps          []ActivityStepDay `json:"steps" doc:"Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused."`
 	FirstSeen      *time.Time        `json:"first_seen,omitempty" doc:"When the first request of any area arrived, absent when none did."`
 	LastSeen       *time.Time        `json:"last_seen,omitempty" doc:"When the last request of any area arrived, absent when none did."`
 	Areas          []ActivityArea    `json:"areas" doc:"Every area and client the organization's apps made requests in, by area then client."`
@@ -185,6 +192,7 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		OrganizationId: request.OrgID,
 		Since:          since.UTC(),
 		FurthestStep:   furthestStep(areas, days),
+		Steps:          reachedSteps(areas),
 		Areas:          make([]ActivityArea, 0, len(areas)),
 		Meters:         make([]ActivityMeter, 0, len(uses)),
 		Shards:         s.store.MeterShards(),
@@ -195,7 +203,10 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		answer.Latency = append(answer.Latency, ActivityLatency(leg))
 	}
 	for _, area := range areas {
-		answer.Areas = append(answer.Areas, ActivityArea(area))
+		answer.Areas = append(answer.Areas, ActivityArea{
+			Area: area.Area, Client: area.Client, FirstAt: area.FirstAt, LastAt: area.LastAt,
+			Requests: area.Requests, Refused: area.Refused, LastRefusalCode: area.LastRefusalCode,
+		})
 		if answer.FirstSeen == nil || area.FirstAt.Before(*answer.FirstSeen) {
 			answer.FirstSeen = &area.FirstAt
 		}
@@ -257,6 +268,16 @@ func furthestStep(areas []store.ActivityArea, days int) ActivityStep {
 	return activityStepNone
 }
 
+// reachedSteps is every step areas reached, with the day each first had a request answered.
+func reachedSteps(areas []store.ActivityArea) []ActivityStepDay {
+	reached := activity.ReachedSteps(areas)
+	steps := make([]ActivityStepDay, 0, len(reached))
+	for _, step := range reached {
+		steps = append(steps, ActivityStepDay{Step: step.Step, FirstAnswered: step.FirstAnswered.Format(time.DateOnly)})
+	}
+	return steps
+}
+
 // registerOrganizationActivity declares Stream staff's read of an organization's activity,
 // which takes the ops key.
 func (s *Server) registerOrganizationActivity(api huma.API) {
@@ -271,9 +292,11 @@ func (s *Server) registerOrganizationActivity(api huma.API) {
 			"sessions they opened, how those ended and how long their turns took. An " +
 			"organization with nothing recorded is answered with empty lists and furthest_step none. " +
 			"Every area and client is one item, so the lists are short and have no cursor. Areas, " +
-			"first_seen, last_seen and furthest_step come from counts kept since they were first " +
+			"first_seen, last_seen, furthest_step and steps come from counts kept since they were first " +
 			"recorded, while meters come from every request, so an organization whose use is older " +
-			"than the counts can read furthest_step none with meters that show use.\n\n" +
+			"than the counts can read furthest_step none with meters that show use. steps lists every " +
+			"step reached, not only the furthest, with the UTC day each was first answered: an " +
+			"organization that only texts reaches conversations and never voice_video.\n\n" +
 			"Stream staff only: it needs the ops key.",
 		Tags:      []string{staffTag},
 		Security:  opsSecurity,

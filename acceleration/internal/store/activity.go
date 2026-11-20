@@ -170,6 +170,9 @@ type ActivityArea struct {
 	Refused  int64     `bun:"refused"`
 	// LastRefusalCode is the code of the latest refusal, empty when there was none.
 	LastRefusalCode string `bun:"last_refusal_code"`
+	// FirstAnswered is the first UTC day of those read with a request answered, not refused,
+	// zero when every request was refused.
+	FirstAnswered time.Time `bun:"first_answered"`
 }
 
 // ActivityAreas sums the activity of apps, at least one, from the UTC day of since on, by area
@@ -182,6 +185,7 @@ func (s *Store) ActivityAreas(ctx context.Context, apps []string, since time.Tim
 		ColumnExpr("SUM(requests) AS requests, SUM(refused) AS refused").
 		ColumnExpr("COALESCE((array_agg(last_refusal_code ORDER BY last_refusal_at DESC)"+
 			" FILTER (WHERE last_refusal_at IS NOT NULL))[1], '') AS last_refusal_code").
+		ColumnExpr("MIN(day) FILTER (WHERE requests > refused) AS first_answered").
 		Where("app_id IN (?)", bun.In(apps)).
 		Where("day >= ?::date", since.UTC().Format(time.DateOnly)).
 		Group("area", "client").

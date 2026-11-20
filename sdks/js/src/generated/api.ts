@@ -4790,6 +4790,18 @@ export type components = {
          * @enum {string}
          */
         readonly ActivityStep: "none" | "dashboard_reads" | "agent_setup" | "workers" | "conversations" | "voice_video" | "phone_sms" | "steady_use";
+        readonly ActivityStepDay: {
+            /**
+             * Format: date
+             * @description The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+             */
+            readonly first_answered: string;
+            /**
+             * @description The step, one of furthest_step's but none and steady_use.
+             * @enum {string}
+             */
+            readonly step: "dashboard_reads" | "agent_setup" | "workers" | "conversations" | "voice_video" | "phone_sms";
+        };
         readonly AddContactsRequest: {
             /** @description Up to 1,000. */
             readonly contacts: readonly components["schemas"]["ContactInput"][];
@@ -8583,6 +8595,8 @@ export type components = {
              * @description The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
              */
             readonly since: string;
+            /** @description Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused. */
+            readonly steps: readonly components["schemas"]["ActivityStepDay"][] | null;
         };
         /**
          * @description What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.

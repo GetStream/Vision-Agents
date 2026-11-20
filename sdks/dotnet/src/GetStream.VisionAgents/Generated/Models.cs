@@ -510,6 +510,36 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityStepDay
+    {
+
+        /// <summary>
+        /// The UTC day, YYYY-MM-DD, of the first request answered in the step's area from since on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("first_answered")]
+        [System.Text.Json.Serialization.JsonConverter(typeof(DateFormatConverter))]
+        public System.DateTimeOffset FirstAnswered { get; set; } = default!;
+
+        /// <summary>
+        /// The step, one of furthest_step's but none and steady_use.
+        /// <br/>
+        /// <br/>One of `dashboard_reads`, `agent_setup`, `workers`, `conversations`, `voice_video`, `phone_sms`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("step")]
+        public string Step { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AddContactsRequest
     {
 
@@ -10301,6 +10331,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("since")]
         public System.DateTimeOffset Since { get; set; } = default!;
+
+        /// <summary>
+        /// Every step the organization's apps had a request answered in from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("steps")]
+        public System.Collections.Generic.List<ActivityStepDay>? Steps { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

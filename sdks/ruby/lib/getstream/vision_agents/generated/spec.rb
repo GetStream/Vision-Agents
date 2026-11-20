@@ -1853,6 +1853,10 @@ module GetStream
           properties: %w[ended latest opened running].freeze,
           required: %w[opened running ended latest].freeze, open: false
         }.freeze,
+        "ActivityStepDay" => {
+          properties: %w[first_answered step].freeze,
+          required: %w[step first_answered].freeze, open: false
+        }.freeze,
         "AddContactsRequest" => {
           properties: %w[contacts default_country].freeze,
           required: %w[contacts].freeze, open: false
@@ -2722,8 +2726,8 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "OrganizationActivity" => {
-          properties: %w[areas first_seen furthest_step last_seen latency meters organization_id sessions shards since].freeze,
-          required: %w[organization_id since furthest_step areas meters shards sessions latency].freeze, open: false
+          properties: %w[areas first_seen furthest_step last_seen latency meters organization_id sessions shards since steps].freeze,
+          required: %w[organization_id since furthest_step steps areas meters shards sessions latency].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
           properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,

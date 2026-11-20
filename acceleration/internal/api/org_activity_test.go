@@ -147,6 +147,7 @@ func (s *OrganizationActivitySuite) TestAnOrganizationWithNothingRecordedHasEmpt
 	s.JSONEq(`[]`, string(raw["areas"]))
 	s.JSONEq(`[]`, string(raw["meters"]))
 	s.JSONEq(`"none"`, string(raw["furthest_step"]))
+	s.JSONEq(`[]`, string(raw["steps"]))
 	s.NotContains(raw, "first_seen")
 	s.NotContains(raw, "last_seen")
 }
@@ -232,6 +233,55 @@ func (s *OrganizationActivitySuite) TestModelCallsOnThreeDaysAreSteadyUse() {
 	s.Require().NoError(s.store.RecordActivity(context.Background(), deltas))
 
 	s.Equal(activityStepSteadyUse, s.read(s.app.organization.ID, time.Time{}).FurthestStep)
+}
+
+// answeredOn is a day of requests of the suite's app in area from client on day, refused of
+// them refused.
+func (s *OrganizationActivitySuite) answeredOn(area, client string, day time.Time, requests, refused int64) store.ActivityDelta {
+	at := day.Add(time.Hour)
+	return store.ActivityDelta{
+		OrganizationID: s.app.organization.ID, AppID: s.customerID(), Area: area, Client: client,
+		Day: day, Requests: requests, Refused: refused, FirstAt: at, LastAt: at,
+	}
+}
+
+// Defect: steps lists only the furthest step, a step whose every request was refused, a step
+// in the order areas come in (by name) rather than the ladder's, or the day of a later client
+// or a later answer rather than the first.
+func (s *OrganizationActivitySuite) TestStepsListEveryStepAnsweredWithItsFirstDayInLadderOrder() {
+	d := time.Now().UTC().Truncate(24 * time.Hour).Add(-10 * 24 * time.Hour)
+	on := func(n int) time.Time { return d.Add(time.Duration(n) * 24 * time.Hour) }
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.answeredOn(activity.AreaDashboardReads, store.AuditSourceDashboard, on(0), 3, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, on(1), 1, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, on(4), 2, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, on(3), 2, 2),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, on(8), 5, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceAPI, on(6), 1, 0),
+		s.answeredOn(activity.AreaVoiceVideo, store.AuditSourceSDK, on(7), 4, 4),
+		s.answeredOn(activity.AreaModelAPI, store.AuditSourceSDK, on(0), 9, 0),
+	}))
+
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Equal([]ActivityStepDay{
+		{Step: activity.AreaDashboardReads, FirstAnswered: on(0).Format(time.DateOnly)},
+		{Step: activity.AreaAgentSetup, FirstAnswered: on(1).Format(time.DateOnly)},
+		{Step: activity.AreaConversations, FirstAnswered: on(6).Format(time.DateOnly)},
+	}, answer.Steps)
+}
+
+// Defect: a step's first day read from before since, so a read of the last days says a step
+// was first answered before them.
+func (s *OrganizationActivitySuite) TestAStepsFirstDayIsReadFromSinceOn() {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, today.Add(-5*24*time.Hour), 1, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, today.Add(-24*time.Hour), 1, 0),
+	}))
+
+	s.Equal([]ActivityStepDay{{Step: activity.AreaAgentSetup, FirstAnswered: today.Add(-24 * time.Hour).Format(time.DateOnly)}},
+		s.readAt(today.Add(-2*24*time.Hour)).Steps)
 }
 
 // Defect: an app of another organization whose id equals this organization's id is summed into
@@ -380,7 +430,7 @@ func (s *OrganizationActivitySuite) TestTheFieldsTheAnswerHadBeforeSessionsAndLa
 	s.Require().NoError(json.Unmarshal(payload, &raw))
 	before := map[string]json.RawMessage{}
 	for key, value := range raw {
-		if key != "sessions" && key != "latency" {
+		if key != "sessions" && key != "latency" && key != "steps" {
 			before[key] = value
 		}
 	}

@@ -322,6 +322,31 @@ func (s *StoreSuite) TestTheCodeOfAnAreaIsItsLatestRefusals() {
 	s.Empty(areas[1].LastRefusalCode)
 }
 
+// Defect: the first answered day of an area read off its first day of any request, refusals
+// only included, or its last answered day, or a day before since.
+func (s *StoreSuite) TestTheFirstAnsweredDayOfAnAreaIsItsFirstDayFromSinceWithARequestAnswered() {
+	day := func(n int) time.Time {
+		return s.base.UTC().Truncate(24 * time.Hour).Add(time.Duration(n) * 24 * time.Hour)
+	}
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{
+		s.day("one", "agent_setup", AuditSourceCLI, day(-1).Add(time.Hour), 7, 0),
+		s.day("one", "agent_setup", AuditSourceCLI, day(0).Add(time.Hour), 2, 2),
+		s.day("one", "agent_setup", AuditSourceCLI, day(1).Add(time.Hour), 3, 2),
+		s.day("one", "agent_setup", AuditSourceCLI, day(2).Add(time.Hour), 1, 0),
+		s.day("one", "conversations", AuditSourceSDK, day(0).Add(time.Hour), 1, 1),
+		s.day("one", "conversations", AuditSourceSDK, day(1).Add(time.Hour), 4, 4),
+	}))
+
+	areas, err := s.store.ActivityAreas(s.ctx, []string{"one"}, s.base)
+	s.Require().NoError(err)
+
+	s.Require().Len(areas, 2, "%+v", areas)
+	s.Equal("agent_setup", areas[0].Area)
+	s.True(day(1).Equal(areas[0].FirstAnswered), "first answered %s", areas[0].FirstAnswered)
+	s.Equal("conversations", areas[1].Area)
+	s.True(areas[1].FirstAnswered.IsZero(), "an area only refused was answered on %s", areas[1].FirstAnswered)
+}
+
 // Defect: a day counted twice for two areas, a day of refusals only counted, or a day of another
 // area, another app or before since counted.
 func (s *StoreSuite) TestActivityDaysCountEachDayAnAreaNamedAnsweredOnce() {
