@@ -429,7 +429,9 @@ func (s *DigestSuite) TestActivityPastFourHundredDaysIsDeletedOnceADay() {
 	for _, daysAgo := range []int{401, 400, 399, 0} {
 		s.active(pinned, activity.AreaAgentSetup, daysAgo, 1, 0)
 	}
-	for _, day := range []time.Time{time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), time.Date(2025, 2, 3, 0, 0, 0, 0, time.UTC)} {
+	for _, day := range []time.Time{
+		time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), time.Date(2025, 2, 3, 0, 0, 0, 0, time.UTC),
+	} {
 		claimed, err := s.db.ClaimActivityDigest(s.ctx, day, stale)
 		s.Require().NoError(err)
 		s.Require().True(claimed)

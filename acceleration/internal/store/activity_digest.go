@@ -115,10 +115,10 @@ WHERE activity_digests.posted_at IS NULL
 	return affected > 0, nil
 }
 
-// activityKeepDays is how many UTC days before today's customer_activity and activity_digests
-// keep: 13 months and a margin, so staff can set a month beside the same month a year before.
-// Kept no longer than that need, as GDPR's storage limitation asks (Art. 5(1)(e),
-// https://eur-lex.europa.eu/eli/reg/2016/679/oj).
+// activityKeepDays is how many UTC days back from today customer_activity and activity_digests
+// keep rows for: 13 months and a margin, so staff can compare a month with the same month a year
+// before. Rows are kept no longer than that need, as GDPR's storage limitation principle asks
+// (Art. 5(1)(e), https://eur-lex.europa.eu/eli/reg/2016/679/oj).
 const activityKeepDays = 400
 
 // PruneActivity deletes the activity rows and activity digests of the UTC days more than
