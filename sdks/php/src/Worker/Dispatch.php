@@ -190,7 +190,7 @@ final class Dispatch
         if ($message->sessionId === '') {
             throw new ConfigurationException('no session is holding this message; open one with getOrCreateAgent');
         }
-        $client = $this->client->withBackend($this->client->backend->onBehalfOf($message->userId));
+        $client = $this->client->withBackend($this->client->backend->writingFor($message->userId));
         $images = array_map(static fn (InboundImage $image): ImageSource => new ImageSource(url: $image->url), $message->images);
         return (new Responses($client, $message->sessionId))->createAnswering($message->text, $images, $message->requestId);
     }
