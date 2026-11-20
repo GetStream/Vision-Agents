@@ -156,16 +156,20 @@ class AgentTransport(
      * Answers a tool call's question from the card that shows it. A card restored from the
      * channel, after the conversation was carried on or the app restarted, names a call this
      * session's socket was never asked, so the answer carries what the reply shows of it, and the
-     * request and turn the reply was written for. Throws when no loaded reply shows the call and
-     * the session holds none by its id, so the card can be answered again.
+     * request and turn the reply was written for. Only a call whose step still waits for the
+     * person is answered: one answered elsewhere is not run here. Throws when no loaded reply
+     * shows the call waiting and the session holds none by its id, so the card can be answered
+     * again.
      */
     suspend fun decide(call: AIToolCallPart, allowed: Boolean) {
         val session = open()
         val reply = opened.value?.channel?.value?.messages?.value?.lastOrNull { message ->
-            message.attachments.any { it.type == "ai_tool_call" && it.extraData["id"] == call.id }
+            message.attachments.any {
+                it.type == "ai_tool_call" && it.extraData["id"] == call.id && it.extraData["status"] == "awaiting_approval"
+            }
         }
         if (reply == null) {
-            check(session.approvals.value.any { it.id == call.id }) { "No reply shows the tool call ${call.id}" }
+            check(session.approvals.value.any { it.id == call.id }) { "No reply shows the tool call ${call.id} waiting" }
             return session.decide(call.id, allowed)
         }
         val runtime = reply.extraData["support_runtime"] as? Map<*, *>

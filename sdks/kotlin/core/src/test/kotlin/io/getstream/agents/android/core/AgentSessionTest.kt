@@ -565,20 +565,83 @@ class AgentSessionTest {
     }
 
     @Test
-    fun `a call shown without its arguments, allowed, tells the model it could not run`() = runBlocking {
+    fun `a call shown without its arguments, allowed, runs once the router sends it`() = runBlocking {
         val ran = CopyOnWriteArrayList<String>()
         val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
 
         chat.decide(shownRefund.copy(arguments = null), allowed = true)
-
         assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        router.script.send(Script.Send(refundCall))
+
         assertEquals(
-            """{"type":"tool_result","tool_call_id":"c1","output":"","error":"The call's arguments were too long for the conversation to keep, so it could not run.",""" +
-                """"request_id":"m1","turn_id":"t1"}""",
+            """{"type":"tool_result","tool_call_id":"c1","output":"Refunded A-1042","error":"","request_id":"m1","turn_id":"t1"}""",
             router.nextSent(),
         )
+        assertEquals(listOf("A-1042"), ran)
+        assertEquals(emptyList(), chat.approvals.value)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation, allowed, is neither asked about nor run again when the router sends it`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = true)
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(JsonPrimitive("Refunded A-1042"), Json.parseToJsonElement(router.nextSent()).jsonObject["output"])
+
+        router.script.send(Script.Send(refundCall))
+        router.script.send(Script.Send(refundCall.dropLast(1) + ""","approved":true}"""))
+        readPast(chat)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        assertEquals(emptyList(), chat.approvals.value)
+        chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation, declined, is not asked about again when the router sends it`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        chat.decide(shownRefund, allowed = false)
+        assertEquals(JsonPrimitive("tool_approval"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+        assertEquals(JsonPrimitive("tool_result"), Json.parseToJsonElement(router.nextSent()).jsonObject["type"])
+
+        router.script.send(Script.Send(refundCall))
+        readPast(chat)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(emptyList(), chat.approvals.value)
         assertEquals(emptyList(), ran)
         chat.close()
+    }
+
+    @Test
+    fun `a call shown from the conversation that already ran here is not run again`() = runBlocking {
+        val ran = CopyOnWriteArrayList<String>()
+        val chat = agents.chat(SessionOptions(tools = listOf(refund(ran))))
+
+        // Allowed out loud, so the router sent it as already approved and it ran at once.
+        router.script.send(Script.Send(refundCall.dropLast(1) + ""","approved":true}"""))
+        assertEquals(JsonPrimitive("Refunded A-1042"), Json.parseToJsonElement(router.nextSent()).jsonObject["output"])
+        chat.decide(shownRefund, allowed = true)
+        chat.say("still there?")
+
+        assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        assertEquals(listOf("A-1042"), ran)
+        chat.close()
+    }
+
+    /** Waits until the session has read every frame the router sent before, and answered what it could. */
+    private suspend fun readPast(chat: AgentSession) = coroutineScope {
+        val seen = async(start = CoroutineStart.UNDISPATCHED) { chat.events().first { it.type == "read_past" } }
+        router.script.send(Script.Send("""{"type":"read_past"}"""))
+        seen.await()
     }
 
     @Test
@@ -669,11 +732,13 @@ class AgentSessionTest {
     /**
      * The question a call of `reserve_table` waits on here, or null when no tool here answers it.
      * Read once the session has seen the call, which it holds for the person before passing it on.
+     * A call answered here is not asked about again, so a later probe after one was answered names
+     * another [id].
      */
-    private suspend fun heldFor(chat: AgentSession): String? = coroutineScope {
+    private suspend fun heldFor(chat: AgentSession, id: String = "c1"): String? = coroutineScope {
         val seen = async(start = CoroutineStart.UNDISPATCHED) { chat.events().first { it.type == "tool_call" } }
         router.script.send(
-            Script.Send("""{"type":"tool_call","id":"c1","name":"reserve_table","arguments":"{}","request_id":"r1","turn_id":"t1"}"""),
+            Script.Send("""{"type":"tool_call","id":"$id","name":"reserve_table","arguments":"{}","request_id":"r1","turn_id":"t1"}"""),
         )
         seen.await()
         chat.approvals.value.singleOrNull()?.approval?.title
@@ -809,7 +874,7 @@ class AgentSessionTest {
             ),
             chat.toolRequests(),
         )
-        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        assertEquals("Reserve at the Ritz?", heldFor(chat, id = "c2"))
         chat.close()
     }
 
@@ -833,7 +898,7 @@ class AgentSessionTest {
             ),
             chat.toolRequests(),
         )
-        assertEquals("Reserve at the Ritz?", heldFor(chat))
+        assertEquals("Reserve at the Ritz?", heldFor(chat, id = "c2"))
         chat.close()
     }
 

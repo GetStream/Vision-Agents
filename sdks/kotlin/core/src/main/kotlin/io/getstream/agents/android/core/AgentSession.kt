@@ -83,10 +83,13 @@ public class AgentSession internal constructor(
     private val changing = Mutex()
     private val running = ConcurrentHashMap<String, Job>()
     /**
-     * The calls answered here, each claimed before its answer is sent, so a call answered twice,
-     * by id or as shown, is answered once.
+     * The calls answered or run here, each claimed before its answer is sent, so a call answered
+     * twice, by id or as shown, is answered once, and one the router sends again is not asked
+     * about or run again.
      */
     private val answered = ConcurrentHashMap.newKeySet<String>()
+    /** Calls allowed from the conversation without their arguments, run once the router sends them. */
+    private val allowedShown = ConcurrentHashMap.newKeySet<String>()
     /** The calls the router cancelled, which an answer must not run. */
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private val started = AtomicBoolean(false)
@@ -264,11 +267,14 @@ public class AgentSession internal constructor(
      * id answers it.
      *
      * The router settles a client call only with its result, so a declined one is told the person
-     * declined, and an allowed one of this session's tools runs here, or is failed when the
-     * conversation left out its arguments, so the model is not left waiting. An allowed call of a
-     * tool this session lacks is left to whoever has it. A call answered here before is left
-     * alone, so answering twice does nothing, and so is one the router cancelled. If the answer
-     * cannot be sent, it can be answered again.
+     * declined, and an allowed one of this session's tools runs here. One whose arguments the
+     * conversation left out runs when the router sends the call, which it does to a session that
+     * attaches while the call waits. An allowed call of a tool this session lacks is left to
+     * whoever has it. A call answered or run here before is left alone, so answering twice does
+     * nothing, and so is one the router cancelled; one answered here is neither asked about nor
+     * run again when the router sends it. Answer only a call whose step is `awaiting_approval`:
+     * the router ignores an answer to one that is not, but an allowed one would still run here.
+     * If the answer cannot be sent, it can be answered again.
      */
     public suspend fun decide(call: ShownToolCall, allowed: Boolean, summary: String = "") {
         val socket = held()
@@ -287,14 +293,7 @@ public class AgentSession internal constructor(
                 Command.ToolResult(call.id, error = "The person declined this call.", requestId = call.requestId, turnId = call.turnId),
             )
             tool == null -> Unit
-            call.arguments == null -> socket.send(
-                Command.ToolResult(
-                    call.id,
-                    error = "The call's arguments were too long for the conversation to keep, so it could not run.",
-                    requestId = call.requestId,
-                    turnId = call.turnId,
-                ),
-            )
+            call.arguments == null -> allowedShown.add(call.id)
             else -> run(AgentEvent.ToolCall(call.id, call.name, call.arguments, call.requestId, call.turnId), tool)
         }
     }
@@ -512,8 +511,15 @@ public class AgentSession internal constructor(
             cameraFrames?.let { return show(it, call) }
         }
         val tool = tools[call.name] ?: return
+        // Allowed from the conversation before its arguments were known: this is the call that
+        // answer was waiting for.
+        val allowed = allowedShown.remove(call.id)
+        // A call this session already answered, is running or is asking about, sent again, as the
+        // router does to a socket that attaches while it waits. Asking again would put a settled
+        // question back in front of the person, and running it again would do what it does twice.
+        if (!allowed && (call.id in answered || running.containsKey(call.id) || held.value.any { it.id == call.id })) return
         val approval = tool.approval
-        if (approval != null && !call.approved) {
+        if (approval != null && !call.approved && !allowed) {
             held.update { it + ToolApprovalRequest(call, approval, tool) }
         } else {
             run(call, tool)
@@ -596,6 +602,9 @@ public class AgentSession internal constructor(
             }
         }
         running[call.id] = job
+        // Answered by this session from here on, also once it has finished and left `running`:
+        // the same call sent again afterwards is not run again.
+        answered += call.id
         job.invokeOnCompletion { running.remove(call.id, job) }
         job.start()
     }
