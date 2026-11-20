@@ -166,8 +166,9 @@ func (l *Loop) check() {
 	}
 }
 
-// checkItems sends each item the condition holds for that was not sent within the limit, in
-// order so the events of one check go out the same way every time.
+// checkItems sets the condition's gauge to the number of items it holds for, and sends each
+// item that was not sent within the limit, in order so the events of one check go out the
+// same way every time.
 func (l *Loop) checkItems(now time.Time, condition Condition) {
 	held := condition.Items(now)
 	holds.WithLabelValues(condition.Name, string(condition.Level)).Set(float64(len(held)))
