@@ -267,6 +267,46 @@ class TestRouter:
         assert backend.headers["stt"]["X-Stream-User-Id"] == "jlahey"
         assert backend.headers["stt"]["X-Customer-Id"] == "acme"
 
+    async def test_a_router_for_a_user_names_them_whoever_the_client_acts_for(
+        self, backend: Router
+    ):
+        client = stream.Client(
+            backend=stream.Backend(
+                url=backend.url, customer_id="acme", acting_for="jlahey"
+            )
+        )
+
+        async with client.router("healthcare", user_id="alice").stt.realtime():
+            await backend.opening("stt")
+
+        assert backend.headers["stt"]["X-Stream-User-Id"] == "alice"
+        assert client.backend.acting_for == "jlahey"
+
+    async def test_a_router_without_a_user_opens_as_it_did_before(
+        self, backend: Router
+    ):
+        client = stream.Client(url=backend.url, customer_id="acme")
+
+        async with client.router("healthcare").stt.realtime():
+            opening = await backend.opening("stt")
+
+        # Probed on fa2a6a66d, before router() took a user.
+        assert opening == {
+            "config_id": "healthcare",
+            "languages": [],
+            "sample_rate": 16000,
+            "stt": {},
+            "tags": {},
+            "target": "",
+            "type": "start",
+        }
+        sent = {
+            name: value
+            for name, value in backend.headers["stt"].items()
+            if name.lower().startswith("x-")
+        }
+        assert sent == {"X-Customer-Id": "acme", "X-Stream-Client": "sdk"}
+
     async def test_a_keyword_overrides_one_field_of_the_config(
         self, router: stream.Router, backend: Router
     ):

@@ -2,6 +2,30 @@
 
 ## Features
 
+### The Rust SDK connects a user's own accounts
+
+`Client::connections()` creates, authorizes, reads, lists and deletes connections: `create(&NewConnection { connector, label, user_id })`, `authorize(id, &AuthorizeOptions { return_url, user_id })` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(&ConnectionFilter { connector, user_id })` (every page) and `delete(id, user_id)`. A user given goes out as both the owner and `X-Stream-User-Id`; `None` is the app's own connection and leaves the client's own `ClientOptions::user_id` as it is.
+
+### The PHP SDK connects a user's own accounts
+
+`$client->connections` creates, authorizes, reads, lists and deletes connections: `create(new NewConnection('linear', userId: 'ada'))`, `authorize($id, new AuthorizeOptions($returnUrl, userId: 'ada'))` for the launch URL, handoff token and expiry of the consent, `get($id, userId: 'ada')`, `list(new ConnectionFilter(userId: 'ada'))` (every page) and `delete($id, userId: 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
+
+### The .NET SDK connects a user's own accounts
+
+`VisionAgentsClient.Connections` creates, authorizes, reads, lists and deletes connections: `CreateAsync("linear", new NewConnectionOptions { UserId = "alice" })`, `AuthorizeAsync(id, new AuthorizeOptions { ReturnUrl = ..., UserId = ... })` for the consent's launch URL, handoff token and expiry, `GetAsync(id, userId)`, `ListAsync(new ConnectionFilter { ConnectorId = ..., UserId = ... })` reading every page, and `DeleteAsync(id, userId)`; a user given is sent as the owner and as `X-Stream-User-Id`, and none is the app's own connection (#2099).
+
+### The JavaScript SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", { userId })`, `authorize(id, { returnUrl, userId })` for the consent's launch URL, handoff token and expiry, `get(id, { userId })`, `list({ connectorId, userId })` and `delete(id, { userId })`; without `userId` they are the app's own. `Backend.actingFor` is deprecated in favour of the `userId` parameter and works as before (#2110).
+
+### The Ruby SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", user_id: "alice")`, then `authorize(id, return_url:, user_id:)` for the launch URL, handoff token and expiry of the consent, and `get(id, user_id:)`, `list(connector:, user_id:)`, `delete(id, user_id:)`; no `user_id` is the app's own connection. `Client#get`, `post`, `put`, `patch`, `delete` and `socket` take an optional `user_id:` sent in `X-Stream-User-Id`, and `Backend#acting_for` is deprecated in its favour (AI-3380, AI-3387).
+
+### The Python SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections, each call naming the user as `user_id` (the owner and `X-Stream-User-Id`; none is the app's). `api.agent(name, user_id=...)` and `api.router(config, user_id=...)` run work for a user on the app's credential; `api.for_user` is deprecated and still works.
+
 ### A guardrail's every check is on the session timeline, and its classifier question is editable
 
 Every turn a guardrail screens now carries its check as `guardrail` on the session socket's `turn` frame and on the timeline entry: `kind`, `model`, `probability`, `threshold`, `allowed`, `latency_ms`, `held_ms`, `mode`, and `failed` for a check that could not be made and let the turn through. Allowed turns are recorded too, so a threshold can be tuned from what the model made of ordinary turns. A `decision_model` guardrail.md takes `question:`, the question asked of the classifier in place of the default, and the check now reads the turn in light of the recent conversation (the last 6 lines, at most 1,500 characters), which it gets as `conversation` beside `policy` and `message`. A webhook's request carries `conversation` too (AI-3402).

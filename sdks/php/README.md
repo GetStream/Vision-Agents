@@ -458,6 +458,33 @@ refuses is a `RouterException` of 402 `spend_limit_reached`, or 429 `user_limit_
 end user's. `$client->teams` also has `list`, `removeLimit` and `usage`, and
 `$client->spendLimits` has `get`, `setNote`, `update` and `usage`.
 
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through (server side only). A backend creates one for a user, sends the user's browser to the
+provider's consent, and reads whether it connected:
+
+```php
+$connections = $client->connections;
+$connection = $connections->create(new NewConnection('linear', userId: 'ada'));
+$consent = $connections->authorize($connection->id, new AuthorizeOptions('https://app.example.com/settings', userId: 'ada'));
+// Open $consent->launchUrl in a popup from a page of the return URL's origin, and post it
+// $consent->handoffToken. The attempt ends at $consent->expiresAt.
+
+$connection = $connections->get($connection->id, userId: 'ada'); // status is pending until ada consents
+$hers = $connections->list(new ConnectionFilter(userId: 'ada'));
+$connections->delete($connection->id, userId: 'ada');
+```
+
+Each call takes the user as `userId`: a parameter of `get` and `delete`, a field of `NewConnection`,
+`AuthorizeOptions` and `ConnectionFilter` for the calls with more options, so a user id never takes the
+place of a label, return URL or connector. The SDK sends it as the owner and as
+`X-Stream-User-Id`, so the two never differ. Another user's connection is not found, the same as
+one that does not exist. An app's connection is reached by every call of a backend, one naming a
+user included, but `list` with a user lists only that user's. Leave the user out for the
+app's own connection, which any of its agents may be bound to; `new ConnectionFilter(connectorId: 'linear')`
+keeps one connector's. `Backend::onBehalfOf` is deprecated: pass `userId` to the call instead.
+
 ## Shapes and failures
 
 Request and response shapes are generated into `GetStream\VisionAgents\Generated` from

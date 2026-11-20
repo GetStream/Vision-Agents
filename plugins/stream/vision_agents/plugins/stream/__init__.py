@@ -12,6 +12,8 @@ from ._generated.models import (
     Account,
     AgentConfigPatch,
     AttachedNumber,
+    Authorization,
+    Connection,
     CreditEntry,
     GuestUser,
     HistoryMessage,
@@ -38,6 +40,7 @@ from .account import OrganizationAccount, Usage
 from .accelerated import Accelerated
 from .client import Agent, Client, GuestOptions, Memories
 from .config import define_agent, define_skills, sync_agent
+from .connections import Connections
 from .detection import (
     ChangeGate,
     DetectionProcessor,
@@ -77,11 +80,14 @@ __all__ = [
     "AgentConfigPatch",
     "AgentResponse",
     "AttachedNumber",
+    "Authorization",
     "Backend",
     "CallContext",
     "CallNotHeld",
     "ChangeGate",
     "Client",
+    "Connection",
+    "Connections",
     "CreditEntry",
     "DetectionProcessor",
     "Dispatch",
