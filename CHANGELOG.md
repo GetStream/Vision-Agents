@@ -6,6 +6,10 @@
 
 `VisionAgentsClient.Connections` creates, authorizes, reads, lists and deletes connections: `CreateAsync("linear", new NewConnectionOptions { UserId = "alice" })`, `AuthorizeAsync(id, new AuthorizeOptions { ReturnUrl = ..., UserId = ... })` for the consent's launch URL, handoff token and expiry, `GetAsync(id, userId)`, `ListAsync(new ConnectionFilter { ConnectorId = ..., UserId = ... })` reading every page, and `DeleteAsync(id, userId)`; a user given is sent as the owner and as `X-Stream-User-Id`, and none is the app's own connection (#2099).
 
+### The Ruby SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", user_id: "alice")`, then `authorize(id, return_url:, user_id:)` for the launch URL, handoff token and expiry of the consent, and `get(id, user_id:)`, `list(connector:, user_id:)`, `delete(id, user_id:)`; no `user_id` is the app's own connection. `Client#get`, `post`, `put`, `patch`, `delete` and `socket` take an optional `user_id:` sent in `X-Stream-User-Id`, and `Backend#acting_for` is deprecated in its favour (AI-3380, AI-3387).
+
 ### The Python SDK connects a user's own accounts
 
 `api.connections` creates, authorizes, reads, lists and deletes connections, each call naming the user as `user_id` (the owner and `X-Stream-User-Id`; none is the app's). `api.agent(name, user_id=...)` and `api.router(config, user_id=...)` run work for a user on the app's credential; `api.for_user` is deprecated and still works.
