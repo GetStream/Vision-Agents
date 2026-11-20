@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { inspect } from "node:util";
 
+import * as chat from "../src/chat.js";
 import * as node from "../src/node.js";
+import * as react from "../src/react.js";
+import * as video from "../src/video.js";
 
 import {
   Backend,
@@ -51,6 +54,9 @@ describe("Backend", () => {
   it("exports speakingFor from no entry point and as no static of Backend", () => {
     assert.equal("speakingFor" in root, false);
     assert.equal("speakingFor" in node, false);
+    assert.equal("speakingFor" in chat, false);
+    assert.equal("speakingFor" in video, false);
+    assert.equal("speakingFor" in react, false);
     assert.equal(Object.getOwnPropertyNames(Backend).includes("speakingFor"), false);
   });
 
