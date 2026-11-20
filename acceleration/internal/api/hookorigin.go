@@ -96,6 +96,7 @@ func (s *Server) verifyHook(w http.ResponseWriter, r *http.Request, payload []by
 	if named := r.PathValue("app"); named != "" {
 		app, ok := streamapp.ParseAppID(named)
 		if !ok {
+			noteAnswered(w, http.StatusNotFound)
 			http.NotFound(w, r)
 			return hookOrigin{}, false
 		}

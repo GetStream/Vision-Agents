@@ -47,11 +47,19 @@ const pongWait = 90 * time.Second
 // for another site to ride on and nothing for this check to protect. One that does carry
 // an origin is held to the same rule as an ordinary cross-origin request: a socket with a
 // looser one would be the way around the check the rest of the API makes.
+//
+// A handshake it refuses is answered as gorilla answers one by default, with its code noted
+// for the access line.
 func newUpgrader(mode auth.Mode) websocket.Upgrader {
 	return websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			return origin == "" || originAllowed(mode, origin)
+		},
+		Error: func(w http.ResponseWriter, _ *http.Request, status int, _ error) {
+			noteAnswered(w, status)
+			w.Header().Set("Sec-Websocket-Version", "13")
+			http.Error(w, http.StatusText(status), status)
 		},
 	}
 }

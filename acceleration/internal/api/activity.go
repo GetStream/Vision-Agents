@@ -153,6 +153,15 @@ func noteRefusal(w http.ResponseWriter, code string) {
 	}
 }
 
+// noteAnswered notes the code of a failure answered outside the error envelope, in the shape a
+// vendor or a library writes it: the code its status's type has when nothing names it better
+// (statusError), which is what the envelope would have said.
+func noteAnswered(w http.ResponseWriter, status int) {
+	if status >= http.StatusBadRequest {
+		noteRefusal(w, statusError(status, "").Code)
+	}
+}
+
 // noteRefusals is a Huma transformer noting the code of an APIError an operation returned,
 // which Huma writes without going through writeError.
 func noteRefusals(ctx huma.Context, _ string, body any) (any, error) {
