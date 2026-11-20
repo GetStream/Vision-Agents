@@ -85,7 +85,7 @@ var (
 	usageUnowned = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "usage_unowned_total",
-		Help:      "Usage rows a sweep left unshipped because their app has joined no organization yet",
+		Help:      "Times a sweep passed over a usage row because its app has joined no organization yet; a row is counted again at every sweep while it waits",
 	})
 	_ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "router",

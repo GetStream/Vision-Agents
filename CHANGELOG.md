@@ -766,6 +766,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The router's `unowned` usage alert names the app and counts rows
+
+The `unowned` alert said only `usage alert: unowned`, with a number that counted every sweep passing over a waiting row, not the rows. It is now one alert per app, fingerprinted `usage_unowned:<app>`, so each app is its own Sentry issue. It warns once the app's oldest row waiting for an organization started 15 minutes ago, and says the app has joined no organization, so its rows are not billed, and to check `app_organizations` for it first, then what wrote the rows. It carries the app's waiting rows, their cost (`cost_micros`), when the oldest started, and the rows by `api_key`, modality, provider and model (`written_by`, the 10 groups with most rows, the rest counted in `other_groups` and `other_rows`), read from Postgres by every router's sweeper at each count. An app that has joined an organization is left out, since the next sweep ships its rows. `router_usage_unowned_total` keeps its name and now says what it counts: each time a sweep passes over such a row (#2118).
+
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 
 The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.

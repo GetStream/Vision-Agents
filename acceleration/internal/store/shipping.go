@@ -154,6 +154,77 @@ func (s *Store) Unshipped(ctx context.Context) (int64, time.Duration, error) {
 	return rows, time.Duration(max(oldest, 0) * float64(time.Second)), nil
 }
 
+// UnownedApp is an app's rows in this shard that wait to ship because the app has joined no
+// organization.
+type UnownedApp struct {
+	App             string
+	Rows            int64
+	OldestStartedAt time.Time
+	CostMicros      int64
+	// Groups are the rows by what wrote them, most rows first.
+	Groups []UnownedGroup
+}
+
+// UnownedGroup is the waiting rows of an app written by one key for one modality and model.
+type UnownedGroup struct {
+	APIKey     string `json:"api_key"`
+	Modality   string `json:"modality"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	Rows       int64  `json:"rows"`
+	CostMicros int64  `json:"cost_micros"`
+}
+
+// UnownedUsage is the apps of this shard whose rows wait to ship with no organization, by app.
+// An app that has joined one is left out: the next sweep writes it on its rows.
+func (s *Store) UnownedUsage(ctx context.Context) ([]UnownedApp, error) {
+	var groups []struct {
+		App string `bun:"customer_id"`
+		UnownedGroup
+		Oldest time.Time `bun:"oldest"`
+	}
+	err := s.shard.NewRaw(`
+SELECT customer_id, api_key, modality, provider, model, count(*) AS rows, sum(cost_micros) AS cost_micros, min(started_at) AS oldest
+FROM requests WHERE to_ship AND shipped_at IS NULL AND organization_id = ''
+GROUP BY 1, 2, 3, 4, 5 ORDER BY customer_id, rows DESC, api_key, modality, provider, model`).Scan(ctx, &groups)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: unowned usage: %w", err))
+	}
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	apps := make([]string, 0, len(groups))
+	for _, group := range groups {
+		apps = append(apps, group.App)
+	}
+	var memberships []string
+	if err := s.db.NewSelect().Model((*AppOrganization)(nil)).Column("app_id").Where("app_id IN (?)", bun.In(apps)).
+		Scan(ctx, &memberships); err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: unowned usage: %w", err))
+	}
+	joined := make(map[string]bool, len(memberships))
+	for _, app := range memberships {
+		joined[app] = true
+	}
+	var unowned []UnownedApp
+	for _, group := range groups {
+		if joined[group.App] {
+			continue
+		}
+		if len(unowned) == 0 || unowned[len(unowned)-1].App != group.App {
+			unowned = append(unowned, UnownedApp{App: group.App, OldestStartedAt: group.Oldest})
+		}
+		app := &unowned[len(unowned)-1]
+		app.Rows += group.Rows
+		app.CostMicros += group.CostMicros
+		if group.Oldest.Before(app.OldestStartedAt) {
+			app.OldestStartedAt = group.Oldest
+		}
+		app.Groups = append(app.Groups, group.UnownedGroup)
+	}
+	return unowned, nil
+}
+
 // Reship queues this shard's rows started since then to be sent to the usage service again:
 // the rows it has (shipped_at set), or with rejected the rows it refused (ship_error set),
 // clearing why. A row it never had nor refused is left alone: one written before the router

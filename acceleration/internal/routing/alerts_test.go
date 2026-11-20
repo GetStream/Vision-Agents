@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type UsageAlertsSuite struct {
@@ -43,11 +44,93 @@ func (s *UsageAlertsSuite) TestTheRouterHasItsEightConditions() {
 	}, levels)
 }
 
-// The Slack message of an alert is its Sentry title: without a summary it names only the alert.
+// The Slack message of an alert is its Sentry title: without a summary, or an item's
+// description, it names only the alert.
 func (s *UsageAlertsSuite) TestEveryConditionSaysWhatItMeans() {
 	for _, condition := range Alerts(time.Minute) {
+		if condition.Items != nil {
+			s.NotEmpty(strings.TrimSpace(condition.Describe("app")), condition.Name)
+			continue
+		}
 		s.NotEmpty(strings.TrimSpace(condition.Summary), condition.Name)
 	}
+}
+
+// counted makes the apps the last count of a sweeper found waiting for an organization what
+// the alerts read.
+func (s *UsageAlertsSuite) counted(apps ...store.UnownedApp) {
+	sweeper := &Sweeper{}
+	sweeper.unowned.Store(&apps)
+	sweepers.Store(sweeper, struct{}{})
+	s.T().Cleanup(func() { sweepers.Delete(sweeper) })
+}
+
+func (s *UsageAlertsSuite) TestUnownedNamesEachAppWhoseRowsWaitedFifteenMinutes() {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	written := []store.UnownedGroup{
+		{APIKey: "job:crawler", Modality: "knowledge", Provider: "turbopuffer", Model: "write", Rows: 10, CostMicros: 300},
+		{APIKey: "key-1", Modality: "llm", Provider: "openai", Model: "gpt", Rows: 2, CostMicros: 100},
+	}
+	s.counted(
+		store.UnownedApp{App: "waiting", Rows: 12, CostMicros: 400, OldestStartedAt: now.Add(-26 * time.Hour), Groups: written},
+		store.UnownedApp{App: "new", Rows: 1, CostMicros: 3, OldestStartedAt: now.Add(-14 * time.Minute)},
+	)
+
+	held := s.named("unowned").Items(now)
+
+	s.Equal(map[string]map[string]any{"waiting": {
+		"waiting_rows": int64(12), "cost_micros": int64(400), "oldest_started_at": "2026-11-18T10:00:00Z",
+		"oldest_waiting": "26h0m0s", "written_by": written,
+	}}, held, "an app is warned about once its oldest row has waited 15 minutes")
+}
+
+func (s *UsageAlertsSuite) TestUnownedWarnsFromTheFifteenthMinuteOn() {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	s.counted(
+		store.UnownedApp{App: "fifteen", Rows: 1, OldestStartedAt: now.Add(-15 * time.Minute)},
+		store.UnownedApp{App: "almost", Rows: 1, OldestStartedAt: now.Add(-15*time.Minute + time.Second)},
+	)
+
+	held := s.named("unowned").Items(now)
+
+	s.Contains(held, "fifteen")
+	s.NotContains(held, "almost")
+}
+
+// An app with many keys or models keeps a small event: the groups with most rows, and a count
+// of the rest.
+func (s *UsageAlertsSuite) TestUnownedSendsTheTenGroupsWithMostRowsAndSumsTheRest() {
+	now := time.Now()
+	var groups []store.UnownedGroup
+	for i := range 13 {
+		groups = append(groups, store.UnownedGroup{APIKey: fmt.Sprintf("key-%d", i), Modality: "llm", Provider: "openai",
+			Model: "gpt", Rows: int64(20 - i), CostMicros: 5})
+	}
+	s.counted(store.UnownedApp{App: "busy", Rows: 221, CostMicros: 65, OldestStartedAt: now.Add(-time.Hour), Groups: groups})
+
+	held := s.named("unowned").Items(now)["busy"]
+
+	s.Equal(groups[:10], held["written_by"])
+	s.Equal(3, held["other_groups"])
+	s.Equal(int64(10+9+8), held["other_rows"])
+}
+
+// A sweeper registers before its first count, which may fail: the alerts loop must not stop.
+func (s *UsageAlertsSuite) TestUnownedReadsNothingFromASweeperNotYetCounted() {
+	sweeper := &Sweeper{}
+	sweepers.Store(sweeper, struct{}{})
+	s.T().Cleanup(func() { sweepers.Delete(sweeper) })
+
+	s.Empty(s.named("unowned").Items(time.Now()))
+}
+
+// What a person who opens the alert checks first: the app's membership, then what wrote its rows.
+func (s *UsageAlertsSuite) TestUnownedSaysWhyTheRowsWaitAndWhatToCheck() {
+	described := s.named("unowned").Describe("app")
+	s.Contains(described, "joined no organization")
+	s.Contains(described, "not billed")
+	s.Contains(described, "app_organizations")
+	s.Contains(described, "api_key")
 }
 
 // A row lost is written back by replay and a refused one is queued again by reship: the summary

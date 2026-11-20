@@ -50,6 +50,8 @@ type Sweeper struct {
 	// nanoseconds since the oldest started.
 	unshipped atomic.Int64
 	oldest    atomic.Int64
+	// unowned is the apps the last count found waiting for an organization, for the unowned alert.
+	unowned atomic.Pointer[[]store.UnownedApp]
 
 	// errorLogged is when a failed sweep was last logged, in Unix nanoseconds, and
 	// unownedLogged when each app whose rows have no organization was. Only the sweeping
@@ -159,7 +161,8 @@ func (s *Sweeper) sweep(ctx context.Context) (bool, error) {
 }
 
 // count reads how many rows wait in the shard and how long ago the oldest started, for the
-// gauges. A count that fails leaves them as they were.
+// gauges, and the apps whose rows wait for an organization, for the alert. A count that fails
+// leaves them as they were.
 func (s *Sweeper) count(ctx context.Context) error {
 	counting, cancel := context.WithTimeout(ctx, countTimeout)
 	defer cancel()
@@ -169,6 +172,11 @@ func (s *Sweeper) count(ctx context.Context) error {
 	}
 	s.unshipped.Store(rows)
 	s.oldest.Store(int64(oldest))
+	unowned, err := s.store.UnownedUsage(counting)
+	if err != nil {
+		return err
+	}
+	s.unowned.Store(&unowned)
 	return nil
 }
 
