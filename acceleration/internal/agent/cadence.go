@@ -59,6 +59,10 @@ type candidate struct {
 	Final bool
 	// OverAgent says the turn was put to the controller while the agent was talking.
 	OverAgent bool
+	// Stopped says the turn is the words a stop over the agent was ruled on, and no more:
+	// the agent has stopped for them, and the reply model says whether they ask anything
+	// else (afterStop).
+	Stopped bool
 }
 
 // cadence decides when an evolving transcript has stayed unchanged long enough to act on.

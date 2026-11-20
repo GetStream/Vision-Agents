@@ -1455,8 +1455,9 @@ func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 		last := harness.WithoutNotes(asked[2].Input)
 		s.Equal(llm.ToolResult, last[len(last)-2].Role)
 		s.Equal("call-2", last[len(last)-2].ToolCallID)
-		// Typed: no caller said it (llm.Message.Typed), which no provider reads.
-		s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true},
+		// Typed and Router: no caller said it (llm.Message.Typed, Router), which no provider reads.
+		s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true,
+			Router: true},
 			last[len(last)-1])
 	})
 }
@@ -2016,7 +2017,7 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 		s.agent.mu.Unlock()
 		ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
 
-		s.agent.speculate(s.agent.harness, ready, false, false)
+		s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
 		s.Require().True(s.agent.adoptSpeculation(ready, ""))
 
 		s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")

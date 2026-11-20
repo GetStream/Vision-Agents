@@ -223,8 +223,8 @@ func syncPrices(ctx context.Context, tx bun.Tx, load PriceLoad) (PriceChange, []
 	}
 	// The database's clock, so routers whose clocks disagree still name and time their
 	// changes in one order.
-	var now time.Time
-	if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&now); err != nil {
+	now, err := databaseNow(ctx, tx)
+	if err != nil {
 		return PriceChange{}, nil, err
 	}
 	change := PriceChange{
@@ -314,14 +314,14 @@ func (s *Store) ReloadPrices(ctx context.Context, load PriceLoad, dryRun bool) (
 		if err := lockPrices(ctx, tx); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&reload.At); err != nil {
+		var err error
+		if reload.At, err = databaseNow(ctx, tx); err != nil {
 			return err
 		}
 		reload.Changes = []PriceChange{}
 		if err := tx.NewSelect().Model(&reload.Changes).Order("created_at DESC", "name DESC").Scan(ctx); err != nil {
 			return err
 		}
-		var err error
 		if reload.Entries, err = tx.NewSelect().Model((*PriceEntry)(nil)).Count(ctx); err != nil {
 			return err
 		}

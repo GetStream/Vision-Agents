@@ -485,8 +485,8 @@ func (s *Store) logShardRequests(ctx context.Context, requests []*Request) error
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// unnest reads the array in order, so the locks are taken in it.
 		if _, err := tx.ExecContext(ctx,
-			"SELECT pg_advisory_xact_lock(hashtextextended(customer, 731)) FROM unnest(?::text[]) AS customer",
-			pgdialect.Array(customers)); err != nil {
+			"SELECT pg_advisory_xact_lock(hashtextextended(customer, ?)) FROM unnest(?::text[]) AS customer",
+			agentLogLockSeed, pgdialect.Array(customers)); err != nil {
 			return err
 		}
 		_, err := tx.NewInsert().Model(&entries).Exec(ctx)
@@ -2015,3 +2015,16 @@ func newID() string {
 // NewID is newID for callers that have to name something before the row holding it exists,
 // as an uploaded file must be given an object key before it can be recorded.
 func NewID() string { return newID() }
+
+// lockUntilCommit takes the advisory lock key and seed name, and holds it until tx ends.
+func lockUntilCommit(ctx context.Context, tx bun.IDB, key string, seed int64) error {
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))", key, seed)
+	return err
+}
+
+// databaseNow is the database's clock, which routers whose clocks disagree still share.
+func databaseNow(ctx context.Context, db bun.IDB) (time.Time, error) {
+	var now time.Time
+	err := db.QueryRowContext(ctx, "SELECT now()").Scan(&now)
+	return now, err
+}

@@ -43,6 +43,7 @@ jobs:
         uses: ./.github/actions/python-uv-setup
         with:
           python-version: "3.12.13"
+          cpu-torch: "true"
       # Run ruff
       - name: Run Ruff linter
         run: uv run ruff check .
@@ -125,6 +126,7 @@ jobs:
         uses: ./.github/actions/python-uv-setup
         with:
           python-version: "3.12.13"
+          cpu-torch: "true"
       # The VAD and turn models land in the temp dir by default and are otherwise fetched
       # from GitHub and Hugging Face on every run.
       - name: Cache ONNX models
