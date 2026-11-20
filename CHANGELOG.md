@@ -815,6 +815,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A POST through the sandbox proxy no longer fails when the host closes an idle connection
 
 The sandbox egress proxy reused a kept-alive connection for every request. A host that closes idle connections sooner than the router's 90 s (Apache after 5 s by default) could close one just as a POST went out on it: the call failed, and the sandbox got a 502. The proxy now sends a request it cannot safely send twice, such as a POST, on a new HTTP/1.1 connection; HTTP/2 connections and GETs are still shared. Other outbound callers keep their connection pooling (#2160).
+
 ### A guardrail is no longer shown a tool's output as the caller's words
 
 The `conversation` a guardrail's check reads (classifier, judge and webhook) left out tool calls but not the result of a call held over an interruption, which reaches the model on the caller's side once it is in: a lookup's JSON reached the next turn's check as a `user:` line. That result, the note that silence declined a call, a summary of the call so far, and the cards of earlier episodes are now left out. In a channel where several people write, each person's line is their name and words (`user: Anya: I'm sick`), not the JSON envelope with their user id, and the same goes for a line of history the caller kept with names (AI-3408).
