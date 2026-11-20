@@ -210,7 +210,7 @@ func (w *Workers) RunHosted(ctx context.Context, customerID, agentID string, cal
 		}
 	}
 	if len(hosts) == 0 {
-		return nil, fmt.Errorf("dispatch: no worker is running %s now", call.Name)
+		return nil, dispatch.NoWorkerError{Tool: call.Name}
 	}
 
 	reply, err := w.ask(ctx, hosts[rand.IntN(len(hosts))], workRequest{

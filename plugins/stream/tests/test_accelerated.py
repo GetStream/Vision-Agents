@@ -920,33 +920,6 @@ class TestAccelerated:
         )
         assert seen[0].approved
 
-    async def test_a_function_tells_the_caller_how_it_is_going(
-        self, router: Router, joined: stream.Accelerated
-    ):
-        @joined.register_function(description="Search flights")
-        async def search(tool_call_context: ToolCallContext) -> str:
-            await tool_call_context.update("checking three airlines")
-            await tool_call_context.say("Still looking, one moment.")
-            return "found two"
-
-        await router.send(
-            {"type": "tool_call", "id": "call-4", "name": "search", "arguments": "{}"}
-        )
-
-        assert await router.answered() == {
-            "type": "tool_update",
-            "tool_call_id": "call-4",
-            "text": "checking three airlines",
-            "verbatim": False,
-        }
-        assert await router.answered() == {
-            "type": "tool_update",
-            "tool_call_id": "call-4",
-            "text": "Still looking, one moment.",
-            "verbatim": True,
-        }
-        assert (await router.answered())["output"] == "found two"
-
     async def test_a_held_call_is_not_cancelled_by_the_caller_talking_over(
         self, router: Router, joined: stream.Accelerated
     ):

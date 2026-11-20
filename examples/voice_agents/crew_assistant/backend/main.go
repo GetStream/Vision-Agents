@@ -82,7 +82,7 @@ func run(ctx context.Context, addr, simulationUser string) error {
 	if err != nil {
 		return err
 	}
-	dispatch.Host(hostedAgent{name: agentName, tools: hosted}, 30*time.Second)
+	dispatch.Host(restaurantTools{tools: hosted}, 30*time.Second)
 
 	mux := http.NewServeMux()
 	s.routes(mux)

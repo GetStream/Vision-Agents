@@ -18,6 +18,14 @@ module GetStream
     #   agent.tools.register("book_flight", description: "Book a flight", ...) do |tool_call_context, args|
     #     bookings.book(args["flight_id"], key: tool_call_context.id)
     #   end
+    #
+    # params: names each argument a required string, with what it is for, and a block that
+    # takes keywords is handed only the arguments it names:
+    #
+    #   agent.tools.register("get_weather", description: "Weather for a city",
+    #                        params: { city: "a city or region" }) do |city:|
+    #     weather_in(city)
+    #   end
     class Tools
       Tool = Data.define(:name, :description, :parameters, :executor, :display_title, :interruptible, :timeout,
                          :approval, :run)
@@ -29,6 +37,8 @@ module GetStream
         @lock = Mutex.new
       end
 
+      # @param params [Hash] argument name => what it is for, each a required string, in place
+      #   of a JSON Schema in parameters:.
       # @param executor [String] who runs it: "server", the default, or "client" for a tool a
       #   person's device runs. This process still answers it, once the device has reported.
       # @param display_title [String] what a call is doing, in words for the people in the
@@ -41,8 +51,11 @@ module GetStream
       #   "Book flight {flight_id}?", where each {name} is an argument filled in from the call.
       #   On a voice call the agent asks it out loud and waits 15 seconds for a yes; in
       #   writing it goes to the app.
-      def register(name, description:, parameters: { type: "object", properties: {} }, executor: nil,
+      def register(name, description:, parameters: nil, params: nil, executor: nil,
                    display_title: nil, interruptible: false, timeout: nil, approval: nil, &run)
+        raise ArgumentError, "#{name} takes params: or parameters:, not both" if params && parameters
+
+        parameters ||= params ? strings(params) : { type: "object", properties: {} }
         raise ConfigurationError, "a tool needs a name" if name.to_s.empty?
         raise ConfigurationError, "#{name} needs a description, since it is all the model sees" if description.to_s.empty?
         raise ConfigurationError, "#{name} needs a block to run" unless run
@@ -120,9 +133,29 @@ module GetStream
       private
 
       # A block that takes two arguments, or any number, is handed the call first; one that
-      # takes one is handed only the arguments.
+      # takes one is handed only the arguments. A block that takes keywords is handed the
+      # arguments as keywords, and the call first when it takes any positional argument.
       def invoke(tool, parsed, tool_call_context)
-        takes_call?(tool.run) ? tool.run.call(tool_call_context, parsed) : tool.run.call(parsed)
+        run = tool.run
+        kinds = run.parameters.map(&:first)
+        return keywords(run, kinds, parsed, tool_call_context) if kinds.intersect?(%i[keyreq key keyrest])
+
+        takes_call?(run) ? run.call(tool_call_context, parsed) : run.call(parsed)
+      end
+
+      # Only the keywords the block names, unless it takes **: an argument the model made up
+      # is not the block's mistake.
+      def keywords(run, kinds, parsed, tool_call_context)
+        arguments = parsed.transform_keys(&:to_sym)
+        unless kinds.include?(:keyrest)
+          arguments = arguments.slice(*run.parameters.filter_map { |kind, name| name if %i[keyreq key].include?(kind) })
+        end
+        kinds.intersect?(%i[req opt rest]) ? run.call(tool_call_context, **arguments) : run.call(**arguments)
+      end
+
+      def strings(params)
+        { type: "object", properties: params.transform_values { |about| { type: "string", description: about } },
+          required: params.keys.map(&:to_s) }
       end
 
       def takes_call?(run)

@@ -102,14 +102,11 @@ func waiting(t *testing.T, router *pool, options DispatchOptions) *Dispatch {
 	return worker
 }
 
-// hostedAgent is an agent to host, standing in for a client.Agent this package cannot import.
-type hostedAgent struct {
-	name      string
-	functions *tools.Registry
-}
+// toolHost is the app's tools to host, standing in for a client.Client this package cannot
+// import.
+type toolHost struct{ functions *tools.Registry }
 
-func (a hostedAgent) Name() string           { return a.name }
-func (a hostedAgent) Tools() *tools.Registry { return a.functions }
+func (h toolHost) Tools() *tools.Registry { return h.functions }
 
 // run waits for work in the background and returns what Run said once it stops.
 func run(t *testing.T, ctx context.Context, worker *Dispatch) func() error {
@@ -429,7 +426,7 @@ func TestAHostedToolCallIsNotCountedAsWorkTheRouterHandedOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 
 	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
@@ -543,18 +540,41 @@ func TestAHostedFunctionIsDeclaredAndAnsweredOverTheDispatchSocket(t *testing.T)
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, time.Minute)
+	worker.Host(toolHost{functions}, time.Minute)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	stopped := run(t, ctx, worker)
 
 	declared := router.told(t, "host_tools")
-	if declared.String("agent_id") != "stream-support" || declared.Int("timeout_ms") != 60000 {
+	if declared["every_agent"] != true || declared["agent_id"] != nil || declared.Int("timeout_ms") != 60000 {
 		t.Errorf("the router was told %v", declared)
 	}
 	answered := router.told(t, "tool_result")
 	if answered.String("id") != "call-1" || answered.String("output") != "read android" {
 		t.Errorf("the call was answered %v", answered)
+	}
+	cancel()
+	stopped()
+}
+
+func TestAHostedFunctionTellsTheRouterWhatItsCallsAreShownDoing(t *testing.T) {
+	router := newPool(t, func(*websocket.Conn) {})
+	functions := tools.NewRegistry()
+	if err := tools.Register(functions, "weather_lookup", "Look up the weather", func(context.Context, struct{}) (any, error) {
+		return "sunny", nil
+	}, tools.DisplayTitle("Checking the weather")); err != nil {
+		t.Fatal(err)
+	}
+	worker := waiting(t, router, DispatchOptions{})
+	worker.Host(toolHost{functions}, time.Minute)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	stopped := run(t, ctx, worker)
+
+	declared := router.told(t, "host_tools")
+	hosted, _ := declared["tools"].([]any)
+	if len(hosted) != 1 || hosted[0].(map[string]any)["display_title"] != "Checking the weather" {
+		t.Errorf("the router was told %v", declared["tools"])
 	}
 	cancel()
 	stopped()
@@ -585,7 +605,7 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 	}
 	worker := waiting(t, router, DispatchOptions{})
 	worker.firstRetry = 10 * time.Millisecond
-	worker.Host(hostedAgent{"stream-support", functions}, 0)
+	worker.Host(toolHost{functions}, 0)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	stopped := run(t, ctx, worker)
@@ -604,7 +624,7 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if declared := router.told(t, "host_tools"); declared.String("agent_id") != "stream-support" {
+	if declared := router.told(t, "host_tools"); declared["every_agent"] != true {
 		t.Errorf("the reconnected worker declared %v", declared)
 	}
 	cancel()
@@ -615,14 +635,14 @@ func TestAWorkerTheRouterDropsReconnectsAndHostsAgain(t *testing.T) {
 
 func TestAWorkerWhoseToolsAreRefusedStopsWaiting(t *testing.T) {
 	router := newPool(t, func(connection *websocket.Conn) {
-		_ = connection.WriteJSON(Frame{"type": "hosting_refused", "agent_id": "stream-support", "reason": "hosting no tools is not hosting"})
+		_ = connection.WriteJSON(Frame{"type": "hosting_refused", "reason": "hosting no tools is not hosting"})
 	})
 	functions := tools.NewRegistry()
 	if err := tools.Register(functions, "investigate_sdk", "Read SDK source", func(context.Context, struct{}) (any, error) { return "", nil }); err != nil {
 		t.Fatal(err)
 	}
 	worker := waiting(t, router, DispatchOptions{})
-	worker.Host(hostedAgent{"stream-support", functions}, 0)
+	worker.Host(toolHost{functions}, 0)
 
 	if err := run(t, t.Context(), worker)(); err == nil {
 		t.Fatal("a worker nobody will call kept waiting")

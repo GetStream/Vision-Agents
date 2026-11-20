@@ -76,7 +76,6 @@ tools.register_with_tool_call_context(
         ..Default::default()
     },
     async |tool_call_context: ToolCallContext, arguments| {
-        tool_call_context.update("checking seats").await?;
         tool_call_context.disallow_interruptions().await?;
         let user = &tool_call_context.user.id;
         Ok::<_, Error>(book(&arguments["flight_id"], user, &tool_call_context.id).await)
@@ -96,10 +95,7 @@ tools.register_with_tool_call_context(
 
 `tool_call_context.id` is the id the model gave the call, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, `user` and `conversation`
-say where it came from. `update(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
-a speech-to-speech model may paraphrase. `disallow_interruptions` keeps the call going from then
-on, for a write that must not stop halfway, and returns `Error::NotHeld` when the router had
+say where it came from. `disallow_interruptions` keeps the call going from then on, for a write that must not stop halfway, and returns `Error::NotHeld` when the router had
 already cancelled it. A cancelled call is aborted at its next `.await` and is not answered. A
 call the router addresses to another watcher (`run: false`) is left alone.
 
@@ -231,26 +227,26 @@ in `images`. `answer` has the model answer it on that session, shown those photo
 worker's own credential acting for the user who wrote it.
 `get_or_create_agent` refuses such a message.
 
-A worker can also host an agent's functions for every session opened under its name,
-including ones opened from a browser. The router offers them to each session and sends every
-call here:
+A worker can also host the app's functions, registered once on the client for every agent, for
+any session, including ones opened from a browser. The router offers a function to a session
+only where a tool group of its agent's agent.yaml names it, and sends every call here:
 
 ```rust
-let agent = client.agent("my-agent");
-agent.tools.register(
+client.tools().register(
     "get_weather",
     "The weather in a city",
     json!({"type": "object", "properties": {"city": {"type": "string"}}}),
     async |arguments| Ok::<_, String>(format!("sunny in {}", arguments["city"])),
 );
-dispatch.host(&agent, None); // None: the router waits its default 30 seconds for each tool call
-dispatch.run().await?;
+client.run_dispatch().await?;
 ```
 
 A hosted tool registered with `register_with_tool_call_context` takes the same `interruptible`,
 `timeout_ms` and `approval` (asked on a voice call), is handed its call, and is cancelled when
-the router gives up on it. A worker that only hosts tools needs no handler. If the router
-refuses the tools, `run` returns `Error::Failed` naming the agent and the reason.
+the router gives up on it. Without its own `timeout_ms` the router waits 30 seconds for a call.
+A worker that also answers calls or messages hosts the tools with `dispatch.host(&client, None)`
+before `run`. If the router refuses the tools, `run_dispatch` returns `Error::Failed` with the
+reason.
 
 Every caller to an attached number gets a session of their own: the `call` handed to a worker
 carries its `session_id`, and `answer` joins that session with voice on. `wait_for_call(number)`

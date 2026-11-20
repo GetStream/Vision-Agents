@@ -155,14 +155,15 @@ func (d *Dispatch) OnCall(handler func(context.Context, InboundCall) error) {
 	d.dispatch.OnCall(handler)
 }
 
-// Host runs an agent's tools for every session opened under it, whoever opened it, with
-// toolTimeout as how long the router waits for each tool call. See stream.Dispatch.Host.
+// Host runs the app's tools for every agent whose tool groups name them, whoever opened the
+// session, with toolTimeout as how long the router waits for each tool call. See
+// stream.Dispatch.Host. client.RunDispatch does this alone, for a worker with no calls or
+// messages to answer.
 //
-//	agent := api.Agent("my-agent")
-//	agent.Tools().Add(LookupOrder{})
-//	dispatch.Host(agent, time.Minute)
-func (d *Dispatch) Host(agent stream.HostedAgent, toolTimeout time.Duration) {
-	d.dispatch.Host(agent, toolTimeout)
+//	api.Tools().Add(LookupOrder{})
+//	dispatch.Host(api, time.Minute)
+func (d *Dispatch) Host(host stream.ToolHost, toolTimeout time.Duration) {
+	d.dispatch.Host(host, toolTimeout)
 }
 
 // WorkerID is what the router calls this connection.

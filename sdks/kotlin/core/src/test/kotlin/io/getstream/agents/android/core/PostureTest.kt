@@ -94,7 +94,7 @@ class PostureTest {
         }
         val sessions = agents.sessions
 
-        sessions.create()
+        sessions.create(SessionOptions(watch = false))
         sessions.query()
         sessions.search("billing")
         sessions.get("s1")
