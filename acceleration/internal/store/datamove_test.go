@@ -187,9 +187,9 @@ func (s *DataMoveSuite) TestExportCarriesOnlyTheCallersRows() {
 }
 
 func (s *DataMoveSuite) TestExportLeavesCredentialsBehind() {
-	s.seedPluginConnection(s.source, "acme", "xoxb-a-real-token")
+	s.seedConnectorConnection(s.source, "acme")
 
-	connections := s.export("acme").of("agent_plugin_connections")
+	connections := s.export("acme").of("connector_connections")
 
 	s.Require().Len(connections, 1)
 	for _, column := range secretColumns {
@@ -243,17 +243,6 @@ func (s *DataMoveSuite) TestAGuestsRefreshSecretInAFileIsNotImported() {
 	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
 		"SELECT refresh_secret_hash FROM users WHERE customer_id = 'moved' AND id = 'guest-1'").Scan(&held))
 	s.Empty(held)
-}
-
-func (s *DataMoveSuite) TestAnImportedConnectionHasToBeAuthorizedAgain() {
-	s.seedPluginConnection(s.source, "acme", "xoxb-a-real-token")
-
-	s.move("acme", "acme")
-
-	var token string
-	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
-		"SELECT access_token FROM agent_plugin_connections").Scan(&token))
-	s.Empty(token)
 }
 
 func (s *DataMoveSuite) TestAMoveKeepsWhoItsUsersAre() {
@@ -1442,16 +1431,6 @@ func (s *DataMoveSuite) seedVoice(store *Store, customerID, name string) string 
 	id := newID()
 	_, err := store.DB().ExecContext(s.ctx,
 		"INSERT INTO voices (id, customer_id, name) VALUES (?, ?, ?)", id, customerID, name)
-	s.Require().NoError(err)
-	return id
-}
-
-func (s *DataMoveSuite) seedPluginConnection(store *Store, customerID, token string) string {
-	id := newID()
-	_, err := store.DB().ExecContext(s.ctx,
-		"INSERT INTO agent_plugin_connections (id, customer_id, config_id, plugin_id, access_token)"+
-			" VALUES (?, ?, ?, ?, ?)",
-		id, customerID, newID(), "slack", token)
 	s.Require().NoError(err)
 	return id
 }
