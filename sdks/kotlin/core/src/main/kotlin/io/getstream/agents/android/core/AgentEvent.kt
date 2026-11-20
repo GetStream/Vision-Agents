@@ -130,6 +130,7 @@ public data class AgentEvent(
         Decision("decision"),
         Responding("responding"),
         ResponseDelta("response_delta"),
+        ReasoningDelta("reasoning_delta"),
         Responded("responded"),
         UiDelta("ui_delta"),
         UiCompleted("ui_completed"),

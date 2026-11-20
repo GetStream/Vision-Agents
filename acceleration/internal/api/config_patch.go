@@ -29,7 +29,7 @@ type AgentConfigPatch struct {
 	Image              *string                  `json:"image,omitempty" doc:"An empty string removes it, and the agent stops being offered generate_image."`
 	Instructions       *string                  `json:"instructions,omitempty"`
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
-	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
+	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. An empty string removes the guardrail."`
 	UiInstructions     *string                  `json:"ui_instructions,omitempty" doc:"What teaches the agent's model to answer with UI. An empty string removes them."`
 	Skills             *[]string                `json:"skills,omitempty"`
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`

@@ -83,11 +83,17 @@ func (s *ClassifierSuite) router(stub *stubClassifier) *decisionrouter.Router {
 
 // guardrail builds a classifier guardrail over the stub, at the given threshold.
 func (s *ClassifierSuite) guardrail(stub *stubClassifier, threshold float64) Guardrail {
+	return s.asking(stub, threshold, "")
+}
+
+// asking is guardrail with the policy's own question, empty for the default.
+func (s *ClassifierSuite) asking(stub *stubClassifier, threshold float64, question string) Guardrail {
 	screening, err := New(s.ctx, Policy{
 		Kind:      KindDecisionModel,
 		Mode:      ModeParallel,
 		Threshold: threshold,
 		Refusal:   "I can only help with questions about Stream.",
+		Question:  question,
 		Text:      "Only answer questions about Stream's SDKs.",
 	}, Deps{
 		Owner:      routing.Owner{CustomerID: "acme"},
@@ -120,7 +126,7 @@ func (s *ClassifierSuite) TestTheThresholdIsWhatDecides() {
 		s.Run(test.name, func() {
 			stub := &stubClassifier{probability: test.probability}
 			verdict, err := s.guardrail(stub, test.threshold).
-				Check(s.ctx, "turn-1", "how do I make a pizza")
+				Check(s.ctx, "turn-1", "how do I make a pizza", "")
 			s.Require().NoError(err)
 
 			s.Equal(test.allowed, verdict.Allowed)
@@ -135,7 +141,7 @@ func (s *ClassifierSuite) TestThePolicyAndTheMessageAreAskedAboutAsTwoThings() {
 	// would let a message that looked like policy prose rewrite what is being asked.
 	stub := &stubClassifier{probability: 0.1}
 
-	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I install stream-chat-react")
+	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I install stream-chat-react", "")
 	s.Require().NoError(err)
 
 	s.Require().Len(stub.asked, 1)
@@ -150,13 +156,61 @@ func (s *ClassifierSuite) TestThePolicyAndTheMessageAreAskedAboutAsTwoThings() {
 	s.Contains(asked.Instructions, "`message`")
 }
 
+func (s *ClassifierSuite) TestAFollowUpIsAskedAboutWithWhatCameBeforeIt() {
+	// "and for my kid?" asks nothing on its own. The conversation travels as state of its
+	// own, as the policy does, and the default question says to read the message by it.
+	stub := &stubClassifier{probability: 0.1}
+	before := "user: what dose of ibuprofen for an adult?\nassistant: I can't help with that."
+
+	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-2", "and how about for my kid?", before)
+	s.Require().NoError(err)
+
+	s.Require().Len(stub.asked, 1)
+	state, ok := stub.asked[0].State.(map[string]string)
+	s.Require().True(ok)
+	s.Equal(before, state["conversation"])
+	s.Equal("and how about for my kid?", state["message"])
+	s.Equal(DefaultQuestion, stub.asked[0].Questions[violates].Instructions)
+	s.Contains(DefaultQuestion, "`conversation`")
+}
+
+func (s *ClassifierSuite) TestThePolicysOwnQuestionIsWhatIsAsked() {
+	// Only the question is the policy's: what yes and no mean stays, since the threshold
+	// is read off yes.
+	stub := &stubClassifier{probability: 0.1}
+	question := "Does `message` ask for medical advice that `policy` forbids?"
+
+	_, err := s.asking(stub, 0.6, question).Check(s.ctx, "turn-1", "what dose for my kid?", "")
+	s.Require().NoError(err)
+
+	s.Require().Len(stub.asked, 1)
+	asked := stub.asked[0].Questions[violates]
+	s.Equal(question, asked.Instructions)
+	s.Equal(map[string]string{
+		"true":  "It asks for something outside what the policy permits.",
+		"false": "It is a request the policy permits.",
+	}, asked.Criteria)
+}
+
+func (s *ClassifierSuite) TestAVerdictNamesTheModelThatAnswered() {
+	permitted, err := s.guardrail(&stubClassifier{probability: 0.1}, 0.6).Check(s.ctx, "turn-1", "anything", "")
+	s.Require().NoError(err)
+	refused, err := s.guardrail(&stubClassifier{probability: 0.9}, 0.6).Check(s.ctx, "turn-1", "anything", "")
+	s.Require().NoError(err)
+
+	// The stub is routed as "judge" and answers as "stub-1.0": the version is what a
+	// threshold was tuned against.
+	s.Equal("stub/stub-1.0", permitted.Model)
+	s.Equal("stub/stub-1.0", refused.Model)
+}
+
 func (s *ClassifierSuite) TestAReasonIsReportedButTheRefusalIsThePolicysOwn() {
 	// What the caller hears is the line the policy wrote. The reason is for the log: one
 	// that quoted the policy back would be a map of how to get around it.
 	stub := &stubClassifier{probability: 0.95}
 	screening := s.guardrail(stub, 0.6)
 
-	verdict, err := screening.Check(s.ctx, "turn-1", "why is the sky blue")
+	verdict, err := screening.Check(s.ctx, "turn-1", "why is the sky blue", "")
 	s.Require().NoError(err)
 
 	s.False(verdict.Allowed)
@@ -170,7 +224,7 @@ func (s *ClassifierSuite) TestAClassifierThatFailedIsReportedRatherThanReadAsAVe
 	// is the agent's to decide, and it can only decide if it is told.
 	stub := &stubClassifier{err: errors.New("rate limited")}
 
-	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "anything")
+	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "anything", "")
 
 	s.ErrorContains(err, "rate limited")
 }

@@ -1402,6 +1402,45 @@ func (e GreetingMode) Valid() bool {
 	}
 }
 
+// Defines values for GuardrailCheckKind.
+const (
+	GuardrailCheckKindDecisionModel GuardrailCheckKind = "decision_model"
+	GuardrailCheckKindLlm           GuardrailCheckKind = "llm"
+	GuardrailCheckKindWebhook       GuardrailCheckKind = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the GuardrailCheckKind enum.
+func (e GuardrailCheckKind) Valid() bool {
+	switch e {
+	case GuardrailCheckKindDecisionModel:
+		return true
+	case GuardrailCheckKindLlm:
+		return true
+	case GuardrailCheckKindWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GuardrailCheckMode.
+const (
+	Blocking GuardrailCheckMode = "blocking"
+	Parallel GuardrailCheckMode = "parallel"
+)
+
+// Valid indicates whether the value is a known member of the GuardrailCheckMode enum.
+func (e GuardrailCheckMode) Valid() bool {
+	switch e {
+	case Blocking:
+		return true
+	case Parallel:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Harness.
 const (
 	Default Harness = "default"
@@ -3821,7 +3860,7 @@ type AgentConfigPatch struct {
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
 
-	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. An empty string removes the guardrail.
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -3941,7 +3980,7 @@ type AgentConfigRequest struct {
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
 
-	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. Empty means every turn is answered.
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -6814,6 +6853,42 @@ type Greeting struct {
 
 // GreetingMode exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
 type GreetingMode string
+
+// GuardrailCheck defines model for GuardrailCheck.
+type GuardrailCheck struct {
+	// Allowed Whether the turn was answered. True for a check that failed, whose turn is answered anyway.
+	Allowed bool `json:"allowed"`
+
+	// Failed True when the check could not be made (the model or the webhook failed or took too long) and the turn was answered anyway. Such a check has no probability. Absent for a check that answered.
+	Failed *bool `json:"failed,omitempty"`
+
+	// HeldMs How long a reply the model had begun waited on the verdict, which is what a parallel check costs the caller. Absent when it did not wait, and in blocking mode, where the model is asked only after the verdict.
+	HeldMs *float64 `json:"held_ms,omitempty"`
+
+	// Kind How the turn was checked: the guardrail.md's type.
+	Kind GuardrailCheckKind `json:"kind"`
+
+	// LatencyMs How long the check took, from asking to the verdict or the failure.
+	LatencyMs float64 `json:"latency_ms"`
+
+	// Mode When the check ran: parallel, beside the model, or blocking, before the model was asked.
+	Mode GuardrailCheckMode `json:"mode"`
+
+	// Model The provider and model that answered, as provider/model. Absent for a webhook, and for a check that failed.
+	Model *string `json:"model,omitempty"`
+
+	// Probability The probability the model put on the turn going against the policy. Absent for a webhook, which answers yes or no, and for a check that failed.
+	Probability *float64 `json:"probability,omitempty"`
+
+	// Threshold The guardrail.md's threshold: a probability at or above it refuses the turn. Absent for a webhook.
+	Threshold *float64 `json:"threshold,omitempty"`
+}
+
+// GuardrailCheckKind How the turn was checked: the guardrail.md's type.
+type GuardrailCheckKind string
+
+// GuardrailCheckMode When the check ran: parallel, beside the model, or blocking, before the model was asked.
+type GuardrailCheckMode string
 
 // GuestUser defines model for GuestUser.
 type GuestUser struct {
@@ -10475,7 +10550,8 @@ type TimelineEntry struct {
 	FirstFrameQueuedMs *float64 `json:"first_frame_queued_ms,omitempty"`
 
 	// FloorChecks The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control.
-	FloorChecks *[]FloorCheck `json:"floor_checks,omitempty"`
+	FloorChecks *[]FloorCheck   `json:"floor_checks,omitempty"`
+	Guardrail   *GuardrailCheck `json:"guardrail,omitempty"`
 
 	// Heard What the caller said, when it can be matched to this exchange.
 	Heard *string `json:"heard,omitempty"`

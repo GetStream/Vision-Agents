@@ -267,6 +267,51 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("tells the model what onError says of a failure, so a connection string never reaches it", async () => {
+    class DatabaseError extends Error {}
+    const tools = new Tools({
+      onError: (error, call) => (error instanceof DatabaseError ? `${call.name} could not reach its data` : String((error as Error).message)),
+    })
+      .register({
+        name: "lookup",
+        description: "Look something up",
+        run: () => {
+          throw new DatabaseError("connect ECONNREFUSED postgres://app:s3cr3t@db.internal:5432/orders");
+        },
+      })
+      .register({
+        name: "send",
+        description: "Send it",
+        run: () => {
+          throw new Error("An email needs someone to go to.");
+        },
+      });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "lookup", arguments: "{}" });
+    assert.equal((await connection.next())["error"], "lookup could not reach its data");
+    connection.send({ type: "tool_call", id: "call_2", name: "send", arguments: "{}" });
+    assert.equal((await connection.next())["error"], "An email needs someone to go to.", "words meant for the model go through");
+    await session.close();
+  });
+
+  it("cuts a long failure to 1 KiB, and says only that a tool failed when its onError throws", async () => {
+    const long = "x".repeat(5_000);
+    const tools = new Tools()
+      .register({ name: "dump", description: "Dump", run: () => { throw new Error(long); } });
+    const hooked = new Tools({ onError: () => { throw new Error("the hook broke"); } })
+      .register({ name: "secret", description: "Secret", run: () => { throw new Error("token=abc123"); } });
+    const [session, connection] = await opened(tools);
+    connection.send({ type: "tool_call", id: "call_1", name: "dump", arguments: "{}" });
+    assert.equal((await connection.next())["error"], `${long.slice(0, 1024)}…`);
+    await session.close();
+
+    const [other, line] = await opened(hooked);
+    line.send({ type: "tool_call", id: "call_2", name: "secret", arguments: "{}" });
+    assert.equal((await line.next())["error"], "secret failed");
+    await other.close();
+  });
+
   it("leaves a call for a tool held elsewhere to whoever holds it", async () => {
     const tools = new Tools().register({ name: "lookup", description: "Look it up", run: () => "found" });
     const [session, connection] = await opened(tools);
@@ -771,6 +816,21 @@ describe("Session", () => {
   });
 
   describe("a function that asks first", () => {
+    /** Waits until the session has read everything sent before, and whatever that started has had time to run. */
+    const readPast = async (
+      session: { on: (kind: string, handler: () => void) => () => void },
+      connection: { send: (frame: Record<string, unknown>) => void },
+    ): Promise<void> => {
+      const read = new Promise<void>((resolve) => {
+        const stop = session.on("read_past", () => {
+          stop();
+          resolve();
+        });
+      });
+      connection.send({ type: "read_past" });
+      await read;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
     const refundCall = {
       type: "tool_call",
       id: "call_1",
@@ -963,6 +1023,41 @@ describe("Session", () => {
         await session.close();
       });
 
+      it("allowed with its arguments, runs once when the router then delivers the call", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next())["output"], "Refunded A-1042");
+
+        connection.send(refundCall);
+        connection.send({ ...refundCall, approved: true });
+        await readPast(session, connection);
+        session.say("still there?");
+
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"], "neither asked again nor run twice");
+        assert.deepEqual(session.approvals, []);
+        await session.close();
+      });
+
+      it("declined, is not asked again when the router then delivers the call", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: false, call: shown });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+
+        connection.send(refundCall);
+        await readPast(session, connection);
+        session.say("still there?");
+
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(session.approvals, []);
+        assert.deepEqual(ran, []);
+        await session.close();
+      });
+
       it("answered twice, such as a double tap on Allow, sends one answer and runs once", async () => {
         const [session, connection] = await opened(refunds());
 
@@ -993,6 +1088,46 @@ describe("Session", () => {
         assert.deepEqual(ran, ["A-1042"]);
         await session.close();
       });
+    });
+
+    it("does not run a finished call again when the router delivers it again", async () => {
+      let lookups = 0;
+      const tools = new Tools().register({
+        name: "lookup",
+        description: "Look something up",
+        run: () => {
+          lookups += 1;
+          return "found";
+        },
+      });
+      const [session, connection] = await opened(tools);
+      const call = { type: "tool_call", id: "call_9", name: "lookup", arguments: "{}" };
+
+      connection.send(call);
+      assert.equal((await connection.next())["output"], "found");
+      connection.send(call);
+      await readPast(session, connection);
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" }, "no second result");
+      assert.equal(lookups, 1);
+      await session.close();
+    });
+
+    it("does not run a finished call sent as already approved again", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send({ ...refundCall, approved: true });
+      assert.equal((await connection.next())["output"], "Refunded A-1042");
+      connection.send({ ...refundCall, approved: true });
+      connection.send(refundCall);
+      await readPast(session, connection);
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      assert.deepEqual(ran, ["A-1042"]);
+      assert.deepEqual(session.approvals, [], "nor asked about once it ran");
+      await session.close();
     });
 
     it("runs at once a call the caller already allowed out loud", async () => {

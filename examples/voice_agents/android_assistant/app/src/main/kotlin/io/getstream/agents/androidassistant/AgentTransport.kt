@@ -12,6 +12,7 @@ import io.getstream.chat.android.ai.compose.conversation.AIMessageRole
 import io.getstream.chat.android.ai.compose.generativeui.AIUIDocument
 import io.getstream.chat.android.ai.compose.parts.AIMessagePart
 import io.getstream.chat.android.ai.compose.parts.AIReasoningPart
+import io.getstream.chat.android.ai.compose.parts.AIToolCallPart
 import io.getstream.chat.android.client.ChatClient
 import io.getstream.chat.android.client.api.state.loadOlderMessages
 import io.getstream.chat.android.client.channel.state.ChannelState
@@ -26,10 +27,13 @@ import io.getstream.agents.android.core.AgentSession
 import io.getstream.agents.android.core.Conversation
 import io.getstream.agents.android.core.LiveReasoning
 import io.getstream.agents.android.core.LiveUI
+import io.getstream.agents.android.core.ShownToolCall
 import io.getstream.agents.android.core.channelState
 import io.getstream.agents.android.core.chat
 import io.getstream.agents.android.core.overlay
 import io.getstream.agents.android.core.read
+import io.getstream.agents.android.core.TurnMessage
+import io.getstream.agents.android.core.turnMessages
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -57,6 +61,10 @@ import kotlinx.coroutines.launch
  * round of reasoning and each tool call) as attachments. The session's socket is what runs this
  * phone's tools and carries the person's answers to the ones that ask first.
  *
+ * An incognito session has no channel. Its messages are its turns as the socket carries them
+ * ([turnMessages]), in the same shape, with every step, the whole of the reply's thinking and the
+ * approval card of a call that asks first; they are gone once the conversation closes.
+ *
  * A new conversation has no session until it is first used: [open] starts one, through [start],
  * and asking opens it too. [onUsed] hears of each question or action before it goes.
  */
@@ -67,7 +75,8 @@ class AgentTransport(
     private val start: suspend () -> AgentSession,
     private val onUsed: (AgentSession) -> Unit = {},
 ) : AIConversationTransport<AgentMessage> {
-    private class Open(val session: AgentSession, val channel: StateFlow<ChannelState?>, val events: Disposable)
+    /** A session, and its channel and the client's events for it, or null for an incognito one. */
+    private class Open(val session: AgentSession, val channel: StateFlow<ChannelState?>?, val events: Disposable?)
 
     private val opened = MutableStateFlow<Open?>(null)
     private var opening: Deferred<Open>? = null
@@ -91,6 +100,8 @@ class AgentTransport(
         opened.value?.let { return it.session }
         val task = opening ?: scope.async {
             val session = start()
+            // An incognito session keeps no channel: its messages are made from its socket.
+            if (session.session.conversationId.isEmpty()) return@async Open(session, null, null)
             // The client's events rather than the channel's state for the thinking: each live
             // update carries its own window of it, and the state folds them into one, losing all
             // but the last.
@@ -105,16 +116,23 @@ class AgentTransport(
     }
 
     override fun connect(feed: AIConversationFeed<AgentMessage>) {
-        val channel = opened.filterNotNull().flatMapLatest { it.channel }
+        val channel = opened.filterNotNull().flatMapLatest { it.channel ?: flowOf(null) }
         // The channel's messages, oldest first, each reply with the whole of its thinking and,
         // while it is written, the UI the socket streamed for it. A new list each time more
-        // thinking or UI arrives, so the conversation redraws it.
+        // thinking or UI arrives, so the conversation redraws it. An incognito session's are its
+        // turns.
         scope.launch {
-            val messages = channel.flatMapLatest { it?.messages ?: flowOf(emptyList()) }
-                .map { messages -> messages.filter { it.deletedAt == null } }
-            combine(messages, thinking, streamed) { messages, version, _ ->
-                val live = liveUi.overlay(messages)
-                messages.map { AgentMessage(it, reasoning, version, live[it.id]) }
+            opened.filterNotNull().flatMapLatest { open ->
+                if (open.channel == null) {
+                    open.session.turnMessages.map { messages -> messages.map(AgentMessage::Unkept) }
+                } else {
+                    val messages = open.channel.flatMapLatest { it?.messages ?: flowOf(emptyList()) }
+                        .map { messages -> messages.filter { it.deletedAt == null } }
+                    combine(messages, thinking, streamed) { messages, version, _ ->
+                        val live = liveUi.overlay(messages)
+                        messages.map { AgentMessage.Kept(it, reasoning, version, live[it.id]) }
+                    }
+                }
             }.collect { if (feed.isConnected) feed.update(messages = it) }
         }
         scope.launch {
@@ -150,6 +168,39 @@ class AgentTransport(
         opened.value?.session?.interrupt()
     }
 
+    /**
+     * Answers a tool call's question from the card that shows it. A card restored from the
+     * channel, after the conversation was carried on or the app restarted, names a call this
+     * session's socket was never asked, so the answer carries what the reply shows of it, and the
+     * request and turn the reply was written for. Only a call whose step still waits for the
+     * person is answered: one answered elsewhere is not run here. Throws when no loaded reply
+     * shows the call waiting and the session holds none by its id, so the card can be answered
+     * again.
+     */
+    suspend fun decide(call: AIToolCallPart, allowed: Boolean) {
+        val session = open()
+        val reply = opened.value?.channel?.value?.messages?.value?.lastOrNull { message ->
+            message.attachments.any {
+                it.type == "ai_tool_call" && it.extraData["id"] == call.id && it.extraData["status"] == "awaiting_approval"
+            }
+        }
+        if (reply == null) {
+            check(session.approvals.value.any { it.id == call.id }) { "No reply shows the tool call ${call.id} waiting" }
+            return session.decide(call.id, allowed)
+        }
+        val runtime = reply.extraData["support_runtime"] as? Map<*, *>
+        session.decide(
+            ShownToolCall(
+                call.id,
+                call.name,
+                call.arguments,
+                requestId = runtime?.get("command_id") as? String ?: "",
+                turnId = runtime?.get("turn_id") as? String ?: "",
+            ),
+            allowed,
+        )
+    }
+
     override suspend fun loadOlderMessages() {
         val cid = opened.value?.channel?.value?.cid ?: return
         val page = ChatClient.instance().loadOlderMessages(cid, PAGE_SIZE).await()
@@ -159,7 +210,7 @@ class AgentTransport(
     /** Stops following the channel and ends the session. */
     suspend fun close() {
         val open = opened.value ?: return
-        open.events.dispose()
+        open.events?.dispose()
         open.session.close()
     }
 
@@ -218,50 +269,81 @@ internal fun String?.unansweredAfter(event: AgentEvent): String? = when {
 /** A reply the agent wrote, which Stream's AI components render. */
 val Message.isAgentReply: Boolean get() = extraData["ai_generated"] == true
 
-/**
- * A message of the conversation as Stream's AI components show it.
- *
- * [version] is how much live thinking had arrived when it was made, so a reply whose thinking
- * grew is a different message and redraws. [live] is the message's custom data with the UI the
- * socket streamed for it, while it is written.
- */
-data class AgentMessage(
-    val message: Message,
-    private val reasoning: LiveReasoning,
-    private val version: Int,
-    private val live: Map<String, Any?>? = null,
-) : AIMessage {
-    override val id: String = message.id
-    override val role: AIMessageRole = if (message.isAgentReply) AIMessageRole.Assistant else AIMessageRole.User
-    override val text: String = message.text
-    override val isGenerating: Boolean = message.extraData["generating"] == true
+/** A message of the conversation as Stream's AI components show it: one of the channel's, or of an incognito session. */
+sealed interface AgentMessage : AIMessage {
+    /** The turn a reply belongs to, as the router writes it on the message, or null. */
+    val turnId: String?
 
-    // The reply's generated UI, `custom.ai_ui`, which Stream Chat lifts into extraData.
-    override val uiDocument: AIUIDocument? = AIUIDocument.from(live ?: message.extraData)
+    /**
+     * One of the channel's messages.
+     *
+     * [version] is how much live thinking had arrived when it was made, so a reply whose thinking
+     * grew is a different message and redraws. [live] is the message's custom data with the UI the
+     * socket streamed for it, while it is written.
+     */
+    data class Kept(
+        val message: Message,
+        private val reasoning: LiveReasoning,
+        private val version: Int,
+        private val live: Map<String, Any?>? = null,
+    ) : AgentMessage {
+        override val id: String = message.id
+        override val role: AIMessageRole = if (message.isAgentReply) AIMessageRole.Assistant else AIMessageRole.User
+        override val text: String = message.text
+        override val isGenerating: Boolean = message.extraData["generating"] == true
 
-    // Read on every update while a reply streams, so decoded once, when the message is made.
-    // Stream lifts `name` out of an attachment's fields, and a tool call's step needs it back.
-    override val parts: List<AIMessagePart> =
-        AIMessagePart.parts(message.attachments.map { it.type.orEmpty() to it.extraData + ("name" to it.name) })
+        // The reply's generated UI, `custom.ai_ui`, which Stream Chat lifts into extraData.
+        override val uiDocument: AIUIDocument? = AIUIDocument.from(live ?: message.extraData)
 
-    override val attachments: List<AIMessageAttachment> = message.attachments.mapNotNull { attachment ->
-        when (attachment.type) {
-            "image" -> (attachment.imageUrl ?: attachment.assetUrl)?.let {
-                AIMessageAttachment.image(Uri.parse(it), name = attachment.title ?: attachment.name)
+        // Read on every update while a reply streams, so decoded once, when the message is made.
+        // Stream lifts `name` out of an attachment's fields, and a tool call's step needs it back.
+        override val parts: List<AIMessagePart> =
+            AIMessagePart.parts(message.attachments.map { it.type.orEmpty() to it.extraData + ("name" to it.name) })
+
+        override val attachments: List<AIMessageAttachment> = message.attachments.mapNotNull { attachment ->
+            when (attachment.type) {
+                "image" -> (attachment.imageUrl ?: attachment.assetUrl)?.let {
+                    AIMessageAttachment.image(Uri.parse(it), name = attachment.title ?: attachment.name)
+                }
+                "file" -> attachment.assetUrl?.let {
+                    AIMessageAttachment.file(
+                        Uri.parse(it),
+                        name = attachment.title ?: attachment.name,
+                        size = attachment.fileSize.toLong().takeIf { size -> size > 0 },
+                        mimeType = attachment.mimeType,
+                    )
+                }
+                else -> null
             }
-            "file" -> attachment.assetUrl?.let {
-                AIMessageAttachment.file(
-                    Uri.parse(it),
-                    name = attachment.title ?: attachment.name,
-                    size = attachment.fileSize.toLong().takeIf { size -> size > 0 },
-                    mimeType = attachment.mimeType,
-                )
-            }
-            else -> null
         }
+
+        override val turnId: String?
+            get() {
+                val custom = message.extraData
+                val runtime = custom["support_runtime"] as? Map<*, *>
+                return (custom["turn_id"] as? String ?: runtime?.get("turn_id") as? String)?.takeIf { it.isNotEmpty() }
+            }
+
+        // A step keeps only the opening of its thinking; the whole of it came with the live
+        // updates, while the reply was being written.
+        override fun reasoningText(step: AIReasoningPart): String? = reasoning[message.id, step.id]
     }
 
-    // A step keeps only the opening of its thinking; the whole of it came with the live updates,
-    // while the reply was being written.
-    override fun reasoningText(step: AIReasoningPart): String? = reasoning[message.id, step.id]
+    /**
+     * One of an incognito session's messages, made from its turns, whose steps and thinking are
+     * the session's own. The photos asked with a question go to the agent but don't show on it.
+     */
+    data class Unkept(val message: TurnMessage) : AgentMessage {
+        override val id: String = message.id
+        override val role: AIMessageRole = if (message.isAgentReply) AIMessageRole.Assistant else AIMessageRole.User
+        override val text: String = message.text
+        override val isGenerating: Boolean = message.isGenerating
+        override val uiDocument: AIUIDocument? = AIUIDocument.from(message.customData)
+        override val parts: List<AIMessagePart> = AIMessagePart.parts(message.steps.map { it.type to it.fields })
+
+        // Its UI is the socket's already, so a call needs no stored copy.
+        override val turnId: String? get() = null
+
+        override fun reasoningText(step: AIReasoningPart): String? = message.reasoning[step.id]
+    }
 }
