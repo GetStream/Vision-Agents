@@ -1,9 +1,12 @@
 package guardrail
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 type PolicySuite struct {
@@ -130,4 +133,57 @@ func (s *PolicySuite) TestAPolicyWithNothingToSayOnARefusalIsRefused() {
 	_, err := Parse("---\nrefusal: \"\"\n---\nOnly Stream questions.")
 
 	s.ErrorContains(err, "nothing for the agent to say")
+}
+
+func (s *PolicySuite) TestADecisionModelPolicyMayRewordWhatIsAsked() {
+	policy, err := Parse("---\ntype: decision_model\nquestion: Does `message` ask for medical advice that `policy` forbids?\n---\nNo medical advice.")
+	s.Require().NoError(err)
+
+	s.Equal("Does `message` ask for medical advice that `policy` forbids?", policy.Question)
+}
+
+func (s *PolicySuite) TestAQuestionOnAPolicyThatAsksNoDecisionModelIsRefused() {
+	// Present and doing nothing: the file says what is asked, and nothing is ever asked it.
+	_, err := Parse("---\ntype: llm\nquestion: Is `message` off topic?\n---\nOnly Stream questions.")
+	s.ErrorContains(err, "question would be ignored")
+
+	_, err = Parse("---\ntype: webhook\nurl: https://example.test/check\nquestion: Is `message` off topic?\n---\n")
+	s.ErrorContains(err, "question would be ignored")
+}
+
+func (s *PolicySuite) TestAConversationIsItsLastLinesAsWhoSaidThem() {
+	// Seven things said, with a tool's call and its result between them: the first falls
+	// off the front, and what no person said is no line.
+	history := []llm.Message{
+		{Role: llm.User, Content: "one"},
+		{Role: llm.Assistant, Content: "two"},
+		{Role: llm.User, Content: "three"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "lookup"}}},
+		{Role: llm.ToolResult, Content: `{"dose":"5ml"}`, ToolCallID: "call-1"},
+		{Role: llm.Assistant, Content: "four,\nover two lines"},
+		{Role: llm.User, Content: "five"},
+		{Role: llm.Assistant, Content: "six"},
+		{Role: llm.User, Content: "seven"},
+	}
+
+	s.Equal("assistant: two\nuser: three\nassistant: four, over two lines\nuser: five\nassistant: six\nuser: seven",
+		Conversation(history))
+}
+
+func (s *PolicySuite) TestALongConversationKeepsItsEndWithinTheBound() {
+	// The end is what a follow-up points at, so that is what a long conversation keeps.
+	history := []llm.Message{
+		{Role: llm.User, Content: strings.Repeat("a", 2*conversationChars)},
+		{Role: llm.Assistant, Content: "what dose for an adult?"},
+	}
+
+	said := "assistant: what dose for an adult?"
+	kept := conversationChars - len("what dose for an adult?")
+
+	// What is left of the long message is still the user's line, not words with no role.
+	s.Equal("user: "+strings.Repeat("a", kept)+"\n"+said, Conversation(history))
+}
+
+func (s *PolicySuite) TestNothingSaidIsNoConversation() {
+	s.Empty(Conversation(nil))
 }

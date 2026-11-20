@@ -50,15 +50,22 @@ import kotlinx.coroutines.withContext
  *
  * It lives as long as the activity, so turning the phone keeps the conversation, and picking
  * another one closes the last.
+ *
+ * A new conversation can be incognito: its session keeps no channel, so it is never listed, and
+ * it is shown from the session's socket. Leaving it ends it for good.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val shown = MutableStateFlow<String?>(null)
     private val screenId = MutableStateFlow(0)
     private val failed = MutableStateFlow<String?>(null)
+    private val incognito = MutableStateFlow(false)
 
-    /** The conversation open, or null for a new one that has not been written to. */
+    /** The conversation open, or null for a new one that has not been written to, or an incognito one. */
     val selected: StateFlow<String?> = shown.asStateFlow()
+
+    /** Whether the conversation open is a new one that keeps nothing. */
+    val isIncognito: StateFlow<Boolean> = incognito.asStateFlow()
 
     /**
      * Which conversation the screen was opened for. It changes only when the person picks one,
@@ -187,11 +194,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // used yet. Leaving without using it deletes it, so it is not left in the list.
     private var unused: String? = null
 
-    /** Shows a conversation from the list, or a new one for null, closing the one on screen. */
-    fun show(sessionId: String?) {
+    /**
+     * Shows a conversation from the list, or a new one for null, closing the one on screen. Only a
+     * new one can be [incognito]: one in the list is kept already.
+     */
+    fun show(sessionId: String?, incognito: Boolean = false) {
         leave()
         screenScope = newScreenScope()
         openedFor = sessionId
+        this.incognito.value = incognito && sessionId == null
         isAnnounced = false
         unused = null
         failed.value = null
@@ -204,13 +215,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (sessionId != null) screenScope.launch { open() }
     }
 
+    /**
+     * Starts a new chat that keeps nothing, or a kept one in place of it, ending the conversation
+     * on screen.
+     */
+    fun toggleIncognito() {
+        show(null, incognito = !incognito.value)
+    }
+
     /** Follows what the person is writing, to open a new conversation's session meanwhile. */
     fun draftChanged(text: String) {
         if (openedFor != null || session.value != null || text.isEmpty()) return
         val transport = transport
         screenScope.launch {
             val session = open()
-            if (session != null && !isAnnounced && transport === this@ChatViewModel.transport) unused = session.id
+            // An incognito session keeps nothing, so there is nothing to delete if it goes unused.
+            if (session != null && !isAnnounced && !incognito.value && transport === this@ChatViewModel.transport) {
+                unused = session.id
+            }
         }
     }
 
@@ -324,7 +346,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // The session is open after all, so why it couldn't open no longer holds.
         failed.value = null
         unused = null
-        if (openedFor != null || isAnnounced) return
+        // An incognito conversation never joins the list.
+        if (openedFor != null || isAnnounced || incognito.value) return
         isAnnounced = true
         shown.value = session.id
     }
@@ -343,12 +366,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Carries on the conversation's session, or starts one for a new conversation. */
     private fun newTransport(): AgentTransport {
         val sessionId = openedFor
+        // Only true is sent: left out, the session is kept, as the router's default is.
+        val keepsNothing = incognito.value.takeIf { it }
         return AgentTransport(
             context = getApplication(),
             scope = screenScope,
             start = {
                 sessionId?.let { Assistant.agents.attach(it, tools) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).sessions.create(
-                    SessionOptions(modelOverwrites = ModelOverwrites(llm = Assistant.CHAT_MODEL), tools = tools, returnUrl = Assistant.RETURN_URL),
+                    SessionOptions(
+                        modelOverwrites = ModelOverwrites(llm = Assistant.CHAT_MODEL),
+                        tools = tools,
+                        returnUrl = Assistant.RETURN_URL,
+                        incognito = keepsNothing,
+                    ),
                 )
             },
             onUsed = ::markUsed,
@@ -364,7 +394,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      *
      * The router addresses a question to the person whose message the call answers, and Stream's
      * components show it only to them. The answer goes back over the session's socket, which is
-     * also what runs the tool once it is allowed. Connect opens the sign-in page in an Auth Tab;
+     * also what runs the tool once it is allowed, a card shown from the channel's history included. Connect opens the sign-in page in an Auth Tab;
      * the page comes back to this app with `status=connected` when the account is connected, and
      * the call carries on at the router. Not now ends the call there.
      */
@@ -375,7 +405,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
         val installId = AIClientIdentity.installId(getApplication())
         return AIToolApprover(Assistant.user.id, installId, screenScope, authorizer) { call, allowed ->
-            transport.session.value?.decide(call.id, allowed)
+            transport.decide(call, allowed)
         }
     }
 

@@ -341,6 +341,9 @@ type Turn struct {
 	// it, within what the recorder keeps up with and keeps. None for an agent without
 	// chorus-asr floor control.
 	FloorChecks []live.FloorCheck
+	// Guardrail is the guardrail's check of the turn, allowed or refused. Nil for a turn
+	// nothing screened: no policy, or a reply that carries no new words of the caller's.
+	Guardrail *live.GuardrailCheck
 }
 
 func (Turn) isAgentEvent() {}

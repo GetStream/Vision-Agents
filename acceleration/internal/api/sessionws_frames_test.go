@@ -646,3 +646,52 @@ func TestATurnFrameCarriesItsFloorChecksAsTheTimelineDoes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "floor_checks")
 }
+
+// A screened turn's check reads the same on its turn frame, on its stored row and on its
+// timeline entry; what a check did not produce is absent, not zero.
+func TestATurnCarriesItsGuardrailCheckOnItsFrameAndItsTimelineEntry(t *testing.T) {
+	probability, threshold := 0.07, 0.6
+	check := live.GuardrailCheck{
+		Kind: "decision_model", Model: "typesafe/jev-latest", Probability: &probability, Threshold: &threshold,
+		Allowed: true, LatencyMs: 142.5, HeldMs: 12, Mode: "parallel",
+	}
+	const wire = `{"kind":"decision_model","model":"typesafe/jev-latest","probability":0.07,"threshold":0.6,
+		"allowed":true,"latency_ms":142.5,"held_ms":12,"mode":"parallel"}`
+
+	sent, ok := frameOf(agent.Turn{TurnID: "turn-1", Guardrail: &check})
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, wire, string(mustField(t, raw, "guardrail")))
+
+	stored, err := json.Marshal(live.Turn{TurnID: "turn-1", Guardrail: &check})
+	require.NoError(t, err)
+	require.JSONEq(t, wire, string(mustField(t, stored, "guardrail")))
+	var row live.Turn
+	require.NoError(t, json.Unmarshal(stored, &row))
+
+	raw, err = json.Marshal(timelineOf([]live.Turn{row}, nil, nil, nil)[0])
+	require.NoError(t, err)
+	require.JSONEq(t, wire, string(mustField(t, raw, "guardrail")))
+}
+
+// A failed check has no probability, and a webhook's neither that nor a model or threshold:
+// sent as zero, either would read as a model sure the turn was harmless.
+func TestAGuardrailCheckLeavesOutWhatItDidNotProduce(t *testing.T) {
+	threshold := 0.6
+	failed, err := json.Marshal(guardrailCheckOf(live.GuardrailCheck{
+		Kind: "decision_model", Threshold: &threshold, Allowed: true, LatencyMs: 2000, Mode: "blocking", Failed: true,
+	}))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"kind":"decision_model","threshold":0.6,"allowed":true,"latency_ms":2000,"mode":"blocking","failed":true}`, string(failed))
+
+	webhook, err := json.Marshal(guardrailCheckOf(live.GuardrailCheck{Kind: "webhook", Allowed: false, LatencyMs: 80, Mode: "parallel"}))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"kind":"webhook","allowed":false,"latency_ms":80,"mode":"parallel"}`, string(webhook))
+
+	plain, ok := frameOf(agent.Turn{TurnID: "turn-2"})
+	require.True(t, ok)
+	raw, err := json.Marshal(plain)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "guardrail")
+}

@@ -625,7 +625,7 @@ pub struct AgentConfigPatch {
     ///Replaces the greeting whole. An empty text removes it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
-    ///A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
+    ///A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. An empty string removes the guardrail.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub guardrail: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -752,7 +752,7 @@ pub struct AgentConfigRequest {
     pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
-    ///A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+    ///A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. Empty means every turn is answered.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub guardrail: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -6289,6 +6289,129 @@ impl ::std::convert::TryFrom<&str> for GreetingMode {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for GreetingMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`GuardrailCheck`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct GuardrailCheck {
+    ///Whether the turn was answered. True for a check that failed, whose turn is answered anyway.
+    pub allowed: bool,
+    ///True when the check could not be made (the model or the webhook failed or took too long) and the turn was answered anyway. Such a check has no probability. Absent for a check that answered.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub failed: ::std::option::Option<bool>,
+    ///How long a reply the model had begun waited on the verdict, which is what a parallel check costs the caller. Absent when it did not wait, and in blocking mode, where the model is asked only after the verdict.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub held_ms: ::std::option::Option<f64>,
+    ///How the turn was checked: the guardrail.md's type.
+    pub kind: GuardrailCheckKind,
+    ///How long the check took, from asking to the verdict or the failure.
+    pub latency_ms: f64,
+    ///When the check ran: parallel, beside the model, or blocking, before the model was asked.
+    pub mode: GuardrailCheckMode,
+    ///The provider and model that answered, as provider/model. Absent for a webhook, and for a check that failed.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///The probability the model put on the turn going against the policy. Absent for a webhook, which answers yes or no, and for a check that failed.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub probability: ::std::option::Option<f64>,
+    ///The guardrail.md's threshold: a probability at or above it refuses the turn. Absent for a webhook.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub threshold: ::std::option::Option<f64>,
+}
+///How the turn was checked: the guardrail.md's type.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum GuardrailCheckKind {
+    #[serde(rename = "decision_model")]
+    DecisionModel,
+    #[serde(rename = "llm")]
+    Llm,
+    #[serde(rename = "webhook")]
+    Webhook,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for GuardrailCheckKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::DecisionModel => f.write_str("decision_model"),
+            Self::Llm => f.write_str("llm"),
+            Self::Webhook => f.write_str("webhook"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for GuardrailCheckKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "decision_model" => Ok(Self::DecisionModel),
+            "llm" => Ok(Self::Llm),
+            "webhook" => Ok(Self::Webhook),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GuardrailCheckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GuardrailCheckKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///When the check ran: parallel, beside the model, or blocking, before the model was asked.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum GuardrailCheckMode {
+    #[serde(rename = "parallel")]
+    Parallel,
+    #[serde(rename = "blocking")]
+    Blocking,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for GuardrailCheckMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Parallel => f.write_str("parallel"),
+            Self::Blocking => f.write_str("blocking"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for GuardrailCheckMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "parallel" => Ok(Self::Parallel),
+            "blocking" => Ok(Self::Blocking),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GuardrailCheckMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GuardrailCheckMode {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -13432,6 +13555,9 @@ pub struct TimelineEntry {
     ///The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_checks: ::std::option::Option<::std::vec::Vec<FloorCheck>>,
+    ///The guardrail's check of this turn, allowed or refused. Absent when no check ran: an agent with no guardrail, or a reply that carries no new words of the caller's. A written aside is no turn, so its check is not recorded.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub guardrail: ::std::option::Option<GuardrailCheck>,
     ///What the caller said, when it can be matched to this exchange.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub heard: ::std::option::Option<::std::string::String>,
@@ -13602,6 +13728,9 @@ pub struct ToolCallState {
     ///When a person allowed the call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub approved_at: ::std::option::Option<::std::string::String>,
+    ///What the call is doing, in words for the people in the conversation, such as "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's own search. Absent when the tool declared none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub display_title: ::std::option::Option<::std::string::String>,
     ///From started_at to this change; on tool_call.finished, how long the call took.
     pub duration_ms: i64,
     ///Why a failed call failed, or what a declined one shows, such as "Not allowed in time".
