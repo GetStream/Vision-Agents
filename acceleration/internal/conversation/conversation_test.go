@@ -398,6 +398,17 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A kept line with a name reaches the model as an envelope of its author and time, not as the
+// bare text, the way a typed message does.
+func TestASuppliedNamedLineIsQuotedAsItsAuthorAndTime(t *testing.T) {
+	at := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+
+	got := Supplied([]HistoryLine{{Role: "user", Name: "Anya", At: at, Text: "I'm sick"}, {Role: "assistant", Text: "ok"}})
+
+	require.Len(t, got, 3)
+	require.Equal(t, `{"author":{"display_name":"Anya"},"sent_at":"2026-11-19T10:00:00Z","text":"I'm sick"}`, got[1].Content)
+}
+
 func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *testing.T) {
 	_, client := newChat(t)
 	service := NewForChat(client)
