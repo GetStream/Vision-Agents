@@ -362,6 +362,9 @@ func (e *Extractor) readPDF(ctx context.Context, data []byte) (Document, error) 
 
 	count, err := session.instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: session.document})
 	if err != nil {
+		if ctx.Err() != nil {
+			return Document{}, stack.Wrap(fmt.Errorf("extract: count the PDF's pages: %w", ctx.Err()))
+		}
 		return Document{}, fail(Corrupt, PDF, fmt.Errorf("the pages cannot be counted: %w", err))
 	}
 	if count.PageCount > e.options.MaxPages {
