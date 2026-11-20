@@ -843,3 +843,13 @@ func (s *EgressSuite) TestNewUnpooledClientRefusesARedirectOutOfTheOrigin() {
 	s.ErrorIs(err, errCrossHostRedirect)
 	s.Zero(stolen.Load())
 }
+
+// neither route sends a request through an environment proxy, which would skip dialPublic.
+// The field is read directly: the test is in package egress.
+func (s *EgressSuite) TestNeitherRouteUsesAnEnvironmentProxy() {
+	pooled := NewClient(5*time.Second, nil).Transport.(clientRoundTripper)
+	unpooled := NewUnpooledClient(5*time.Second, nil).Transport.(clientRoundTripper)
+
+	s.Nil(pooled.transport.Proxy)
+	s.Nil(unpooled.unpooled.Proxy)
+}
