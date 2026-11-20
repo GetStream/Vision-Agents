@@ -90,6 +90,107 @@ func (s *AlertsSuite) TestAConditionHeldPastTheLimitIsSentAgain() {
 	s.Equal(sentry.LevelError, s.sent()[0].Level)
 }
 
+func (s *AlertsSuite) TestAConditionWithItsOwnRepeatIsSentAgainOnlyAfterIt() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "unowned", Level: Warn, Repeat: 24 * time.Hour,
+		Check: func(time.Time) (bool, map[string]any) { return true, nil }})
+
+	s.ticks(loop, &now, start, 0)
+	s.Require().Len(s.sent(), 1, "the first event goes out as soon as the condition holds")
+	s.ticks(loop, &now, start, time.Minute, 2*time.Minute, time.Hour, 24*time.Hour-time.Second)
+	s.Len(s.sent(), 1, "the loop's one-minute limit does not apply to it")
+	s.ticks(loop, &now, start, 24*time.Hour)
+	s.Len(s.sent(), 2)
+}
+
+func (s *AlertsSuite) TestAnItemOfAConditionWithItsOwnRepeatIsSentAgainOnlyAfterIt() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "unowned", Level: Warn, Repeat: 24 * time.Hour,
+		Items: func(time.Time) map[string]map[string]any { return map[string]map[string]any{"a": nil} }})
+
+	s.ticks(loop, &now, start, 0, time.Minute, 2*time.Minute, 24*time.Hour-time.Second)
+	s.Len(s.sent(), 1)
+	s.ticks(loop, &now, start, 24*time.Hour)
+	s.Len(s.sent(), 2)
+}
+
+func (s *AlertsSuite) TestANewSpellOfAConditionWithItsOwnRepeatIsSentAtOnce() {
+	start := time.Now()
+	now := start
+	holds := func(now time.Time) bool { at := now.Sub(start); return at < 2*time.Hour || at >= 3*time.Hour }
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "unowned", Level: Warn, Repeat: 24 * time.Hour,
+		Check: func(now time.Time) (bool, map[string]any) { return holds(now), nil }})
+
+	s.ticks(loop, &now, start, 0, time.Hour, 2*time.Hour, 3*time.Hour, 4*time.Hour)
+
+	s.Len(s.sent(), 2, "the condition stopped holding at 2 h, so 3 h starts a new spell")
+}
+
+func (s *AlertsSuite) TestAnItemThatComesBackIsSentAtOnce() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "unowned", Level: Warn, Repeat: 24 * time.Hour,
+		Items: func(now time.Time) map[string]map[string]any {
+			if at := now.Sub(start); at >= time.Hour && at < 2*time.Hour {
+				return map[string]map[string]any{"b": nil}
+			}
+			return map[string]map[string]any{"a": nil, "b": nil}
+		}})
+
+	s.ticks(loop, &now, start, 0, time.Hour, 2*time.Hour, 3*time.Hour)
+
+	events := s.sent()
+	s.Require().Len(events, 3, "a went away at 1 h and came back at 2 h; b never went away")
+	s.Equal("a", events[2].Tags["item"])
+}
+
+func (s *AlertsSuite) TestAConditionWithoutARepeatKeepsTheLimitAcrossSpells() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "rejected", Level: Page,
+		Check: func(now time.Time) (bool, map[string]any) { return now.Sub(start) != 15*time.Second, nil }})
+
+	s.ticks(loop, &now, start, 0, 15*time.Second, 30*time.Second)
+
+	s.Len(s.sent(), 1, "a condition with no Repeat is held back for the Limit even after it stopped holding")
+}
+
+func (s *AlertsSuite) TestAnItemOfAConditionWithoutARepeatKeepsTheLimitAcrossSpells() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "rejected", Level: Page,
+		Items: func(now time.Time) map[string]map[string]any {
+			if now.Sub(start) == 15*time.Second {
+				return map[string]map[string]any{}
+			}
+			return map[string]map[string]any{"a": nil}
+		}})
+
+	s.ticks(loop, &now, start, 0, 15*time.Second, 30*time.Second)
+
+	s.Len(s.sent(), 1, "an item with no Repeat is held back for the Limit even after it went away")
+}
+
 func (s *AlertsSuite) TestWithNoDSNAnAlertIsLogged() {
 	held := Condition{Name: "ingest_failing", Level: Page, Check: func(time.Time) (bool, map[string]any) {
 		return true, map[string]any{"increase": 4}

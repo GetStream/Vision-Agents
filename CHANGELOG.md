@@ -774,6 +774,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The `unowned` usage alert is sent once a day, not once a minute
+
+The router's `unowned` alert holds for as long as usage rows wait for an app to join an organization, which can be days, and was sent again every minute it held. It is now sent again at most once a day while it holds; it is still sent as soon as it starts holding, including when it holds again after it stopped. Every other usage alert is unchanged (#2115).
+
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 
 The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.

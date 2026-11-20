@@ -1,7 +1,7 @@
 // Package alerts checks named conditions in the process that can see them, and sends one
-// Sentry event per condition that holds at most once per interval, which Sentry's alert rules
-// route by the usage_alert tag. Without a Sentry DSN an alert is only logged, at ERROR, which
-// it always is too.
+// Sentry event per condition that holds at most once per interval (the loop's Limit, or the
+// condition's own Repeat), which Sentry's alert rules route by the usage_alert tag. Without a
+// Sentry DSN an alert is only logged, at ERROR, which it always is too.
 package alerts
 
 import (
@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -59,6 +60,12 @@ type Condition struct {
 	// whoever reads it in Slack. It follows the name in the alert's message; the fingerprint and
 	// the tags do not have it, so a new summary keeps the alert's Sentry issue.
 	Summary string
+	// Repeat is the least time between two events of the condition, or of one of its items,
+	// while it keeps holding, in place of the loop's Limit; zero keeps the Limit. Once it stops
+	// holding, the next time it holds is sent at once. A check that is given the loop's limit
+	// (IncreasedSinceAlert, IncreasedPer) must be given the Repeat instead, or it loses every
+	// increase the Repeat holds back.
+	Repeat time.Duration
 }
 
 // Options configure a Loop.
@@ -72,7 +79,8 @@ type Options struct {
 	Tags map[string]string
 	// Every is how often the conditions are checked; defaults to 15 s.
 	Every time.Duration
-	// Limit is the least time between two events of one condition; defaults to a minute.
+	// Limit is the least time between two events of one condition without a Repeat of its
+	// own; defaults to a minute.
 	Limit time.Duration
 	// Now is the loop's clock; nil is time.Now.
 	Now func() time.Time
@@ -126,7 +134,7 @@ func (l *Loop) Run(ctx context.Context) {
 	}
 }
 
-// check sends each condition that holds and was not sent within the limit.
+// check sends each condition that holds and was not sent within its repeat interval.
 func (l *Loop) check() {
 	now := l.options.Now()
 	for _, condition := range l.conditions {
@@ -136,9 +144,12 @@ func (l *Loop) check() {
 		}
 		holds, extra := condition.Check(now)
 		if !holds {
+			if condition.Repeat != 0 {
+				delete(l.sent, condition.Name)
+			}
 			continue
 		}
-		if last, ok := l.sent[condition.Name]; ok && now.Sub(last) < l.options.Limit {
+		if last, ok := l.sent[condition.Name]; ok && now.Sub(last) < l.repeat(condition) {
 			continue
 		}
 		l.sent[condition.Name] = now
@@ -146,13 +157,23 @@ func (l *Loop) check() {
 	}
 }
 
-// checkItems sends each item the condition holds for that was not sent within the limit, in
-// order so the events of one check go out the same way every time.
+// checkItems sends each item the condition holds for that was not sent within its repeat
+// interval, in order so the events of one check go out the same way every time.
 func (l *Loop) checkItems(now time.Time, condition Condition) {
 	held := condition.Items(now)
+	if condition.Repeat != 0 {
+		prefix := condition.Name + ":"
+		for key := range l.sent {
+			if item, ok := strings.CutPrefix(key, prefix); ok {
+				if _, holds := held[item]; !holds {
+					delete(l.sent, key)
+				}
+			}
+		}
+	}
 	for _, item := range slices.Sorted(maps.Keys(held)) {
 		key := condition.Name + ":" + item
-		if last, ok := l.sent[key]; ok && now.Sub(last) < l.options.Limit {
+		if last, ok := l.sent[key]; ok && now.Sub(last) < l.repeat(condition) {
 			continue
 		}
 		l.sent[key] = now
@@ -162,6 +183,14 @@ func (l *Loop) checkItems(now time.Time, condition Condition) {
 		}
 		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, item, description, condition.Level, held[item])
 	}
+}
+
+// repeat is the least time between two events of condition, or of one of its items.
+func (l *Loop) repeat(condition Condition) time.Duration {
+	if condition.Repeat != 0 {
+		return condition.Repeat
+	}
+	return l.options.Limit
 }
 
 // Send sends one alert now, for a short-lived process (a job) that has no loop. It goes to
