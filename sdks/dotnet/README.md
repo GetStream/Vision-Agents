@@ -411,9 +411,7 @@ request keeps the server credential: behind the proxy it is a server token, not 
 client's own user, which is what the router needs to let a backend act for somebody. A client
 with an API key holding a user's token is a device. It cannot act for another user, so a call
 naming one throws a `ConfigurationException` before any request, and a call naming none is sent
-as before. The Go SDK differs here: a `client.Client` made for a user (`UserID` with the secret)
-keeps signing that user's own token when a call names another, which Stream's proxy refuses
-with a 403.
+as before.
 
 ## Working on this package
 
