@@ -16,6 +16,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -35,6 +36,8 @@ func TestARequestItsCallerCancelledIsNotAProviderFailure(t *testing.T) {
 type statSink struct {
 	mu   sync.Mutex
 	rows []routing.Stat
+	// cost is what every row is quoted at.
+	cost int64
 }
 
 func (k *statSink) Record(_ routing.ProviderConfig, row routing.Stat) {
@@ -43,9 +46,10 @@ func (k *statSink) Record(_ routing.ProviderConfig, row routing.Stat) {
 	k.rows = append(k.rows, row)
 }
 
-// Quote prices nothing: the rows, not what they cost, are under test.
+// Quote prices every row at cost, nothing unless a test sets it: the rows, not what they
+// cost, are under test.
 func (k *statSink) QuoteStat(routing.ProviderConfig, routing.Stat) pricing.Quote {
-	return pricing.Quote{}
+	return pricing.Quote{CostMicros: k.cost}
 }
 
 // Billable is true: nothing here asks money of an admission.
@@ -337,12 +341,144 @@ func TestOnlyAFirstTokenMakesALatency(t *testing.T) {
 
 // loggedTiming is a line the session logged, read back from JSON.
 type loggedTiming struct {
-	Message      string `json:"msg"`
-	Success      bool   `json:"success"`
-	ErrorCode    string `json:"error_code"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	Estimated    bool   `json:"estimated"`
+	Message            string  `json:"msg"`
+	Success            bool    `json:"success"`
+	ErrorCode          string  `json:"error_code"`
+	InputTokens        int64   `json:"input_tokens"`
+	OutputTokens       int64   `json:"output_tokens"`
+	Estimated          bool    `json:"estimated"`
+	AppID              string  `json:"app_id"`
+	AgentID            *string `json:"agent_id"`
+	CostMicros         int64   `json:"cost_micros"`
+	Status             string  `json:"status"`
+	IncompleteReason   string  `json:"incomplete_reason"`
+	ProviderResponseID string  `json:"provider_response_id"`
+	Error              string  `json:"error"`
+	Transient          *bool   `json:"transient"`
+	Region             string  `json:"region"`
+	BYOK               bool    `json:"byok"`
+}
+
+// logTimings sends the default logger's lines to the buffer it returns, as JSON.
+func logTimings(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &logs
+}
+
+func TestTheTimingLogNamesTheAppAgentAndWhatTheResponseCost(t *testing.T) {
+	logs := logTimings(t)
+	provider := newStubLLM()
+	session := newSession(provider,
+		routing.ProviderConfig{Provider: "stub", Model: "stub-model", Region: "eu-west", BYOK: true},
+		routing.Owner{CustomerID: "acme", AgentID: "support", CallID: "c1"}, nil, nil)
+	session.recorder = &statSink{cost: 1234}
+	t.Cleanup(func() { _ = session.Close() })
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).ProviderResponseID("chatcmpl-9")
+	provider.script(0).OutputText("hello")
+	provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 2})
+	provider.script(0).Done()
+	drain(stream)
+
+	logged := timingLogged(t, logs)
+	require.Equal(t, "acme", logged.AppID, "the app, under the field the request lines use")
+	require.NotNil(t, logged.AgentID)
+	require.Equal(t, "support", *logged.AgentID)
+	require.EqualValues(t, 1234, logged.CostMicros, "what the row is quoted at")
+	require.Equal(t, string(llm.StatusCompleted), logged.Status)
+	require.Equal(t, "chatcmpl-9", logged.ProviderResponseID, "the id to give the vendor")
+	require.Equal(t, "eu-west", logged.Region)
+	require.True(t, logged.BYOK, "asked on the app's own key")
+	require.Empty(t, logged.Error, "a served response failed at nothing")
+	require.Nil(t, logged.Transient)
+}
+
+func TestTheTimingLogNamesNoAgentOutsideAConversation(t *testing.T) {
+	logs := logTimings(t)
+	session, provider, _ := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).Done()
+	drain(stream)
+
+	logged := timingLogged(t, logs)
+	require.Equal(t, "acme", logged.AppID)
+	require.Nil(t, logged.AgentID, "a direct call has no agent to name")
+	require.False(t, logged.BYOK, "asked on the deployment's key")
+}
+
+func TestTheTimingLogSaysWhyAResponseStoppedEarly(t *testing.T) {
+	logs := logTimings(t)
+	session, provider, _ := sinkSession(t)
+
+	stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.NoError(t, err)
+	provider.script(0).OutputText("a long ans")
+	provider.script(0).Incomplete(llm.ReasonMaxOutputTokens)
+	drain(stream)
+
+	logged := timingLogged(t, logs)
+	require.Equal(t, string(llm.StatusIncomplete), logged.Status)
+	require.Equal(t, llm.ReasonMaxOutputTokens, logged.IncompleteReason)
+}
+
+func TestTheTimingLogSaysWhatAFailedStreamFailedWith(t *testing.T) {
+	for name, test := range map[string]struct {
+		err       error
+		transient bool
+	}{
+		"a vendor overloaded": {&llm.ProviderFailure{Err: errors.New("overloaded"), Transient: true}, true},
+		"a request refused":   {&llm.ProviderFailure{Err: errors.New("bad request"), Transient: false}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := logTimings(t)
+			session, provider, _ := sinkSession(t)
+
+			stream, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+			require.NoError(t, err)
+			provider.script(0).Fail(test.err, "stream")
+			drain(stream)
+
+			logged := timingLogged(t, logs)
+			require.Equal(t, "provider_error", logged.ErrorCode)
+			require.Contains(t, logged.Error, test.err.Error())
+			require.NotNil(t, logged.Transient)
+			require.Equal(t, test.transient, *logged.Transient)
+		})
+	}
+}
+
+func TestTheTimingLogSaysWhatAFailedCreateFailedWith(t *testing.T) {
+	logs := logTimings(t)
+	session, provider, _ := sinkSession(t)
+	provider.createErr = &llm.ProviderFailure{Err: errors.New("stub: vendor overloaded"), Transient: true}
+
+	_, err := session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	require.Error(t, err)
+
+	logged := timingLogged(t, logs)
+	require.Equal(t, "acme", logged.AppID)
+	require.Contains(t, logged.Error, "stub: vendor overloaded")
+	require.NotNil(t, logged.Transient)
+	require.True(t, *logged.Transient)
+}
+
+func TestTheTimingLogNamesTheHostAnOpenAICompatibleProviderAsks(t *testing.T) {
+	provider, err := Started(openaicompat.New(openaicompat.Options{
+		Provider: "gemma", Model: "gemma-4", APIKey: "k",
+		BaseURL: "https://user:secret@gemma.example.test:8443/v1",
+	}))
+	require.NoError(t, err)
+	require.Equal(t, "gemma.example.test:8443", vendorHost(provider),
+		"the host alone, without the credentials or the path")
+	require.Empty(t, vendorHost(newStubLLM()), "a provider that names no host")
 }
 
 // timingLogged is the one "model call timing" line among those logged.
