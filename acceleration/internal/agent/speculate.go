@@ -61,9 +61,8 @@ type speculation struct {
 // the reply it is about.
 //
 // With UnifiedReplies the reply also rules on the words, and it reports true: nobody else
-// is asked, so the caller must not ask the flow controller as well. Not when the agent acts
-// on chorus-asr: its floor heard the audio and rules on the words, and a reply ruling on the
-// words alone answered a radio it ruled ignored.
+// is asked, so the caller must not ask the flow controller as well. Never with chorus-asr:
+// its ruling comes from the audio and must decide the turn, not the reply model.
 func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, anotherVoice bool) bool {
 	unified := a.options.UnifiedReplies && a.audioFloor == nil
 	if !a.options.SpeculativeReplies && !unified {

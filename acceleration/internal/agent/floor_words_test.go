@@ -195,9 +195,7 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberAServerThatCantRuleLeavesTh
 	s.heardOnly("What time do you open?")
 }
 
-// Acting on chorus-asr, its floor rules on the turn with unified replies on as well: words it
-// ruled ignored, a radio's "thank you so much", are never answered by a reply that rules on
-// the words alone.
+// With unified replies on, chorus-asr still decides the turn: words it ruled ignored get no reply.
 func (s *AgentSuite) TestActingOnChorusASRAUnifiedReplyNeverAnswersWordsItIgnored() {
 	s.floorRules(ignoresAtOnce)
 	s.unified = true
