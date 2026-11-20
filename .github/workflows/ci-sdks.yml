@@ -1,0 +1,248 @@
+name: CI (SDKs)
+# Server SDKs share one runner, one after another, and every run checks all of them.
+# Feature branches run through pull_request; a push of the same commit would be a second,
+# uncancellable copy of every job. A push to main runs it on the same paths as a pull request.
+# A pull request that changes none of them never starts this workflow, so its check must not
+# be made required: it would wait forever on such a pull request.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'sdks/go/**'
+      - 'sdks/js/**'
+      - 'sdks/dotnet/**'
+      - 'sdks/php/**'
+      - 'sdks/rust/**'
+      - 'sdks/ruby/**'
+      - 'acceleration/api/openapi.yaml'
+      - '.github/workflows/ci-sdks.yml'
+      - 'sdks/testdata/ui/**'
+      - 'examples/voice_agents/swift_assistant/a2ui/prompt.json'
+      - 'examples/voice_agents/swift_assistant/app/SwiftAssistant/UIComponents.json'
+      - '!**/*.md'
+      # A Markdown file the Go SDK's ui_test.go reads: it must stay after the *.md exclusion,
+      # which would otherwise drop it.
+      - 'examples/voice_agents/swift_assistant/a2ui/instructions.md'
+  pull_request:
+    branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - 'sdks/go/**'
+      - 'sdks/js/**'
+      - 'sdks/dotnet/**'
+      - 'sdks/php/**'
+      - 'sdks/rust/**'
+      - 'sdks/ruby/**'
+      - 'acceleration/api/openapi.yaml'
+      - '.github/workflows/ci-sdks.yml'
+      - 'sdks/testdata/ui/**'
+      - 'examples/voice_agents/swift_assistant/a2ui/prompt.json'
+      - 'examples/voice_agents/swift_assistant/app/SwiftAssistant/UIComponents.json'
+      - '!**/*.md'
+      # A Markdown file the Go SDK's ui_test.go reads: it must stay after the *.md exclusion,
+      # which would otherwise drop it.
+      - 'examples/voice_agents/swift_assistant/a2ui/instructions.md'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# Cancel in-flight runs for the same branch/PR when new commits arrive
+concurrency:
+  group: ci-sdks-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # Every step runs after a failure (`!cancelled()`), so each SDK reports its result.
+  sdks:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    # For the Go SDK, the only Go here: it is installed on its own, with no go.work, by Go as
+    # old as its go directive, so it is checked that way too. GOTOOLCHAIN=local keeps 1.25
+    # from switching to a newer toolchain, which would prove nothing about 1.25.
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: ''
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 'Go SDK: set up Go 1.25.0'
+        if: ${{ !cancelled() }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: sdks/go/go.sum
+
+      - name: 'Go SDK: check formatting'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/go
+        run: test -z "$(gofmt -l .)"
+
+      - name: 'Go SDK: check go.mod and go.sum are tidy and verified'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/go
+        run: |
+          go mod tidy -diff
+          go mod verify
+
+      - name: 'Go SDK: vet, the end-to-end suite included'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/go
+        run: |
+          go vet ./...
+          go vet -tags e2e .
+
+      - name: 'Go SDK: test'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/go
+        run: go test -race ./...
+
+      - name: 'JS: set up Node 24'
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - name: 'JS: install'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/js
+        run: npm ci
+
+      # The generated types are committed so that installing the package needs no code
+      # generation, which only holds while they are the ones the spec describes.
+      - name: 'JS: check the generated types are in step with the spec'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/js
+        run: npm run types -- --check
+
+      - name: 'JS: test'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/js
+        run: npm test
+
+      - name: 'JS: build'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/js
+        run: npm run build
+
+      # The same suite again with stream-chat 10 in place of the 9 the lockfile has: an app may
+      # hand either to the SDK, and the SDK reads both by shape. It runs last, after the build,
+      # because it changes node_modules. The newest 10 there is, release candidates included,
+      # so a release candidate that breaks the SDK shows here before it ships. The log says
+      # which one ran.
+      - name: 'JS: install stream-chat 10'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/js
+        run: |
+          npm install --no-save stream-chat@^10.0.2
+          node -p "'stream-chat ' + require('./node_modules/stream-chat/package.json').version"
+
+      - name: 'JS: test with stream-chat 10'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/js
+        run: npm test
+
+      - name: '.NET: set up .NET'
+        if: ${{ !cancelled() }}
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: sdks/dotnet/global.json
+
+      - name: '.NET: check the generated models are in step with the spec'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/dotnet
+        run: dotnet run --project tools/Generate -- --check
+
+      - name: '.NET: check formatting'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/dotnet
+        run: dotnet format --verify-no-changes
+
+      - name: '.NET: build'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/dotnet
+        run: dotnet build -warnaserror
+
+      - name: '.NET: test'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/dotnet
+        run: dotnet test --no-build
+
+      - name: 'PHP: set up PHP 8.4'
+        if: ${{ !cancelled() }}
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          tools: composer
+
+      - name: 'PHP: install'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/php
+        run: composer install --no-interaction --no-progress
+
+      - name: 'PHP: check the generated classes are in step with the spec'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/php
+        run: composer generate-check
+
+      - name: 'PHP: analyse'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/php
+        run: composer stan
+
+      - name: 'PHP: test'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/php
+        run: composer test
+
+      - name: 'Rust: set up the stable toolchain'
+        if: ${{ !cancelled() }}
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: 'Rust: restore the build cache'
+        if: ${{ !cancelled() }}
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: sdks/rust
+
+      - name: 'Rust: check the generated types are in step with the spec'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/rust
+        run: cargo run -p generate -- --check
+
+      - name: 'Rust: check formatting'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/rust
+        run: cargo fmt --check
+
+      - name: 'Rust: lint'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/rust
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: 'Rust: test'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/rust
+        run: cargo test
+
+      - name: 'Ruby: set up Ruby 3.3'
+        if: ${{ !cancelled() }}
+        uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: sdks/ruby
+
+      # The default task checks the generated spec table against the spec, then runs the tests.
+      - name: 'Ruby: check and test'
+        if: ${{ !cancelled() }}
+        working-directory: sdks/ruby
+        run: bundle exec rake

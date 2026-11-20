@@ -25,6 +25,8 @@ final readonly class OfferedTool
         public ?array $parameters = null,
         // Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker conne...
         public ?string $source = null,
+        // How the tool is offered, as its tool group or connector binding says: full for the router's own. A deferred...
+        public ToolLoading|string|null $loading = null,
     ) {
     }
 
@@ -39,6 +41,7 @@ final readonly class OfferedTool
             tokens: Json::int($data, 'tokens'),
             parameters: array_key_exists('parameters', $data) && $data['parameters'] !== null ? Json::object($data, 'parameters') : null,
             source: array_key_exists('source', $data) && $data['source'] !== null ? Json::string($data, 'source') : null,
+            loading: array_key_exists('loading', $data) && $data['loading'] !== null ? Json::enum($data, 'loading', ToolLoading::class) : null,
         );
     }
 
@@ -58,6 +61,9 @@ final readonly class OfferedTool
         }
         if ($this->source !== null) {
             $out['source'] = $this->source;
+        }
+        if ($this->loading !== null) {
+            $out['loading'] = Json::enumValue($this->loading);
         }
         return $out;
     }

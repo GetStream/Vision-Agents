@@ -16,6 +16,10 @@ import (
 // question. It is offered only on a voice call with a tool that asks one.
 const confirmTool = "confirm_tool_call"
 
+// ConfirmTool is the tool the model answers a call's approval question with. The call it
+// confirms runs inside it, so its ToolRan is that call's outcome too.
+const ConfirmTool = confirmTool
+
 // approvalWait is how long a voice caller has to answer an approval question, from when it
 // finished playing.
 const approvalWait = 15 * time.Second
@@ -167,6 +171,7 @@ func (a *Agent) askApproval(call llm.ToolCall, question string) []llm.ContentPar
 	}
 	a.mu.Unlock()
 	a.logger.Info("a call waits for the caller's yes", "tool", call.Name, "tool_call", call.ID)
+	a.emitter.Send(ToolAwaitingApproval{ID: call.ID, TurnID: call.TurnID, Tool: call.Name, Question: question})
 	return llm.TextParts(fmt.Sprintf(answer, call.Name, question, call.ID, call.Name))
 }
 

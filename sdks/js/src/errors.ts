@@ -66,15 +66,12 @@ export class SocketClosedError extends Error {
  * again would only be told the same thing.
  */
 export class HostingRefusedError extends Error {
-  /** The agent the tools were offered for. */
-  readonly agentId: string;
   /** Why the router said no. */
   readonly reason: string;
 
-  constructor(agentId: string, reason: string) {
-    super(`the router refused to host tools for agent ${agentId}: ${reason}`);
+  constructor(reason: string) {
+    super(`the router refused to host tools: ${reason}`);
     this.name = "HostingRefusedError";
-    this.agentId = agentId;
     this.reason = reason;
   }
 }
@@ -114,7 +111,7 @@ export async function errorOf(
     return new RouterError(
       response.status,
       operation,
-      text.trim() || `${answeredBy} answered ${response.status}`,
+      clipped(text.trim()) || `${answeredBy} answered ${response.status}`,
       { requestId },
     );
   }
@@ -145,4 +142,21 @@ function objectOf(value: unknown): Record<string, unknown> | undefined {
 
 function stringOf(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+/**
+ * How much of a body that is not the router's own envelope becomes an error's message. Enough to
+ * read what a proxy or a gateway said; past it is a whole HTML page, or a request echoed back,
+ * which an app would log and show in full.
+ */
+const MAX_MESSAGE_CHARS = 1024;
+
+/** `text`, cut to `MAX_MESSAGE_CHARS` with an ellipsis where it was cut, never inside an emoji's pair. */
+export function clipped(text: string): string {
+  if (text.length <= MAX_MESSAGE_CHARS) {
+    return text;
+  }
+  const high = text.charCodeAt(MAX_MESSAGE_CHARS - 1);
+  const end = high >= 0xd800 && high <= 0xdbff ? MAX_MESSAGE_CHARS - 1 : MAX_MESSAGE_CHARS;
+  return `${text.slice(0, end)}…`;
 }

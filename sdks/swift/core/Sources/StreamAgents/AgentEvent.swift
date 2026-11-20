@@ -47,6 +47,7 @@ public struct AgentEvent: Sendable, Hashable {
         case decision
         case responding
         case responseDelta = "response_delta"
+        case reasoningDelta = "reasoning_delta"
         case uiDelta = "ui_delta"
         case uiCompleted = "ui_completed"
         case responded
@@ -57,7 +58,13 @@ public struct AgentEvent: Sendable, Hashable {
         case taskCancelled = "task_cancelled"
         case toolCall = "tool_call"
         case toolCancel = "tool_cancel"
+        case toolHeld = "tool_held"
+        case toolStarted = "tool_started"
+        case toolUpdated = "tool_updated"
         case toolRan = "tool_ran"
+        case toolCallStarted = "tool_call.started"
+        case toolCallProgress = "tool_call.progress"
+        case toolCallFinished = "tool_call.finished"
         case transferred
         case pressed
         case lookedUp = "looked_up"
@@ -109,7 +116,9 @@ extension AgentEvent {
             name: string("name"),
             arguments: string("arguments"),
             requestID: string("request_id"),
-            turnID: string("turn_id"))
+            turnID: string("turn_id"),
+            run: self["run"].boolValue ?? true,
+            approved: self["approved"].boolValue ?? false)
     }
 
     /// A request from the model to run one of the caller's functions.
@@ -121,6 +130,11 @@ extension AgentEvent {
         /// The request and turn that asked, which its result must name again.
         public var requestID = ""
         public var turnID = ""
+        /// Whether this device is the one to run it. Every watcher is sent every call, and
+        /// only the one the router names answers it.
+        public var run = true
+        /// Whether the person already said yes to it, on a voice call, so nobody asks again.
+        public var approved = false
 
         /// The arguments decoded, or an empty dictionary if the model wrote something else.
         public var argumentValues: [String: RawJSON] {
@@ -129,6 +143,66 @@ extension AgentEvent {
             else { return [:] }
             return decoded
         }
+    }
+}
+
+extension AgentEvent {
+    /// The call's whole state on a `tool_call.started`, `tool_call.progress` or
+    /// `tool_call.finished`, or nil for any other event.
+    public var toolCallState: ToolCallState? {
+        guard kind == .toolCallStarted || kind == .toolCallProgress || kind == .toolCallFinished,
+            !string("tool_call_id").isEmpty
+        else { return nil }
+        let dates = RouterDates()
+        let date = { (key: String) in try? dates.decode(self.string(key)) }
+        return ToolCallState(
+            id: string("tool_call_id"),
+            tool: string("tool"),
+            turnID: string("turn_id"),
+            status: ToolCallState.Status(rawValue: string("status")),
+            progress: string("progress"),
+            startedAt: date("started_at"),
+            durationMS: Int(self["duration_ms"].numberValue ?? 0),
+            approvedAt: date("approved_at"),
+            rejectedAt: date("rejected_at"),
+            error: string("error"))
+    }
+}
+
+/// One tool call as the session last reported it, whichever process runs it.
+public struct ToolCallState: Sendable, Hashable, Identifiable {
+    /// The call's `tool_call_id`.
+    public let id: String
+    public let tool: String
+    public let turnID: String
+    public let status: Status
+    /// The last thing said about the call while it runs, such as "Searching for flights", or
+    /// the question it waits on. Empty for none.
+    public let progress: String
+    public let startedAt: Date?
+    /// From `startedAt` to this report; once finished, how long the call took.
+    public let durationMS: Int
+    /// When a person allowed the call.
+    public let approvedAt: Date?
+    /// When a person declined the call, or its wait for them passed.
+    public let rejectedAt: Date?
+    /// Why a failed call failed, or what a declined one shows. Empty for none.
+    public let error: String
+
+    /// Where a call stands. A value the router added after this SDK shipped is kept as it came.
+    public struct Status: RawRepresentable, Sendable, Hashable {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+
+        public static let inProgress = Status(rawValue: "in_progress")
+        /// Held for a person's approval.
+        public static let waiting = Status(rawValue: "waiting")
+        public static let success = Status(rawValue: "success")
+        public static let failed = Status(rawValue: "failed")
+        public static let cancelled = Status(rawValue: "cancelled")
+
+        /// Whether the call is over.
+        public var isFinished: Bool { self == .success || self == .failed || self == .cancelled }
     }
 }
 

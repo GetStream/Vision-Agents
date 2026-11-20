@@ -717,7 +717,7 @@ func (s *ConnectorsSuite) duringADeleteOf(id string, call func() (int, string)) 
 	deleted := make(chan int, 1)
 	go func() { deleted <- s.serverClient.do(http.MethodDelete, "/v1/agents/connectors/"+id, nil, nil) }()
 	// The two seconds and the ten milliseconds are assertTheWaitEnded's (internal/store/credentials_test.go).
-	s.Require().Eventually(func() bool { return s.waitingFor("DELETE FROM connector_oauth_clients", id) == 1 },
+	s.Require().Eventually(func() bool { return s.waitingFor(`DELETE FROM "connector_oauth_clients"`, id) == 1 },
 		2*time.Second, 10*time.Millisecond, "the delete waits at its DELETE")
 	type answer struct {
 		status  int

@@ -59,6 +59,15 @@ final class Operations {
     return Session.fromJson(json);
   }
 
+  /// Delete a scheduled task.
+  Future<void> deleteScheduledTask({required String id}) async {
+    await _wire.send(
+      'DELETE',
+      '/v1/agents/scheduled-tasks/${Uri.encodeComponent(id)}',
+      operation: 'deleteScheduledTask',
+    );
+  }
+
   /// Delete a session.
   Future<void> deleteSession({required String id}) async {
     await _wire.send(
@@ -77,6 +86,16 @@ final class Operations {
       body: body?.toJson(),
     );
     return Session.fromJson(json);
+  }
+
+  /// One scheduled task.
+  Future<ScheduledTask> getScheduledTask({required String id}) async {
+    final json = await _wire.send(
+      'GET',
+      '/v1/agents/scheduled-tasks/${Uri.encodeComponent(id)}',
+      operation: 'getScheduledTask',
+    );
+    return ScheduledTask.fromJson(json);
   }
 
   /// One session.
@@ -116,6 +135,54 @@ final class Operations {
     return AgentResponsePage.fromJson(json);
   }
 
+  /// A scheduled task's runs.
+  Future<ScheduledTaskRunPage> listScheduledTaskRuns({
+    required String id,
+    int? limit,
+    String? cursor,
+  }) async {
+    final json = await _wire.send(
+      'GET',
+      '/v1/agents/scheduled-tasks/${Uri.encodeComponent(id)}/runs',
+      operation: 'listScheduledTaskRuns',
+      query: {'limit': limit?.toString(), 'cursor': cursor},
+    );
+    return ScheduledTaskRunPage.fromJson(json);
+  }
+
+  /// The scheduled tasks of the user, or of the customer.
+  Future<ScheduledTaskPage> listScheduledTasks({
+    int? limit,
+    String? cursor,
+    String? state,
+    String? configId,
+    String? sessionId,
+  }) async {
+    final json = await _wire.send(
+      'GET',
+      '/v1/agents/scheduled-tasks',
+      operation: 'listScheduledTasks',
+      query: {
+        'limit': limit?.toString(),
+        'cursor': cursor,
+        'state': state,
+        'config_id': configId,
+        'session_id': sessionId,
+      },
+    );
+    return ScheduledTaskPage.fromJson(json);
+  }
+
+  /// Pause a scheduled task.
+  Future<ScheduledTask> pauseScheduledTask({required String id}) async {
+    final json = await _wire.send(
+      'POST',
+      '/v1/agents/scheduled-tasks/${Uri.encodeComponent(id)}/pause',
+      operation: 'pauseScheduledTask',
+    );
+    return ScheduledTask.fromJson(json);
+  }
+
   /// List or search the caller's sessions.
   Future<SessionPage> querySessions({SessionQuery? body}) async {
     final json = await _wire.send(
@@ -134,6 +201,16 @@ final class Operations {
       '/v1/agents/sessions/${Uri.encodeComponent(id)}/tools/${Uri.encodeComponent(name)}',
       operation: 'removeSessionTool',
     );
+  }
+
+  /// Resume a scheduled task.
+  Future<ScheduledTask> resumeScheduledTask({required String id}) async {
+    final json = await _wire.send(
+      'POST',
+      '/v1/agents/scheduled-tasks/${Uri.encodeComponent(id)}/resume',
+      operation: 'resumeScheduledTask',
+    );
+    return ScheduledTask.fromJson(json);
   }
 
   /// Go back to a response and carry on from there.
@@ -182,6 +259,20 @@ final class Operations {
     return Session.fromJson(json);
   }
 
+  /// Change a scheduled task.
+  Future<ScheduledTask> updateScheduledTask({
+    required String id,
+    required UpdateScheduledTaskRequest body,
+  }) async {
+    final json = await _wire.send(
+      'PATCH',
+      '/v1/agents/scheduled-tasks/${Uri.encodeComponent(id)}',
+      operation: 'updateScheduledTask',
+      body: body.toJson(),
+    );
+    return ScheduledTask.fromJson(json);
+  }
+
   /// Change a session.
   Future<Session> updateSession({required String id, required UpdateSessionRequest body}) async {
     final json = await _wire.send(
@@ -196,22 +287,28 @@ final class Operations {
 
 /// Tools to give a running session's caller.
 final class AddSessionToolsRequest {
-  const AddSessionToolsRequest({required this.tools});
+  const AddSessionToolsRequest({this.tools});
 
   factory AddSessionToolsRequest.fromJson(Object? value) {
     final json = _object(value, 'AddSessionToolsRequest');
     return AddSessionToolsRequest(
-      tools: [
-        for (final item in _list(json['tools'], 'AddSessionToolsRequest.tools'))
-          SessionTool.fromJson(item),
-      ],
+      tools: switch (json['tools']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'AddSessionToolsRequest.tools'))
+            SessionTool.fromJson(item),
+        ],
+      },
     );
   }
 
-  final List<SessionTool> tools;
+  final List<SessionTool>? tools;
 
   Map<String, Object?> toJson() => {
-    'tools': [for (final item in tools) item.toJson()],
+    'tools': switch (tools) {
+      null => null,
+      final value => [for (final item in value) item.toJson()],
+    },
   };
 }
 
@@ -1345,6 +1442,340 @@ final class RewoundTo {
   Map<String, Object?> toJson() => {'inclusive': inclusive, 'message_id': messageId};
 }
 
+final class ScheduledTask {
+  const ScheduledTask({
+    required this.configId,
+    required this.consecutiveFailures,
+    required this.createdAt,
+    required this.createdBy,
+    this.custom,
+    required this.deliverTo,
+    required this.id,
+    required this.instructions,
+    this.lastRunAt,
+    this.nextRunAt,
+    this.quietHours,
+    required this.schedule,
+    required this.sessionId,
+    required this.state,
+    required this.title,
+    required this.upcoming,
+    required this.updatedAt,
+    required this.userId,
+  });
+
+  factory ScheduledTask.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTask');
+    return ScheduledTask(
+      configId: _string(json['config_id'], 'ScheduledTask.config_id'),
+      consecutiveFailures: _int(json['consecutive_failures'], 'ScheduledTask.consecutive_failures'),
+      createdAt: _date(json['created_at'], 'ScheduledTask.created_at'),
+      createdBy: _string(json['created_by'], 'ScheduledTask.created_by'),
+      custom: switch (json['custom']) {
+        null => null,
+        final Object value => _object(value, 'ScheduledTask.custom'),
+      },
+      deliverTo: [
+        for (final item in _list(json['deliver_to'], 'ScheduledTask.deliver_to'))
+          _string(item, 'ScheduledTask.deliver_to[]'),
+      ],
+      id: _string(json['id'], 'ScheduledTask.id'),
+      instructions: _string(json['instructions'], 'ScheduledTask.instructions'),
+      lastRunAt: switch (json['last_run_at']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTask.last_run_at'),
+      },
+      nextRunAt: switch (json['next_run_at']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTask.next_run_at'),
+      },
+      quietHours: switch (json['quiet_hours']) {
+        null => null,
+        final Object value => ScheduledTaskQuietHours.fromJson(value),
+      },
+      schedule: ScheduledTaskSchedule.fromJson(json['schedule']),
+      sessionId: _string(json['session_id'], 'ScheduledTask.session_id'),
+      state: _string(json['state'], 'ScheduledTask.state'),
+      title: _string(json['title'], 'ScheduledTask.title'),
+      upcoming: [
+        for (final item in _list(json['upcoming'], 'ScheduledTask.upcoming'))
+          _string(item, 'ScheduledTask.upcoming[]'),
+      ],
+      updatedAt: _date(json['updated_at'], 'ScheduledTask.updated_at'),
+      userId: _string(json['user_id'], 'ScheduledTask.user_id'),
+    );
+  }
+
+  final String configId;
+  final int consecutiveFailures;
+  final DateTime createdAt;
+  final String createdBy;
+  final Map<String, Object?>? custom;
+  final List<String> deliverTo;
+  final String id;
+  final String instructions;
+  final String? lastRunAt;
+  final String? nextRunAt;
+  final ScheduledTaskQuietHours? quietHours;
+  final ScheduledTaskSchedule schedule;
+  final String sessionId;
+  final String state;
+  final String title;
+  final List<String> upcoming;
+  final DateTime updatedAt;
+  final String userId;
+
+  Map<String, Object?> toJson() => {
+    'config_id': configId,
+    'consecutive_failures': consecutiveFailures,
+    'created_at': createdAt.toUtc().toIso8601String(),
+    'created_by': createdBy,
+    'custom': ?custom,
+    'deliver_to': deliverTo,
+    'id': id,
+    'instructions': instructions,
+    'last_run_at': lastRunAt,
+    'next_run_at': nextRunAt,
+    if (quietHours case final value?) 'quiet_hours': value.toJson(),
+    'schedule': schedule.toJson(),
+    'session_id': sessionId,
+    'state': state,
+    'title': title,
+    'upcoming': upcoming,
+    'updated_at': updatedAt.toUtc().toIso8601String(),
+    'user_id': userId,
+  };
+}
+
+final class ScheduledTaskNext {
+  const ScheduledTaskNext({this.at, this.inValue});
+
+  factory ScheduledTaskNext.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTaskNext');
+    return ScheduledTaskNext(
+      at: switch (json['at']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskNext.at'),
+      },
+      inValue: switch (json['in']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskNext.in'),
+      },
+    );
+  }
+
+  final String? at;
+  final String? inValue;
+
+  Map<String, Object?> toJson() => {'at': ?at, 'in': ?inValue};
+}
+
+final class ScheduledTaskPage {
+  const ScheduledTaskPage({required this.hasMore, required this.items, this.nextCursor});
+
+  factory ScheduledTaskPage.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTaskPage');
+    return ScheduledTaskPage(
+      hasMore: _bool(json['has_more'], 'ScheduledTaskPage.has_more'),
+      items: [
+        for (final item in _list(json['items'], 'ScheduledTaskPage.items'))
+          ScheduledTask.fromJson(item),
+      ],
+      nextCursor: switch (json['next_cursor']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskPage.next_cursor'),
+      },
+    );
+  }
+
+  final bool hasMore;
+  final List<ScheduledTask> items;
+  final String? nextCursor;
+
+  Map<String, Object?> toJson() => {
+    'has_more': hasMore,
+    'items': [for (final item in items) item.toJson()],
+    'next_cursor': ?nextCursor,
+  };
+}
+
+final class ScheduledTaskQuietHours {
+  const ScheduledTaskQuietHours({required this.end, required this.start});
+
+  factory ScheduledTaskQuietHours.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTaskQuietHours');
+    return ScheduledTaskQuietHours(
+      end: _string(json['end'], 'ScheduledTaskQuietHours.end'),
+      start: _string(json['start'], 'ScheduledTaskQuietHours.start'),
+    );
+  }
+
+  final String end;
+  final String start;
+
+  Map<String, Object?> toJson() => {'end': end, 'start': start};
+}
+
+final class ScheduledTaskRun {
+  const ScheduledTaskRun({
+    required this.attempts,
+    required this.deliveredTo,
+    this.error,
+    this.finishedAt,
+    required this.id,
+    required this.scheduledFor,
+    required this.sessionId,
+    this.startedAt,
+    required this.state,
+    required this.taskId,
+    required this.trigger,
+  });
+
+  factory ScheduledTaskRun.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTaskRun');
+    return ScheduledTaskRun(
+      attempts: _int(json['attempts'], 'ScheduledTaskRun.attempts'),
+      deliveredTo: _string(json['delivered_to'], 'ScheduledTaskRun.delivered_to'),
+      error: switch (json['error']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskRun.error'),
+      },
+      finishedAt: switch (json['finished_at']) {
+        null => null,
+        final Object value => _date(value, 'ScheduledTaskRun.finished_at'),
+      },
+      id: _string(json['id'], 'ScheduledTaskRun.id'),
+      scheduledFor: _string(json['scheduled_for'], 'ScheduledTaskRun.scheduled_for'),
+      sessionId: _string(json['session_id'], 'ScheduledTaskRun.session_id'),
+      startedAt: switch (json['started_at']) {
+        null => null,
+        final Object value => _date(value, 'ScheduledTaskRun.started_at'),
+      },
+      state: _string(json['state'], 'ScheduledTaskRun.state'),
+      taskId: _string(json['task_id'], 'ScheduledTaskRun.task_id'),
+      trigger: _string(json['trigger'], 'ScheduledTaskRun.trigger'),
+    );
+  }
+
+  final int attempts;
+  final String deliveredTo;
+  final String? error;
+  final DateTime? finishedAt;
+  final String id;
+  final String scheduledFor;
+  final String sessionId;
+  final DateTime? startedAt;
+  final String state;
+  final String taskId;
+  final String trigger;
+
+  Map<String, Object?> toJson() => {
+    'attempts': attempts,
+    'delivered_to': deliveredTo,
+    'error': error,
+    'finished_at': switch (finishedAt) {
+      null => null,
+      final value => value.toUtc().toIso8601String(),
+    },
+    'id': id,
+    'scheduled_for': scheduledFor,
+    'session_id': sessionId,
+    'started_at': switch (startedAt) {
+      null => null,
+      final value => value.toUtc().toIso8601String(),
+    },
+    'state': state,
+    'task_id': taskId,
+    'trigger': trigger,
+  };
+}
+
+final class ScheduledTaskRunPage {
+  const ScheduledTaskRunPage({required this.hasMore, required this.items, this.nextCursor});
+
+  factory ScheduledTaskRunPage.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTaskRunPage');
+    return ScheduledTaskRunPage(
+      hasMore: _bool(json['has_more'], 'ScheduledTaskRunPage.has_more'),
+      items: [
+        for (final item in _list(json['items'], 'ScheduledTaskRunPage.items'))
+          ScheduledTaskRun.fromJson(item),
+      ],
+      nextCursor: switch (json['next_cursor']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskRunPage.next_cursor'),
+      },
+    );
+  }
+
+  final bool hasMore;
+  final List<ScheduledTaskRun> items;
+  final String? nextCursor;
+
+  Map<String, Object?> toJson() => {
+    'has_more': hasMore,
+    'items': [for (final item in items) item.toJson()],
+    'next_cursor': ?nextCursor,
+  };
+}
+
+final class ScheduledTaskSchedule {
+  const ScheduledTaskSchedule({
+    this.at,
+    this.description,
+    this.inValue,
+    this.repeat,
+    this.timezone,
+    this.until,
+  });
+
+  factory ScheduledTaskSchedule.fromJson(Object? value) {
+    final json = _object(value, 'ScheduledTaskSchedule');
+    return ScheduledTaskSchedule(
+      at: switch (json['at']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskSchedule.at'),
+      },
+      description: switch (json['description']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskSchedule.description'),
+      },
+      inValue: switch (json['in']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskSchedule.in'),
+      },
+      repeat: switch (json['repeat']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskSchedule.repeat'),
+      },
+      timezone: switch (json['timezone']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskSchedule.timezone'),
+      },
+      until: switch (json['until']) {
+        null => null,
+        final Object value => _string(value, 'ScheduledTaskSchedule.until'),
+      },
+    );
+  }
+
+  final String? at;
+  final String? description;
+  final String? inValue;
+  final String? repeat;
+  final String? timezone;
+  final String? until;
+
+  Map<String, Object?> toJson() => {
+    'at': ?at,
+    'description': ?description,
+    'in': ?inValue,
+    'repeat': ?repeat,
+    'timezone': ?timezone,
+    'until': ?until,
+  };
+}
+
 final class SearchAnswer {
   const SearchAnswer({
     this.answer,
@@ -2361,6 +2792,66 @@ final class TimeWindow {
   Map<String, Object?> toJson() => {
     if (gte case final value?) '\$gte': value.toUtc().toIso8601String(),
     if (lt case final value?) '\$lt': value.toUtc().toIso8601String(),
+  };
+}
+
+final class UpdateScheduledTaskRequest {
+  const UpdateScheduledTaskRequest({
+    this.deliverTo,
+    this.instructions,
+    this.next,
+    this.quietHours,
+    this.schedule,
+    this.title,
+  });
+
+  factory UpdateScheduledTaskRequest.fromJson(Object? value) {
+    final json = _object(value, 'UpdateScheduledTaskRequest');
+    return UpdateScheduledTaskRequest(
+      deliverTo: switch (json['deliver_to']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'UpdateScheduledTaskRequest.deliver_to'))
+            _string(item, 'UpdateScheduledTaskRequest.deliver_to[]'),
+        ],
+      },
+      instructions: switch (json['instructions']) {
+        null => null,
+        final Object value => _string(value, 'UpdateScheduledTaskRequest.instructions'),
+      },
+      next: switch (json['next']) {
+        null => null,
+        final Object value => ScheduledTaskNext.fromJson(value),
+      },
+      quietHours: switch (json['quiet_hours']) {
+        null => null,
+        final Object value => ScheduledTaskQuietHours.fromJson(value),
+      },
+      schedule: switch (json['schedule']) {
+        null => null,
+        final Object value => ScheduledTaskSchedule.fromJson(value),
+      },
+      title: switch (json['title']) {
+        null => null,
+        final Object value => _string(value, 'UpdateScheduledTaskRequest.title'),
+      },
+    );
+  }
+
+  final List<String>? deliverTo;
+  final String? instructions;
+  final ScheduledTaskNext? next;
+  final ScheduledTaskQuietHours? quietHours;
+  final ScheduledTaskSchedule? schedule;
+  final String? title;
+
+  Map<String, Object?> toJson() => {
+    'deliver_to': ?deliverTo,
+    'instructions': ?instructions,
+    if (next case final value?) 'next': value.toJson(),
+    if (quietHours case final value?) 'quiet_hours': value.toJson(),
+    if (schedule case final value?) 'schedule': value.toJson(),
+    'title': ?title,
   };
 }
 

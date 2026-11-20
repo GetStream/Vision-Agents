@@ -273,6 +273,22 @@ func (s *StoreSuite) TestARowWrittenTwiceCountsOnceTowardItsGrant() {
 	s.EqualValues(350, s.used(grant.ID), "a row sent twice in one batch counts once")
 }
 
+func (s *StoreSuite) TestGrantUsesCountedIsHowManyGrantsEachRowCountsToward() {
+	a, b := s.grant(LimitGrant{AmountMicros: 10_000}), s.grant(LimitGrant{AmountMicros: 10_000})
+	both, one, other, unasked := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := s.store.AddGrantUses(s.ctx, []GrantUse{
+		{GrantID: a.ID, UsageID: both, Micros: 10},
+		{GrantID: b.ID, UsageID: both, Micros: 10},
+		{GrantID: a.ID, UsageID: one, Micros: 10},
+		{GrantID: b.ID, UsageID: unasked, Micros: 10},
+	})
+	s.Require().NoError(err)
+
+	counted, err := s.store.GrantUsesCounted(s.ctx, []uuid.UUID{both, one, other})
+	s.Require().NoError(err)
+	s.Equal(map[uuid.UUID]int{both: 2, one: 1}, counted, "a row counted toward nothing, or not asked about, is left out")
+}
+
 func (s *StoreSuite) TestAUsedUpGrantIsNotLiveAndLeavesRoomForAnother() {
 	for range MaxLiveGrants - 1 {
 		s.grant(LimitGrant{OrganizationID: "org-used"})

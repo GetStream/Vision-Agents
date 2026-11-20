@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Schema;
@@ -55,7 +57,7 @@ public sealed class Tools
         TimeSpan? timeout = null,
         string? approval = null)
     {
-        var schema = Json.Options.GetJsonSchemaAsNode(typeof(TArguments));
+        var schema = Json.Options.GetJsonSchemaAsNode(typeof(TArguments), Described);
         return Register(name, description, schema as JsonObject ?? [], async (toolCallContext, arguments, cancellationToken) =>
         {
             var read = arguments.Deserialize<TArguments>(Json.Options)
@@ -267,6 +269,27 @@ public sealed class Tools
     }
 
     private static readonly Regex Placeholder = new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Writes a <see cref="DescriptionAttribute"/> into the schema as <c>description</c>: a property's
+    /// own, else its record parameter's, else its type's.
+    /// </summary>
+    private static readonly JsonSchemaExporterOptions Described = new()
+    {
+        TransformSchemaNode = (context, node) =>
+        {
+            var attribute = context.PropertyInfo?.AttributeProvider?.GetCustomAttributes(typeof(DescriptionAttribute), inherit: true)
+                    .OfType<DescriptionAttribute>().FirstOrDefault()
+                ?? context.PropertyInfo?.AssociatedParameter?.AttributeProvider?.GetCustomAttributes(typeof(DescriptionAttribute), inherit: true)
+                    .OfType<DescriptionAttribute>().FirstOrDefault()
+                ?? context.TypeInfo.Type.GetCustomAttribute<DescriptionAttribute>();
+            if (attribute is not null && node is JsonObject schema)
+            {
+                schema["description"] = attribute.Description;
+            }
+            return node;
+        },
+    };
 
     private sealed record Registered(
         string Description,

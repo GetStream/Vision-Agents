@@ -14,7 +14,6 @@ module GetStream
     # The call a tool's block is running for, handed to it as the first argument:
     #
     #   tools.register("book_flight", description: "Book a flight", ...) do |tool_call_context, args|
-    #     tool_call_context.update("checking seats")
     #     tool_call_context.disallow_interruptions
     #     bookings.book(args["flight_id"], key: tool_call_context.id) unless tool_call_context.cancelled?
     #   end
@@ -66,19 +65,6 @@ module GetStream
         @lock.synchronize { @state == :cancelled }
       end
 
-      # Says how the call is going. A voice agent tells the caller in its own words once
-      # nobody is talking, and a conversation shows it on the call's step until the call
-      # ends. A newer update replaces one not yet said, and the result replaces both.
-      def update(text)
-        tell(text, false)
-      end
-
-      # Has the agent say text as written while the call runs, or post it in a text
-      # conversation. A speech-to-speech model is asked for these words and may paraphrase.
-      def say(text)
-        tell(text, true)
-      end
-
       # Keeps the call going from now on when the caller talks over the agent, which is what
       # a write that must not be left halfway wants. Only the call's timeout and its socket
       # ending stop it after this.
@@ -126,15 +112,6 @@ module GetStream
           @state = :cancelled
           @answered.broadcast
         end
-      end
-
-      private
-
-      def tell(text, verbatim)
-        return nil unless @send && !id.empty?
-
-        @send.call({ type: "tool_update", tool_call_id: id, text: text, verbatim: verbatim })
-        nil
       end
     end
   end

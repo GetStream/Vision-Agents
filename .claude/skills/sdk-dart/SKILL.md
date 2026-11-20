@@ -150,7 +150,7 @@ headers or body.
 
 ```dart
 final agents = StreamAgents(url: url, customerId: 'acme');
-final chat = await agents.agent('support').chat();
+final session = await agents.agent('support').sessions.create();
 ```
 
 The constructor does no I/O. Advanced forms take an options value (`SessionOptions`,

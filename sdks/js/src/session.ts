@@ -7,6 +7,7 @@ import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import { Speech } from "./speech.js";
 import { ConversationState } from "./state.js";
+import { ToolCalls, type ToolCallState } from "./tool-calls.js";
 import type { ChatClient, VideoClient } from "./stream.js";
 import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
 import { type ToolApproval, Tools } from "./tools.js";
@@ -76,9 +77,11 @@ export interface Participant {
  *
  * `kind` is the backend's own name for it: joined, hearing, heard, decision, responding,
  * response_delta, responded, blocked, speaking, spoke, turn, delegated, task_settled,
- * task_cancelled, tool_started, tool_ran, transferred, pressed, looked_up, backchannel,
- * interrupted, overlap_decided, conversation_compacted, conversation_updated, error and left,
- * and tool_call for a call waiting in `session.approvals`. The fields
+ * task_cancelled, tool_started, tool_updated, tool_ran, tool_call.started, tool_call.progress
+ * and tool_call.finished (each call's state, also kept in `session.toolCalls`), transferred,
+ * pressed, looked_up, backchannel, interrupted, overlap_decided, conversation_compacted,
+ * conversation_updated, error and left, and tool_call for a call waiting in
+ * `session.approvals`. The fields
  * below are filled from whichever of those carry them, and `frame` is the whole thing for
  * anything they do not cover.
  *
@@ -198,6 +201,12 @@ export class Session {
    */
   readonly conversation: Conversation;
   /**
+   * Every tool call of the session by `tool_call_id`, as it was last reported: running,
+   * waiting for a person's approval, or how it ended, whichever process runs it. Fed from the
+   * socket beside `events()`, like `state`.
+   */
+  readonly toolCalls = new ToolCalls();
+  /**
    * @internal What this device's camera showed lately, set by a `VoiceSession` while its
    * camera is on. The router's `get_video_frames` is answered from it.
    */
@@ -233,6 +242,8 @@ export class Session {
   /** What arrived while nobody was reading, for the first reader to start with. */
   private readonly backlog: SessionEvent[] = [];
   private readonly readers = new Set<Reader>();
+  /** What `on` registered, by the kind of event each wants. */
+  private readonly handlers = new Map<string, Set<(event: SessionEvent) => void>>();
   private readonly running = new Map<string, AbortController>();
   private readonly holds = new Holds();
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
@@ -240,6 +251,8 @@ export class Session {
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   /** The calls answered here, so answering one shown from the conversation again sends nothing. */
   private readonly answered = new Set<string>();
+  /** Calls allowed from the conversation without their arguments, run once the router sends them. */
+  private readonly allowedShown = new Set<string>();
   private readonly finished: Promise<void>;
   private ended = false;
   private stopped = false;
@@ -420,8 +433,9 @@ export class Session {
   /**
    * Answers a call that never reached this socket, from what the conversation shows of it, once.
    * The router settles a client call only with its result, so a declined one is answered with
-   * the same error a waiting one gets, and an allowed one of this session's tools is run here,
-   * or failed when the conversation left out its arguments, so the model isn't left waiting.
+   * the same error a waiting one gets, and an allowed one of this session's tools is run here.
+   * One whose arguments the conversation left out runs when the router sends the call, which it
+   * does to a session that attaches while the call waits.
    */
   private decideShown(id: string, call: NonNullable<ToolDecision["call"]>, { allowed, summary }: ToolDecision): void {
     if (this.answered.has(id)) {
@@ -437,12 +451,7 @@ export class Session {
       this.held().send({ type: "tool_result", tool_call_id: id, ...ids, error: "The person declined this call." });
     } else if (this.functionsFor(call.name)?.has(call.name)) {
       if (call.arguments === undefined) {
-        this.held().send({
-          type: "tool_result",
-          tool_call_id: id,
-          ...ids,
-          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
-        });
+        this.allowedShown.add(id);
       } else {
         void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
       }
@@ -491,6 +500,30 @@ export class Session {
     } finally {
       this.readers.delete(reader);
     }
+  }
+
+  /**
+   * Calls `handler` with every event of `kind` that `events()` yields, such as
+   * `tool_call.finished` or `responded`, from now until the returned function is called. It
+   * needs no loop over `events()` and takes nothing from one.
+   */
+  on(kind: string, handler: (event: SessionEvent) => void): () => void {
+    let handlers = this.handlers.get(kind);
+    if (handlers === undefined) {
+      handlers = new Set();
+      this.handlers.set(kind, handlers);
+    }
+    const added = handlers;
+    const handle = (event: SessionEvent): void => handler(event);
+    added.add(handle);
+    return () => {
+      added.delete(handle);
+    };
+  }
+
+  /** The tool call `id` as it was last reported, or undefined before the session said anything of it. */
+  toolCall(id: string): ToolCallState | undefined {
+    return this.toolCalls.get().get(id);
   }
 
   /** Speaks text without going through the model, for when you know what should be said. */
@@ -808,6 +841,7 @@ export class Session {
         this.speech.observe(message);
         this.state.observe(message);
         this.conversation.observe(message);
+        this.toolCalls.observe(message);
 
         if (message.type === "tool_call" && text(message, "name") === CameraFrames.toolName) {
           // Answered by the session rather than offered as a tool, and only by a device whose
@@ -825,8 +859,21 @@ export class Session {
           if (message["run"] === false || !functions?.has(text(message, "name"))) {
             continue;
           }
-          // A caller who already said yes on a voice call is not asked again.
-          const approval = message.approved === true ? undefined : functions.approval(text(message, "name"));
+          const id = text(message, "id");
+          // Allowed from the conversation before its arguments were known: this is the call
+          // that answer was waiting for.
+          const allowedShown = this.allowedShown.delete(id);
+          // A call this session already answered, is running or is asking about, delivered
+          // again, as the router does to a socket that attaches while it waits. Asking again
+          // would put a settled question back in front of the person, and running it again
+          // would do what it does twice.
+          if (!allowedShown && (this.answered.has(id) || this.running.has(id) || this.asking.has(id))) {
+            continue;
+          }
+          // A caller who already said yes, on a voice call or to the call shown in the
+          // conversation before it reached here, is not asked again.
+          const allowed = message.approved === true || allowedShown;
+          const approval = allowed ? undefined : functions.approval(text(message, "name"));
           if (approval) {
             this.hold(message, approval);
             this.deliver(eventOf(message));
@@ -982,8 +1029,11 @@ export class Session {
 
     const cancel = new AbortController();
     this.running.set(id, cancel);
+    // Answered by this session from here on, also once it has finished and left `running`: the
+    // same call delivered again afterwards is not run again.
+    this.answered.add(id);
+    const functions = this.functionsFor(name);
     try {
-      const functions = this.functionsFor(name);
       if (!functions) {
         throw new Error(`${name} was asked for, and no tools are registered`);
       }
@@ -991,7 +1041,8 @@ export class Session {
       const toolCallContext = toolCallContextOf(frame, this.id, line, this.ending.signal);
       result["output"] = await functions.call(name, text(frame, "arguments"), cancel.signal, toolCallContext);
     } catch (cause) {
-      result["error"] = cause instanceof Error ? cause.message : String(cause);
+      // What the model is told is the tools' own choice (`onError`), since it may repeat it.
+      result["error"] = functions ? functions.failure(name, id, cause) : (cause as Error).message;
     } finally {
       this.running.delete(id);
       this.holds.forget(id);
@@ -1100,6 +1151,16 @@ export class Session {
   }
 
   private deliver(event: SessionEvent): void {
+    for (const handler of [...(this.handlers.get(event.kind) ?? [])]) {
+      try {
+        handler(event);
+      } catch (cause) {
+        // A handler runs on the socket's read, which one mistake must not stop.
+        queueMicrotask(() => {
+          throw cause;
+        });
+      }
+    }
     if (this.readers.size === 0) {
       this.backlog.push(event);
       if (this.backlog.length > BUFFERED_EVENTS) {

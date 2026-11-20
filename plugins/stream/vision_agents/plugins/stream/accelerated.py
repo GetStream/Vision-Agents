@@ -52,7 +52,7 @@ from ._tool_line import (
     cancel,
     run_with_tool_call_context,
 )
-from .config import ensure_agent
+from .config import sync_agent
 from .knowledge import Knowledge
 from .sessions import _SessionTools, _with_policy
 
@@ -192,6 +192,16 @@ class Accelerated(OmniLLM):
         """The session the router is running this call in, once it has joined."""
         return self.session.id if self.session else None
 
+    async def sync(self) -> None:
+        """Store the agent directory named after the config, which sessions then run from."""
+        if not self.config:
+            return await super().sync()
+        await sync_agent(
+            self.config,
+            url=self.backend.url,
+            customer_id=self.backend.customer_id,
+        )
+
     async def join_remote(self, call: RemoteCall) -> None:
         """Create the session and start watching it.
 
@@ -200,14 +210,6 @@ class Accelerated(OmniLLM):
         """
         request = self._request(call)
         if self.config:
-            # The directory is the config, so it is stored before the config is looked
-            # up: an agent whose instructions changed since the last run joins with the
-            # ones on disk rather than the ones the server happens to remember.
-            await ensure_agent(
-                self.config,
-                url=self.backend.url,
-                customer_id=self.backend.customer_id,
-            )
             request.config_id = await self._config_id(self.config)
 
         try:
@@ -363,7 +365,9 @@ class Accelerated(OmniLLM):
         for stored in listed:
             if stored.name == name:
                 return stored.id
-        raise RemotePipelineError(f"there is no agent config called {name!r}")
+        raise RemotePipelineError(
+            f"there is no agent config called {name!r}; store it with agent.sync() first"
+        )
 
     def _request(self, call: RemoteCall) -> CreateSessionRequest:
         """Render the agent's configuration as a session to create."""

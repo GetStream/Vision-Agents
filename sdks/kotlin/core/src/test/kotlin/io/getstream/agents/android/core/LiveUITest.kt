@@ -3,6 +3,7 @@ package io.getstream.agents.android.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -149,6 +150,30 @@ class LiveUITest {
 
         assertFalse(unfinished)
         assertTrue(finished)
+    }
+
+    @Test
+    fun `a turn whose UI is taken back shows none of it`() {
+        // A patch previewed onto a card before it, whose base turns out to take no patch.
+        var conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_delta","turn_id":"t3","format":"openui","mode":"patch","delta":"${"$"}party = 4\n"}""",
+        )
+        live.observe(conversation)
+        val reply = mapOf("ai_generated" to true, "generating" to true, "turn_id" to "t3")
+        assertEquals(setOf("m3"), live.overlayCustom(listOf("m3" to reply)).keys)
+
+        conversation = conversation.after(
+            """{"type":"ui_completed","turn_id":"t2","format":"a2ui","content":"{\"createSurface\":{}}"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertTrue(live.observe(conversation))
+        assertNull(live["t3"])
+        assertTrue(live.overlayCustom(listOf("m3" to reply)).isEmpty())
     }
 
     @Test

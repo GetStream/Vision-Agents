@@ -116,10 +116,10 @@ final class WorkerTest extends TestCase
             }
             $socket->close();
         });
-        $agent = $server->client()->agent('my-agent');
-        $agent->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+        $client = $server->client();
+        $client->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
 
-        (new Dispatch(client: $server->client()))->host($agent)->run();
+        (new Dispatch(client: $client))->host($client)->run();
 
         self::assertSame('/v1/dispatch?capacity=4&active=0&handles=', $server->handshakes[0]);
         self::assertSame([['type' => 'done', 'work_id' => 'wk1', 'error' => 'this worker answers no messages']], $server->sent('done'));
@@ -278,7 +278,7 @@ final class WorkerTest extends TestCase
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
             LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-1']);
             $server->next($socket);
-            LocalSocketServer::send($socket, ['type' => 'hosting', 'agent_id' => 'my-agent']);
+            LocalSocketServer::send($socket, ['type' => 'hosting', 'every_agent' => true]);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'session_id' => 'ses_1', 'name' => 'slow', 'arguments' => '{}']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't2', 'session_id' => 'ses_1', 'name' => 'weather_lookup', 'arguments' => '{"location":"Boulder, Colorado"}']);
             LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't3', 'session_id' => 'ses_1', 'name' => 'broken', 'arguments' => '{}']);
@@ -287,21 +287,21 @@ final class WorkerTest extends TestCase
             }
             $socket->close();
         });
-        $agent = $server->client()->agent('my-agent');
-        $agent->tools
+        $client = $server->client();
+        $client->tools
             ->register('weather_lookup', 'The weather somewhere', ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]], static fn (array $args): array => ['location' => $args['location'], 'sky' => 'sunny'])
             ->register('slow', 'Takes a while', [], static function (array $args): string {
                 delay(0.2);
                 return 'done';
             })
             ->register('broken', 'Always fails', [], static fn (array $args): string => throw new RuntimeException('the weather service is down'));
-        $dispatch = (new Dispatch(client: $server->client()))->host($agent, toolTimeoutMs: 30000);
+        $dispatch = (new Dispatch(client: $client))->host($client, toolTimeoutMs: 30000);
 
         $dispatch->run();
 
         self::assertSame([[
             'type' => 'host_tools',
-            'agent_id' => 'my-agent',
+            'every_agent' => true,
             'tools' => [
                 ['description' => 'The weather somewhere', 'name' => 'weather_lookup', 'parameters' => ['type' => 'object', 'properties' => ['location' => ['type' => 'string']]]],
                 ['description' => 'Takes a while', 'name' => 'slow'],
@@ -309,7 +309,7 @@ final class WorkerTest extends TestCase
             ],
             'timeout_ms' => 30000,
         ]], $server->sent('host_tools'));
-        self::assertSame(['my-agent'], $dispatch->hosting);
+        self::assertTrue($dispatch->hosting);
         $results = [];
         foreach ($server->sent('tool_result') as $result) {
             $results[Json::string($result, 'id')] = $result;
@@ -329,9 +329,9 @@ final class WorkerTest extends TestCase
             $server->next($socket);
             $socket->close();
         });
-        $agent = $server->client()->agent('my-agent');
-        $agent->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
-        $dispatch = (new Dispatch(client: $server->client()))->host($agent);
+        $client = $server->client();
+        $client->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+        $dispatch = (new Dispatch(client: $client))->host($client);
 
         $dispatch->run();
         $dispatch->run();
@@ -344,20 +344,42 @@ final class WorkerTest extends TestCase
     public function testDispatchStopsWhenHostingIsRefused(): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
-            LocalSocketServer::send($socket, ['type' => 'hosting_refused', 'agent_id' => 'my-agent', 'reason' => 'hosting no tools is not hosting']);
+            LocalSocketServer::send($socket, ['type' => 'hosting_refused', 'reason' => 'hosting no tools is not hosting']);
             while ($server->next($socket) !== null) {
             }
         });
-        $dispatch = (new Dispatch(client: $server->client()))->host($server->client()->agent('my-agent'));
+        $client = $server->client();
+        $dispatch = (new Dispatch(client: $client))->host($client);
 
         try {
             $dispatch->run();
             self::fail('a worker nobody will call kept waiting');
         } catch (HostingRefusedException $refused) {
-            self::assertSame('my-agent', $refused->agentId);
             self::assertSame('hosting no tools is not hosting', $refused->reason);
-            self::assertSame('the router refused to host tools for agent my-agent: hosting no tools is not hosting', $refused->getMessage());
+            self::assertSame('the router refused to host tools: hosting no tools is not hosting', $refused->getMessage());
         }
+    }
+
+    public function testRunDispatchRunsTheClientsToolsForEveryAgent(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-1']);
+            $server->next($socket);
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 't1', 'session_id' => 'ses_1', 'name' => 'weather_lookup', 'arguments' => '{}']);
+            while ($server->sent('tool_result') === [] && $server->next($socket) !== null) {
+            }
+            $socket->close();
+        });
+        $client = $server->client();
+        $client->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+
+        $client->runDispatch();
+
+        self::assertSame('/v1/dispatch?capacity=4&active=0&handles=', $server->handshakes[0]);
+        $declared = $server->sent('host_tools')[0];
+        self::assertTrue($declared['every_agent']);
+        self::assertSame(['weather_lookup'], array_map(static fn (array $tool): mixed => $tool['name'], Json::objects($declared, 'tools')));
+        self::assertSame([['type' => 'tool_result', 'tool_call_id' => 't1', 'id' => 't1', 'output' => 'sunny']], $server->sent('tool_result'));
     }
 
     public function testDispatchNeedsAHandlerOrHostedTools(): void

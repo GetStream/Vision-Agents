@@ -41,8 +41,8 @@ public sealed record DispatchOptions
 /// shared between them.
 /// </para>
 /// <para>
-/// A worker can also <see cref="Host"/> an agent's tools: the router offers them to every
-/// session opened under that agent, and sends each call down this connection.
+/// A worker can also <see cref="Host"/> the app's tools: the router offers them to every
+/// session whose agent names them in a tool group, and sends each call down this connection.
 /// </para>
 /// </remarks>
 public sealed class Dispatch
@@ -57,7 +57,7 @@ public sealed class Dispatch
     private static readonly TimeSpan SteadyAfter = TimeSpan.FromMinutes(1);
 
     private readonly TimeSpan _reportEvery;
-    private readonly List<(string AgentId, Tools Tools, TimeSpan Timeout)> _hosted = [];
+    private readonly List<(Tools Tools, TimeSpan Timeout)> _hosted = [];
     private readonly ConcurrentDictionary<long, Task> _running = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _hostedCalls = new();
     private readonly Holds _holds = new();
@@ -142,22 +142,22 @@ public sealed class Dispatch
     }
 
     /// <summary>
-    /// Runs an agent's <see cref="Agent.Tools"/> for every session opened under it, whoever opened it.
+    /// Runs the app's <see cref="VisionAgentsClient.Tools"/> for every session they are offered to, whoever opened it.
     /// </summary>
     /// <remarks>
-    /// A session's own tools run in the process that opened it, which is no use to a
-    /// conversation opened from a browser. Hosting is the other direction: the router offers
-    /// them to each session whose agent id or config name is the agent's
-    /// <see cref="Agent.Name"/>, and sends every call here. Call before <see cref="RunAsync"/>.
+    /// The tools are registered once on the client, for every agent: the router offers one to
+    /// a session only where a tool group of its agent's agent.yaml names it, and sends every
+    /// call here. <see cref="VisionAgentsClient.RunDispatchAsync"/> does this alone, for a
+    /// worker with no calls or messages to answer. Call before <see cref="RunAsync"/>.
     /// </remarks>
-    /// <param name="agent">The agent, usually <see cref="VisionAgentsClient.Agent"/>, whose tools are hosted.</param>
+    /// <param name="client">The client whose tools are hosted.</param>
     /// <param name="toolTimeout">
     /// How long the router waits for one tool call to be answered before telling the model it
     /// failed, not how long the worker runs; null takes the router's default of 30 seconds.
     /// </param>
-    public Dispatch Host(Agent agent, TimeSpan? toolTimeout = null)
+    public Dispatch Host(VisionAgentsClient client, TimeSpan? toolTimeout = null)
     {
-        _hosted.Add((agent.Name, agent.Tools, toolTimeout ?? TimeSpan.Zero));
+        _hosted.Add((client.Tools, toolTimeout ?? TimeSpan.Zero));
         return this;
     }
 
@@ -381,9 +381,9 @@ public sealed class Dispatch
                 break;
             case "ready":
                 WorkerId = frame.Text("worker_id");
-                foreach (var (agentId, tools, timeout) in _hosted)
+                foreach (var (tools, timeout) in _hosted)
                 {
-                    await TellAsync(Frames.Of("host_tools", ("agent_id", agentId), ("tools", tools.Declared()),
+                    await TellAsync(Frames.Of("host_tools", ("every_agent", true), ("tools", tools.Declared()),
                         ("timeout_ms", (long)timeout.TotalMilliseconds))).ConfigureAwait(false);
                 }
                 break;
@@ -403,13 +403,12 @@ public sealed class Dispatch
                 _holds.Answer(key, false);
                 break;
             case "hosting":
-                Trace.TraceInformation("the router sends tools for agent {0} to this worker", frame.Text("agent_id"));
+                Trace.TraceInformation("the router sends the app's tools to this worker");
                 break;
             case "hosting_refused":
                 // A worker whose tools were refused is one nobody will call; saying so beats
                 // sitting connected looking healthy.
-                throw new InvalidOperationException(
-                    $"the router refused to host tools for agent {frame.Text("agent_id")}: {frame.Text("reason")}");
+                throw new InvalidOperationException($"the router refused to host tools: {frame.Text("reason")}");
             case "pong":
                 _latencyMs = (_clock.Elapsed.TotalSeconds - frame.Number("at")) * 1000;
                 _pong.TrySetResult();

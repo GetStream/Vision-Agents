@@ -9,7 +9,10 @@ name: Publish Kotlin SDK
 # - A pull request from release-kotlin-X.Y.Z (version=X.Y.Z) fails unless X.Y.Z is newer than the
 #   last `sdk-kotlin-v*` tag and not already published. Merging it into main publishes the
 #   release, then tags the commit `sdk-kotlin-vX.Y.Z`.
-# - Any other push to main publishes nothing, and other pull requests do not run the jobs.
+# - Any other push to main publishes nothing, even one that sets a new version: only the merge of
+#   a pull request from release-kotlin-X.Y.Z does. Other pull requests do not run the jobs.
+#   If the run of a release merge says nothing is published, re-run all its jobs: the lookup of
+#   its pull request can lag right after the merge.
 #
 # There is no GitHub release: publishing one starts the Python release (release.yml), and the
 # repository's releases are the Python packages'.
@@ -38,6 +41,9 @@ jobs:
     # Of the pull requests, only a release's: one from a branch named release-kotlin-X.Y.Z.
     if: github.event_name == 'push' || startsWith(github.head_ref, 'release-kotlin-')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # the pull request a push to main merged
     outputs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
@@ -52,8 +58,21 @@ jobs:
         id: version
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A push to main is a release only as the merge of a pull request from release-kotlin-X.Y.Z.
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$BRANCH" = main ]; then
+            heads=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '.[] | select(.base.ref == "main" and .merged_at != null) | .head.ref')
+            release=$(grep -xE 'release-kotlin-[0-9]+\.[0-9]+\.[0-9]+' <<< "$heads" | head -1 || true)
+            if [ -z "$release" ]; then
+              echo "::notice::Nothing is published: this push is not the merge of a release-kotlin-X.Y.Z pull request. If it is one, the lookup may have lagged: re-run all jobs of this run."
+              echo "channel=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            BRANCH="$release"
+          fi
           version=$(sed -n 's/^version=//p' sdks/kotlin/gradle.properties)
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$ ]]; then
             echo "::error file=sdks/kotlin/gradle.properties::version=$version is not X.Y.Z or X.Y.Z-SNAPSHOT"; exit 1
@@ -63,11 +82,7 @@ jobs:
             echo "::error file=sdks/kotlin/gradle.properties::$BRANCH publishes ${BASH_REMATCH[1]}, but version=$version"; exit 1
           fi
           last=$(git tag -l 'sdk-kotlin-v*' | sed 's/^sdk-kotlin-v//' | sort -V | tail -1)
-          if [ "$BRANCH" = main ] && { [[ "$version" == *-SNAPSHOT ]] || [ "$version" = "$last" ]; }; then
-            # Not a release: snapshots are published from release-kotlin-X.Y.Z-SNAPSHOT only.
-            echo "channel=none" >> "$GITHUB_OUTPUT"
-            exit 0
-          elif [[ "$version" == *-SNAPSHOT ]]; then
+          if [[ "$version" == *-SNAPSHOT ]]; then
             # A snapshot of X.Y.Z sorts below release X.Y.Z, so X.Y.Z must be one still to come.
             base="${version%-SNAPSHOT}"
             if [ -n "$last" ] && { [ "$base" = "$last" ] || [ "$(printf '%s\n%s\n' "$last" "$base" | sort -V | tail -1)" != "$base" ]; }; then
@@ -100,7 +115,8 @@ jobs:
     needs: version
     if: github.event_name == 'push' && needs.version.outputs.channel != 'none'
     runs-on: ubuntu-latest
-    # The signing key lives in this environment, which only the publishing branches may enter.
+    # The signing key is a GetStream organization secret: this environment does not limit it, and any
+    # workflow in this repository can read it. AI-3372 tracks limiting it to the release jobs.
     environment: release
     defaults:
       run:
@@ -155,7 +171,8 @@ jobs:
     name: Upload to the Stream repository
     needs: [ version, publish ]
     runs-on: ubuntu-latest
-    # The repository endpoint and bucket live in this environment, as the signing key does.
+    # The repository endpoint, bucket and credentials are GetStream organization secrets too: this
+    # environment does not limit them either. AI-3372 tracks limiting them to the release jobs.
     environment: release
     permissions:
       contents: write   # the sdk-kotlin-v* tag of a release

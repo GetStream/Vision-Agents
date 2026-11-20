@@ -10,6 +10,13 @@ public struct Turn: Sendable, Hashable, Identifiable {
     public let at: Date
     /// The interactive UI an agent turn wrote, as it streams in, or nil for a turn without any.
     public var ui: TurnUI?
+    /// What the agent did on its way to the turn's text, in order: each round of the model's
+    /// thinking on a written reply, and each tool it called. Empty on a participant's turn.
+    public var steps: [TurnStep] = []
+    /// Whether the agent is done with the turn: it answered with no tools or work left to come,
+    /// or it was interrupted. A turn whose tools are still running is not. Never set on a
+    /// participant's turn.
+    public var isDone = false
 
     public enum Speaker: Sendable, Hashable {
         /// A person, on the call or typing. Nil when the router did not say who.
@@ -18,6 +25,56 @@ public struct Turn: Sendable, Hashable, Identifiable {
         case agent
 
         public var isAgent: Bool { self == .agent }
+    }
+}
+
+/// One thing the agent did in a turn.
+public enum TurnStep: Sendable, Hashable, Identifiable {
+    /// A round of the model's thinking, which is read, never spoken.
+    case reasoning(Reasoning)
+    /// A call of a tool: what was called and how it went, not what it was given or gave.
+    case toolCall(ToolCall)
+
+    public var id: String {
+        switch self {
+        case .reasoning(let round): round.id
+        case .toolCall(let call): call.id
+        }
+    }
+
+    public struct Reasoning: Sendable, Hashable {
+        /// `r1`, `r2` and on, in the order the turn thought.
+        public let id: String
+        /// Whether the model is still thinking: until it writes, calls a tool or finishes.
+        public var isStreaming: Bool
+        /// The thinking so far.
+        public var text: String
+        /// When the model began on it: when it was asked, or took the reply up again after
+        /// writing, as a kept reply's step is timed.
+        public let at: Date
+        /// How long the model thought, once it is done.
+        public var duration: TimeInterval?
+    }
+
+    public struct ToolCall: Sendable, Hashable {
+        /// The call's id, which `AgentSession.decide` answers it by while it waits in `approvals`.
+        public let id: String
+        /// The tool.
+        public let name: String
+        public var status: Status
+        /// What whoever runs it last said about how it is going (`tool_update`), or the empty
+        /// string.
+        public var summary: String
+        /// When it began.
+        public let at: Date
+        /// How long it ran, once it is no longer running.
+        public var duration: TimeInterval?
+
+        public enum Status: String, Sendable {
+            case running
+            case completed
+            case failed
+        }
     }
 }
 
@@ -42,6 +99,10 @@ public struct Conversation: Sendable, Hashable {
     /// it is merged. Kept apart from `Turn.ui`, which is what shows and is left unchanged by a
     /// delta that shows nothing new.
     private var uiWritten: [String: String] = [:]
+
+    /// When the model last took each turn in flight up again, which a round of thinking is
+    /// timed from.
+    private var resumedAt: [String: Date] = [:]
 
     public init() {}
 
@@ -87,14 +148,51 @@ public struct Conversation: Sendable, Hashable {
         case .responding:
             state = .responding
             turns.append(Turn(id: event.turnID, speaker: .agent, text: "", at: now))
+            resumedAt[event.turnID] = now
 
         case .responseDelta:
             state = .responding
+            if !event.text.isEmpty {
+                amend(event.turnID) { $0.settle(at: now) }
+                resumedAt[event.turnID] = now
+            }
             write(event.text, to: event.turnID, at: now) { $0 += event.text }
+
+        case .reasoningDelta:
+            guard !event.text.isEmpty else { return }
+            let began = resumedAt[event.turnID] ?? now
+            amend(event.turnID, startingAt: now) { $0.think(event.text, began: began) }
+
+        case .toolStarted:
+            let call = TurnStep.ToolCall(
+                id: event.string("tool_call_id"), name: event.string("tool"), status: .running,
+                summary: "", at: now)
+            amend(event.turnID, startingAt: now) {
+                $0.settle(at: now)
+                $0.call(call)
+            }
+
+        case .toolUpdated:
+            // Words to say as written are a line of the reply, not how the call is going.
+            guard event["verbatim"].boolValue != true, !event.text.isEmpty else { return }
+            amend(event.turnID) { $0.changeCall(event.string("id")) { $0.summary = event.text } }
+
+        case .toolRan:
+            let status: TurnStep.ToolCall.Status = event.errorText.isEmpty ? .completed : .failed
+            amend(event.turnID) {
+                $0.changeCall(event.string("tool_call_id")) { call in
+                    call.status = status
+                    call.duration = now.timeIntervalSince(call.at)
+                }
+            }
 
         case .uiDelta:
             let delta = event.string("delta")
             let format = event.string("format")
+            if !delta.isEmpty {
+                amend(event.turnID) { $0.settle(at: now) }
+                resumedAt[event.turnID] = now
+            }
             guard !delta.isEmpty, !format.isEmpty else { return }
             let written = uiWritten[event.turnID, default: ""] + delta
             uiWritten[event.turnID] = written
@@ -115,6 +213,13 @@ public struct Conversation: Sendable, Hashable {
             if !event.text.isEmpty {
                 write(event.text, to: event.turnID, at: now) { $0 = event.text }
             }
+            // A reply whose tools or work are still to come is carried on by a turn of its own.
+            let isDone = event["pending_work"].boolValue != true
+            resumedAt[event.turnID] = nil
+            amend(event.turnID) {
+                $0.settle(at: now)
+                if isDone { $0.isDone = true }
+            }
             state = .idle
 
         case .delegated:
@@ -125,9 +230,17 @@ public struct Conversation: Sendable, Hashable {
             state = left.isEmpty ? .responding : .working(left)
 
         case .interrupted:
+            resumedAt[event.turnID] = nil
+            amend(event.turnID) {
+                $0.settle(at: now)
+                $0.isDone = true
+            }
             state = .idle
 
         case .error:
+            if event.string("code") == "prompt_injection" {
+                refuseReplyInFlight()
+            }
             failure = event.errorText
 
         case .left:
@@ -148,6 +261,16 @@ public struct Conversation: Sendable, Hashable {
         return turns.last?.text == text
     }
 
+    /// The prompt injection screen refused the reply being written. What it streamed before the
+    /// verdict is not the answer, so its text and UI go, as they do from the kept conversation;
+    /// its thinking and tool calls stay.
+    private mutating func refuseReplyInFlight() {
+        guard let index = turns.lastIndex(where: { $0.speaker.isAgent }), !turns[index].isDone else { return }
+        uiWritten[turns[index].id] = nil
+        turns[index].text = ""
+        turns[index].ui = nil
+    }
+
     /// Applies a change to the agent turn this event belongs to, starting one if the router
     /// sent a delta for a turn we never saw begin.
     private mutating func write(
@@ -160,6 +283,18 @@ public struct Conversation: Sendable, Hashable {
             change(&turns[index].text)
         } else {
             turns.append(Turn(id: turnID, speaker: .agent, text: text, at: now))
+        }
+    }
+
+    /// Changes the agent turn `turnID`. A turn this never saw begin is started at `start` when
+    /// the event begins something, and left alone otherwise.
+    private mutating func amend(_ turnID: String, startingAt start: Date? = nil, _ change: (inout Turn) -> Void) {
+        if let index = turns.lastIndex(where: { $0.id == turnID && $0.speaker.isAgent }) {
+            change(&turns[index])
+        } else if let start {
+            var turn = Turn(id: turnID, speaker: .agent, text: "", at: start)
+            change(&turn)
+            turns.append(turn)
         }
     }
 
@@ -196,6 +331,46 @@ public struct Conversation: Sendable, Hashable {
             turns[index].ui = ui
         } else {
             turns.append(Turn(id: turnID, speaker: .agent, text: "", at: now, ui: ui))
+        }
+    }
+}
+
+extension Turn {
+    /// Adds `delta` to the round of thinking under way, or to a new one when the model did
+    /// something else since: every round is numbered from `r1`, as a kept reply's steps are.
+    fileprivate mutating func think(_ delta: String, began: Date) {
+        if case .reasoning(var round)? = steps.last, round.isStreaming {
+            round.text += delta
+            steps[steps.count - 1] = .reasoning(round)
+            return
+        }
+        let rounds = steps.filter { if case .reasoning = $0 { true } else { false } }.count
+        steps.append(.reasoning(TurnStep.Reasoning(id: "r\(rounds + 1)", isStreaming: true, text: delta, at: began)))
+    }
+
+    /// Completes the round of thinking under way, if there is one.
+    fileprivate mutating func settle(at now: Date) {
+        guard case .reasoning(var round)? = steps.last, round.isStreaming else { return }
+        round.isStreaming = false
+        round.duration = now.timeIntervalSince(round.at)
+        steps[steps.count - 1] = .reasoning(round)
+    }
+
+    /// Begins `call`, unless the turn already shows it. A round of thinking's id is ours, so a
+    /// call may share it.
+    fileprivate mutating func call(_ call: TurnStep.ToolCall) {
+        guard !steps.contains(where: { if case .toolCall(let shown) = $0 { shown.id == call.id } else { false } })
+        else { return }
+        steps.append(.toolCall(call))
+    }
+
+    /// Changes the running call `id`, if the turn has one.
+    fileprivate mutating func changeCall(_ id: String, _ change: (inout TurnStep.ToolCall) -> Void) {
+        for (index, step) in steps.enumerated() {
+            guard case .toolCall(var call) = step, call.id == id, call.status == .running else { continue }
+            change(&call)
+            steps[index] = .toolCall(call)
+            return
         }
     }
 }

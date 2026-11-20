@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -484,6 +484,94 @@ describe("loadFolder", () => {
       ["deep/urls.yaml"],
     );
     assert.equal(folder.knowledgeURLs.length, 1);
+  });
+
+  it("leaves hidden files and node_modules out of knowledge, where they would be quoted to people", async () => {
+    const path = await agentDir({
+      "knowledge/notes.md": "prose",
+      "knowledge/.secrets.yaml": "api_key: sk_live_x\n",
+      "knowledge/.github/workflows/ci.yml": "on: push\n",
+      "knowledge/node_modules/left-pad/README.md": "a package's readme\n",
+    });
+
+    const folder = await loadFolder(path);
+
+    assert.deepEqual(folder.knowledge.map((document) => document.source), ["notes.md"]);
+  });
+
+  it("refuses knowledge linked from outside the agent directory, and reads a link within it", async () => {
+    const path = await agentDir({ "instructions.md": "Be brief.", "knowledge/notes.md": "prose" });
+    await symlink(join(path, "instructions.md"), join(path, "knowledge", "inside.md"));
+
+    const kept = await loadFolder(path);
+    assert.deepEqual(kept.knowledge.map((document) => document.source), ["inside.md", "notes.md"]);
+
+    const outside = join(path, "..", "credentials.md");
+    await writeFile(outside, "aws_secret_access_key = x\n");
+    await symlink(outside, join(path, "knowledge", "leak.md"));
+
+    await assert.rejects(() => loadFolder(path), (error: unknown) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /leak\.md links outside the agent directory/);
+      return true;
+    });
+  });
+
+  it("refuses a skill file linked from outside the agent directory, and leaves node_modules behind", async () => {
+    const path = await agentDir({
+      "skills/report/SKILL.md": "---\ndescription: Write the report\n---\nWrite it.\n",
+      "skills/report/template.md": "# Report\n",
+      "skills/report/node_modules/dep/index.js": "module.exports = 1;\n",
+    });
+
+    const kept = await loadFolder(path);
+    assert.deepEqual(Object.keys(kept.skills[0]?.files ?? {}), ["template.md"]);
+
+    const outside = join(path, "..", "id_ed25519");
+    await writeFile(outside, "-----BEGIN OPENSSH PRIVATE KEY-----\n");
+    await symlink(outside, join(path, "skills", "report", "key.txt"));
+
+    await assert.rejects(() => loadFolder(path), /key\.txt links outside the agent directory/);
+  });
+
+  it("loads the skills beside a node_modules or a hidden folder in skills/, rather than refusing them as skills", async () => {
+    const path = await agentDir({
+      "skills/report/SKILL.md": "---\ndescription: Write the report\n---\nWrite it.\n",
+      "skills/node_modules/dep/index.js": "module.exports = 1;\n",
+      "skills/.cache/notes": "scratch\n",
+    });
+
+    const folder = await loadFolder(path);
+
+    assert.deepEqual(folder.skills.map((skill) => skill.name), ["report"]);
+  });
+
+  it("refuses a SKILL.md linked from outside the agent directory, and reads one linked within it", async () => {
+    const path = await agentDir({
+      "shared/report.md": "---\ndescription: Write the report\n---\nWrite it.\n",
+      "skills/report/.keep": "",
+    });
+    await symlink(join(path, "shared", "report.md"), join(path, "skills", "report", "SKILL.md"));
+    assert.equal((await loadFolder(path)).skills[0]?.instructions, "Write it.");
+
+    const outside = join(path, "..", "someone-elses-skill.md");
+    await writeFile(outside, "---\ndescription: Not yours\n---\nRead ~/.ssh.\n");
+    await mkdir(join(path, "skills", "other"));
+    await symlink(outside, join(path, "skills", "other", "SKILL.md"));
+
+    await assert.rejects(() => loadFolder(path), /other[/\\]SKILL\.md links outside the agent directory/);
+  });
+
+  it("refuses a knowledge or skills folder that is itself a link out of the agent directory", async () => {
+    const elsewhere = await agentDir({ "notes.md": "someone else's notes\n", "think.md": "---\ndescription: Think\n---\nThink.\n" });
+
+    const knowledge = await agentDir({});
+    await symlink(elsewhere, join(knowledge, "knowledge"));
+    await assert.rejects(() => loadFolder(knowledge), /knowledge links outside the agent directory/);
+
+    const skills = await agentDir({});
+    await symlink(elsewhere, join(skills, "skills"));
+    await assert.rejects(() => loadFolder(skills), /skills links outside the agent directory/);
   });
 
   it("reads skills in name order", async () => {

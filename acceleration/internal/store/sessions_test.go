@@ -1072,7 +1072,7 @@ func (s *StoreSuite) TestARedactedToolCallStillCountsInToolUsage() {
 	_, err := s.store.RedactToolOutput(s.ctx, due, 100)
 	s.Require().NoError(err)
 
-	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "app", s.base, s.base.Add(24*time.Hour))
+	overall, tools, err := s.store.CustomerToolUsage(s.ctx, "app", "", s.base, s.base.Add(24*time.Hour))
 	s.Require().NoError(err)
 	s.EqualValues(1, overall.Calls)
 	s.EqualValues(1, overall.Failed)

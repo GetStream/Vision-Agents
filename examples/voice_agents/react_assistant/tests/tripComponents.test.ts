@@ -2,15 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseAIUIComponentDefinition } from "stream-chat-react/ai-components";
 
 import described from "../../swift_assistant/app/SwiftAssistant/UIComponents.json";
-import bookingDescribed from "../src/bookingComponents.json";
 import { applyBrandProfile, BRAND_PROFILES } from "../src/brandTheme";
 import { calendarDays } from "../src/reminders";
 
 describe("the trip and hospitality booking components", () => {
   it("reads the portable trip and booking components by the names the agent places them by", () => {
-    const definitions = [...(described as unknown[]), ...(bookingDescribed as unknown[])].map(
-      parseAIUIComponentDefinition,
-    );
+    const definitions = (described as unknown[]).map(parseAIUIComponentDefinition);
     expect(definitions.map((each) => each?.name)).toEqual([
       "place_card",
       "trip_map",
