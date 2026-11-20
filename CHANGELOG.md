@@ -2,6 +2,17 @@
 
 ## Features
 
+### A tool is registered once for the app, and each agent's agent.yaml enables it
+
+Every server SDK's client has a tool registry for the whole app, and one call runs it for every agent: Go `client.Tools().Add(...)` and `client.RunDispatch(ctx)`, Python `client.tools.register(...)` and `await client.run_dispatch()`, JavaScript `client.tools.register(...)` and `await client.runDispatch()`, .NET `client.Tools.Register(...)` and `await client.RunDispatchAsync()`, Ruby `client.tools.register(...)` and `client.run_dispatch`, Rust `client.tools().register(...)` and `client.run_dispatch().await`, PHP `$client->tools->register(...)` and `$client->runDispatch()`. A worker that also answers calls or messages hosts them with `dispatch.host(client)`. A session is offered one of those tools only when a tool group of its agent's `agent.yaml` names it, and a tool of the same name an agent hosts itself wins. A worker asks for this with `every_agent: true` on its `host_tools` frame; one naming neither an agent nor `every_agent` is still refused, so a forgotten agent id never offers tools to every agent.
+
+### Tool stats show how to load each tool, per agent
+
+`GET /v1/stats/agents` takes `agent`, an agent config id, and answers how many sessions took a turn and how many turns they took. Each tool now also has the sessions that called it and their share, the turns a session took before its first call, how it was loaded, and what its definition costs every turn, in full and as a summary: the numbers that decide between `full`, `summary` and `deferred`. A call's token cost and its tool's definition size now survive tool output retention, which used to shrink a redacted call's tokens to its tool name. Calls recorded before this have no definition size.
+### The Go SDK connects a user's own accounts
+
+`client.Connections()` creates, authorizes, reads, lists and deletes connections: `Create(ctx, client.ConnectionRequest{Connector: "linear", UserID: "alice"})`, then `Authorize(ctx, id, client.AuthorizeOptions{ReturnURL, UserID})` for the launch URL, handoff token and expiry of the consent, and `Get(ctx, id, client.ConnectionOptions{UserID})`, `List(ctx, client.ConnectionFilter{UserID, Connector})`, `Delete(ctx, id, client.ConnectionOptions{UserID})`. Every call takes the user as `UserID` of its options struct and sends it as both the owner and `X-Stream-User-Id`. An empty user is the app's own connection.
+
 ### The Swift SDK shows an incognito session
 
 An incognito session has no Stream Chat channel, so `session.chat()` throws and an app had nothing to show its replies with. `Conversation` now folds the socket's `reasoning_delta`, `tool_started`, `tool_updated` and `tool_ran` into each turn's `steps` (rounds of reasoning and tool calls, in order) and `isDone`, timing a round of reasoning from when the model was asked. `session.turnMessages` is the conversation in the shape a kept one has in Chat: one `TurnMessage` per question and reply, its steps as attachment payloads for StreamChatAI's `AIMessagePart.parts(from:)`, the whole of each round of thinking, the reply's UI, and an approval card for the session's user, now `Session.userID`. `swift_assistant` has an incognito toggle at the top right of a new chat (#2091).
@@ -29,9 +40,17 @@ An Anthropic model's signed thinking now reaches a socket client: a `reasoning` 
 
 `POST /v1/agents/sessions/{id}/tools` gives a running session more of its caller's tools and `DELETE /v1/agents/sessions/{id}/tools/{name}` withdraws one, for tools that exist only partway through a conversation, such as the ones a card shown in it brings. The model is offered the change from its next request, on a call too, without the agent leaving it. A change waits for the turn in progress and every tool call in flight, so a call is only checked, and asks its approval, against the tools it was made with. Only the kind of caller that opened the session changes its tools (403 otherwise); a name the caller already has, or the agent offers from elsewhere, is a 409 (to change a tool, remove it, then add it again), and a speech-to-speech model that takes its tools only when it opens (Gemini Live) refuses with a 400. Swift has `AgentSession.add(tools:)` and `remove(toolNamed:)`, and `swift_assistant`'s seat selector brings a `reserve_table` tool while it is shown (#2044). Go has `Pipeline.AddTools` and `RemoveTool`, and now every other SDK has the same pair on its session: JavaScript `addTools`/`removeTool`, Python `add_tools`/`remove_tool`, .NET `AddToolsAsync`/`RemoveToolAsync`, Ruby and Rust `add_tools`/`remove_tool`, PHP, Kotlin and Dart `addTools`/`removeTool`. A removal whose answer is lost is settled by the next change of that name, as a lost add is, rather than leaving the old function to run under a new declaration, and the SDK's own HTTP client never resends either request (a client the app supplies, with retries of its own, is outside that). Only a 4xx answer counts as a refusal: a 5xx, such as a gateway timing out after the router applied the change, leaves the name unsettled too. A fork of a running session is watched with the tools the session has now, added ones and unsettled names included, as the router offers them to it (#2050).
 
+### The Dart SDK reads the user's scheduled tasks, and interrupts one reply
+
+Dart gains `StreamAgents.scheduledTasks`, `session.interrupt(requestId:)` and `session.say(text, interrupt: true)`, as in Swift and Kotlin.
+
 ### The JavaScript SDK draws a streaming card a statement at a time
 
 While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed (#2042).
+
+### The Dart SDK draws a streaming card a statement at a time
+
+While a reply's OpenUI streams, `TurnUI.content` holds only its finished statements, so a card no longer reflows with every delta or shows a gauge reading 8 before 86; `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text and a call shows no empty card, and `LiveUI.observe` reports no change for a delta that finishes nothing. A streamed `openui-patch` merges only its finished statements. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed. While OpenUI streams, `TurnUI.raw` can lag behind what was written until a delta ends a line, and `TurnUI ==` compares only what shows. `Conversation.withoutTurn(id)` removes a turn, such as a refused question, and keeps a card still being written (#2061).
 
 ### The JavaScript SDK compiles `ui.format: a2ui`
 
@@ -617,6 +636,13 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Tools are hosted from the client, not from an agent
+
+An agent handle no longer has tools to host: Go `client.Agent.Tools()`, Python `Agent.register` and `Agent.functions`, JavaScript `AgentHandle.tools`, Rust `AgentRef.tools` and PHP `AgentHandle::$tools` are gone. Register the tools on the client and run them with its `run_dispatch` (see above), and name each one in a tool group of the agents that use it. `Dispatch.host` takes the client in place of an agent in every SDK, and the hosting refusal no longer names an agent: JavaScript's `HostingRefusedError` and PHP's `HostingRefusedException` lose `agentId`, and PHP's `Dispatch::$hosting` is a boolean. A session's own tools stay: Go `SessionOptions.Tools`, Python `SessionOptions(tools=...)`, and the in-process `Agent`'s tools in JavaScript, .NET, Ruby and Go's `agents` package.
+
+### A tool call no longer has update or say
+
+A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Say` (and `tools.Line` has only `Hold`), JavaScript `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), Python `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), .NET `UpdateAsync`/`SayAsync`, Ruby `update`/`say`, Rust `update`/`say` and PHP `update()`/`say()`. A session's own `say` stays. A tool says nothing while it runs: the agent tells a waiting caller the work is still going, and a tool's `display_title` is what its call shows. The router still takes `tool_update` from an older SDK, so a released app keeps working.
 ### `agents.DefineSkills` takes the id of the agent config the skills belong to
 
 `agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
@@ -624,6 +650,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### The router reads a plain key encryption key only as `ROUTER_DEV_KEK`
 
 `ROUTER_AUTH_KEK`, a plain `ROUTER_AUTH_KEK_V<n>` and the `auth.kek` config key are no longer read, and a router that still sets one refuses to start with an error that names the variable and what to set in its place. On a laptop or in CI, rename `ROUTER_AUTH_KEK` to `ROUTER_DEV_KEK` and keep its value: it is version 1 of the keyring, so every row and peer credential stays the same. A hosted router sets `ROUTER_AUTH_KEK_V<n>_WRAPPED` with `ROUTER_AUTH_KMS_KEY`, and switches to them before it takes this build. `ROUTER_DEV_KEK` beside `ROUTER_AUTH_KMS_KEY` or any `_WRAPPED` key is refused too (AI-3332).
+### Python, .NET and Rust: an agent no longer syncs its directory on its own
+
+A Python agent used to store its directory on the router when it joined a call, and a .NET or Rust agent before its first session. In a container that meant a sync on each new container's first call, in the call path, and an overwrite of what was edited in the dashboard or through the API on every restart. Now a session runs on whatever config is stored under the agent's name, and the directory is stored only when asked: Python `await agent.sync()` (which calls the new `LLM.sync()`, implemented by `Accelerated` and doing nothing for an LLM that keeps no config on a router), .NET `await agent.SyncAsync()`, Rust `agent.sync().await` (which still finds the directory `Agent::new` names). Call it before the agent takes calls, e.g. as a deploy step; an agent that was never synced fails to join with a message saying so. Python's `ensure_agent` is gone: use `sync_agent` or `agent.sync()`. Python's `sync_agent` now reads `.agent_sync` as the other SDKs do, so a sync of files unchanged since the last sync sends nothing and returns the stored config (AI-3354).
 
 ### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
 
@@ -736,6 +765,13 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### One `Sync` drops an agent's sandbox and a skill's scripts together
 
 The Go SDK's `Agent.Sync` and the Python SDK's `stream.define_agent` stored the config before its skills, so a sync that removed the sandbox and a skill's scripts at once was refused: the router still held the skill with its scripts. Each retry was refused the same way. When the stored config has a sandbox, the skills are now written first, then the config. Adding a sandbox and a skill's scripts in one sync still works (AI-3363). When the stored config has a sandbox and the router refuses the new config, the skill edits stay applied; a corrected Sync converges.
+### A tool's question survives the app being closed while it waits
+
+A tool call waiting for the person to allow it went to the channel only in live updates, and the call itself only to the socket of the app that asked. An app killed while the question was up and reopened showed "Thinking…" until the tool's timeout failed the call. The question and the person's answer are now stored on the call's step as soon as they happen, as a connector call's are, and a call still waiting for its answer is sent again, with its command, to a watcher that attaches later. A reopened app shows the question and can run the call when the person allows it, with each SDK's `decide` as it is (AI-3392).
+
+### The JavaScript SDK answers a tool's question from a reopened app
+
+`AgentChat.decide` reads the call's step under `custom` in stream-chat 10, where it found no call to answer. A call allowed from the conversation before it reached this session, such as one a reopened app shows from history, now runs once the router sends it, instead of failing because the conversation keeps no arguments for it (AI-3392).
 
 ### The Go SDK's `Agent.Sync` works for an agent with skills
 

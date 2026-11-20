@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -49,10 +48,6 @@ func (s *Store) NoteBalance(ctx context.Context, notice BalanceNotice, delivery 
 	if notice.Kind != NoticeBalanceLow && notice.Kind != NoticeBalanceExhausted {
 		return false, 0, stack.Wrap(fmt.Errorf("store: a balance notice is %s or %s, not %q", NoticeBalanceLow, NoticeBalanceExhausted, notice.Kind))
 	}
-	headers, err := json.Marshal(delivery.Headers)
-	if err != nil {
-		return false, 0, stack.Wrap(err)
-	}
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		written, err := tx.NewInsert().Model(&notice).On("CONFLICT DO NOTHING").Exec(ctx)
 		if err != nil {
@@ -80,11 +75,15 @@ func (s *Store) NoteBalance(ctx context.Context, notice BalanceNotice, delivery 
 			if err != nil {
 				return err
 			}
-			if _, err := tx.NewRaw(`
-INSERT INTO connector_event_deliveries (destination_id, id, headers, body, attempts, next_attempt_at)
-VALUES (?, ?, ?::jsonb, ?, 0, ?)
-ON CONFLICT (destination_id, id) DO NOTHING`,
-				destination.ID, delivery.ID, string(headers), payload, delivery.NextAttemptAt.UTC()).Exec(ctx); err != nil {
+			row := EventDelivery{
+				DestinationID: destination.ID, ID: delivery.ID, Headers: delivery.Headers, Body: payload,
+				NextAttemptAt: delivery.NextAttemptAt.UTC(),
+			}
+			_, err = tx.NewInsert().Model(&row).
+				Column("destination_id", "id", "headers", "body", "attempts", "next_attempt_at").
+				On("CONFLICT (destination_id, id) DO NOTHING").
+				Exec(ctx)
+			if err != nil {
 				return err
 			}
 			queued++

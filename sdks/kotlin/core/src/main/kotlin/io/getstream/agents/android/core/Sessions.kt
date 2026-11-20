@@ -15,9 +15,9 @@ import kotlinx.serialization.json.JsonObject
 /**
  * Conversations: opening one, finding the ones there were, and acting on one by id.
  *
- * What comes back are the router's rows rather than live handles, because reading a
- * conversation back is not the same as holding one and most of them are over. Holding one is
- * [StreamAgents.chat], [StreamAgents.voice] or [StreamAgents.attach].
+ * Opening one is holding it. The rest come back as the router's rows rather than live handles,
+ * because reading a conversation back is not the same as holding one and most of them are
+ * over; [StreamAgents.attach] holds one by id.
  *
  * From [Agent.sessions] every call is about that agent: opening names it, and listing is
  * narrowed to it.
@@ -27,12 +27,20 @@ public class Sessions internal constructor(
     private val agent: String? = null,
 ) {
     /**
-     * Opens a session without following it, for a caller building its own state layer.
+     * Opens a conversation and starts watching it, answering [SessionOptions.tools] here.
      *
-     * It returns once the router is holding the conversation. Without
-     * [SessionOptions.startVoice] it is held in writing: nothing is joined, transcribed or spoken.
+     * It returns with the socket open, so a session that has opened is one that is already
+     * listening. Without [SessionOptions.startVoice] it is held in writing: nothing is joined,
+     * transcribed or spoken. With [SessionOptions.watch] false it opens no socket and declares
+     * no tools, and its turns go through [AgentSession.responses].
      */
-    public suspend fun create(options: SessionOptions = SessionOptions()): Session {
+    public suspend fun create(options: SessionOptions = SessionOptions()): AgentSession {
+        // A copy, so what is declared is what is answered here even if the caller's list changes.
+        val tools = if (options.watch) options.tools.toList() else emptyList()
+        val duplicate = tools.groupBy { it.name }.entries.firstOrNull { it.value.size > 1 }
+        if (duplicate != null) {
+            throw AgentsException.Configuration("${duplicate.key} is declared twice")
+        }
         val request = CreateSessionRequest(
             id = options.id?.ifEmpty { null },
             startVoice = if (options.startVoice) true else null,
@@ -49,7 +57,7 @@ public class Sessions internal constructor(
             stt = options.stt,
             tts = options.tts,
             voice = options.voice,
-            tools = options.tools.ifEmpty { null }?.map { it.schema },
+            tools = tools.ifEmpty { null }?.map { it.schema },
             tags = options.tags.ifEmpty { null },
             returnUrl = options.returnUrl?.ifEmpty { null },
             memory = options.memory?.schema(backend.user?.id),
@@ -62,7 +70,21 @@ public class Sessions internal constructor(
             request,
             SessionSchema.serializer(),
         )
-        return Session.of(created)
+        val session = AgentSession(backend, Session.of(created), tools, watched = options.watch)
+        if (!options.watch) return session
+        try {
+            session.start()
+        } catch (e: AgentsException) {
+            // The session is live in the router even though nothing here can watch it, so it is
+            // stopped rather than left holding a call nobody is listening to.
+            try {
+                close(created.id)
+            } catch (_: AgentsException) {
+                // What the caller needs to hear is why it could not be watched.
+            }
+            throw e
+        }
+        return session
     }
 
     /**

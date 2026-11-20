@@ -45,7 +45,7 @@ final class AgentChat {
     @ObservationIgnored private let events: EventsController
     @ObservationIgnored private var following: Set<AnyCancellable> = []
 
-    /// Opens the session's channel and starts following the session.
+    /// Opens the channel of a session `sessions.create` opened, which is watched already.
     static func open(_ session: AgentSession) async throws -> AgentChat {
         let channel = try await session.chat()
         let chat = AgentChat(session: session, channel: channel)
@@ -54,7 +54,6 @@ final class AgentChat {
                 if let error { done.resume(throwing: error) } else { done.resume() }
             }
         }
-        await session.start()
         chat.hasOlderMessages = !channel.hasLoadedAllPreviousMessages
         return chat
     }

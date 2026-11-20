@@ -1,3 +1,24 @@
+## Upcoming
+
+🔄 Changed
+
+- `sessions.create` opens the session and follows it, as `chat` and `voice` do: it returns an
+  `AgentSession` once the socket is open, and answers the device's tools. It returned a `Session`
+  row before; read that as `session.session`. `chat` and `voice` are now `sessions.create` with
+  `startVoice` false and true.
+
+✅ Added
+
+- `SessionOptions.watch` - false opens a session with no socket and no tools declared; turns go
+  through `responses.create`, and `say`, `interrupt`, `events` and `addTools` throw a
+  `StateError` saying so.
+
+- `StreamAgents.scheduledTasks` - list, change, pause, resume and delete the user's scheduled tasks.
+- `session.interrupt(requestId:)` - stops only the reply answering that request.
+- `session.say(text, interrupt: true)` - stops what the agent is saying first.
+- `session.addTools` and `session.removeTool` - change a running session's tools.
+- `AgentTool.typed` - a tool whose arguments its `fromJson` reads into a class of yours.
+
 ## 0.7.0
 
 First release of `stream_agents`, the Flutter client for Stream Agents, versioned with the

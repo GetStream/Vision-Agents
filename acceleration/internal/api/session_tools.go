@@ -76,6 +76,7 @@ type OfferedTool struct {
 	Parameters  map[string]any `json:"parameters,omitempty" doc:"The JSON Schema of its arguments."`
 	Tokens      int64          `json:"tokens" doc:"Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token."`
 	Source      string         `json:"source,omitempty" enum:"session,worker,connector,builtin" doc:"Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded."`
+	Loading     *ToolLoading   `json:"loading,omitempty" doc:"How the tool is offered, as its tool group or connector binding says: full for the router's own. A deferred tool is listed once the model has loaded it. Absent for a session that has ended."`
 }
 
 func (*OfferedTool) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -190,6 +191,8 @@ func toolsChanged(err error) error {
 		return conflict(err.Error())
 	case errors.Is(err, session.ErrNoCallerTool):
 		return errNoCallerTool
+	case errors.Is(err, session.ErrToolNotConfigured):
+		return toolNotConfigured(err)
 	case errors.Is(err, sts.ErrToolsFixed):
 		return errToolsFixed
 	case errors.Is(err, agent.ErrSpeechEnded):
@@ -209,10 +212,12 @@ func (s *Server) listSessionTools(ctx context.Context, request *listSessionTools
 	}
 	var tools []llm.Tool
 	sources := map[string]string{}
+	loadings := map[string]ToolLoading{}
 	if found.Live != nil {
 		tools = found.Live.ToolDefinitions()
 		for _, tool := range tools {
 			sources[tool.Name] = string(found.Live.ToolSource(tool.Name))
+			loadings[tool.Name] = ToolLoading(found.Live.ToolLoading(tool.Name))
 		}
 	} else {
 		stored, err := s.store.SessionTools(ctx, request.Id)
@@ -231,10 +236,14 @@ func (s *Server) listSessionTools(ctx context.Context, request *listSessionTools
 	offered := OfferedTools{Tools: []OfferedTool{}}
 	for _, tool := range tools {
 		tokens := llm.ToolTokens(tool)
-		offered.Tools = append(offered.Tools, OfferedTool{
+		one := OfferedTool{
 			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters, Tokens: tokens,
 			Source: sources[tool.Name],
-		})
+		}
+		if loading, known := loadings[tool.Name]; known {
+			one.Loading = &loading
+		}
+		offered.Tools = append(offered.Tools, one)
 		offered.Tokens += tokens
 	}
 	return &listSessionToolsResponse{Body: offered}, nil

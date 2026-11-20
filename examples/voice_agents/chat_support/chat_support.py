@@ -24,6 +24,7 @@ async def inbound_message(message: acceleration.InboundMessage):
 
 
 async def main() -> None:
+    await (await create_agent()).sync()
     logger.info("waiting for messages; write to an agent channel to start one")
     await dispatch.run()
 

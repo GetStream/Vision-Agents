@@ -153,6 +153,9 @@ class SessionOptions:
         interim: Also report what the caller is part way through saying.
         decisions: Report the router's own routing decisions. Off here by default, because it
             is the router explaining itself several times a second.
+        tools: The caller's own functions for this conversation only, run in this process.
+            The app's tools (``Client.tools``) reach a conversation through
+            ``Client.run_dispatch`` instead.
     """
 
     id: str = ""
@@ -172,6 +175,7 @@ class SessionOptions:
     connector_bindings: Optional[dict[str, str]] = None
     return_url: str = ""
     timezone: str = ""
+    tools: Optional[FunctionRegistry] = None
 
     interim: bool = False
     decisions: bool = False
@@ -223,10 +227,9 @@ class _WireQuery(SessionQuery):
 class Sessions:
     """One agent's conversations: the ones being held and the ones that were."""
 
-    def __init__(self, backend: Backend, agent: str, functions: FunctionRegistry):
+    def __init__(self, backend: Backend, agent: str):
         self._backend = backend
         self._agent = agent
-        self._functions = functions
 
     async def create(self, options: Optional[SessionOptions] = None) -> "Session":
         """Open a conversation and start watching it.
@@ -242,7 +245,9 @@ class Sessions:
             ),
             f"opening a session with {self._agent}",
         )
-        return await Session.watching(self._backend, row, self._functions, options)
+        return await Session.watching(
+            self._backend, row, options.tools or FunctionRegistry(), options
+        )
 
     async def resume(
         self, id: str, options: Optional[SessionOptions] = None
@@ -250,8 +255,9 @@ class Sessions:
         """Carry on a conversation held in writing, by the id of the session it was held
         in, and start watching it. One that ended is reopened with what was said in it."""
         row = await self.get(id)
+        options = options or SessionOptions()
         return await Session.watching(
-            self._backend, row, self._functions, options or SessionOptions()
+            self._backend, row, options.tools or FunctionRegistry(), options
         )
 
     async def query(
@@ -488,7 +494,7 @@ class Sessions:
         if options.incognito:
             request.incognito = True
 
-        declared = _tools(self._functions)
+        declared = _tools(options.tools or FunctionRegistry())
         if declared:
             request.tools = declared
         return request
@@ -888,7 +894,7 @@ class Session:
 
     def _sessions(self) -> Sessions:
         """The resource methods that act on a session by id, which never need its agent."""
-        return Sessions(self._backend, "", self._functions)
+        return Sessions(self._backend, "")
 
     async def _command(self, frame: dict[str, Any]) -> None:
         """Act on the session over the socket it is being watched on."""

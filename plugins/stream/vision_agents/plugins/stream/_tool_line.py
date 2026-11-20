@@ -54,16 +54,6 @@ class SocketLine:
         self._send = send
         self._holds = holds
 
-    async def update(self, call_id: str, text: str, verbatim: bool) -> None:
-        await self._send(
-            {
-                "type": "tool_update",
-                "tool_call_id": call_id,
-                "text": text,
-                "verbatim": verbatim,
-            }
-        )
-
     async def hold(self, call_id: str) -> bool:
         return await self._holds.ask(
             call_id, lambda: self._send({"type": "tool_hold", "tool_call_id": call_id})

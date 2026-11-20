@@ -81,7 +81,10 @@ export const createDeviceTools = ({ clientId, userId }: { clientId: string; user
           ...(APPROVALS[name] ? { timeoutMs: APPROVAL_TIMEOUT_MS } : {}),
           description,
           displayTitle: DISPLAY_TITLES[name],
-          executor: 'client',
+          // A tool that asks first is declared as the server's, so the router asks on the reply's
+          // step, where an app reopened while the call waits finds the question. It asks a client
+          // tool's question there only once it can address this phone, which the SDK can't name yet.
+          executor: APPROVALS[name] ? 'server' : 'client',
           name,
           parameters,
           run: async (input, call) => {

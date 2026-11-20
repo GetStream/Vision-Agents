@@ -111,7 +111,7 @@ npm run build     # types, then the bundle
   with what they did as its `uiAction`, so the agent answers with a new plan. One done while
   Juno is still answering isn't sent, and the line over the composer says so.
 - **A card brings its own tool.** Ask "Where should we eat in Ohrid tonight?" for restaurant
-  cards and a seat selector of a venue's tables (`bookingComponents.json`). The agent cannot book
+  cards and a seat selector of a venue's tables (swift_assistant's `UIComponents.json`). The agent cannot book
   a table until a seat selector is on the screen: the card defines `reserve_table`
   (`reserveTable.ts`) and gives it to the conversation's session the first time it shows, with
   `Session.addTools`. Tapping a free table then has the agent call it, which asks first

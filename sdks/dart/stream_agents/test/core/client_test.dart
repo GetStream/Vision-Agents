@@ -313,10 +313,87 @@ void main() {
         'return_url': 'com.example.app:/connected',
       });
       expect(session.id, 's1');
-      expect(session.isText, isTrue);
-      expect(session.mode, SessionMode.text);
-      expect(session.modality, SessionModality.text);
-      expect(session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
+      expect(session.session.isText, isTrue);
+      expect(session.session.mode, SessionMode.text);
+      expect(session.session.modality, SessionModality.text);
+      expect(session.session.createdAt, DateTime.utc(2026, 9, 24, 15, 54, 56, 38, 55));
+      await session.close();
+    });
+
+    test('opens a session followed, its socket open, and answers its tools', () async {
+      router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+      final session = await agents
+          .agent('support')
+          .sessions
+          .create(
+            SessionOptions(
+              tools: [
+                AgentTool(
+                  name: 'lookup_order',
+                  description: 'Look up an order.',
+                  run: (arguments) async => 'Order ${arguments['order_id']}: 2 wool throws.',
+                ),
+              ],
+            ),
+          );
+      expect(session.isConnected, isTrue);
+      expect(router.upgrades.single.path, '/v1/agents/sessions/s1/events');
+      final socket = await router.socket();
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"lookup_order",'
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
+      );
+
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': 'Order A-1042: 2 wool throws.',
+        'error': '',
+      });
+      expect(
+        ((router.last('POST /v1/agents/sessions').json as Map)['tools'] as List).single['name'],
+        'lookup_order',
+      );
+      await session.close();
+    });
+
+    test('unwatched, opens no socket and declares no tool, and turns go over HTTP alone', () async {
+      router
+        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson()))
+        ..answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
+
+      final session = await agents
+          .agent('support')
+          .sessions
+          .create(
+            SessionOptions(
+              watch: false,
+              tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => '')],
+            ),
+          );
+      final response = await session.responses.create('What are your hours?');
+
+      expect(response.id, 'r1');
+      expect(router.upgrades, isEmpty);
+      expect(session.connection.value, Connection.notStarted);
+      expect(router.last('POST /v1/agents/sessions').json, {'agent': 'support'});
+      final unwatched = throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('watch: false'), contains('responses.create()')),
+        ),
+      );
+      expect(() => session.say('Hello.'), unwatched);
+      expect(session.interrupt, unwatched);
+      expect(session.events, unwatched);
+      expect(session.start, unwatched);
+      await expectLater(
+        session.addTools([AgentTool(name: 'now', description: 'The time.', run: (_) async => '')]),
+        unwatched,
+      );
+      expect(router.upgrades, isEmpty);
     });
 
     test('an empty return url sends none, so the sign-in goes back to the dashboard', () async {
@@ -385,9 +462,11 @@ void main() {
         'config_id': 'c1',
         'start_voice': true,
       });
-      expect(session.callId, 's1');
-      expect(session.callType, 'agent');
-      expect(session.isText, isFalse);
+      expect(session.session.callId, 's1');
+      expect(session.session.callType, 'agent');
+      expect(session.session.isText, isFalse);
+      expect(session.isConnected, isTrue);
+      await session.close();
     });
 
     test('starting and stopping voice moves a session onto its call and off it', () async {
@@ -444,6 +523,44 @@ void main() {
         },
       ]);
     });
+
+    test(
+      'declares a typed tool with the schema it was given, not one read from its type',
+      () async {
+        router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+
+        await agents.sessions.create(
+          SessionOptions(
+            tools: [
+              AgentTool.typed<String>(
+                name: 'weather_lookup',
+                description: 'Look up the weather.',
+                parameters: AgentTool.strings({'location': 'a city'}, required: ['location']),
+                fromJson: (json) => json['location']! as String,
+                displayTitle: 'Checking the weather',
+                executor: ToolExecutor.client,
+                approval: const ToolApproval(title: 'Share your city?'),
+                run: (location) async => location,
+              ),
+            ],
+          ),
+        );
+
+        final [tool as Map] =
+            (router.last('POST /v1/agents/sessions').json as Map)['tools'] as List;
+        expect(tool['name'], 'weather_lookup');
+        expect(tool['display_title'], 'Checking the weather');
+        expect(tool['executor'], 'client');
+        expect(tool['approval'], {'title': 'Share your city?'});
+        expect(tool['parameters'], {
+          'type': 'object',
+          'properties': {
+            'location': {'type': 'string', 'description': 'a city'},
+          },
+          'required': ['location'],
+        });
+      },
+    );
 
     test('naming a config by id does not also send the agent it is scoped to', () async {
       router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
@@ -1393,6 +1510,284 @@ void main() {
       await agents.router().search('anything');
 
       expect(router.last('POST /v1/search').json, {'query': 'anything'});
+    });
+  });
+
+  group('ScheduledTasks', () {
+    const tasks = '/v1/agents/scheduled-tasks';
+
+    test('reads a task as the router writes it', () async {
+      router.answer('GET $tasks/t1', Answer(200, scheduledTaskJson(createdBy: 'api')));
+
+      final task = await agents.scheduledTasks.get('t1');
+
+      expect(task.id, 't1');
+      expect(task.title, 'Water the plants');
+      expect(task.instructions, 'Remind Ada to water the plants.');
+      expect(
+        task.schedule,
+        const ScheduledTaskSchedule(
+          at: '2026-11-19T09:00:00',
+          repeat: 'FREQ=DAILY',
+          timezone: 'Europe/Amsterdam',
+          description: 'Every day at 09:00',
+        ),
+      );
+      expect(task.deliverTo, ['conversation', 'sms']);
+      expect(task.quietHours, const ScheduledTaskQuietHours(start: '22:00', end: '07:00'));
+      expect(task.state, ScheduledTaskState.active);
+      expect(task.nextRunAt, DateTime.utc(2026, 11, 19, 8));
+      expect(task.upcoming, [DateTime.utc(2026, 11, 19, 8), DateTime.utc(2026, 11, 20, 8)]);
+      expect(task.lastRunAt, DateTime.utc(2026, 11, 18, 8, 0, 4));
+      expect(task.consecutiveFailures, 2);
+      expect(task.createdBy, ScheduledTaskCreatedBy.api);
+      expect(task.sessionId, 's1');
+      expect(task.configId, 'c1');
+      expect(task.custom, {'plant': 'fern'});
+      expect(task.createdAt, DateTime.utc(2026, 11, 18, 10, 15, 30, 123, 456));
+      expect(task.updatedAt, DateTime.utc(2026, 11, 18, 11));
+    });
+
+    test('reads a task that has not run and will not run again', () async {
+      router.answer(
+        'GET $tasks/t1',
+        Answer(200, {
+          ...scheduledTaskJson(state: 'completed', lastRunAt: null),
+          'next_run_at': null,
+          'upcoming': <String>[],
+          'quiet_hours': null,
+        }),
+      );
+
+      final task = await agents.scheduledTasks.get('t1');
+
+      expect(task.state, ScheduledTaskState.completed);
+      expect(task.lastRunAt, isNull);
+      expect(task.nextRunAt, isNull);
+      expect(task.upcoming, isEmpty);
+      expect(task.quietHours, isNull);
+      expect(task.createdBy, ScheduledTaskCreatedBy.agent);
+    });
+
+    test('reads a state or a maker it has never heard of as unknown', () async {
+      router.answer(
+        'GET $tasks/t1',
+        Answer(200, scheduledTaskJson(state: 'snoozed', createdBy: 'workflow')),
+      );
+
+      final task = await agents.scheduledTasks.get('t1');
+
+      expect(task.state, ScheduledTaskState.unknown);
+      expect(task.createdBy, ScheduledTaskCreatedBy.unknown);
+    });
+
+    test('refuses an occurrence that is not a timestamp, naming it', () async {
+      router.answer(
+        'GET $tasks/t1',
+        Answer(200, {...scheduledTaskJson(), 'next_run_at': 'tomorrow'}),
+      );
+
+      await expectLater(
+        agents.scheduledTasks.get('t1'),
+        throwsA(
+          isA<UnreadableException>().having((error) => error.what, 'what', contains('next_run_at')),
+        ),
+      );
+    });
+
+    test('lists with the filters asked for, and pages on with the cursor', () async {
+      router.answer(
+        'GET $tasks',
+        Answer(200, pageJson([scheduledTaskJson()], nextCursor: 'next-1')),
+      );
+
+      final page = await agents.scheduledTasks.list(
+        const ScheduledTaskQuery(
+          state: ScheduledTaskState.paused,
+          configId: 'c1',
+          sessionId: 's1',
+          limit: 10,
+          cursor: 'start',
+        ),
+      );
+
+      expect(router.last('GET $tasks').query, {
+        'state': 'paused',
+        'config_id': 'c1',
+        'session_id': 's1',
+        'limit': '10',
+        'cursor': 'start',
+      });
+      expect(page.items.single.id, 't1');
+      expect(page.hasMore, isTrue);
+      expect(page.nextCursor, 'next-1');
+    });
+
+    test('refuses to list by a state the router does not know, before asking', () async {
+      expect(
+        () =>
+            agents.scheduledTasks.list(const ScheduledTaskQuery(state: ScheduledTaskState.unknown)),
+        throwsArgumentError,
+      );
+      expect(router.arrived, isEmpty);
+    });
+
+    test('lists with no filters as none', () async {
+      router.answer('GET $tasks', Answer(200, pageJson([])));
+
+      final page = await agents.scheduledTasks.list();
+
+      expect(router.last('GET $tasks').query, isEmpty);
+      expect(page.items, isEmpty);
+      expect(page.hasMore, isFalse);
+      expect(page.nextCursor, isNull);
+    });
+
+    test('changes only what was given, and never the instructions', () async {
+      router.answer('PATCH $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      await agents.scheduledTasks.update(
+        't1',
+        title: 'Water the ferns',
+        schedule: const ScheduledTaskSchedule(
+          after: 'P1D',
+          repeat: 'FREQ=WEEKLY;BYDAY=MO',
+          description: 'not sent',
+        ),
+        next: const ScheduledTaskNext.after('PT15M'),
+        deliverTo: const ['sms'],
+        quietHours: const ScheduledTaskQuietHours(start: '23:00', end: '06:30'),
+      );
+
+      expect(router.last('PATCH $tasks/t1').json, {
+        'title': 'Water the ferns',
+        'schedule': {'in': 'P1D', 'repeat': 'FREQ=WEEKLY;BYDAY=MO'},
+        'next': {'in': 'PT15M'},
+        'deliver_to': ['sms'],
+        'quiet_hours': {'start': '23:00', 'end': '06:30'},
+      });
+    });
+
+    test('sends an empty delivery list and empty quiet hours, which reset them', () async {
+      router.answer('PATCH $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      await agents.scheduledTasks.update(
+        't1',
+        deliverTo: const [],
+        quietHours: const ScheduledTaskQuietHours(start: '', end: ''),
+      );
+
+      expect(router.last('PATCH $tasks/t1').json, {
+        'deliver_to': <String>[],
+        'quiet_hours': {'start': '', 'end': ''},
+      });
+    });
+
+    test('moves the next occurrence to a time on the user\'s clock', () async {
+      router.answer('PATCH $tasks/t1', Answer(200, scheduledTaskJson()));
+
+      final task = await agents.scheduledTasks.update(
+        't1',
+        next: const ScheduledTaskNext.at('2026-11-19T18:00:00'),
+      );
+
+      expect(router.last('PATCH $tasks/t1').json, {
+        'next': {'at': '2026-11-19T18:00:00'},
+      });
+      expect(task.id, 't1');
+    });
+
+    test('pauses a task by its id', () async {
+      router.answer('POST $tasks/t1/pause', Answer(200, scheduledTaskJson(state: 'paused')));
+
+      final paused = await agents.scheduledTasks.pause('t1');
+
+      expect(paused.state, ScheduledTaskState.paused);
+      expect(
+        [for (final request in router.arrived) '${request.method} ${request.path}'],
+        ['POST $tasks/t1/pause'],
+      );
+    });
+
+    test('resumes a task by its id', () async {
+      router.answer('POST $tasks/t1/resume', Answer(200, scheduledTaskJson()));
+
+      final resumed = await agents.scheduledTasks.resume('t1');
+
+      expect(resumed.state, ScheduledTaskState.active);
+      expect(
+        [for (final request in router.arrived) '${request.method} ${request.path}'],
+        ['POST $tasks/t1/resume'],
+      );
+    });
+
+    test('cancels a task by its id', () async {
+      router.answer('DELETE $tasks/t1', const Answer(204));
+
+      await agents.scheduledTasks.delete('t1');
+
+      expect(
+        [for (final request in router.arrived) '${request.method} ${request.path}'],
+        ['DELETE $tasks/t1'],
+      );
+    });
+
+    test('ends a task\'s runs on the last page', () async {
+      router.answer('GET $tasks/t1/runs', Answer(200, pageJson([scheduledTaskRunJson('run-3')])));
+
+      final page = await agents.scheduledTasks.runs('t1', cursor: 'runs-2');
+
+      expect(page.items.single.id, 'run-3');
+      expect(page.hasMore, isFalse);
+      expect(page.nextCursor, isNull);
+    });
+
+    test('reads a task\'s runs a page at a time', () async {
+      router.answer(
+        'GET $tasks/t1/runs',
+        Answer(
+          200,
+          pageJson([
+            scheduledTaskRunJson('run-1'),
+            {
+              ...scheduledTaskRunJson('run-2'),
+              'trigger': 'replay',
+              'state': 'missed',
+              'error': 'task_paused',
+              'delivered_to': '',
+              'started_at': null,
+              'finished_at': null,
+            },
+          ], nextCursor: 'runs-2'),
+        ),
+      );
+
+      final page = await agents.scheduledTasks.runs('t1', limit: 2, cursor: 'runs-1');
+
+      expect(router.last('GET $tasks/t1/runs').query, {'limit': '2', 'cursor': 'runs-1'});
+      expect(page.hasMore, isTrue);
+      expect(
+        page.items.first,
+        ScheduledTaskRun(
+          id: 'run-1',
+          taskId: 't1',
+          scheduledFor: DateTime.utc(2026, 11, 18, 8),
+          trigger: ScheduledTaskRunTrigger.schedule,
+          state: ScheduledTaskRunState.delivered,
+          deliveredTo: 'conversation',
+          sessionId: 's1',
+          attempts: 1,
+          startedAt: DateTime.utc(2026, 11, 18, 8, 0, 1),
+          finishedAt: DateTime.utc(2026, 11, 18, 8, 0, 4),
+        ),
+      );
+      final missed = page.items.last;
+      expect(missed.trigger, ScheduledTaskRunTrigger.unknown);
+      expect(missed.state, ScheduledTaskRunState.missed);
+      expect(missed.error, 'task_paused');
+      expect(missed.startedAt, isNull);
+      expect(missed.finishedAt, isNull);
+      expect(page.nextCursor, 'runs-2');
     });
   });
 }

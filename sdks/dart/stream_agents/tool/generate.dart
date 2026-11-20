@@ -22,25 +22,32 @@ import 'package:yaml/yaml.dart';
 
 // What a device may reach: opening, finding, reading back, renaming, rewinding, forking,
 // stopping and deleting a conversation, giving it tools and taking them back, a guest to hold
-// one as, and looking something up. Everything else about an agent is its backend's to ask for
-// and hand down.
+// one as, looking something up, and the user's own scheduled tasks. Everything else about an
+// agent is its backend's to ask for and hand down.
 const operations = [
   'addSessionTools',
   'createGuestUser',
   'createResponse',
   'createSession',
+  'deleteScheduledTask',
   'deleteSession',
   'forkSession',
+  'getScheduledTask',
   'getSession',
   'listResponseItems',
   'listResponses',
+  'listScheduledTaskRuns',
+  'listScheduledTasks',
+  'pauseScheduledTask',
   'querySessions',
   'removeSessionTool',
+  'resumeScheduledTask',
   'rewindSession',
   'search',
   'startSessionVoice',
   'stopSession',
   'stopSessionVoice',
+  'updateScheduledTask',
   'updateSession',
 ];
 
@@ -272,7 +279,9 @@ ${helpers.trim()}
       final kind = kindOf(property as YamlMap);
       final dart = identifier(wire);
       final at = '$name.$key';
-      if (required.contains(wire)) {
+      // A field the spec requires but lets be null is read as optional: it is always there,
+      // and null when it has no value.
+      if (required.contains(wire) && property['nullable'] != true) {
         fields.add('  final ${kind.type} $dart;');
         parameters.add('required this.$dart');
         reads.add("$dart: ${kind.decode("json['$key']", at)}");
@@ -284,9 +293,18 @@ ${helpers.trim()}
           "$dart: switch (json['$key']) { null => null, final Object value => ${kind.decode('value', at)} }",
         );
         final encoded = kind.encode('value');
-        writes.add(
-          encoded == 'value' ? "'$key': ?$dart" : "if ($dart case final value?) '$key': $encoded",
-        );
+        if (required.contains(wire)) {
+          // Required though it may be null: the key is always written, null or not.
+          writes.add(
+            encoded == 'value'
+                ? "'$key': $dart"
+                : "'$key': switch ($dart) { null => null, final value => $encoded }",
+          );
+        } else {
+          writes.add(
+            encoded == 'value' ? "'$key': ?$dart" : "if ($dart case final value?) '$key': $encoded",
+          );
+        }
       }
     }
 

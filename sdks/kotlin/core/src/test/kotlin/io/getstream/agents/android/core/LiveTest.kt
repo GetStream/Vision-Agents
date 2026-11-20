@@ -121,7 +121,7 @@ class LiveTest {
     @Test
     fun `a titled conversation is found by its title`() = runBlocking {
         val title = "kotlin search ${System.nanoTime()}"
-        val session = agents.sessions.create(options.copy(title = title))
+        val session = agents.sessions.create(options.copy(title = title, watch = false))
 
         val found = agents.sessions.search(title)
 
@@ -149,7 +149,7 @@ class LiveTest {
         assertTrue(guest.id.isNotEmpty() && guest.token.isNotEmpty())
 
         agents.setUser(guest)
-        val session = agents.sessions.create(options)
+        val session = agents.sessions.create(options.copy(watch = false))
 
         assertTrue(agents.sessions.query().items.any { it.id == session.id })
         agents.sessions.close(session.id)

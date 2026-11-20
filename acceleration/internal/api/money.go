@@ -88,6 +88,9 @@ func refusedRequest(err error) error {
 		}
 		return answer
 	}
+	if errors.Is(err, session.ErrToolNotConfigured) {
+		return toolNotConfigured(err)
+	}
 	return invalidRequest(err.Error())
 }
 

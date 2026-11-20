@@ -12,7 +12,7 @@ load_dotenv()
 
 """
 An agent that answers the restaurant's phone and takes orders from the menu in
-this directory, which is stored on the first call rather than by hand.
+this directory, which `main` stores with `agent.sync()` before it waits for calls.
 """
 
 dispatch = acceleration.Dispatch()
@@ -31,6 +31,7 @@ async def inbound_call(call: acceleration.CallContext):
 
 
 async def main() -> None:
+    await Agent(config="restaurant_orders").sync()
     logger.info("waiting for calls; ring the number to start one")
     await dispatch.run()
 

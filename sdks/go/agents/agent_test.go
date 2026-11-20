@@ -1219,9 +1219,11 @@ func TestSyncSendsNoChannelsWhenTheFileNamesNone(t *testing.T) {
 	}
 }
 
-func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
+func TestSyncSendsTheToolGroups(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "tools:\n  progressive: true\n")
+	write(t, root, "agent.yaml", "tools:\n"+
+		"  - name: booking\n    tools: [lookup_booking]\n"+
+		"  - name: refunds\n    loading: deferred\n    output_retention: 30d\n    tools: [refund_booking, void_ticket]\n")
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
 
@@ -1231,14 +1233,24 @@ func TestSyncSendsWhetherToolsAreOfferedProgressively(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	if sent := router.syncs[0].Tools; sent == nil || sent.Progressive == nil || !*sent.Progressive {
-		t.Errorf("tools went as %+v", sent)
+	sent := router.syncs[0].Tools
+	if sent == nil || len(*sent) != 2 {
+		t.Fatalf("tools went as %+v", sent)
+	}
+	booking, refunds := (*sent)[0], (*sent)[1]
+	if booking.Name != "booking" || booking.Loading != nil || booking.OutputRetention != nil {
+		t.Errorf("a group that says nothing more went as %+v", booking)
+	}
+	if refunds.Loading == nil || *refunds.Loading != acceleration.ToolLoadingDeferred ||
+		refunds.OutputRetention == nil || *refunds.OutputRetention != "30d" ||
+		!slices.Equal(refunds.Tools, []string{"refund_booking", "void_ticket"}) {
+		t.Errorf("refunds went as %+v", refunds)
 	}
 }
 
-func TestSyncSendsHowLongToolOutputIsKept(t *testing.T) {
+func TestSyncSendsHowAConnectorsToolsAreOffered(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "tools:\n  output_retention: 30d\n")
+	write(t, root, "agent.yaml", "connectors:\n  - name: linear\n    loading: summary\n    output_retention: none\n")
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
 
@@ -1248,8 +1260,14 @@ func TestSyncSendsHowLongToolOutputIsKept(t *testing.T) {
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	if sent := router.syncs[0].Tools; sent == nil || sent.OutputRetention == nil || *sent.OutputRetention != "30d" {
-		t.Errorf("tools went as %+v", sent)
+	bindings := router.syncs[0].Connectors
+	if bindings == nil || len(*bindings) != 1 {
+		t.Fatalf("connectors went as %+v", bindings)
+	}
+	binding := (*bindings)[0]
+	if binding.Loading == nil || *binding.Loading != acceleration.ToolLoadingSummary ||
+		binding.OutputRetention == nil || *binding.OutputRetention != "none" {
+		t.Errorf("linear went as %+v", binding)
 	}
 }
 

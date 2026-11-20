@@ -175,8 +175,9 @@ class VisionAgentsTest {
                 modelOverwrites = ModelOverwrites(thinking = ModelOverwrites.Thinking.High, temperature = 0.0),
                 greeting = Greeting("Hello.", Greeting.Mode.Variation),
                 returnUrl = "com.example.app:/connected",
+                watch = false,
             ),
-        )
+        ).session
 
         val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
         assertEquals(
@@ -203,9 +204,9 @@ class VisionAgentsTest {
         router.answer = { Reply(201, sessionJson()) }
         deviceZoneId = { "Asia/Kolkata" }
 
-        agents.sessions.create()
-        agents.agent("docs").sessions.create(SessionOptions(title = "Billing"))
-        agents.sessions.create(SessionOptions(timezone = "Europe/Skopje"))
+        agents.sessions.create(SessionOptions(watch = false))
+        agents.agent("docs").sessions.create(SessionOptions(title = "Billing", watch = false))
+        agents.sessions.create(SessionOptions(timezone = "Europe/Skopje", watch = false))
 
         val (device, agent, named) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
         assertEquals("""{"timezone":"Asia/Kolkata"}""", device.toString())
@@ -218,8 +219,8 @@ class VisionAgentsTest {
         router.answer = { Reply(201, sessionJson()) }
         deviceZoneId = { "Asia/Kolkata" }
 
-        agents.sessions.create(SessionOptions(timezone = null))
-        agents.sessions.create(SessionOptions(timezone = ""))
+        agents.sessions.create(SessionOptions(timezone = null, watch = false))
+        agents.sessions.create(SessionOptions(timezone = "", watch = false))
 
         assertEquals(listOf("{}", "{}"), router.requests.map { it.body })
     }
@@ -229,9 +230,9 @@ class VisionAgentsTest {
         router.answer = { Reply(201, sessionJson()) }
         deviceZoneId = { "GMT+05:30" }
 
-        agents.sessions.create()
+        agents.sessions.create(SessionOptions(watch = false))
         // The router is the one that knows which zones it knows, so what the app names is its to refuse.
-        agents.sessions.create(SessionOptions(timezone = "GMT+05:30"))
+        agents.sessions.create(SessionOptions(timezone = "GMT+05:30", watch = false))
 
         val (device, named) = router.requests.map { it.body }
         assertEquals("{}", device)
@@ -255,9 +256,9 @@ class VisionAgentsTest {
         agents.setUser(User("jlahey"), "unused")
 
         agents.sessions.create(
-            SessionOptions(memory = SessionOptions.Memory(filter = mapOf("topic" to "billing"), appId = "web")),
+            SessionOptions(memory = SessionOptions.Memory(filter = mapOf("topic" to "billing"), appId = "web"), watch = false),
         )
-        agents.sessions.create(SessionOptions(memory = SessionOptions.Memory(), incognito = true))
+        agents.sessions.create(SessionOptions(memory = SessionOptions.Memory(), incognito = true, watch = false))
 
         val (narrowed, incognito) = router.requests.map { Json.parseToJsonElement(it.body).jsonObject }
         assertEquals("""{"app_id":"web","filter":{"topic":"billing"},"user_id":"jlahey"}""", narrowed["memory"].toString())
@@ -271,7 +272,7 @@ class VisionAgentsTest {
         router.answer = { Reply(201, sessionJson()) }
         agents.setUser(User("jlahey"), "unused")
 
-        agents.sessions.create()
+        agents.sessions.create(SessionOptions(watch = false))
 
         assertEquals("{}", router.requests.single().body)
     }
@@ -298,7 +299,7 @@ class VisionAgentsTest {
     fun `a voice session asks to start voice and is on its own call`() = runTest {
         router.answer = { Reply(201, sessionJson(callId = "s1")) }
 
-        val session = agents.sessions.create(SessionOptions(configId = "cfg-1", startVoice = true))
+        val session = agents.sessions.create(SessionOptions(configId = "cfg-1", startVoice = true, watch = false)).session
 
         val body = Json.parseToJsonElement(router.requests.single().body).jsonObject
         assertEquals(setOf("config_id", "start_voice"), body.keys)

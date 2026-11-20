@@ -60,6 +60,12 @@ public data class SessionOptions(
     val voice: String? = null,
     /** Functions of yours the agent may call, answered on this device. */
     val tools: List<AgentTool> = emptyList(),
+    /**
+     * Whether to watch the conversation: open its socket, answer [tools] and fold its events
+     * into [AgentSession.conversation]. False opens it with no socket and declares no tools;
+     * its turns go through [AgentSession.responses].
+     */
+    val watch: Boolean = true,
     /** Cost labels, carried onto every request the session makes. */
     val tags: Map<String, String> = emptyMap(),
     /**
