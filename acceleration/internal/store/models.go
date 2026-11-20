@@ -222,6 +222,11 @@ type ToolUsage struct {
 	Tool   string `bun:"tool"`
 	Calls  int64  `bun:"calls"`
 	Failed int64  `bun:"failed"`
+	// Sessions is how many sessions made at least one of the calls.
+	Sessions int64 `bun:"sessions"`
+	// AvgTurnsBeforeUse is how many turns a session took before its first call, nil on the
+	// row over every tool.
+	AvgTurnsBeforeUse *float64 `bun:"avg_turns_before_use"`
 	// AvgTokens is what a call put in front of the model, its arguments and result,
 	// estimated the way a prompt's composition counts tool use.
 	AvgTokens float64 `bun:"avg_tokens"`
@@ -229,6 +234,18 @@ type ToolUsage struct {
 	// group has both.
 	AvgMs *float64 `bun:"avg_ms"`
 	P99Ms *float64 `bun:"p99_ms"`
+	// Loading, DefinitionTokens and SummaryTokens are how the latest call that recorded them
+	// had the tool offered, and what its definition costs a turn whole and as a summary.
+	// Empty and nil when no call did; SummaryTokens is set only for a summarised tool.
+	Loading          string `bun:"loading"`
+	DefinitionTokens *int64 `bun:"definition_tokens"`
+	SummaryTokens    *int64 `bun:"summary_tokens"`
+}
+
+// SessionTurns is how many sessions took a turn and how many turns they took.
+type SessionTurns struct {
+	Sessions int64 `bun:"sessions"`
+	Turns    int64 `bun:"turns"`
 }
 
 // TurnSample is what a finished turn adds to its hour's stats. The legs are pointers
@@ -576,6 +593,9 @@ type AgentConfig struct {
 	// ReviewInstructions is what the model reviewing a finished call judges it by, in place
 	// of the default scoring guide. Empty, which most configs are, is the default.
 	ReviewInstructions string `bun:"review_instructions,notnull"`
+	// UIInstructions teach the model to answer with UI, such as agent.yaml's ui: compiled by
+	// the SDK. Apart from Instructions so a session can leave them out (AgentSession.NoUI).
+	UIInstructions string `bun:"ui_instructions,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
@@ -632,16 +652,12 @@ type AgentConfig struct {
 	// (20261217090000_agent_config_episode_cards_record.sql): the record mode. Read only beside
 	// EpisodeCards off; WritesCards is the two together.
 	EpisodeCardsRecord bool `bun:"episode_cards_record,notnull"`
-	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
-	// sends a tool's full description the first time it is called instead of running it
-	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
-	ProgressiveTools bool `bun:"progressive_tools,notnull"`
-	// ToolOutputRetention is how long the config's sessions keep what their tools were
-	// given and gave back on the turns they record: options.RetentionNone for not at all, a
-	// duration such as 30d, or empty for as long as the session. The app's and the
-	// organization's policies can shorten it and never lengthen it
-	// (20261113120000_tool_output_retention.sql).
-	ToolOutputRetention options.Retention `bun:"tool_output_retention,notnull"`
+	// ToolGroups are the functions an SDK provides that the config's sessions may offer, and
+	// how each group is loaded (20270103090000_agent_config_tool_groups.sql). A function no
+	// group names is not offered. The row's progressive_tools and tool_output_retention
+	// columns, which groups and connector bindings replaced, are not modelled: a router still
+	// running the release before reads them, so they are left in place.
+	ToolGroups []ToolGroup `bun:"tool_groups,type:jsonb"`
 	// ResumeHistory is how the config's sessions are handed back a conversation they
 	// carry on. The zero value is the router's default.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
@@ -718,6 +734,34 @@ type ConnectorBinding struct {
 	// allow each one before it is sent. The field is JSON inside agent_configs.connectors, so
 	// an older router drops it and sends those calls with nobody asked.
 	RequireApproval []string `json:"require_approval,omitempty"`
+	// Loading is how the binding's tools are offered: ToolLoadingFull, ToolLoadingSummary or
+	// ToolLoadingDeferred. Empty is full.
+	Loading string `json:"loading,omitempty"`
+	// OutputRetention is how long the turns a session records keep what the binding's tools
+	// were given and gave back: options.RetentionNone, a duration, or empty for as long as the
+	// session. The app's and the organization's policies can shorten it.
+	OutputRetention options.Retention `json:"output_retention,omitempty"`
+}
+
+// The ways a tool is offered. Full sends its whole description and input schema from the
+// start; summary sends the first line of its description and a schema without descriptions,
+// and the first call returns the rest; deferred offers nothing until the model finds the tool
+// with search_tool and loads it with load_tool.
+const (
+	ToolLoadingFull     = "full"
+	ToolLoadingSummary  = "summary"
+	ToolLoadingDeferred = "deferred"
+)
+
+// ToolGroup is a named set of functions an SDK provides, as agent_configs.tool_groups stores it.
+type ToolGroup struct {
+	Name string `json:"name"`
+	// Loading is ToolLoadingFull, ToolLoadingSummary or ToolLoadingDeferred. Empty is full.
+	Loading string `json:"loading,omitempty"`
+	// Tools are the functions' names.
+	Tools []string `json:"tools"`
+	// OutputRetention is ConnectorBinding.OutputRetention for the group's functions.
+	OutputRetention options.Retention `json:"output_retention,omitempty"`
 }
 
 // RequiresApproval reports whether the binding's require_approval names tool, by its name at
@@ -1986,6 +2030,9 @@ type AgentSession struct {
 	// ReturnURL is where the consents the session asks for in the chat go back to. Empty,
 	// stored as NULL, is the dashboard. Never shown in the session's own answer.
 	ReturnURL string `bun:"return_url,nullzero"`
+	// NoUI is a session opened with ui false, whose model is not told its config's
+	// UIInstructions, which reopening it keeps. False, stored as NULL, is the default.
+	NoUI bool `bun:"no_ui,nullzero"`
 	// Remembers is whether the session was opened with a memory user id, so it could have
 	// taught the memory store anything. Nil, as on a row made before it was kept, is not known.
 	Remembers *bool `bun:"remembers"`
@@ -2270,9 +2317,11 @@ type AgentResponseItem struct {
 }
 
 // redactedToolKeys are what a redacted tool item keeps of its payload: what ties a call to
-// its result and says which product and SDK ran it. Anything else the payload carries,
-// the arguments above all, goes. An error is kept as having happened, not as its text.
-var redactedToolKeys = []string{"call_id", "product", "sdk"}
+// its result, says which product and SDK ran it, and the counts tool usage reads: how the
+// tool was offered, what its definition and the call cost in tokens. Anything else the
+// payload carries, the arguments above all, goes. An error is kept as having happened, not
+// as its text.
+var redactedToolKeys = []string{"call_id", "product", "sdk", "loading", "definition_tokens", "summary_tokens", "tokens"}
 
 // Redact takes out what a tool item carried of the call itself: its text (the result, or
 // a search's query), its arguments, and the wording of its error. What is left still says

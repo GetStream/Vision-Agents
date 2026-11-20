@@ -17,7 +17,9 @@ import (
 //
 // A config is what a session can be created from by name, so the things worth deciding once
 // are decided once. Both the config and its skills are found by name first, so calling this
-// twice edits what is stored rather than storing another copy of it.
+// twice edits what is stored rather than storing another copy of it. When the stored config
+// has a sandbox its skills are written before the config, so a config the router refuses
+// leaves those skill edits applied; a corrected retry converges.
 //
 // An agent read from a directory is synced whole, with what its agent.yaml declares, and
 // .agent_sync records the fingerprint of what was stored. A directory unchanged since then
@@ -32,12 +34,6 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	}
 
 	skills := a.syncedSkills()
-	if len(skills) > 0 {
-		if err := defineSkills(ctx, client, skills); err != nil {
-			return nil, err
-		}
-	}
-
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.Guardrail, a.options.Guardrail)
@@ -55,7 +51,32 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 		wanted.Skills = &named
 	}
 
-	return defineAgent(ctx, client, wanted)
+	stored, err := storedConfig(ctx, client, a.options.Name)
+	if err != nil {
+		return nil, err
+	}
+	// A config with a sandbox takes any skill, and an edit that drops the sandbox is refused
+	// while a skill it names still has scripts. So the skills of a config with a sandbox are
+	// written first, and a skill can lose its scripts in the sync that drops the sandbox.
+	skillsFirst := stored != nil && deref(stored.Sandbox) != ""
+	if skillsFirst && len(skills) > 0 {
+		if err := defineSkills(ctx, client, stored.Id, skills); err != nil {
+			return nil, err
+		}
+	}
+	config, err := putConfig(ctx, client, stored, wanted)
+	if err != nil {
+		return nil, err
+	}
+	// A skill belongs to a config, so it is stored once the config has an id to name. Without
+	// a sandbox stored, the config goes first too, so a skill with scripts finds the sandbox
+	// that this sync adds.
+	if !skillsFirst && len(skills) > 0 {
+		if err := defineSkills(ctx, client, config.Id, skills); err != nil {
+			return nil, err
+		}
+	}
+	return config, nil
 }
 
 // syncFolder stores the agent's directory in one request. What the code set wins over what
@@ -63,8 +84,8 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithResponses) (*acceleration.AgentConfig, error) {
 	folder := a.folder
 	skills := a.syncedSkills()
-	hash := fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
-		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations)
+	hash := withUI(fingerprint(folder.Declaration, a.options.Instructions, a.options.Guardrail,
+		skills, folder.Knowledge, folder.KnowledgeURLs, folder.Simulations), folder.UIInstructions)
 	harness, subagent, sandbox := a.options.Harness.stored()
 	if harness != nil || subagent != nil || sandbox != nil || len(a.options.CostTracking) > 0 {
 		hash = fingerprint(hash, fmt.Sprint(deref(harness), deref(subagent), deref(sandbox)),
@@ -72,14 +93,21 @@ func (a *Agent) syncFolder(ctx context.Context, client *acceleration.ClientWithR
 	}
 
 	if ReadStamp(folder.Path) == hash {
-		if stored, err := storedConfig(ctx, client, a.options.Name); err != nil || stored != nil {
-			return stored, err
+		stored, err := storedConfig(ctx, client, a.options.Name)
+		if err != nil {
+			return nil, err
+		}
+		// A router older than ui_instructions takes the sync and drops them, which the stamp
+		// cannot tell, so a config missing the UI the stamp covers is synced again.
+		if stored != nil && (folder.UIInstructions == "" || deref(stored.UiInstructions) != "") {
+			return stored, nil
 		}
 	}
 
 	body := acceleration.SyncAgentRequest{Name: a.options.Name, Hash: hash}
 	setString(&body.Instructions, a.options.Instructions)
 	setString(&body.Guardrail, a.options.Guardrail)
+	setString(&body.UiInstructions, folder.UIInstructions)
 	if len(skills) > 0 {
 		requests := make([]acceleration.SkillRequest, 0, len(skills))
 		for _, skill := range skills {
@@ -247,9 +275,19 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 	}
 	if settings.Tools != nil {
-		body.Tools = &acceleration.AgentTools{
-			Progressive: settings.Tools.Progressive, OutputRetention: settings.Tools.OutputRetention,
+		groups := make([]acceleration.ToolGroup, 0, len(*settings.Tools))
+		for _, group := range *settings.Tools {
+			sent := acceleration.ToolGroup{Name: group.Name, Tools: group.Tools}
+			if group.Loading != "" {
+				loading := acceleration.ToolLoading(group.Loading)
+				sent.Loading = &loading
+			}
+			if group.OutputRetention != "" {
+				sent.OutputRetention = &group.OutputRetention
+			}
+			groups = append(groups, sent)
 		}
+		body.Tools = &groups
 	}
 	if settings.Channels != nil {
 		declared := acceleration.AgentChannels{
@@ -451,6 +489,13 @@ func connectorBinding(ctx context.Context, client *acceleration.ClientWithRespon
 		Connection:   acceleration.AgentConnectorSelection{Type: acceleration.AgentConnectorSelectionTypeSession},
 	}
 	binding.RequireApproval = entry.RequireApproval
+	if entry.Loading != "" {
+		loading := acceleration.ToolLoading(entry.Loading)
+		binding.Loading = &loading
+	}
+	if entry.OutputRetention != "" {
+		binding.OutputRetention = &entry.OutputRetention
+	}
 	if entry.Sandbox {
 		binding.Sandbox = &entry.Sandbox
 	}
@@ -538,6 +583,9 @@ func appConnections(ctx context.Context, client *acceleration.ClientWithResponse
 
 // storedConfig is the config stored under a name, or nil when there is none.
 func storedConfig(ctx context.Context, client *acceleration.ClientWithResponses, name string) (*acceleration.AgentConfig, error) {
+	// Narrowed to the name rather than read whole and filtered here: names are unique per
+	// customer, so this asks the router the question instead of downloading every config an
+	// app has to answer it locally.
 	listed, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
 	if err != nil {
 		return nil, fmt.Errorf("agents: listing configs: %w", err)
@@ -585,26 +633,24 @@ func defineAgent(
 	client *acceleration.ClientWithResponses,
 	wanted acceleration.AgentConfigRequest,
 ) (*acceleration.AgentConfig, error) {
-	// Narrowed to the name rather than read whole and filtered here: names are unique per
-	// customer, so this asks the router the question instead of downloading every config an
-	// app has to answer it locally.
-	listed, err := client.ListAgentConfigsWithResponse(ctx,
-		&acceleration.ListAgentConfigsParams{Name: &wanted.Name})
-	if err != nil {
-		return nil, fmt.Errorf("agents: listing configs: %w", err)
-	}
-	stored, err := answer(listed.JSON200, listed.HTTPResponse, listed.Body)
+	stored, err := storedConfig(ctx, client, wanted.Name)
 	if err != nil {
 		return nil, err
 	}
+	return putConfig(ctx, client, stored, wanted)
+}
 
-	for _, config := range *stored {
-		if config.Name != wanted.Name {
-			continue
-		}
-		updated, err := client.UpdateAgentConfigWithResponse(ctx, config.Id, wanted)
+// putConfig edits stored to be wanted, or creates wanted when nothing is stored.
+func putConfig(
+	ctx context.Context,
+	client *acceleration.ClientWithResponses,
+	stored *acceleration.AgentConfig,
+	wanted acceleration.AgentConfigRequest,
+) (*acceleration.AgentConfig, error) {
+	if stored != nil {
+		updated, err := client.UpdateAgentConfigWithResponse(ctx, stored.Id, wanted)
 		if err != nil {
-			return nil, fmt.Errorf("agents: updating config %s: %w", config.Id, err)
+			return nil, fmt.Errorf("agents: updating config %s: %w", stored.Id, err)
 		}
 		return answer(updated.JSON200, updated.HTTPResponse, updated.Body)
 	}
@@ -616,18 +662,19 @@ func defineAgent(
 	return answer(created.JSON201, created.HTTPResponse, created.Body)
 }
 
-// DefineSkills stores skills on the router backend points at, editing whichever is already
-// under each name.
-func DefineSkills(ctx context.Context, backend stream.Backend, skills []Skill) error {
+// DefineSkills stores skills on the router backend points at, as the skills of the agent
+// config with this id, editing whichever of its skills is already under each name.
+func DefineSkills(ctx context.Context, backend stream.Backend, configID string, skills []Skill) error {
 	client, err := backend.Client()
 	if err != nil {
 		return err
 	}
-	return defineSkills(ctx, client, skills)
+	return defineSkills(ctx, client, configID, skills)
 }
 
-func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses, skills []Skill) error {
-	listed, err := client.ListSkillsWithResponse(ctx, nil)
+func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses, configID string, skills []Skill) error {
+	// Names are unique among one config's skills, so only this config's are looked at.
+	listed, err := client.ListSkillsWithResponse(ctx, &acceleration.ListSkillsParams{ConfigId: &configID})
 	if err != nil {
 		return fmt.Errorf("agents: listing skills: %w", err)
 	}
@@ -643,6 +690,7 @@ func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 
 	for _, skill := range skills {
 		body := skillRequestOf(skill)
+		body.ConfigId = configID
 		if id, ok := known[skill.Name]; ok {
 			updated, err := client.UpdateSkillWithResponse(ctx, id, body)
 			if err != nil {

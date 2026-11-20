@@ -116,8 +116,6 @@ type bookings struct {
 
 func (b *bookings) book(ctx context.Context, in BookInterview) (any, error) {
 	toolCallContext := tools.ToolCallContextFrom(ctx)
-	toolCallContext.Update(ctx, "Checking the caregiver's calendar")
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if confirmation, ok := b.byKey[toolCallContext.ID]; ok {

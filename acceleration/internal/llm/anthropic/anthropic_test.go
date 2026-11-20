@@ -158,10 +158,58 @@ func (s *AnthropicSuite) TestHaikuTakesAnEffortToo() {
 	s.Equal(map[string]any{"effort": "low"}, s.sent()[0].body["output_config"])
 }
 
-func (s *AnthropicSuite) TestAnEffortOutsideTheThreeLevelsIsRefused() {
-	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{
+func (s *AnthropicSuite) TestXhighGoesOutOnSonnet55() {
+	_, err := s.collect(s.provider(Options{Model: "claude-sonnet-5-5"}), llm.ResponseParams{
+		Input:     []llm.Message{{Role: llm.User, Content: "think harder"}},
+		Reasoning: llm.ReasoningParams{Effort: "xhigh"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]any{"effort": "xhigh"}, s.sent()[0].body["output_config"])
+}
+
+func (s *AnthropicSuite) TestEffortLevelsFollowTheModel() {
+	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-opus-5-5"))
+	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-fable-5-2"))
+	s.Equal([]string{"low", "medium", "high", "xhigh", "max"}, efforts("claude-opus-4-7-20260416"))
+	s.Equal([]string{"low", "medium", "high", "max"}, efforts("claude-sonnet-4-6"))
+	s.Equal([]string{"low", "medium", "high"}, efforts("claude-opus-4-5-20251101"))
+	s.Equal([]string{"low", "medium", "high"}, efforts("claude-haiku-4-5"))
+	s.Nil(efforts("gpt-5"))
+}
+
+// The models Anthropic answers tool_choice any or tool with a 400, checked live, dated or not.
+func (s *AnthropicSuite) TestForcedToolUseIsRefusedBeforeItGoesOut() {
+	for _, model := range []string{"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5-5-20261001"} {
+		s.Run(model, func() {
+			_, err := s.collect(s.provider(Options{Model: model}), llm.ResponseParams{
+				Input:      []llm.Message{{Role: llm.User, Content: "weather in Paris?"}},
+				Tools:      []llm.Tool{{Name: "weather"}},
+				ToolChoice: "required",
+			})
+
+			s.ErrorContains(err, `tool choice "required" is not one of auto, none`)
+			s.Empty(s.sent())
+		})
+	}
+}
+
+// Haiku 5.5 still takes forced tool use, so required goes out as any.
+func (s *AnthropicSuite) TestForcedToolUseGoesOutOnHaiku55() {
+	_, err := s.collect(s.provider(Options{Model: "claude-haiku-5-5"}), llm.ResponseParams{
+		Input:      []llm.Message{{Role: llm.User, Content: "weather in Paris?"}},
+		Tools:      []llm.Tool{{Name: "weather"}},
+		ToolChoice: "required",
+	})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]any{"type": "any"}, s.sent()[0].body["tool_choice"])
+}
+
+func (s *AnthropicSuite) TestAnEffortTheModelLacksIsRefused() {
+	_, err := s.collect(s.provider(Options{Model: "claude-sonnet-4-6"}), llm.ResponseParams{
 		Input:     []llm.Message{{Role: llm.User, Content: "think hardest"}},
-		Reasoning: llm.ReasoningParams{Effort: "max"},
+		Reasoning: llm.ReasoningParams{Effort: "xhigh"},
 	})
 
 	s.ErrorContains(err, "is not one of")
@@ -606,7 +654,7 @@ func (s *AnthropicSuite) TestARefusalEndsTheResponseAsFiltered() {
 func (s *AnthropicSuite) TestARejectedRequestFailsCreateWithAnthropicsReason() {
 	s.answerWith(http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"tool_choice any is not supported for this model"}}`)
 
-	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}, ToolChoice: "required"})
+	_, err := s.collect(s.provider(Options{Model: "claude-haiku-5-5"}), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}, ToolChoice: "required"})
 
 	s.ErrorContains(err, "tool_choice any is not supported")
 	s.Len(s.sent(), 1, "a 400 is not retried")

@@ -31,6 +31,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -81,7 +82,7 @@ func run(ctx context.Context, addr, simulationUser string) error {
 	if err != nil {
 		return err
 	}
-	dispatch.Host(hostedAgent{name: agentName, tools: hosted}, 30*time.Second)
+	dispatch.Host(restaurantTools{tools: hosted}, 30*time.Second)
 
 	mux := http.NewServeMux()
 	s.routes(mux)
@@ -140,11 +141,11 @@ var events = map[string]struct{ title, instructions string }{
 	},
 }
 
-// agentSpeaksFirst has the agent open userID's conversation about an event, by creating a
-// scheduled task in it and running it now.
-func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone string) (string, error) {
-	event := events[kind]
-	client, err := stream.Backend{ActingFor: userID}.Client()
+// agentSpeaksFirst has the agent say what instructions ask for in userID's conversation, about an
+// event or a decision, by creating a scheduled task in it and running it now.
+func agentSpeaksFirst(ctx context.Context, userID, sessionID, title, instructions, timezone string) (string, error) {
+	// The create names the user; running and deleting the task reach it as the backend.
+	client, err := stream.Backend{}.Client()
 	if err != nil {
 		return "", err
 	}
@@ -156,8 +157,8 @@ func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone str
 	created, err := client.CreateScheduledTaskWithResponse(ctx,
 		&acceleration.CreateScheduledTaskParams{XStreamUserId: &userID},
 		acceleration.CreateScheduledTaskJSONRequestBody{
-			Title:        event.title,
-			Instructions: event.instructions,
+			Title:        title,
+			Instructions: instructions,
 			Schedule:     acceleration.ScheduledTaskSchedule{In: &in, Timezone: zone},
 			SessionId:    &sessionID,
 		})
@@ -178,8 +179,11 @@ func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone str
 	// The task was only a way to run once now: it goes once its run is well under way.
 	go func(id string) {
 		time.Sleep(2 * time.Minute)
-		if deleted, err := client.DeleteScheduledTaskWithResponse(context.Background(), id); err != nil || deleted.StatusCode() >= http.StatusMultipleChoices {
-			log.Printf("the %s task %s stays scheduled: %v", kind, id, err)
+		deleted, err := client.DeleteScheduledTaskWithResponse(context.Background(), id)
+		if err != nil {
+			slog.Warn("the task stays scheduled", "task", id, "title", title, "err", err)
+		} else if deleted.StatusCode() >= http.StatusMultipleChoices {
+			slog.Warn("the task stays scheduled", "task", id, "title", title, "status", deleted.StatusCode())
 		}
 	}(task.Id)
 	return task.Id, nil

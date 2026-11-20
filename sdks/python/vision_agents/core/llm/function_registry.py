@@ -29,6 +29,15 @@ class FunctionParameter:
 # A {name} in an approval question, filled in from the call's arguments.
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
+# A Google-style docstring section the model is not told as part of the description.
+_SECTION = re.compile(
+    r"^(Args|Arguments|Parameters|Keyword Args|Keyword Arguments|Returns|Return|"
+    r"Yields|Yield|Raises):\s*$"
+)
+_ARGUMENT_SECTIONS = {"Args", "Arguments", "Parameters"}
+# An argument in an Args section: `name: description` or `name (type): description`.
+_ARGUMENT = re.compile(r"^\*{0,2}(\w+)\s*(?:\([^)]*\))?\s*:\s*(.*)$")
+
 
 @dataclass(frozen=True)
 class ToolPolicy:
@@ -136,7 +145,8 @@ class FunctionRegistry:
                 )
 
             func_name = name or func.__name__
-            func_description = description or func.__doc__ or ""
+            summary, argument_descriptions = _parse_docstring(func.__doc__ or "")
+            func_description = description or summary
             context = context_parameter(func)
 
             # If explicit schema provided, use it directly
@@ -157,7 +167,9 @@ class FunctionRegistry:
             # Otherwise, extract from type hints
             type_hints = get_type_hints(func, include_extras=True)
             sig = inspect.signature(func)
-            arguments = Arguments(func_name, func, type_hints, context)
+            arguments = Arguments(
+                func_name, func, type_hints, context, argument_descriptions
+            )
 
             parameters = []
             for param_name, param in sig.parameters.items():
@@ -165,13 +177,12 @@ class FunctionRegistry:
                     continue
 
                 param_type = type_hints.get(param_name, type(None))
-                param_description = None
 
                 parameters.append(
                     FunctionParameter(
                         name=param_name,
                         type=param_type,
-                        description=param_description,
+                        description=argument_descriptions.get(param_name),
                         required=param.default == inspect.Parameter.empty,
                         default=param.default
                         if param.default != inspect.Parameter.empty
@@ -300,6 +311,51 @@ class FunctionRegistry:
             description=func_def.description,
             parameters_schema=func_def.arguments.json_schema(),
         )
+
+
+def _parse_docstring(docstring: str) -> tuple[str, dict[str, str]]:
+    """Split a Google-style docstring into what the function does and what each argument means.
+
+    Args:
+        docstring: The function's docstring.
+
+    Returns:
+        The docstring up to its first Args, Returns or Raises section (the whole docstring
+        when it has none), and each argument's description from its Args section, with
+        continuation lines joined.
+    """
+    lines = inspect.cleandoc(docstring).splitlines()
+    starts = [index for index, line in enumerate(lines) if _SECTION.match(line)]
+    if not starts:
+        return docstring, {}
+
+    descriptions: dict[str, list[str]] = {}
+    for start, end in zip(starts, starts[1:] + [len(lines)]):
+        if lines[start].rstrip(":") not in _ARGUMENT_SECTIONS:
+            continue
+        current: Optional[list[str]] = None
+        indent: Optional[int] = None
+        for line in lines[start + 1 : end]:
+            if not line.strip():
+                continue
+            depth = len(line) - len(line.lstrip())
+            if depth == 0:
+                break
+            if indent is None:
+                indent = depth
+            if depth > indent:
+                if current is not None:
+                    current.append(line.strip())
+                continue
+            entry = _ARGUMENT.match(line.strip())
+            current = None
+            if entry is not None:
+                current = descriptions[entry.group(1)] = [entry.group(2)]
+    summary = "\n".join(lines[: starts[0]]).strip()
+    return summary, {
+        name: " ".join(part for part in parts if part)
+        for name, parts in descriptions.items()
+    }
 
 
 def _check_approval(name: str, approval: str, arguments: Any) -> None:

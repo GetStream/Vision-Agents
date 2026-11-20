@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -54,7 +55,7 @@ func newTestServer(t *testing.T) (*server, *fakeRoles, http.Handler) {
 	}
 	s := &server{
 		secret: []byte(testSecret), mint: minter.mint, crew: crew, roles: roles,
-		speak: func(context.Context, string, string, string, string) (string, error) { return "task-1", nil },
+		speak: func(context.Context, string, string, string, string, string) (string, error) { return "task-1", nil },
 	}
 	mux := http.NewServeMux()
 	s.routes(mux)
@@ -99,7 +100,7 @@ func TestEveryRouteButTheTokenNeedsAValidToken(t *testing.T) {
 		"no user": tokenFor(t, "", testSecret, hour),
 	} {
 		for _, route := range []struct{ method, path string }{
-			{"POST", "/events"}, {"POST", "/crew/swaps"}, {"POST", "/crew/tickets"},
+			{"POST", "/events"}, {"POST", "/crew/swaps"}, {"POST", "/crew/tickets"}, {"POST", "/crew/tickets/ticket-1/decision"},
 			{"POST", "/crew/check-ins"}, {"POST", "/crew/reflections"}, {"GET", "/crew/leader"},
 		} {
 			got := request(t, handler, route.method, route.path, token, map[string]string{})
@@ -301,5 +302,145 @@ func TestTheSupervisorCanBeNamed(t *testing.T) {
 	got, _ := crew.checkIn("crew-jordan", "Sam Doe", "Friday 10:00", "")
 	if !strings.Contains(fmt.Sprint(got), "sam.doe@example.org") {
 		t.Errorf("the check-in doesn't invite the named supervisor: %v", got)
+	}
+}
+
+func TestTheOwnerApprovesATicketAndTheDrafterHearsIt(t *testing.T) {
+	s, _, handler := newTestServer(t)
+	type told struct{ userID, sessionID, instructions, timezone string }
+	var heard []told
+	s.speak = func(_ context.Context, userID, sessionID, _, instructions, timezone string) (string, error) {
+		heard = append(heard, told{userID, sessionID, instructions, timezone})
+		return "task-1", nil
+	}
+	hour := time.Now().Add(time.Hour)
+	jordan, maya, taylor := tokenFor(t, "crew-jordan", testSecret, hour), tokenFor(t, "crew-maya", testSecret, hour), tokenFor(t, owner, testSecret, hour)
+
+	drafted := request(t, handler, "POST", "/crew/tickets", jordan, map[string]string{"asset": "FRY-02", "summary": "E-41 again", "details": "Reset twice", "session_id": "session-1", "timezone": "Europe/Skopje"})
+	var ticket struct {
+		ID string `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(drafted.Body.Bytes(), &ticket); err != nil || ticket.ID == "" {
+		t.Fatalf("drafting: %d %s", drafted.Code, drafted.Body)
+	}
+	decision := "/crew/tickets/" + ticket.ID + "/decision"
+	if got := request(t, handler, "POST", decision, jordan, map[string]any{"approve": true}); got.Code != http.StatusForbidden {
+		t.Errorf("the drafter approved their own ticket: %d", got.Code)
+	}
+	if got := request(t, handler, "POST", decision, maya, map[string]any{"approve": true}); got.Code != http.StatusForbidden {
+		t.Errorf("a shift leader approved the owner's ticket: %d", got.Code)
+	}
+	if len(heard) != 0 {
+		t.Fatalf("the drafter heard before the owner decided: %+v", heard)
+	}
+
+	got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": true, "details": "Reset twice; oil smoked"})
+	if got.Code != http.StatusOK {
+		t.Fatalf("the owner couldn't approve: %d %s", got.Code, got.Body)
+	}
+	var decided InboxItem
+	if err := json.Unmarshal(got.Body.Bytes(), &decided); err != nil {
+		t.Fatal(err)
+	}
+	if decided.WaitingFor != "" || !strings.Contains(decided.Status, "submitted to repairs") || decided.Details != "Reset twice; oil smoked" {
+		t.Errorf("the ticket wasn't submitted with the owner's edit: %+v", decided)
+	}
+	if len(heard) != 1 || heard[0].userID != "crew-jordan" || heard[0].sessionID != "session-1" || heard[0].timezone != "Europe/Skopje" || !strings.Contains(heard[0].instructions, decided.Status) {
+		t.Errorf("Jordan wasn't told in the conversation the ticket came from: %+v", heard)
+	}
+	if got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false}); got.Code != http.StatusConflict {
+		t.Errorf("a decided ticket was decided again: %d", got.Code)
+	}
+	if len(heard) != 1 {
+		t.Errorf("the refused second decision told Jordan again: %+v", heard)
+	}
+}
+
+func TestADecisionMustSayApproveOrReject(t *testing.T) {
+	_, _, handler := newTestServer(t)
+	hour := time.Now().Add(time.Hour)
+	jordan, taylor := tokenFor(t, "crew-jordan", testSecret, hour), tokenFor(t, owner, testSecret, hour)
+	drafted := request(t, handler, "POST", "/crew/tickets", jordan, map[string]string{"summary": "Fryer down", "details": "E-41"})
+	var ticket struct {
+		ID string `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(drafted.Body.Bytes(), &ticket); err != nil || ticket.ID == "" {
+		t.Fatalf("drafting: %d %s", drafted.Code, drafted.Body)
+	}
+	decision := "/crew/tickets/" + ticket.ID + "/decision"
+	if got := request(t, handler, "POST", decision, taylor, map[string]any{"details": "Oil smoked"}); got.Code != http.StatusBadRequest {
+		t.Errorf("an edit without approve decided the ticket: %d", got.Code)
+	}
+	got := request(t, handler, "POST", decision, taylor, map[string]any{"approve": false})
+	if got.Code != http.StatusOK {
+		t.Fatalf("the ticket wasn't still waiting after the refused edit: %d %s", got.Code, got.Body)
+	}
+	var rejected InboxItem
+	if err := json.Unmarshal(got.Body.Bytes(), &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.WaitingFor != "" || !strings.HasPrefix(rejected.Status, "Not approved by") || strings.Contains(rejected.Status, "repairs") {
+		t.Errorf("approve false didn't reject the ticket: %+v", rejected)
+	}
+}
+
+func TestADecisionNoticeStaysWithinTheTasksLimit(t *testing.T) {
+	s, _, handler := newTestServer(t)
+	var notice string
+	s.speak = func(_ context.Context, _, _, _, instructions, _ string) (string, error) {
+		notice = instructions
+		return "task-1", nil
+	}
+	hour := time.Now().Add(time.Hour)
+	jordan, taylor := tokenFor(t, "crew-jordan", testSecret, hour), tokenFor(t, owner, testSecret, hour)
+	// A title that %q would escape to ten characters a rune, after a control character.
+	title := "\x00" + strings.Repeat("\U0010FFFF", 1000)
+	drafted := request(t, handler, "POST", "/crew/tickets", jordan, map[string]string{"summary": title, "details": "x", "session_id": "session-1"})
+	var ticket struct {
+		ID string `json:"ticket_id"`
+	}
+	if err := json.Unmarshal(drafted.Body.Bytes(), &ticket); err != nil || ticket.ID == "" {
+		t.Fatalf("drafting: %d %s", drafted.Code, drafted.Body)
+	}
+	if got := request(t, handler, "POST", "/crew/tickets/"+ticket.ID+"/decision", taylor, map[string]any{"approve": true}); got.Code != http.StatusOK {
+		t.Fatalf("deciding: %d %s", got.Code, got.Body)
+	}
+	if n := utf8.RuneCountInString(notice); n == 0 || n > maxNoticeRunes {
+		t.Errorf("the notice has %d characters, want 1 to %d", n, maxNoticeRunes)
+	}
+	if !strings.Contains(notice, ticket.ID) || !strings.Contains(notice, "call no tools") || strings.ContainsRune(notice, 0) {
+		t.Errorf("the notice lost its ticket id or its instructions, or kept a control character: %.200q", notice)
+	}
+}
+
+// Catches a scheduled task created without naming its user: the router refuses one, so the
+// agent would never speak first.
+func TestTheAgentSpeaksFirstInTheUsersConversation(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.Method+" "+r.URL.Path] = r.Header.Get("X-Stream-User-Id")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/scheduled-tasks") {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"t1","title":"T","instructions":"I","state":"active","created_at":"2026-11-19T00:00:00Z","updated_at":"2026-11-19T00:00:00Z","user_id":"anya"}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer router.Close()
+	t.Setenv("STREAM_ACCELERATION_URL", router.URL)
+	t.Setenv("STREAM_ACCELERATION_CUSTOMER_ID", "acme")
+
+	if _, err := agentSpeaksFirst(t.Context(), "anya", "s1", "T", "I", "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := seen["POST /v1/agents/scheduled-tasks"]; got != "anya" {
+		t.Errorf("the task was created naming %q, want anya", got)
 	}
 }

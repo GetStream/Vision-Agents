@@ -459,7 +459,7 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 	if line := severalPeople(len(a.speakers), a.writers); line != "" {
 		instructions += "\n\n" + line
 	}
-	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
+	speaking := a.talkingLocked()
 	reply, unsaid := a.replyLocked(history)
 	heard, measured := a.replyHeardLocked(reply, time.Now())
 	replyID := a.speakingTurn
@@ -511,7 +511,7 @@ func (p pauseAsker) Hearing(stt.Participant) {
 func (p pauseAsker) Speaking() bool {
 	a := p.a
 	a.mu.Lock()
-	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
+	speaking := a.talkingLocked()
 	a.mu.Unlock()
 	return speaking || a.speechPending()
 }

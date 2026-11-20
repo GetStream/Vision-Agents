@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -29,15 +30,18 @@ type stubGuardrail struct {
 
 	mu    sync.Mutex
 	asked []string
+	// before is the conversation each check was given, in the order they were asked.
+	before []string
 }
 
 func (g *stubGuardrail) Policy() guardrail.Policy { return g.policy }
 
 func (g *stubGuardrail) Close() error { return nil }
 
-func (g *stubGuardrail) Check(ctx context.Context, _, text string) (guardrail.Verdict, error) {
+func (g *stubGuardrail) Check(ctx context.Context, _, text, conversation string) (guardrail.Verdict, error) {
 	g.mu.Lock()
 	g.asked = append(g.asked, text)
+	g.before = append(g.before, conversation)
 	held := g.held
 	g.mu.Unlock()
 
@@ -57,10 +61,18 @@ func (g *stubGuardrail) Check(ctx context.Context, _, text string) (guardrail.Ve
 			return guardrail.Verdict{
 				Reason:      "outside what the policy permits",
 				Probability: 0.93,
+				Model:       "stub/judge",
 			}, nil
 		}
 	}
-	return guardrail.Verdict{Allowed: true}, nil
+	return guardrail.Verdict{Allowed: true, Probability: 0.07, Model: "stub/judge"}, nil
+}
+
+// conversations is the conversation each check was given.
+func (g *stubGuardrail) conversations() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.before...)
 }
 
 func (g *stubGuardrail) screened() []string {
@@ -342,4 +354,296 @@ func (s *AgentSuite) TestAWrittenAsideIsScreenedToo() {
 	s.Equal(theRefusal, answer)
 	s.eventually(func() bool { return countOf[Blocked](s.reported()) == 1 },
 		"the aside was never reported as refused")
+}
+
+func (s *AgentSuite) TestATurnThePolicyPermitsReportsItsCheck() {
+	// An allowed turn's check is what a threshold is tuned by: without it only refusals
+	// say what the model made of a turn.
+	release := make(chan struct{})
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.guards.held = release
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return len(s.guards.screened()) == 1 }, "the check never started")
+	close(release)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	check := turn.Guardrail
+	s.Require().NotNil(check, "the turn does not say it was screened")
+	s.Equal("decision_model", check.Kind)
+	s.Equal("parallel", check.Mode)
+	s.Equal("stub/judge", check.Model)
+	s.True(check.Allowed)
+	s.False(check.Failed)
+	s.Require().NotNil(check.Probability)
+	s.InDelta(0.07, *check.Probability, 0.001)
+	s.Require().NotNil(check.Threshold)
+	s.InDelta(guardrail.DefaultThreshold, *check.Threshold, 0.001)
+	s.Positive(check.LatencyMs)
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal(responded.TurnID, turn.TurnID)
+}
+
+func (s *AgentSuite) TestATurnThePolicyRefusesReportsItsCheck() {
+	s.screens(guardrail.ModeBlocking, "pizza")
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the turn does not say it was screened")
+	s.False(turn.Guardrail.Allowed)
+	s.Equal("blocking", turn.Guardrail.Mode)
+	s.Require().NotNil(turn.Guardrail.Probability)
+	s.InDelta(0.93, *turn.Guardrail.Probability, 0.001)
+	s.Zero(turn.Guardrail.HeldMs, "no reply waits on a check that runs before the model is asked")
+}
+
+func (s *AgentSuite) TestACheckThatCouldNotBeMadeIsReportedAsFailedAndNotAsHarmless() {
+	// A failed check lets the turn through. Reported as allowed at a probability of zero,
+	// an outage would read as a model sure of every turn.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.guards.err = errors.New("rate limited")
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the turn does not say its check failed")
+	s.True(turn.Guardrail.Failed)
+	s.True(turn.Guardrail.Allowed)
+	s.Nil(turn.Guardrail.Probability)
+	s.Empty(turn.Guardrail.Model)
+	s.Require().NotNil(turn.Guardrail.Threshold)
+}
+
+func (s *AgentSuite) TestATurnTheModelFailedStillReportsItsCheck() {
+	// The check answered beside a model that never did: the turn ends failed, and what the
+	// guardrail made of it is still on it.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+	s.model.mu.Lock()
+	s.model.refuses = errors.New("invalid api key")
+	s.model.mu.Unlock()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the failed turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the failed turn lost its check")
+	s.True(turn.Guardrail.Allowed)
+	s.Require().NotNil(turn.Guardrail.Probability)
+	s.InDelta(0.07, *turn.Guardrail.Probability, 0.001)
+	s.Zero(turn.Guardrail.HeldMs, "no reply was held: the model wrote none")
+}
+
+func (s *AgentSuite) TestATurnNothingScreenedReportsNoCheck() {
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Nil(turn.Guardrail)
+}
+
+func (s *AgentSuite) TestAFollowUpIsScreenedWithWhatCameBeforeIt() {
+	// "and for my kid?" cannot be judged alone: the check is given the exchange before the
+	// turn, and not the turn again as part of it.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+	s.model.reply = []string{"Use the MessageList component."}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the first turn was never reported")
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "and in React Native?"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "the follow-up was never reported")
+
+	s.Equal([]string{
+		"",
+		"user: how do I render a message list\nassistant: Use the MessageList component.",
+	}, s.guards.conversations())
+}
+
+func (s *AgentSuite) TestAWrittenAsideIsScreenedWithWhatCameBeforeIt() {
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+
+	refusal, err := s.agent.Ask(s.ctx, "how do I make a pizza")
+	s.Require().NoError(err)
+	s.Equal(theRefusal, refusal)
+	_, err = s.agent.Ask(s.ctx, "how do I render a message list")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"", "user: how do I make a pizza\nassistant: " + theRefusal}, s.guards.conversations())
+}
+
+func (s *AgentSuite) TestALateToolResultIsNotPartOfTheConversationTheNextTurnIsScreenedWith() {
+	// A call held over an interruption has its result added on the caller's side once it is
+	// in. Nobody said it, so the next turn's check is not shown it as the caller's words.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.ownsTools("")
+	s.toolPolicy = func(string) ToolPolicy { return ToolPolicy{Waits: true} }
+	s.join(true)
+	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(runner.release) })
+	defer release()
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Fifteen."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(settleFor):
+		s.FailNow("tool did not start")
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.replyWentOut()
+	s.mutters(participant, "stop cancel that lookup")
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.HasPrefix(m.Content, stillRunning) })
+	}, "the interrupted call was not answered")
+	s.flow.then = nil
+	s.says(participant, "what is seven plus eight")
+	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
+
+	release()
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool { return strings.Contains(m.Content, "ships tomorrow") })
+	}, "the late result never reached the conversation")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 3 }, "the late result was never answered")
+	s.says(participant, "can I change the address")
+	s.eventually(func() bool { return slices.Contains(s.guards.screened(), "can I change the address") },
+		"the turn after the late result was never screened")
+
+	asked := s.guards.screened()
+	before := s.guards.conversations()[slices.Index(asked, "can I change the address")]
+	s.NotContains(before, "ships tomorrow", "the tool's output was screened as the caller's words")
+	s.NotContains(before, "lookup_order")
+	s.Contains(before, "user: what is seven plus eight", "what the caller said is still the conversation")
+}
+
+func (s *AgentSuite) TestTheNoteThatSilenceDeclinedACallIsNotConversation() {
+	s.agentAsksAndWaits(100 * time.Millisecond)
+	s.askFor()
+	s.eventually(s.declinedBySilence, "silence never declined the call")
+
+	history := append(s.history(), llm.Message{Role: llm.User, Content: "what now?"})
+	before := conversationBefore(history)
+	s.NotContains(before, "did not say yes")
+	s.Contains(before, "user: book order 12")
+}
+
+func (s *AgentSuite) TestASummaryOfTheCallSoFarIsNotConversation() {
+	// The summary is the router's words about the conversation, not the conversation, and it
+	// is written from what tools returned too.
+	prefix := []llm.Message{{Role: llm.User, Content: "first question"}, {Role: llm.Assistant, Content: "first answer"}}
+	recent := []llm.Message{{Role: llm.User, Content: "new question"}, {Role: llm.Assistant, Content: "new answer"}}
+	emitter := NewEmitter(eventBuffer)
+	defer emitter.Close()
+	agent := &Agent{emitter: emitter, history: append(append([]llm.Message(nil), prefix...), recent...)}
+	agent.applyCompaction(harness.Compacted{Prefix: prefix, Summary: "The caller's card ends in 4242."})
+
+	history := append(agent.History(), llm.Message{Role: llm.User, Content: "and then?"})
+	s.Equal("user: new question\nassistant: new answer", conversationBefore(history))
+}
+
+func (s *AgentSuite) TestNotesAreNotConversation() {
+	history := []llm.Message{
+		{Role: llm.User, Content: "hi"},
+		{Role: llm.Assistant, Content: "hello"},
+		harness.DocumentMessage("menu.pdf", 1, "the whole menu"),
+		{Role: llm.User, Content: "and now?"},
+	}
+
+	s.Equal("user: hi\nassistant: hello", conversationBefore(history))
+}
+
+func (s *AgentSuite) TestAWriterInAChannelTypeIsScreenedByNameAndNotByUserID() {
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+	s.model.reply = []string{"Get well soon."}
+
+	s.writesAs("anya-1", "Anya", "I'm sick, I can't come at 6")
+	s.writesAs("ben-2", "Ben", "feel better!")
+
+	s.Equal([]string{"", "user: Anya: I'm sick, I can't come at 6\nassistant: Get well soon."}, s.guards.conversations())
+}
+
+func (s *AgentSuite) TestOnlyAnEnvelopeAsAuthoredWritesItIsReadAsAName() {
+	// What a person typed that looks like an envelope keeps every word of it, and a speaker's
+	// label on a call is left as it is. A line the caller kept itself (Quoted) is read the same.
+	kept := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	for _, row := range []struct {
+		name, said, line string
+	}{
+		{"an envelope", Authored("anya-1", "Anya", "hi\nthere"), "user: Anya: hi there"},
+		{"an envelope naming nobody", Authored("anya-1", "", "hi"), "user: hi"},
+		{"plain words", "hi", "user: hi"},
+		{"a speaker's label", "Anya: hi", "user: Anya: hi"},
+		{"cut short", `{"author":{"user_id":"anya-1","display_name":"Anya"},"text":"hi"`,
+			`user: {"author":{"user_id":"anya-1","display_name":"Anya"},"text":"hi"`},
+		{"a field of its own", `{"author":{"user_id":"anya-1","display_name":"Anya"},"text":"hi","to":"Ben"}`,
+			`user: {"author":{"user_id":"anya-1","display_name":"Anya"},"text":"hi","to":"Ben"}`},
+		{"an author that is a string", `{"author":"Anya","text":"hi"}`, `user: {"author":"Anya","text":"hi"}`},
+		{"a kept line with a name and a time", Quoted("Anya", &kept, "hi"), "user: Anya: hi"},
+		{"a kept line with a time only", Quoted("", &kept, "hi"), "user: hi"},
+		{"a kept line with a field of its own", `{"author":{"display_name":"Anya"},"text":"hi","to":"Ben"}`,
+			`user: {"author":{"display_name":"Anya"},"text":"hi","to":"Ben"}`},
+		{"a kept line with a time written another way", `{"author":{"display_name":"Anya"},"sent_at":"2026-11-19T10:00:00+00:00","text":"hi"}`,
+			`user: {"author":{"display_name":"Anya"},"sent_at":"2026-11-19T10:00:00+00:00","text":"hi"}`},
+		{"an empty object", `{}`, `user: {}`},
+		{"null", `null`, `user: null`},
+	} {
+		history := []llm.Message{{Role: llm.User, Content: row.said}, {Role: llm.User, Content: "next"}}
+		s.Equal(row.line, conversationBefore(history), row.name)
+	}
+}
+
+func (s *AgentSuite) TestHeldMsIsRecordedWhenTheReplyWaitedForTheCheck() {
+	release := make(chan struct{})
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.guards.held = release
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	close(release)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail)
+	s.Positive(turn.Guardrail.HeldMs)
+}
+
+// The verdict is put in before the reply asks, so no goroutine's timing decides the row.
+func (s *AgentSuite) TestNoHeldMsWhenTheVerdictWasInBeforeTheReply() {
+	started := &screening{decided: make(chan checked, 1)}
+	started.decided <- checked{}
+
+	_, heldMs := started.wait()
+
+	s.Zero(heldMs)
+}
+
+func (s *AgentSuite) TestAWebhookCheckHasNoProbabilityOrThreshold() {
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.guards.policy.Kind = guardrail.KindWebhook
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail)
+	s.Equal("webhook", turn.Guardrail.Kind)
+	s.Nil(turn.Guardrail.Probability)
+	s.Nil(turn.Guardrail.Threshold)
 }

@@ -128,6 +128,11 @@ a change), and `go run ./configure` again, which binds both:
   is not written again and a message is not edited: the router cannot rewind a conversation kept
   in Chat. The composer's options sheet has Think harder, which asks with a higher
   `reasoning_effort`.
+- **Incognito chat** is the dashed circle at the top right of a new chat. Its session is created
+  with `incognito: true`, so it has no channel, isn't listed, and Juno learns nothing from it;
+  `AgentChat` shows it from the session's `turnMessages`, reasoning, tool calls and approvals
+  included. Leaving it, or picking another conversation, ends it for good. The photos sent with a
+  question go to the agent but don't show on the question once it is sent.
 - **Photos** from the composer go with the question, shrunk and inline as data URIs. The
   router uploads them to the conversation's channel and writes them on the person's message,
   where the chat shows them; the model sees them with that question's reply.
@@ -148,10 +153,15 @@ a change), and `go run ./configure` again, which binds both:
 
 The gear in the conversations list opens the settings, where Replies chooses how the agent
 answers: in Markdown, or with interactive UI in A2UI or OpenUI. The backend keeps the choice as
-what the agent is told (`GET` and `PUT /reply-format`), so the app has nothing to switch: its
-`AIUIHost` has a renderer for each format, and a reply shows whichever UI it carries. A
-conversation keeps the instructions it started with, so the next new one is the first to answer
-the new way, and earlier replies keep theirs.
+the agent's UI instructions (`GET` and `PUT /reply-format`), apart from `instructions.md`, so the
+app has nothing to switch: its `AIUIHost` has a renderer for each format, and a reply shows
+whichever UI it carries. A conversation keeps the instructions it started with, so the next new
+one is the first to answer the new way, and earlier replies keep theirs.
+
+Settings' Interactive UI switch is the phone's own: off, the app opens its new conversations with
+`SessionOptions.ui` false, so the model isn't sent the UI instructions the backend chose. Markdown
+is the expected answer, since `instructions.md` teaches no UI, but it isn't guaranteed: a card the
+model writes anyway still shows.
 
 With A2UI or OpenUI chosen, ask "Plan a weekend in Ohrid" and the reply is UI rather than text: a
 map of the places, the person's own calendar for those days, a tab per day with each place's photo
@@ -167,7 +177,7 @@ The map, the place cards and the calendar are the app's own views (`TripComponen
 described once in `app/SwiftAssistant/UIComponents.json`, and both formats place them. They
 load what they show on the phone: the photos from Wikipedia and the calendar from EventKit, which
 the agent never sees. The agent learns them with the format, from `a2ui/instructions.md` or
-`openui/instructions.md`, which the backend adds to what it is told, and which are generated
+`openui/instructions.md`, which the backend stores as the agent's UI instructions, and which are generated
 from the same file with the renderers' own code, from a clone of `stream-chat-swift` beside this
 repository on the branch the app takes:
 

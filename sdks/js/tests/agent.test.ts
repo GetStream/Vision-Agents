@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { inspect } from "node:util";
 
 import {
   Agent,
@@ -936,6 +937,111 @@ describe("Agent", () => {
       assert.equal(recorded.hash, (last?.body as Schemas["SyncAgentRequest"]).hash);
       assert.match(recorded.synced_at, /^\d{4}-\d\d-\d\dT/);
     });
+
+    describe("ui_instructions", () => {
+      let stored: Record<string, unknown>;
+      /** Off, the fake is a router older than ui_instructions: it takes a sync and drops them. */
+      let knowsUI: boolean;
+
+      beforeEach(() => {
+        knowsUI = true;
+        stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z", sync_hash: "" };
+        router.serve("POST", "/v1/agents/sync", (request) => {
+          const { ui_instructions: ui, hash, instructions } = request.body as Schemas["SyncAgentRequest"];
+          const { ui_instructions: _before, ...kept } = stored;
+          stored = { ...kept, sync_hash: hash, instructions, ...(knowsUI && ui ? { ui_instructions: ui } : {}) };
+          return { body: { unchanged: false, config: stored } };
+        });
+        router.serve("GET", "/v1/agents/configs", () => ({ body: [stored] }));
+      });
+
+      async function folder(yaml: string): Promise<string> {
+        const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
+        await mkdir(root);
+        await writeFile(join(root, "agent.yaml"), yaml);
+        await writeFile(join(root, "instructions.md"), "Be brief.\n");
+        return root;
+      }
+
+      function syncs(): Schemas["SyncAgentRequest"][] {
+        return router.requestsTo("POST", "/v1/agents/sync").map((one) => one.body as Schemas["SyncAgentRequest"]);
+      }
+
+      it("sends agent.yaml's ui apart from the instructions, so a session opened with ui false is not told it", async () => {
+        const root = await folder("name: jean\nui: {}\n");
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        const [body] = syncs();
+        assert.equal(body?.instructions, "Be brief.");
+        assert.match(body?.ui_instructions ?? "", /^## Interactive UI Generation\n/);
+      });
+
+      it("sends the folder's ui beside instructions the code gives in place of instructions.md", async () => {
+        const root = await folder("name: jean\nui: {}\n");
+
+        await new Agent({ folder: await loadFolder(root), instructions: "Be warm.", client: api }).sync();
+
+        const [body] = syncs();
+        assert.equal(body?.instructions, "Be warm.");
+        assert.match(body?.ui_instructions ?? "", /^## Interactive UI Generation\n/);
+      });
+
+      it("sends none without a ui:, so such a directory keeps the fingerprint it was stamped with", async () => {
+        const root = await folder("name: jean\n");
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        const [body] = syncs();
+        assert.equal(body && "ui_instructions" in body, false);
+        // What the SDK sent for this directory before the UI was synced apart from the
+        // instructions, so a .agent_sync written then still matches.
+        assert.equal(body?.hash, "b25c07032945a5bbcb9ae171a85d69d9fc4350ea0e24cbc9422df8d16ec5b5d7");
+      });
+
+      it("keeps the ui in the instructions on a router older than ui_instructions, and asks again next time", async () => {
+        knowsUI = false;
+        const root = await folder("name: jean\nui: {}\n");
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        const [first, fallback] = syncs();
+        assert.match(String(stored["instructions"]), /^Be brief\.\n\n## Interactive UI Generation\n/);
+        assert.equal(fallback && "ui_instructions" in fallback, false);
+        assert.notEqual(fallback?.hash, first?.hash);
+        // Never stamped while the router drops the UI, so every sync asks it again.
+        assert.equal(syncs().length, 4);
+        await assert.rejects(() => readFile(join(root, ".agent_sync"), "utf8"));
+      });
+
+      it("moves the ui apart once the router knows ui_instructions", async () => {
+        knowsUI = false;
+        const root = await folder("name: jean\nui: {}\n");
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        knowsUI = true;
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        const settled = await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        assert.equal(stored["instructions"], "Be brief.");
+        assert.match(String(stored["ui_instructions"]), /^## Interactive UI Generation\n/);
+        assert.equal(settled.unchanged, true);
+        assert.equal(syncs().length, 3);
+      });
+
+      it("syncs again a stamped config that lost its ui", async () => {
+        const root = await folder("name: jean\nui: {}\n");
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        const { ui_instructions: _lost, ...withoutUI } = stored;
+        stored = withoutUI;
+
+        const again = await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        assert.equal(again.unchanged, false);
+        assert.match(String(stored["ui_instructions"]), /^## Interactive UI Generation\n/);
+      });
+    });
   });
 });
 
@@ -982,6 +1088,14 @@ describe("Edge", () => {
     assert.equal(made.headers.get("stream-auth-type"), "jwt");
     assert.ok(made.headers.get("authorization"));
     assert.deepEqual(made.body, { data: { created_by_id: "john" } });
+  });
+
+  it("never prints the secret it signs with", () => {
+    const edge = new Edge({ apiKey: "key", apiSecret: "shh-edge-secret" });
+
+    for (const shown of [inspect(edge), JSON.stringify(edge)]) {
+      assert.ok(!shown.includes("shh-edge-secret"), shown);
+    }
   });
 
   it("builds a link a person can open to hear the agent", async () => {

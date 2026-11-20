@@ -25,9 +25,20 @@ model tokens
 ## The agent.yaml `ui:` key
 
 `ui:` tells the model what it may draw. The SDK that loads the folder compiles it into a
-`## Interactive UI Generation` section appended to `instructions.md`, so it is synced as part of
-the instructions and the router sees only text. The output is deterministic, so the prompt
-prefix stays cacheable across turns.
+`## Interactive UI Generation` section and syncs it as the config's `ui_instructions`, apart from
+`instructions.md`, so the router sees only text. The output is deterministic, so the prompt
+prefix stays cacheable across turns. The prompt is mixed mode: the model answers in prose and
+adds a card only when it helps.
+
+The router tells the model `ui_instructions` after the instructions (`session.Spec.prompt`),
+unless the session was opened with `ui: false`, which a device may send. The router then omits
+`ui_instructions`, so an app that shows no UI leaves the catalog out of every turn and can expect
+prose; this does not prevent the model from producing UI blocks, which are still split off the
+reply. The session row keeps the choice (`agent_sessions.no_ui`), so a reopened or forked
+conversation is not told them either. Go and JavaScript write
+`ui_instructions`. A renderer's own prompt pasted into `instructions.md` (`stream-chat-react`'s
+`openUIInstructions` is OpenUI's, 53 KB, and says the entire reply must be openui-lang) can't be
+turned off either and contradicts prose plus one block: use `ui:` instead.
 
 ```yaml
 # agents/concierge/agent.yaml
@@ -57,12 +68,13 @@ ui:
 Paths are relative to the agent directory and may not leave it (symlinks included); each file is
 capped at 512 KiB.
 
-Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`) and JavaScript (`sdks/js/src/ui-catalog.ts`,
+Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`, into `Folder.UIInstructions`) and JavaScript (`sdks/js/src/ui-catalog.ts`,
 from `loadFolder` in `folder.ts`). Python, .NET, Ruby, Rust and PHP don't read `ui:` yet (see the
 note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an unknown key
 (`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
 folder: `sdks/testdata/ui/concierge/` is compiled by a Go test and a JavaScript test, both held to
-`sdks/testdata/ui/concierge.instructions.txt`, which Go writes. An SDK that adds `ui:` checks itself
+`sdks/testdata/ui/concierge.instructions.txt`, which Go writes: what the model is told, the
+instructions and the UI joined by a blank line, as the router joins them. An SDK that adds `ui:` checks itself
 against the same pair. `a2ui` is compiled by Go (`sdks/go/agents/ui_a2ui.go`) and JavaScript
 (`sdks/js/src/ui-a2ui.ts`), both held to `sdks/testdata/ui/concierge-a2ui/` and
 `concierge-a2ui.instructions.txt`. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
@@ -135,10 +147,10 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
   (`flutter_assistant/lib/agent_chat.dart`), and in Swift too (`swift_assistant`'s
   `AgentChat.swift`, which publishes each change inside an animation) and Kotlin
   (`android_assistant`'s `AgentTransport.kt`, which redraws the conversation when `observe` says
-  what shows changed). Swift's, JavaScript's and Kotlin's `TurnUI.content` also hold back the
-  OpenUI statement no newline has ended yet while it streams, so a card grows a part at a time
+  what shows changed). Swift's, JavaScript's, Kotlin's and Dart's `TurnUI.content` also hold back
+  the OpenUI statement no newline has ended yet while it streams, so a card grows a part at a time
   rather than reflowing with every delta, and `LiveUI` leaves a reply its text until one
-  statement is finished (Dart doesn't yet). The rules, which keep a card from jumping:
+  statement is finished. The rules, which keep a card from jumping:
   - A reply that names its turn (`support_runtime.turn_id`) shows only that turn's UI.
   - Before its turn id is in Chat, the newest generating reply shows `latest()`: the newest
     turn's UI, only when that turn is the agent's. The person's question (`said`) and a new

@@ -13,22 +13,27 @@ user's Stream token, and the backend acts for that user alone.
 
 ## What it shows
 
-| Flow                   | How it starts                 | What to look at                                                                                                                                                     |
-| ---------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Clock in**           | the agent speaks first        | A fit-check checklist and the focus for the shift, as interactive UI. Tick the boxes and tap "I'm ready".                                                           |
-| **Call out sick**      | a question                    | Schedule and call-out policy as tool steps. With a cold it offers cover, the swap asks you first, and the shift leader gets a note. With a fever it says stay home. |
-| **Ask the handbook**   | a question                    | The answer comes from `search_handbook`, and the passages show as **Sources** under the reply.                                                                      |
-| **Equipment problem**  | a question, a photo or a scan | The quick fix for the asset and code. "Still broken" drafts a repair ticket, which asks you first. Send a photo with "+" to have it look first.                     |
-| **Back from time off** | the agent speaks first        | What you missed since your time off started, grouped.                                                                                                               |
-| **I'm new here**       | the agent speaks first        | Who's who, a menu quiz as interactive UI, and booking a check-in with the trainer.                                                                                  |
-| **Interview practice** | a question                    | A mock shift leader interview, one question at a time, with feedback. Try it in voice mode (the button beside the composer).                                        |
-| **Clock out**          | the agent speaks first        | An end-of-shift reflection form. What it saves shows in the team lead view, without your name.                                                                      |
+| Flow                   | How it starts                 | What to look at                                                                                                                                                           |
+| ---------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Clock in**           | the agent speaks first        | A fit-check checklist and the focus for the shift, as interactive UI. Tick the boxes and tap "I'm ready".                                                                 |
+| **Call out sick**      | a question                    | Schedule and call-out policy as tool steps. With a cold it offers cover, the swap asks you first, and the shift leader gets a note. With a fever it says stay home.       |
+| **Ask the handbook**   | a question                    | The answer comes from `search_handbook`, and the passages show as **Sources** under the reply.                                                                            |
+| **Equipment problem**  | a question, a photo or a scan | The quick fix for the asset and code. "Still broken" drafts a repair ticket, which asks you first, for the owner to approve. Send a photo with "+" to have it look first. |
+| **Back from time off** | the agent speaks first        | What you missed since your time off started, grouped.                                                                                                                     |
+| **I'm new here**       | the agent speaks first        | Who's who, a menu quiz as interactive UI, and booking a check-in with the trainer.                                                                                        |
+| **Interview practice** | a question                    | A mock shift leader interview, one question at a time, with feedback. Try it in voice mode (the button beside the composer).                                              |
+| **Clock out**          | the agent speaks first        | An end-of-shift reflection form. What it saves shows in the team lead view, without your name.                                                                            |
 
 **Team lead** (top right) is what the shift leaders and the owner see: call-out notes, swap
 requests, drafted tickets, booked check-ins and the team's pulse from reflections. It signs in as
-a leader (`EXPO_PUBLIC_AGENT_LEADER_ID`, Maya by default), since the backend answers the leaders'
-inbox only to a user whose Stream user has `crew_role: "leader"`. It refreshes every few seconds,
-so keep it open next to a flow.
+a leader (`EXPO_PUBLIC_AGENT_LEADER_ID`, Taylor, the owner, by default), since the backend answers
+the leaders' inbox only to a user whose Stream user has `crew_role: "leader"`. It refreshes every
+few seconds, so keep it open next to a flow.
+
+**Approving a ticket.** A repair ticket the team member drafts waits for the owner. In the team
+lead view, signed in as the owner, it shows **Approve and submit** and **Reject**. Approving submits
+it to repairs; either way the agent tells the team member in the conversation they drafted it in,
+however much later that is. Nothing waits in between: the call that drafted it has already ended.
 
 **Scanning a machine.** A QR code on a machine holds a link such as
 `crewassistant://equipment?asset=FRY-02&code=E-41`. Opening it starts a conversation about that

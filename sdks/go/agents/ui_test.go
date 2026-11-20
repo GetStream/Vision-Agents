@@ -82,13 +82,13 @@ ui:
 	loaded2, err := Load(dir)
 	s.Require().NoError(err)
 
-	s.Equal(loaded1.Instructions, loaded2.Instructions)
+	s.Equal(loaded1.UIInstructions, loaded2.UIInstructions)
 	s.Equal(loaded1.Hash(), loaded2.Hash())
-	s.Contains(loaded1.Instructions, "You are Juno, a hospitality concierge.")
-	s.Contains(loaded1.Instructions, "RestaurantCard(name: string, cuisine: string, rating: number)")
-	s.Contains(loaded1.Instructions, "**restaurant_booking**")
-	s.Contains(loaded1.Instructions, "openui-patch")
-	s.NotContains(loaded1.Instructions, "BarChart(")
+	s.Equal("You are Juno, a hospitality concierge.", loaded1.Instructions)
+	s.Contains(loaded1.UIInstructions, "RestaurantCard(name: string, cuisine: string, rating: number)")
+	s.Contains(loaded1.UIInstructions, "**restaurant_booking**")
+	s.Contains(loaded1.UIInstructions, "openui-patch")
+	s.NotContains(loaded1.UIInstructions, "BarChart(")
 }
 
 func (s *FolderUISuite) TestArrayPropertyWithItemSchemaLoadsAsArray() {
@@ -122,7 +122,7 @@ func (s *FolderUISuite) TestArrayPropertyWithItemSchemaLoadsAsArray() {
 
 	loaded, err := Load(dir)
 	s.Require().NoError(err)
-	s.Contains(loaded.Instructions, "SeatSelector(tables: array) — Pick a table by zone.")
+	s.Contains(loaded.UIInstructions, "SeatSelector(tables: array) — Pick a table by zone.")
 }
 
 func (s *FolderUISuite) TestFoldedBlueprintWhenStaysOnOneLine() {
@@ -138,7 +138,7 @@ func (s *FolderUISuite) TestFoldedBlueprintWhenStaysOnOneLine() {
 
 	loaded, err := Load(dir)
 	s.Require().NoError(err)
-	s.Contains(loaded.Instructions, "- **booking** (when booking a table for tonight): `Card([CardHeader])`")
+	s.Contains(loaded.UIInstructions, "- **booking** (when booking a table for tonight): `Card([CardHeader])`")
 }
 
 func (s *FolderUISuite) TestUIPathLeavingAgentDirectoryIsRefused() {
@@ -180,7 +180,9 @@ func (s *FolderUISuite) TestTheSharedFixtureCompilesToTheInstructionsJavaScriptA
 
 	loaded, err := Load(filepath.Join(fixture, "concierge"))
 	s.Require().NoError(err)
-	s.Equal(string(golden), loaded.Instructions+"\n")
+	// The router tells the model the two joined so (session.Spec.prompt in acceleration), which
+	// is what the JavaScript SDK still writes as one.
+	s.Equal(string(golden), loaded.Instructions+"\n\n"+loaded.UIInstructions+"\n")
 }
 
 func (s *FolderUISuite) TestABareUIKeyAppendsNothing() {
@@ -191,11 +193,13 @@ func (s *FolderUISuite) TestABareUIKeyAppendsNothing() {
 	loaded, err := Load(dir)
 	s.Require().NoError(err)
 	s.Equal("You are Juno.", loaded.Instructions)
+	s.Empty(loaded.UIInstructions)
 
 	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  # nothing yet\n"), 0o644))
 	loaded, err = Load(dir)
 	s.Require().NoError(err)
 	s.Equal("You are Juno.", loaded.Instructions)
+	s.Empty(loaded.UIInstructions)
 }
 
 func (s *FolderUISuite) TestTheSharedA2UIFixtureCompilesToItsInstructions() {
@@ -206,7 +210,7 @@ func (s *FolderUISuite) TestTheSharedA2UIFixtureCompilesToItsInstructions() {
 
 	loaded, err := Load(filepath.Join(fixture, "concierge-a2ui"))
 	s.Require().NoError(err)
-	s.Equal(string(golden), loaded.Instructions+"\n")
+	s.Equal(string(golden), loaded.Instructions+"\n\n"+loaded.UIInstructions+"\n")
 }
 
 func (s *FolderUISuite) TestTheA2UICatalogIsTheOneTheSwiftRendererWritesForTheSameComponents() {
@@ -231,7 +235,10 @@ func (s *FolderUISuite) TestTheA2UICatalogIsTheOneTheSwiftRendererWritesForTheSa
 	loaded, err := Load(dir)
 	s.Require().NoError(err)
 
-	s.Equal(a2uiCatalogLine(string(written)), a2uiCatalogLine(loaded.Instructions))
+	want, got := a2uiCatalogLine(string(written)), a2uiCatalogLine(loaded.UIInstructions)
+	s.Require().NotEmpty(want, "the renderer's prompt has a catalog line")
+	s.Require().NotEmpty(got, "the compiled prompt has a catalog line")
+	s.Equal(want, got)
 }
 
 func (s *FolderUISuite) TestPatchModeIsRefusedForA2UISinceOnlyOpenUIPatchesAreMerged() {

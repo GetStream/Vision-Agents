@@ -188,10 +188,10 @@ func effectiveAt(now time.Time, asked *time.Time) (time.Time, error) {
 // priceListAt reads the list a change asked to take effect at asked lands on.
 func priceListAt(ctx context.Context, db bun.IDB, asked *time.Time) (PriceListAt, error) {
 	var list PriceListAt
-	if err := db.QueryRowContext(ctx, "SELECT now()").Scan(&list.Now); err != nil {
+	var err error
+	if list.Now, err = databaseNow(ctx, db); err != nil {
 		return PriceListAt{}, err
 	}
-	var err error
 	if list.At, err = effectiveAt(list.Now, asked); err != nil {
 		return PriceListAt{}, err
 	}
@@ -258,8 +258,8 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite,
 				return err
 			}
 		}
-		var seeded bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM price_changes)").Scan(&seeded); err != nil {
+		seeded, err := tx.NewSelect().Model((*PriceChange)(nil)).Exists(ctx)
+		if err != nil {
 			return err
 		}
 		if !seeded {
@@ -289,8 +289,8 @@ func (s *Store) CreatePriceChange(ctx context.Context, write PriceChangeWrite,
 			CreatedBy:      write.ActorID,
 			IdempotencyKey: write.IdempotencyKey,
 		}
-		var taken bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM price_changes WHERE name = ?)", change.Name).Scan(&taken); err != nil {
+		taken, err := tx.NewSelect().Model((*PriceChange)(nil)).Where("name = ?", change.Name).Exists(ctx)
+		if err != nil {
 			return err
 		}
 		if taken {
@@ -432,8 +432,8 @@ func (s *Store) CancelPriceChange(ctx context.Context, name, reason, actorID, ac
 		if change.CancelledAt != nil {
 			return nil
 		}
-		var now time.Time
-		if err := tx.QueryRowContext(ctx, "SELECT now()").Scan(&now); err != nil {
+		now, err := databaseNow(ctx, tx)
+		if err != nil {
 			return err
 		}
 		if change.Kind != PriceChangeAPI || !change.EffectiveAt.After(now) {

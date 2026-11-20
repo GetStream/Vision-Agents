@@ -331,6 +331,34 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
+    public async Task ACancelledTokenStopsTheCallerWaitingForAStalledSendButNotTheFrame()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        var thrown = new TaskCompletionSource();
+        var said = new TaskCompletionSource<JsonObject>();
+        router.OnSocket(Events, async peer =>
+        {
+            peer.Pause();
+            await thrown.Task.WaitAsync(TestRouter.Patience);
+            peer.Resume();
+            said.SetResult(await peer.ReceiveAsync("say"));
+        });
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
+        var cancel = TestContext.Current.CancellationToken;
+        var session = await agent.ChatAsync(cancellationToken: cancel);
+
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => session.SayAsync(new string('x', 32 << 20), caller.Token).WaitAsync(TestRouter.Patience, cancel));
+        thrown.SetResult();
+
+        Assert.Equal(32 << 20, (await said.Task.WaitAsync(TestRouter.Patience, cancel)).Text("text").Length);
+        await session.CloseAsync(cancel);
+    }
+
+    [Fact]
     public async Task AResponseIsCreatedInTheConversationTheAgentOpened()
     {
         await using var router = await TestRouter.StartAsync();
@@ -516,7 +544,7 @@ public sealed class AgentTests : IDisposable
     }
 
     [Fact]
-    public async Task ADirectoryIsSyncedBeforeTheFirstSessionAndOnlyReadBackOnceStamped()
+    public async Task ADirectoryIsSyncedByHandAndOnlyReadBackOnceStamped()
     {
         var root = Path.Combine(_workspace, "agents", "jean");
         Directory.CreateDirectory(Path.Combine(root, "knowledge"));
@@ -532,15 +560,13 @@ public sealed class AgentTests : IDisposable
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("jean", "cfg-1") });
         router.On("GET", "/v1/agents/configs", 200, new[] { Fixtures.Config("jean", "cfg-1") });
-        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
-        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
         var costs = new Dictionary<string, string> { ["tenant"] = "acme" };
 
         await using (var first = new Agent(new AgentOptions { Config = root, Client = client, CostTracking = costs }))
         {
-            await first.ChatAsync(cancellationToken: cancel);
+            await first.SyncAsync(cancel);
         }
         await using (var second = new Agent(new AgentOptions { Config = root, Client = client, CostTracking = costs }))
         {
@@ -562,8 +588,66 @@ public sealed class AgentTests : IDisposable
         Assert.Equal(["assertion", "name", "scenario", "variations"], simulation.Select(pair => pair.Key).Order());
         Assert.Equal(3, simulation["variations"]!.GetValue<long>());
         Assert.Equal(synced.Text("hash"), Folder.Load(root).ReadStamp());
-        Assert.Equal("cfg-1", router.Only("POST", "/v1/agents/sessions").Body.Text("config_id"));
         Assert.Equal("jean", router.Only("GET", "/v1/agents/configs").Query["name"]);
+    }
+
+    [Fact]
+    public async Task ASessionFromADirectoryRunsOnTheConfigStoredUnderItsNameWithoutSyncing()
+    {
+        var root = Path.Combine(_workspace, "agents", "jean");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\n");
+        File.WriteAllText(Path.Combine(root, "instructions.md"), "You are Jean.\n");
+
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Config = root, Client = client });
+
+        await agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Empty(router.To("POST", "/v1/agents/sync"));
+        Assert.Equal("jean", router.Only("POST", "/v1/agents/sessions").Body.Text("agent"));
+    }
+
+    [Fact]
+    public async Task ADirectoryRenamedInCodeIsSyncedAndRunUnderThatName()
+    {
+        var root = Path.Combine(_workspace, "agents", "jean");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "agent.yaml"), "name: jean\n");
+
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sync", 200, new { unchanged = false, config = Fixtures.Config("support", "cfg-1") });
+        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
+        router.OnSocket(Events, peer => peer.ReceiveAsync("close"));
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+        await using (var deploy = new Agent(new AgentOptions { Config = root, Name = "support", Client = client }))
+        {
+            await deploy.SyncAsync(cancel);
+        }
+        await using var agent = new Agent(new AgentOptions { Config = root, Name = "support", Client = client });
+
+        await agent.ChatAsync(cancellationToken: cancel);
+
+        Assert.Equal(
+            ("support", "support"),
+            (router.Only("POST", "/v1/agents/sync").Body.Text("name"), router.Only("POST", "/v1/agents/sessions").Body.Text("agent")));
+    }
+
+    [Fact]
+    public async Task ASessionForAnAgentNeverSyncedSaysToSyncIt()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions", 404, Fixtures.Failure("not_found", "not_found", "there is no agent called support"));
+        using var client = Fixtures.Client(router);
+        await using var agent = new Agent(new AgentOptions { Config = "support", Client = client });
+
+        var refused = await Assert.ThrowsAsync<RouterException>(() => agent.ChatAsync(cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal((404, "there is no agent called support; store it with SyncAsync first"), (refused.Status, refused.Said));
     }
 
     [Fact]

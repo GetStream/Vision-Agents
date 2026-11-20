@@ -2,7 +2,8 @@ import * as streamChat from "stream-chat";
 
 /**
  * A real stream-chat client reading Chat from a test router, for the installed major: 9, or 10
- * in CI's js-stream-chat-10 job (`npm install --no-save stream-chat@^10.0.2 && npm test`).
+ * in the stream-chat 10 pass of CI's sdks job (`npm install --no-save stream-chat@^10.0.2 &&
+ * npm test`).
  *
  * Typed by shape rather than by either version's declarations, so the suite compiles against both.
  * What differs between them, and why a 10 client pointed at the router the way a 9 one is reached
@@ -112,12 +113,13 @@ export function update(chat: TestChat, message: Record<string, unknown>): void {
   chat.dispatchEvent({ type: "message.updated", cid: CID, channel_type: "agent", channel_id: "support-1", message, user: message["user"] });
 }
 
-/** A rewind of the channel to `messageId`, made at `second` seconds into 2026. */
+/** A rewind of the channel to `messageId`, made at `second` seconds into 2026, timed as `chatMessage`. */
 export function rewind(chat: TestChat, messageId: string, inclusive: boolean, second: number, cid = CID): void {
+  const ms = Date.UTC(2026, 0, 1, 0, 0, second);
   chat.dispatchEvent({
     type: "channel.rewound",
     cid,
-    rewind: { id: "rw_1", message_id: messageId, inclusive, created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString() },
+    rewind: { id: "rw_1", message_id: messageId, inclusive, created_at: chat10 ? ms * 1e6 : new Date(ms).toISOString() },
   });
 }
 

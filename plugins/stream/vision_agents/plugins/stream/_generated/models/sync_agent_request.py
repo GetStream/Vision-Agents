@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
-    from ..models.agent_tools import AgentTools
     from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
         SyncAgentRequestPluginsItemType1,
     )
     from ..models.sync_agent_request_tags import SyncAgentRequestTags
+    from ..models.tool_group import ToolGroup
 
 
 T = TypeVar("T", bound="SyncAgentRequest")
@@ -136,8 +136,9 @@ class SyncAgentRequest:
             stt (str | Unset):
             subagent (str | Unset): Only a voice agent names one: a text agent runs everything on its llm.
             tags (SyncAgentRequestTags | Unset):
-            tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
-                is kept.
+            tools (list[ToolGroup] | Unset): agent.yaml's tools: the functions an SDK provides that the agent may offer, in
+                named groups, as AgentConfigRequest's tools names them, with the same rules. Sent, they replace the stored
+                groups whole, an empty list removing them. Left out, the stored ones stay.
             tts (str | Unset):
             video (SessionVideo | Unset):
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
@@ -152,6 +153,9 @@ class SyncAgentRequest:
                 stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
             image (str | Unset): agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an
                 empty string removes it.
+            ui_instructions (str | Unset): What teaches the agent's model to answer with UI, which the SDK compiles from
+                agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out,
+                the agent is taught none.
     """
 
     hash_: str
@@ -189,13 +193,14 @@ class SyncAgentRequest:
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
     tags: SyncAgentRequestTags | Unset = UNSET
-    tools: AgentTools | Unset = UNSET
+    tools: list[ToolGroup] | Unset = UNSET
     tts: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
     image: str | Unset = UNSET
+    ui_instructions: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -350,9 +355,12 @@ class SyncAgentRequest:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
-        tools: dict[str, Any] | Unset = UNSET
+        tools: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tools, Unset):
-            tools = self.tools.to_dict()
+            tools = []
+            for tools_item_data in self.tools:
+                tools_item = tools_item_data.to_dict()
+                tools.append(tools_item)
 
         tts = self.tts
 
@@ -377,6 +385,8 @@ class SyncAgentRequest:
                 agents.append(agents_item)
 
         image = self.image
+
+        ui_instructions = self.ui_instructions
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -466,6 +476,8 @@ class SyncAgentRequest:
             field_dict["agents"] = agents
         if image is not UNSET:
             field_dict["image"] = image
+        if ui_instructions is not UNSET:
+            field_dict["ui_instructions"] = ui_instructions
 
         return field_dict
 
@@ -477,7 +489,6 @@ class SyncAgentRequest:
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
-        from ..models.agent_tools import AgentTools
         from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
@@ -499,6 +510,7 @@ class SyncAgentRequest:
             SyncAgentRequestPluginsItemType1,
         )
         from ..models.sync_agent_request_tags import SyncAgentRequestTags
+        from ..models.tool_group import ToolGroup
 
         d = dict(src_dict)
         hash_ = d.pop("hash")
@@ -726,11 +738,13 @@ class SyncAgentRequest:
             tags = SyncAgentRequestTags.from_dict(_tags)
 
         _tools = d.pop("tools", UNSET)
-        tools: AgentTools | Unset
-        if isinstance(_tools, Unset):
-            tools = UNSET
-        else:
-            tools = AgentTools.from_dict(_tools)
+        tools: list[ToolGroup] | Unset = UNSET
+        if _tools is not UNSET:
+            tools = []
+            for tools_item_data in _tools:
+                tools_item = ToolGroup.from_dict(tools_item_data)
+
+                tools.append(tools_item)
 
         tts = d.pop("tts", UNSET)
 
@@ -762,6 +776,8 @@ class SyncAgentRequest:
                 agents.append(agents_item)
 
         image = d.pop("image", UNSET)
+
+        ui_instructions = d.pop("ui_instructions", UNSET)
 
         sync_agent_request = cls(
             hash_=hash_,
@@ -806,6 +822,7 @@ class SyncAgentRequest:
             chat_channels=chat_channels,
             agents=agents,
             image=image,
+            ui_instructions=ui_instructions,
         )
 
         sync_agent_request.additional_properties = d

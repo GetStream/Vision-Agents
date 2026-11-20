@@ -57,7 +57,9 @@ final readonly class AgentConfig
         public ?string $syncHash = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        public ?AgentTools $tools = null,
+        // The functions an SDK provides that the agent may offer, in named groups. Empty when there are none, and the...
+        /** @var list<ToolGroup>|null */
+        public ?array $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
         /** @var list<string>|null */
@@ -74,6 +76,8 @@ final readonly class AgentConfig
         /** @var list<ChildAgent>|null */
         public ?array $agents = null,
         public ?string $image = null,
+        // Absent when the agent is taught no UI.
+        public ?string $uiInstructions = null,
     ) {
     }
 
@@ -116,7 +120,7 @@ final readonly class AgentConfig
             subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             syncHash: array_key_exists('sync_hash', $data) && $data['sync_hash'] !== null ? Json::string($data, 'sync_hash') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? AgentTools::fromArray(Json::object($data, 'tools')) : null,
+            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(ToolGroup::fromArray(...), Json::objects($data, 'tools')) : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
@@ -125,6 +129,7 @@ final readonly class AgentConfig
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
             agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
             image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
+            uiInstructions: array_key_exists('ui_instructions', $data) && $data['ui_instructions'] !== null ? Json::string($data, 'ui_instructions') : null,
         );
     }
 
@@ -224,7 +229,7 @@ final readonly class AgentConfig
             $out['tags'] = $this->tags;
         }
         if ($this->tools !== null) {
-            $out['tools'] = $this->tools->toArray();
+            $out['tools'] = array_map(static fn (ToolGroup $each): array => $each->toArray(), $this->tools);
         }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts;
@@ -249,6 +254,9 @@ final readonly class AgentConfig
         }
         if ($this->image !== null) {
             $out['image'] = $this->image;
+        }
+        if ($this->uiInstructions !== null) {
+            $out['ui_instructions'] = $this->uiInstructions;
         }
         return $out;
     }

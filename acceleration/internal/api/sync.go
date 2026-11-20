@@ -26,6 +26,7 @@ type SyncAgentRequest struct {
 	BaseChange        *string                    `json:"base_change,omitempty" doc:"The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again."`
 	Instructions      *string                    `json:"instructions,omitempty"`
 	Guardrail         *string                    `json:"guardrail,omitempty" doc:"The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered."`
+	UiInstructions    *string                    `json:"ui_instructions,omitempty" doc:"What teaches the agent's model to answer with UI, which the SDK compiles from agent.yaml's ui key. Kept apart from instructions, so a session opened with ui false is not told them. Left out, the agent is taught none."`
 	Skills            *[]SkillRequest            `json:"skills,omitempty"`
 	Knowledge         *[]KnowledgeDocument       `json:"knowledge,omitempty"`
 	KnowledgeUrls     *[]KnowledgeUrlDeclaration `json:"knowledge_urls,omitempty" doc:"The pages the directory's knowledge/urls.yaml declares. They are subscribed to in the same knowledge base as the files, so one lookup covers both."`
@@ -58,7 +59,7 @@ type SyncAgentRequest struct {
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
 	Agents         *[]ChildAgent      `json:"agents,omitempty" maxItems:"16" doc:"agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names."`
-	Tools          *AgentTools        `json:"tools,omitempty" doc:"How connector tools are offered. A setting left out keeps what is stored."`
+	Tools          *[]ToolGroup       `json:"tools,omitempty" maxItems:"64" doc:"agent.yaml's tools: the functions an SDK provides that the agent may offer, in named groups, as AgentConfigRequest's tools names them, with the same rules. Sent, they replace the stored groups whole, an empty list removing them. Left out, the stored ones stay."`
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
@@ -228,7 +229,10 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if err != nil {
 		return nil, err
 	}
-	if found && existing.SyncHash == hash {
+	// A router older than ui_instructions kept a sync's hash and dropped them, so the same sync
+	// sent again with UI the config lacks is written rather than found unchanged.
+	missingUI := value(body.UiInstructions) != "" && existing.UIInstructions == ""
+	if found && existing.SyncHash == hash && !missingUI {
 		drifted, err := s.driftedSinceSync(ctx, customerID, existing.ID, body)
 		if err != nil {
 			return nil, err
@@ -278,7 +282,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := outputRetentionComplaint(config); !ok {
+	if message, ok := toolsComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
@@ -338,6 +342,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		prospective := config
 		prospective.Instructions = value(body.Instructions)
 		prospective.Guardrail = value(body.Guardrail)
+		prospective.UIInstructions = value(body.UiInstructions)
 		prospective.Skills = named
 		refusal, conflicting, err := s.syncConflict(ctx, customerID, existing, prospective, body)
 		if err != nil {
@@ -391,6 +396,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 
 	config.Instructions = value(body.Instructions)
 	config.Guardrail = value(body.Guardrail)
+	config.UIInstructions = value(body.UiInstructions)
 	config.Skills = named
 	config.KnowledgeNamespace = namespace
 	config.SyncHash = hash
@@ -597,8 +603,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 		config.Connectors = storedBindings(*body.Connectors)
 		config.LeftOutConnectors = leftOutOf(body.LeftOutConnectors)
 	}
-	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
-	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, body.Tools)
+	if body.Tools != nil {
+		config.ToolGroups = toolGroupsOf(*body.Tools)
+	}
 	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
 	config.Calls = callsOr(config.Calls, body.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, body.ResumeHistory)

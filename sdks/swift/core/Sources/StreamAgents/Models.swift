@@ -18,6 +18,8 @@ public struct Session: Sendable, Hashable, Identifiable {
     public let modality: Modality
     /// The Stream Chat channel the session is kept in, typed or spoken. Empty for an incognito one.
     public let conversationID: String
+    /// The person the conversation is with, whom a tool that asks first asks.
+    public let userID: String
     public let projectID: String
     /// The team the session's usage is counted under. Empty for none.
     public let team: String
@@ -53,6 +55,7 @@ public struct Session: Sendable, Hashable, Identifiable {
         state = State(rawValue: schema.state.rawValue) ?? .ended
         modality = Modality(rawValue: schema.modality.rawValue) ?? .unknown
         conversationID = schema.conversationId ?? ""
+        userID = schema.userId
         projectID = schema.projectId ?? ""
         team = schema.team ?? ""
         title = schema.title ?? ""

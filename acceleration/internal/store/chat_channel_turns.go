@@ -6,8 +6,20 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
+
+// chatChannelTurn is the lease on a channel's running turn (TakeChatChannelTurn).
+type chatChannelTurn struct {
+	bun.BaseModel `bun:"table:chat_channel_turns,alias:cht"`
+
+	StreamAppPK int64     `bun:"stream_app_pk,pk"`
+	CID         string    `bun:"cid,pk"`
+	TurnHolder  string    `bun:"turn_holder,notnull"`
+	TurnUntil   time.Time `bun:"turn_until,notnull"`
+}
 
 // TakeChatChannelTurn leases the one running turn of the channel cid of the Stream app app, a
 // channel of a type an agent config answers in, to holder until until, when no turn holds it
@@ -17,12 +29,12 @@ func (s *Store) TakeChatChannelTurn(ctx context.Context, app int64, cid, holder 
 	if cid == "" || holder == "" {
 		return false, stack.Wrap(errors.New("store: a channel and a holder are required"))
 	}
-	result, err := s.db.NewRaw(
-		"INSERT INTO chat_channel_turns (stream_app_pk, cid, turn_holder, turn_until) VALUES (?, ?, ?, ?) "+
-			"ON CONFLICT (stream_app_pk, cid) DO UPDATE "+
-			"SET turn_holder = EXCLUDED.turn_holder, turn_until = EXCLUDED.turn_until "+
-			"WHERE chat_channel_turns.turn_until < now() OR chat_channel_turns.turn_holder = EXCLUDED.turn_holder",
-		app, cid, holder, until.UTC()).Exec(ctx)
+	result, err := s.db.NewInsert().Model(&chatChannelTurn{StreamAppPK: app, CID: cid, TurnHolder: holder, TurnUntil: until.UTC()}).
+		On("CONFLICT (stream_app_pk, cid) DO UPDATE").
+		Set("turn_holder = EXCLUDED.turn_holder").
+		Set("turn_until = EXCLUDED.turn_until").
+		Where("cht.turn_until < now() OR cht.turn_holder = EXCLUDED.turn_holder").
+		Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: take chat channel turn: %w", err))
 	}
@@ -36,7 +48,8 @@ func (s *Store) TakeChatChannelTurn(ctx context.Context, app int64, cid, holder 
 // ReleaseChatChannelTurn ends holder's lease on a channel's turn, so the next turn need not
 // wait for it to run out. A lease another holder took since is left alone.
 func (s *Store) ReleaseChatChannelTurn(ctx context.Context, app int64, cid, holder string) error {
-	_, err := s.db.NewRaw("DELETE FROM chat_channel_turns WHERE stream_app_pk = ? AND cid = ? AND turn_holder = ?",
-		app, cid, holder).Exec(ctx)
+	_, err := s.db.NewDelete().Model((*chatChannelTurn)(nil)).
+		Where("stream_app_pk = ? AND cid = ? AND turn_holder = ?", app, cid, holder).
+		Exec(ctx)
 	return stack.Wrap(err)
 }

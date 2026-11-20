@@ -215,6 +215,8 @@ func queueChannelInbound(ctx context.Context, tx bun.Tx, message ChannelInbound)
 	if _, err := tx.NewRaw("SELECT 1 FROM channel_threads WHERE channel_id = ? FOR NO KEY UPDATE", message.ChannelID).Exec(ctx); err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: queue channel inbound: %w", err))
 	}
+	// Not the insert builder: bun writes a JSON \u0000 as the text \\u0000, and a delivery jsonb
+	// cannot hold must fail here, so it stays unclaimed and the provider's retry takes it again.
 	media, err := json.Marshal(message.Media)
 	if err != nil {
 		return false, stack.Wrap(err)
@@ -309,13 +311,13 @@ func (s *Store) claimChannelInbound(ctx context.Context, query string, now time.
 // found is false when no message is queued at all.
 func (s *Store) NextChannelInboundAt(ctx context.Context) (next time.Time, found bool, err error) {
 	var at sql.NullTime
-	if err := s.db.NewRaw(`
-SELECT min(head.next_attempt_at) FROM (
-    SELECT DISTINCT ON (channel_id) next_attempt_at
-    FROM channel_thread_inbound
-    WHERE state = 'queued'
-    ORDER BY channel_id, seq
-) AS head`).Scan(ctx, &at); err != nil {
+	head := s.db.NewSelect().Model((*ChannelInbound)(nil)).
+		DistinctOn("cti.channel_id").
+		Column("cti.next_attempt_at").
+		Where("cti.state = ?", ChannelInboundQueued).
+		Order("cti.channel_id", "cti.seq")
+	err = s.db.NewSelect().TableExpr("(?) AS head", head).ColumnExpr("min(head.next_attempt_at)").Scan(ctx, &at)
+	if err != nil {
 		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: next channel inbound: %w", err))
 	}
 	return at.Time, at.Valid, nil
@@ -357,8 +359,11 @@ func (s *Store) FailChannelInbound(ctx context.Context, claimed ChannelInbound, 
 		if forward(ctx) != nil {
 			return nil
 		}
-		if _, err := tx.NewRaw("UPDATE channel_thread_inbound SET forward = jsonb_set(forward, '{forwarded}', 'true') WHERE seq = ?",
-			claimed.Seq).Exec(ctx); err != nil {
+		_, err = tx.NewUpdate().Model((*ChannelInbound)(nil)).
+			Set("forward = jsonb_set(forward, '{forwarded}', 'true')").
+			Where("seq = ?", claimed.Seq).
+			Exec(ctx)
+		if err != nil {
 			return fmt.Errorf("store: fail channel inbound: %w", err)
 		}
 		return nil
@@ -372,8 +377,8 @@ func (s *Store) FailChannelInbound(ctx context.Context, claimed ChannelInbound, 
 // lockChannelInboundDelivery locks claimed's delivery until tx ends, so of two messages of it
 // given up at once on two routers, the second sees what the first did.
 func lockChannelInboundDelivery(ctx context.Context, tx bun.Tx, claimed ChannelInbound) error {
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"channel_thread_inbound/"+claimed.CustomerID+"/"+claimed.ConnectorID+"/"+claimed.Forward.ID); err != nil {
+	key := "channel_thread_inbound/" + claimed.CustomerID + "/" + claimed.ConnectorID + "/" + claimed.Forward.ID
+	if err := lockUntilCommit(ctx, tx, key, 0); err != nil {
 		return fmt.Errorf("store: fail channel inbound: %w", err)
 	}
 	return nil
@@ -383,13 +388,14 @@ func lockChannelInboundDelivery(ctx context.Context, tx bun.Tx, claimed ChannelI
 // it: one with the same provider id for the delivery, or with none and the same body, as the
 // event destinations key a forward (eventforward.deliveryID).
 func channelInboundDeliveryForwarded(ctx context.Context, tx bun.Tx, claimed ChannelInbound) (bool, error) {
-	var forwarded bool
-	if err := tx.NewRaw(`
-SELECT EXISTS (
-    SELECT 1 FROM channel_thread_inbound
-    WHERE state = 'failed' AND forward->>'forwarded' = 'true' AND customer_id = ? AND connector_id = ?
-      AND forward->>'id' = ? AND (? <> '' OR raw = ?)
-)`, claimed.CustomerID, claimed.ConnectorID, claimed.Forward.ID, claimed.Forward.ID, claimed.Raw).Scan(ctx, &forwarded); err != nil {
+	forwarded, err := tx.NewSelect().Model((*ChannelInbound)(nil)).
+		Where("state = ?", ChannelInboundFailed).
+		Where("forward->>'forwarded' = 'true'").
+		Where("customer_id = ? AND connector_id = ?", claimed.CustomerID, claimed.ConnectorID).
+		Where("forward->>'id' = ?", claimed.Forward.ID).
+		Where("(? <> '' OR raw = ?)", claimed.Forward.ID, claimed.Raw).
+		Exists(ctx)
+	if err != nil {
 		return false, fmt.Errorf("store: fail channel inbound: %w", err)
 	}
 	return forwarded, nil
@@ -452,10 +458,10 @@ func updateClaimedChannelInbound(ctx context.Context, claimed ChannelInbound, up
 // PruneChannelInbound deletes the rows of written messages finished a day before now, and of
 // given-up ones 30 days before, and returns how many it deleted.
 func (s *Store) PruneChannelInbound(ctx context.Context, now time.Time) (int, error) {
-	result, err := s.db.NewRaw(`
-DELETE FROM channel_thread_inbound
-WHERE (state = 'done' AND finished_at < ?) OR (state = 'failed' AND finished_at < ?)`,
-		now.Add(-channelInboundDoneKeep).UTC(), now.Add(-channelInboundFailedKeep).UTC()).Exec(ctx)
+	result, err := s.db.NewDelete().Model((*ChannelInbound)(nil)).
+		Where("(state = ? AND finished_at < ?) OR (state = ? AND finished_at < ?)",
+			ChannelInboundDone, now.Add(-channelInboundDoneKeep).UTC(), ChannelInboundFailed, now.Add(-channelInboundFailedKeep).UTC()).
+		Exec(ctx)
 	if err != nil {
 		return 0, stack.Wrap(fmt.Errorf("store: prune channel inbound: %w", err))
 	}

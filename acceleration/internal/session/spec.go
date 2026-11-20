@@ -224,6 +224,12 @@ type Spec struct {
 	// ReviewInstructions is what the call is judged by once it ends, from the agent's config.
 	// Empty is the default scoring guide.
 	ReviewInstructions string
+	// UIInstructions teach the model to answer with UI, from the agent's config. They follow
+	// Instructions in the prompt unless NoUI.
+	UIInstructions string
+	// NoUI leaves UIInstructions out: the session was opened with ui false, for a caller
+	// that shows no UI.
+	NoUI bool
 	// Navigating tells an agent that placed this call how to get past whatever answers.
 	Navigating bool
 
@@ -280,13 +286,14 @@ type Spec struct {
 	// session does what it did before the cards existed.
 	EpisodeCards       bool
 	EpisodeCardsRecord bool
-	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
-	// answers the first call to each with its full description instead of running it.
-	ProgressiveTools bool
-	// ToolOutputRetention is how long the turns this session records keep what its tools
-	// were given and gave back: options.RetentionNone for not at all, a duration, or empty
-	// for as long as the session. From the agent's config, and the manager shortens it to
-	// the app's and the organization's policies when the session is created.
+	// ToolGroups are the agent config's groups of the functions an SDK provides: a session
+	// under a config offers only the functions they name, each loaded as its group says.
+	ToolGroups []store.ToolGroup
+	// ToolOutputRetention is how long the turns this session records keep what any of its
+	// tools were given and gave back: options.RetentionNone for not at all, a duration, or
+	// empty for as long as the session. The manager sets it to the app's and the
+	// organization's policies when the session is created; a tool's group or connector
+	// binding can shorten it for that tool (toolLoading.retention).
 	ToolOutputRetention options.Retention
 	// ResumeHistory is how a conversation the session carries on is handed back to the
 	// model: the session request's, else the agent config's. Zero is the router's default.
@@ -435,6 +442,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		VaryGreeting:       config.GreetingMode == store.GreetingVariation,
 		Guardrail:          config.Guardrail,
 		ReviewInstructions: config.ReviewInstructions,
+		UIInstructions:     config.UIInstructions,
 		SkillNames:         config.Skills,
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
@@ -446,7 +454,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
 		EpisodeCardsRecord: config.EpisodeCardsRecord,
-		ProgressiveTools:   config.ProgressiveTools,
+		ToolGroups:         config.ToolGroups,
 		ResumeHistory:      config.ResumeHistory,
 		FloorControl:       config.FloorControl,
 		Scheduling:         config.Scheduling,
@@ -454,8 +462,6 @@ func FromConfig(config store.AgentConfig) Spec {
 		Tags:               routing.Tags(config.Tags),
 		Team:               configTeam(config.Tags),
 		ConfigTeam:         strings.TrimSpace(config.Tags[TeamTag]),
-		// The config's alone until Manager.Create holds it to the policies.
-		ToolOutputRetention: config.ToolOutputRetention,
 	}
 }
 
@@ -866,6 +872,9 @@ func (s Spec) prompt() string {
 	}
 	if s.Instructions != "" {
 		parts = append(parts, s.Instructions)
+	}
+	if s.UIInstructions != "" && !s.NoUI {
+		parts = append(parts, s.UIInstructions)
 	}
 	if s.ServerInstructions != "" {
 		parts = append(parts, s.ServerInstructions)

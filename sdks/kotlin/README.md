@@ -33,8 +33,9 @@ dependencies {
 val agents = StreamAgents(apiKey = "your_api_key")
 agents.setUser(User(id = "jlahey")) { yourBackend.agentToken() }
 
-// In writing. No call is joined, nothing is transcribed or spoken.
-val chat = agents.agent("docs").chat()
+// In writing. No call is joined, nothing is transcribed or spoken. It returns with the
+// socket open, so the conversation is already being watched.
+val chat = agents.agent("docs").sessions.create()
 chat.responses.create("What are your opening hours?")
 // chat.conversation is a StateFlow: the question shows at once, the turns grow as the reply
 // streams in, and its state says what the agent is doing.
@@ -92,8 +93,37 @@ included. The channel from `chat(context)` is what Stream Chat's AI components s
 streaming in, its reasoning and tool calls, and the approvals waiting on the person. On a call,
 `voice.call` is the Stream `Call` that Stream Video's Compose views render.
 
+An `incognito` session has no channel, so `chat(context)` throws. Show it from its socket
+instead: `chat.turnMessages` is a `Flow` of the conversation in the same shape, one
+`TurnMessage` per question and reply, each reply's rounds of thinking and tool calls as steps
+for `AIMessagePart.parts`, rounds numbered `r1`, `r2` across the reply, the whole of each round
+in `reasoning`, its UI under `customData["ai_ui"]`, and a call waiting in `approvals` shown
+`awaiting_approval` for the user `setUser` named:
+
+```kotlin
+val chat = agents.agent("docs").chat(SessionOptions(incognito = true))
+chat.turnMessages.collect { messages ->
+    for (message in messages) {
+        val parts = AIMessagePart.parts(message.steps.map { it.type to it.fields })
+        // reasoningText(step) is message.reasoning[step.id]
+    }
+}
+```
+
+`chat.conversation`'s turns hold the same as `Turn.steps` (`TurnStep.Reasoning`,
+`TurnStep.ToolCall`) and `Turn.isDone`, folded from the socket's `reasoning_delta`,
+`tool_started`, `tool_updated` and `tool_ran`. A round of thinking is timed from when the model
+was asked or went on after writing, not from its first words.
+
 `say(text)` has the agent speak words as written, without the model; `say(text, interrupt = true)`
 stops what it is saying first rather than waiting for it to finish.
+
+`sessions.create` opens a conversation and watches it. `SessionOptions(startVoice = true)` puts
+the agent on the session's call as well; `agents.agent("docs").chat(...)` and `.voice(...)` are
+the same call with `startVoice` false and true. `SessionOptions(watch = false)` opens one with no
+socket and declares no tools: its turns go through `responses.create` and come back from
+`responses.items()`, and `say`, `interrupt`, `decide` and `addTools` throw
+`AgentsException.Configuration`. The router's row is `.session` either way.
 
 ### Remembering the user
 
@@ -102,7 +132,7 @@ recalled in this session, and what it learns here is kept for their next one. It
 user's; a device recalls nobody else's, and an `incognito` session remembers nothing.
 
 ```kotlin
-val chat = agents.agent("docs").chat(
+val chat = agents.agent("docs").sessions.create(
     SessionOptions(memory = SessionOptions.Memory(filter = mapOf("topic" to "billing"))),
 )
 ```
@@ -134,7 +164,21 @@ val lookup = AgentTool(
     parameters = AgentTool.strings(mapOf("order_id" to "the order number"), required = listOf("order_id")),
 ) { arguments -> orders.find(arguments["order_id"]?.jsonPrimitive?.content.orEmpty()) }
 
-val chat = agents.agent("docs").chat(lookup)
+val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup)))
+```
+
+Or let a `@Serializable` class be the arguments and their schema. A property with no default
+that is not nullable is required, `@SerialName` names it, and `@AgentTool.Describe` tells the
+model what it is. Arguments that do not decode tell the model why, as a tool that throws does:
+
+```kotlin
+@Serializable
+data class WeatherLookup(@AgentTool.Describe("a city or region") val location: String)
+
+val weatherLookup = AgentTool.typed<WeatherLookup>(
+    name = "weather_lookup",
+    description = "Look up the current weather for a location",
+) { args -> weather.today(args.location) }
 ```
 
 Tools are answered inside `AgentSession` whether or not anybody collects `events()`, and a
@@ -382,6 +426,8 @@ to `https://stream-io-repo.com` from `release-kotlin-*` branches only. `version`
   `version=X.Y.Z`. It fails unless `X.Y.Z` is newer than the last release and not already
   published. Merging it publishes the release and tags the commit `sdk-kotlin-vX.Y.Z`.
 
-Other merges into `main` publish nothing.
+Other merges into `main` publish nothing, even one that sets a new `version`: only the merge of a
+pull request from a `release-kotlin-X.Y.Z` branch publishes. If a release merge's run says nothing
+is published, re-run all its jobs: the lookup of its pull request can lag right after the merge.
 
 There is no GitHub release: publishing one starts the Python release, `release.yml`.

@@ -72,8 +72,12 @@ WHERE cc.campaign_id = ? AND EXISTS (SELECT 1 FROM campaign_attempts ca
 		Outcome string
 		Count   int
 	}
-	err = s.db.NewRaw(`SELECT outcome, count(*) AS count FROM campaign_contacts
-WHERE campaign_id = ? AND stage = ? GROUP BY outcome`, campaignID, ContactCompleted).Scan(ctx, &outcomes)
+	err = s.db.NewSelect().Model((*Contact)(nil)).
+		Column("cc.outcome").
+		ColumnExpr("count(*) AS count").
+		Where("cc.campaign_id = ? AND cc.stage = ?", campaignID, ContactCompleted).
+		Group("cc.outcome").
+		Scan(ctx, &outcomes)
 	if err != nil {
 		return CampaignAnalytics{}, stack.Wrap(fmt.Errorf("store: count outcomes: %w", err))
 	}
@@ -85,8 +89,12 @@ WHERE campaign_id = ? AND stage = ? GROUP BY outcome`, campaignID, ContactComple
 		CallOutcome string
 		Count       int
 	}
-	err = s.db.NewRaw(`SELECT call_outcome, count(*) AS count FROM campaign_attempts
-WHERE campaign_id = ? AND call_outcome IS NOT NULL GROUP BY call_outcome`, campaignID).Scan(ctx, &calls)
+	err = s.db.NewSelect().Model((*CampaignAttempt)(nil)).
+		Column("ca.call_outcome").
+		ColumnExpr("count(*) AS count").
+		Where("ca.campaign_id = ? AND ca.call_outcome IS NOT NULL", campaignID).
+		Group("ca.call_outcome").
+		Scan(ctx, &calls)
 	if err != nil {
 		return CampaignAnalytics{}, stack.Wrap(fmt.Errorf("store: count call outcomes: %w", err))
 	}
@@ -119,9 +127,13 @@ func (s *Store) ContactStages(ctx context.Context, campaignIDs []string) (map[st
 		Stage      string
 		Count      int
 	}
-	err := s.db.NewRaw(`SELECT campaign_id, CASE WHEN stage = ? THEN ? ELSE stage END AS stage, count(*) AS count
-FROM campaign_contacts WHERE campaign_id IN (?) GROUP BY 1, 2`,
-		AwaitingOutcome, InProgress, bun.In(campaignIDs)).Scan(ctx, &rows)
+	err := s.db.NewSelect().Model((*Contact)(nil)).
+		Column("cc.campaign_id").
+		ColumnExpr("CASE WHEN cc.stage = ? THEN ? ELSE cc.stage END AS stage", AwaitingOutcome, InProgress).
+		ColumnExpr("count(*) AS count").
+		Where("cc.campaign_id IN (?)", bun.In(campaignIDs)).
+		GroupExpr("1, 2").
+		Scan(ctx, &rows)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: count contact stages: %w", err))
 	}

@@ -1,8 +1,7 @@
 import type { Agent } from "./agent.js";
-import type { BackendOptions } from "./backend.js";
+import { speakingFor, type BackendOptions } from "./backend.js";
 import { Client } from "./client.js";
 import { ConfigurationError, HostingRefusedError, SocketClosedError } from "./errors.js";
-import type { AgentHandle } from "./handle.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
 import { createResponse, type AgentResponse } from "./responses.js";
 import type { Session } from "./session.js";
@@ -64,9 +63,8 @@ export interface HostOptions {
   toolTimeoutMs?: number;
 }
 
-/** One set of functions this worker runs for every session under an agent id. */
+/** One set of functions this worker runs for every agent of the app. */
 interface Hosting {
-  agentId: string;
   tools: Tools;
   toolTimeoutMs: number;
 }
@@ -174,25 +172,20 @@ export class Dispatch {
   }
 
   /**
-   * Runs an agent's tools for every session opened under it, whoever opened it.
+   * Runs the app's tools for every session that is offered them, whoever opened it.
    *
-   * A session's own functions run in the process that opened it, which is no use to a
-   * conversation opened from a browser that wants to read a source tree. Hosting is the
-   * other direction: the router offers `agent.tools` to each session naming the agent and
-   * sends every call to a worker hosting them. Call before `run`.
+   * The tools are registered once on the client, for every agent: the router offers one to
+   * a session only where a tool group of its agent's agent.yaml names it, and sends every
+   * call of it to a worker hosting it. `client.runDispatch()` does this alone, for a worker
+   * with no calls or messages to answer. Call before `run`.
    *
    * ```ts
-   * const agent = client.agent("my-agent");
-   * agent.tools.register({ name: "lookup", description: "Look up an order", run });
-   * await new Dispatch().host(agent).run();
+   * client.tools.register({ name: "lookup", description: "Look up an order", run });
+   * await new Dispatch({ client }).host(client).run();
    * ```
    */
-  host(agent: AgentHandle, options: HostOptions = {}): this {
-    const offer = {
-      agentId: agent.name,
-      tools: agent.tools,
-      toolTimeoutMs: options.toolTimeoutMs ?? 0,
-    };
+  host(client: Client, options: HostOptions = {}): this {
+    const offer = { tools: client.tools, toolTimeoutMs: options.toolTimeoutMs ?? 0 };
     this.checkHosting([...this.hosted, offer]);
     this.hosted.push(offer);
     return this;
@@ -261,7 +254,7 @@ export class Dispatch {
     if (!message.sessionId) {
       throw new ConfigurationError("no session is holding this message; open one with sessionFor");
     }
-    const acting = new Client(this.client.backend.actingFor(message.userId));
+    const acting = new Client(speakingFor(this.client.backend, message.userId));
     const images = (message.images ?? []).map(({ url }) => ({ url }));
     return createResponse(acting, message.sessionId, message.text, {
       images,
@@ -408,7 +401,7 @@ export class Dispatch {
             // The router took the offer. Nothing changes here: the calls simply start.
             break;
           case "hosting_refused":
-            throw new HostingRefusedError(text(message, "agent_id"), text(message, "reason"));
+            throw new HostingRefusedError(text(message, "reason"));
           case "pong":
             this.pong?.(numberOf(message, "at"));
             break;
@@ -505,7 +498,7 @@ export class Dispatch {
     for (const offer of this.hosted) {
       this.tell({
         type: "host_tools",
-        agent_id: offer.agentId,
+        every_agent: true,
         tools: offer.tools.declared(),
         timeout_ms: offer.toolTimeoutMs,
       });
@@ -554,7 +547,8 @@ export class Dispatch {
             toolCallContext,
           );
         } catch (cause) {
-          result["error"] = cause instanceof Error ? cause.message : String(cause);
+          // What the model is told is the tools' own choice (`onError`), since it may repeat it.
+          result["error"] = offer.tools.failure(name, id, cause);
         } finally {
           this.hostedCalls.delete(key);
           this.holds.forget(id);

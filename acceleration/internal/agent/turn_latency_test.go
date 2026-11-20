@@ -177,27 +177,29 @@ func (s *AgentSuite) TestAReplyInterruptedAfterItsAudioIsStillObserved() {
 // settings change moves the agent onto a speech-to-speech model while the turn waits out its
 // playout grace.
 func (s *AgentSuite) TestATurnIsObservedOnThePipelineItStartedOn() {
-	s.edgeFactory = func(base *loopbackEdge) Edge {
-		return &markedEdge{loopbackEdge: base, neverTakes: true}
-	}
-	w := s.joinSwappable()
-	before, native := turnLatencies(pipelineCascade), turnLatencies(pipelineNative)
-	alice := stt.Participant{ID: "alice"}
-	s.hears(w, alice, "hello", 1)
-	s.Require().Zero(countOf[Turn](s.reported()), "the turn must still be open when the pipeline moves")
+	s.onFakeClock(func() {
+		s.edgeFactory = func(base *loopbackEdge) Edge {
+			return &markedEdge{loopbackEdge: base, neverTakes: true}
+		}
+		w := s.joinSwappable()
+		before, native := turnLatencies(pipelineCascade), turnLatencies(pipelineNative)
+		alice := stt.Participant{ID: "alice"}
+		s.hears(w, alice, "hello", 1)
+		s.Require().Zero(countOf[Turn](s.reported()), "the turn must still be open when the pipeline moves")
 
-	moved := cascadeOnStub
-	moved.STSTarget = "openai/gpt-realtime-2"
-	s.Require().NoError(s.agent.SetSettings(s.ctx, moved))
+		moved := cascadeOnStub
+		moved.STSTarget = "openai/gpt-realtime-2"
+		s.Require().NoError(s.agent.SetSettings(s.ctx, moved))
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["roundtrip"].count)
-	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
-	for leg, series := range observedSince(pipelineNative, native) {
-		s.Zero(series.count, "a cascade's turn was counted as native after the move: "+leg)
-	}
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+		s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+		for leg, series := range observedSince(pipelineNative, native) {
+			s.Zero(series.count, "a cascade's turn was counted as native after the move: "+leg)
+		}
+	})
 }
 
 // Catches a tool's answer timed as if the caller had waited on it since they stopped: its
@@ -275,50 +277,54 @@ func (s *AgentSuite) handsOverInSilence() (participant stt.Participant, release 
 // Catches a caller turn answered through the subagent left out of the metric: its own reply
 // said nothing, so the caller waited until the answer the subagent came back with began.
 func (s *AgentSuite) TestACallerTurnAnsweredThroughADelegateIsObservedAtTheAnswer() {
-	before := turnLatencies(pipelineCascade)
-	_, release := s.handsOverInSilence()
-	s.Require().Zero(countOf[Turn](s.reported()), "the turn closed before the answer it waits on")
+	s.onFakeClock(func() {
+		before := turnLatencies(pipelineCascade)
+		_, release := s.handsOverInSilence()
+		s.Require().Zero(countOf[Turn](s.reported()), "the turn closed before the answer it waits on")
 
-	time.AfterFunc(subagentHeld, release)
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the answer was never spoken")
+		time.AfterFunc(subagentHeld, release)
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the answer was never spoken")
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	s.Equal(s.callerTurn(), turn.TurnID)
-	s.GreaterOrEqual(turn.RoundtripMs, float64(subagentHeld.Milliseconds()), "timed before the answer began")
-	s.InDelta(turn.RoundtripMs+turn.STTLatencyMs, turn.SpeechEndToAudioMs, 1e-9)
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["roundtrip"].count)
-	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
-	s.Equal(uint64(1), gained["speech_end_to_audio"].count)
-	s.InDelta(turn.SpeechEndToAudioMs/1000, gained["speech_end_to_audio"].sum, 1e-9)
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		s.Equal(s.callerTurn(), turn.TurnID)
+		s.GreaterOrEqual(turn.RoundtripMs, float64(subagentHeld.Milliseconds()), "timed before the answer began")
+		s.InDelta(turn.RoundtripMs+turn.STTLatencyMs, turn.SpeechEndToAudioMs, 1e-9)
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+		s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+		s.Equal(uint64(1), gained["speech_end_to_audio"].count)
+		s.InDelta(turn.SpeechEndToAudioMs/1000, gained["speech_end_to_audio"].sum, 1e-9)
+	})
 }
 
 // Catches the delegated answer counted a second time: a filler in the turn's own reply ended
 // the caller's wait, so the turn is observed once, at the filler, before the answer arrives.
 func (s *AgentSuite) TestADelegatedTurnWithAFillerIsObservedOnceAtTheFiller() {
-	s.delegates()
-	held := make(chan struct{})
-	s.subagent.holdCreate = held
-	s.join(true)
-	s.model.reply = []string{`One moment. <ask skill="think">15% of 84.20</ask>`}
-	s.model.then = []string{"That comes to 12.63."}
-	s.subagent.reply = []string{"It is 12.63."}
-	before := turnLatencies(pipelineCascade)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		s.delegates()
+		held := make(chan struct{})
+		s.subagent.holdCreate = held
+		s.join(true)
+		s.model.reply = []string{`One moment. <ask skill="think">15% of 84.20</ask>`}
+		s.model.then = []string{"That comes to 12.63."}
+		s.subagent.reply = []string{"It is 12.63."}
+		before := turnLatencies(pipelineCascade)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "what is 15% of 84.20")
+		s.says(participant, "what is 15% of 84.20")
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn the filler answered was never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	s.Require().Positive(turn.RoundtripMs)
-	close(held)
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the delegated answer was never spoken")
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["speech_end_to_audio"].count)
-	s.InDelta(turn.SpeechEndToAudioMs/1000, gained["speech_end_to_audio"].sum, 1e-9)
-	s.Equal(uint64(1), gained["roundtrip"].count)
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn the filler answered was never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		s.Require().Positive(turn.RoundtripMs)
+		close(held)
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the delegated answer was never spoken")
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["speech_end_to_audio"].count)
+		s.InDelta(turn.SpeechEndToAudioMs/1000, gained["speech_end_to_audio"].sum, 1e-9)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+	})
 }
 
 // Control: a greeting the agent says on its own answers nobody's silence, so it adds no
@@ -337,88 +343,96 @@ func (s *AgentSuite) TestAGreetingAddsNoObservation() {
 
 // Catches a line the agent says on its own taken for the answer a caller turn waits on.
 func (s *AgentSuite) TestALineSaidOnItsOwnDoesNotEndTheWaitForADelegatedAnswer() {
-	before := turnLatencies(pipelineCascade)
-	_, release := s.handsOverInSilence()
+	s.onFakeClock(func() {
+		before := turnLatencies(pipelineCascade)
+		_, release := s.handsOverInSilence()
 
-	s.Require().NoError(s.agent.Say(s.ctx, "Bear with me."))
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
-	s.Zero(countOf[Turn](s.reported()), "the caller's turn was timed to a line nobody said for it")
-	time.AfterFunc(subagentHeld, release)
+		s.Require().NoError(s.agent.Say(s.ctx, "Bear with me."))
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
+		s.Zero(countOf[Turn](s.reported()), "the caller's turn was timed to a line nobody said for it")
+		time.AfterFunc(subagentHeld, release)
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	s.GreaterOrEqual(turn.RoundtripMs, float64(subagentHeld.Milliseconds()), "timed to the line said on its own")
-	s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		s.GreaterOrEqual(turn.RoundtripMs, float64(subagentHeld.Milliseconds()), "timed to the line said on its own")
+		s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+	})
 }
 
 // Catches a caller turn left waiting, or timed to an answer, once the caller spoke again
 // before hearing one: what is said next answers the newer turn.
 func (s *AgentSuite) TestACallerTurnSpokenOverBeforeItsAnswerIsNotObserved() {
-	before := turnLatencies(pipelineCascade)
-	participant, _ := s.handsOverInSilence()
-	first := s.callerTurn()
+	s.onFakeClock(func() {
+		before := turnLatencies(pipelineCascade)
+		participant, _ := s.handsOverInSilence()
+		first := s.callerTurn()
 
-	s.says(participant, "and what is the time")
+		s.says(participant, "and what is the time")
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "both turns were never reported")
-	var unanswered, answered Turn
-	for _, event := range s.reported() {
-		if turn, ok := event.(Turn); ok && turn.TurnID == first {
-			unanswered = turn
-		} else if ok {
-			answered = turn
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "both turns were never reported")
+		var unanswered, answered Turn
+		for _, event := range s.reported() {
+			if turn, ok := event.(Turn); ok && turn.TurnID == first {
+				unanswered = turn
+			} else if ok {
+				answered = turn
+			}
 		}
-	}
-	s.Equal(first, unanswered.TurnID)
-	s.Zero(unanswered.RoundtripMs)
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["roundtrip"].count)
-	s.InDelta(answered.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+		s.Equal(first, unanswered.TurnID)
+		s.Zero(unanswered.RoundtripMs)
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+		s.InDelta(answered.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+	})
 }
 
 // Catches a caller turn still waiting for its answer lost when the call ends: it is reported,
 // without a wait, as the base reported it when its reply finished.
 func (s *AgentSuite) TestACallerTurnStillWaitingWhenTheCallEndsIsReportedUnobserved() {
-	before := turnLatencies(pipelineCascade)
-	s.handsOverInSilence()
-	turnID := s.callerTurn()
+	s.onFakeClock(func() {
+		before := turnLatencies(pipelineCascade)
+		s.handsOverInSilence()
+		turnID := s.callerTurn()
 
-	s.Require().NoError(s.agent.Close())
+		s.Require().NoError(s.agent.Close())
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was lost with the call")
-	turn, _ := firstOf[Turn](s.reported())
-	s.Equal(turnID, turn.TurnID)
-	s.Zero(turn.RoundtripMs)
-	for leg, series := range observedSince(pipelineCascade, before) {
-		s.Zero(series.count, leg)
-	}
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was lost with the call")
+		turn, _ := firstOf[Turn](s.reported())
+		s.Equal(turnID, turn.TurnID)
+		s.Zero(turn.RoundtripMs)
+		for leg, series := range observedSince(pipelineCascade, before) {
+			s.Zero(series.count, leg)
+		}
+	})
 }
 
 // Catches delegated work that came back before the reply that handed it over finished: the
 // caller still waits for the answer, which is said once the reply is done.
 func (s *AgentSuite) TestATurnWhoseDelegateAnsweredFirstIsObservedAtTheAnswer() {
-	s.delegates()
-	s.join(true)
-	s.model.reply = nil
-	s.model.then = []string{"That comes to 12.63."}
-	s.subagent.reply = []string{"It is 12.63."}
-	before := turnLatencies(pipelineCascade)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "what is 15% of 84.20")
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
-	turnID := s.model.requests()[0].ID
-	s.model.writes(turnID, `<ask skill="think">15% of 84.20</ask>`)
-	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	s.onFakeClock(func() {
+		s.delegates()
+		s.join(true)
+		s.model.reply = nil
+		s.model.then = []string{"That comes to 12.63."}
+		s.subagent.reply = []string{"It is 12.63."}
+		before := turnLatencies(pipelineCascade)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		s.says(participant, "what is 15% of 84.20")
+		s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply never started")
+		turnID := s.model.requests()[0].ID
+		s.model.writes(turnID, `<ask skill="think">15% of 84.20</ask>`)
+		s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
 
-	s.model.finishes(turnID)
+		s.model.finishes(turnID)
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	s.Require().Positive(turn.RoundtripMs, "the answer said after the reply ended the wait")
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["roundtrip"].count)
-	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		s.Require().Positive(turn.RoundtripMs, "the answer said after the reply ended the wait")
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+		s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+	})
 }
 
 // Catches a written turn that handed work over held back for an answer it can never hear:
@@ -482,62 +496,68 @@ func (s *AgentSuite) toolHeldInSilence(hold string) (saidAt time.Time, release f
 // Catches a caller turn that only called a tool timed past the hold line said while the tool
 // ran: that line is the first the caller heard.
 func (s *AgentSuite) TestACallerTurnThatOnlyCalledAToolIsObservedAtTheHoldLine() {
-	before := turnLatencies(pipelineCascade)
-	saidAt, release := s.toolHeldInSilence("Pulling up order twelve now.")
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the hold line was never said")
-	heldAt := time.Now()
+	s.onFakeClock(func() {
+		before := turnLatencies(pipelineCascade)
+		saidAt, release := s.toolHeldInSilence("Pulling up order twelve now.")
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the hold line was never said")
+		heldAt := time.Now()
 
-	time.AfterFunc(subagentHeld, release)
+		time.AfterFunc(subagentHeld, release)
 
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the answer never followed the hold line")
-	turn, ok := turnFor(s.reported(), s.callerTurn())
-	s.Require().True(ok, "the caller's turn was never reported")
-	s.Positive(turn.RoundtripMs)
-	s.LessOrEqual(turn.RoundtripMs, msBetween(saidAt, heldAt), "timed past the hold line")
-	s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the answer never followed the hold line")
+		turn, ok := turnFor(s.reported(), s.callerTurn())
+		s.Require().True(ok, "the caller's turn was never reported")
+		s.Positive(turn.RoundtripMs)
+		s.LessOrEqual(turn.RoundtripMs, msBetween(saidAt, heldAt), "timed past the hold line")
+		s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+	})
 }
 
 // Catches a caller turn that only called a tool, with no hold line, left out of the metric:
 // the tool's answer is the first the caller heard.
 func (s *AgentSuite) TestACallerTurnThatOnlyCalledAToolIsObservedAtTheToolsAnswer() {
-	before := turnLatencies(pipelineCascade)
-	_, release := s.toolHeldInSilence("")
-	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply that called the tool never finished")
-	s.Require().Zero(countOf[Turn](s.reported()), "the turn closed before the answer it waits on")
+	s.onFakeClock(func() {
+		before := turnLatencies(pipelineCascade)
+		_, release := s.toolHeldInSilence("")
+		s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply that called the tool never finished")
+		s.Require().Zero(countOf[Turn](s.reported()), "the turn closed before the answer it waits on")
 
-	time.AfterFunc(subagentHeld, release)
+		time.AfterFunc(subagentHeld, release)
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "both turns were never reported")
-	turn, ok := turnFor(s.reported(), s.callerTurn())
-	s.Require().True(ok)
-	s.GreaterOrEqual(turn.RoundtripMs, float64(subagentHeld.Milliseconds()), "timed before the tool's answer began")
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["roundtrip"].count)
-	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "both turns were never reported")
+		turn, ok := turnFor(s.reported(), s.callerTurn())
+		s.Require().True(ok)
+		s.GreaterOrEqual(turn.RoundtripMs, float64(subagentHeld.Milliseconds()), "timed before the tool's answer began")
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+		s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+	})
 }
 
 // Catches an update said while delegated work runs not taken for the end of the caller's
 // wait: it is the first line the caller heard.
 func (s *AgentSuite) TestADelegatedTurnIsObservedAtTheUpdateSaidWhileItRuns() {
-	s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
-	before := turnLatencies(pipelineCascade)
-	s.delegates()
-	held := make(chan struct{})
-	s.subagent.holdCreate = held
-	defer close(held)
-	s.join(true)
-	s.model.reply = []string{`<ask skill="think">work through the itinerary</ask>`}
-	s.model.composes = []string{"Still mapping out your itinerary."}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
+		before := turnLatencies(pipelineCascade)
+		s.delegates()
+		held := make(chan struct{})
+		s.subagent.holdCreate = held
+		defer close(held)
+		s.join(true)
+		s.model.reply = []string{`<ask skill="think">work through the itinerary</ask>`}
+		s.model.composes = []string{"Still mapping out your itinerary."}
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "please work through the itinerary")
+		s.says(participant, "please work through the itinerary")
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the update never ended the wait")
-	s.Zero(countOf[TaskSettled](s.reported()), "the work was still running")
-	turn, _ := firstOf[Turn](s.reported())
-	s.Positive(turn.RoundtripMs)
-	s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the update never ended the wait")
+		s.Zero(countOf[TaskSettled](s.reported()), "the work was still running")
+		turn, _ := firstOf[Turn](s.reported())
+		s.Positive(turn.RoundtripMs)
+		s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+	})
 }
 
 // Catches a reply read from a tool that calls another without a word held back like a caller's
@@ -632,44 +652,46 @@ func (s *AgentSuite) TestAScheduledTaskAnsweredWithWordsIsNotObserved() {
 // hears it and it does not end the caller's wait: the one observation is at the next voice's
 // audio. Catches the dropped audio taken as the turn's first audio.
 func (s *AgentSuite) TestLateAudioOfALostVoiceDoesNotEndTheCallersWait() {
-	s.replacement = newStubTTS(true)
-	started, release := make(chan struct{}), make(chan struct{})
-	s.replacement.startStarted, s.replacement.startRelease = started, release
-	opened := sync.OnceFunc(func() { close(release) })
-	defer opened()
-	s.join(true)
-	s.voice.silent = true
-	before := turnLatencies(pipelineCascade)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	saidAt := time.Now()
-	s.says(participant, "what is the capital of France")
-	s.eventually(func() bool {
-		sent := s.voice.spoken()
-		s.agent.mu.Lock()
-		defer s.agent.mu.Unlock()
-		return len(sent) > 0 && sent[len(sent)-1].Final && !s.agent.generating
-	}, "the whole reply never reached the voice")
-	turnID := s.callerTurn()
-	synthesis := s.voice.spoken()[0].ID
+	s.onFakeClock(func() {
+		s.replacement = newStubTTS(true)
+		started, release := make(chan struct{}), make(chan struct{})
+		s.replacement.startStarted, s.replacement.startRelease = started, release
+		opened := sync.OnceFunc(func() { close(release) })
+		defer opened()
+		s.join(true)
+		s.voice.silent = true
+		before := turnLatencies(pipelineCascade)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		saidAt := time.Now()
+		s.says(participant, "what is the capital of France")
+		s.eventually(func() bool {
+			sent := s.voice.spoken()
+			s.agent.mu.Lock()
+			defer s.agent.mu.Unlock()
+			return len(sent) > 0 && sent[len(sent)-1].Final && !s.agent.generating
+		}, "the whole reply never reached the voice")
+		turnID := s.callerTurn()
+		synthesis := s.voice.spoken()[0].ID
 
-	s.refusesVoice()
-	<-started
-	lateAt := time.Now()
-	s.voice.emitter.Send(tts.AudioChunk{
-		SynthesisID: synthesis,
-		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+		s.refusesVoice()
+		<-started
+		lateAt := time.Now()
+		s.voice.emitter.Send(tts.AudioChunk{
+			SynthesisID: synthesis,
+			Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+		})
+		// The next voice opens 200 ms after the late audio, so a wait ended by it is that much short.
+		time.Sleep(200 * time.Millisecond)
+		opened()
+
+		s.eventually(func() bool { _, ok := s.turnReported(turnID); return ok }, "the turn was never reported")
+		turn, _ := s.turnReported(turnID)
+		gained := observedSince(pipelineCascade, before)
+		s.Equal(uint64(1), gained["roundtrip"].count)
+		s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+		s.Greater(turn.RoundtripMs, msBetween(saidAt, lateAt)+150, "timed at the lost voice's unheard audio")
 	})
-	// The next voice opens 200 ms after the late audio, so a wait ended by it is that much short.
-	time.Sleep(200 * time.Millisecond)
-	opened()
-
-	s.eventually(func() bool { _, ok := s.turnReported(turnID); return ok }, "the turn was never reported")
-	turn, _ := s.turnReported(turnID)
-	gained := observedSince(pipelineCascade, before)
-	s.Equal(uint64(1), gained["roundtrip"].count)
-	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
-	s.Greater(turn.RoundtripMs, msBetween(saidAt, lateAt)+150, "timed at the lost voice's unheard audio")
 }
 
 // How far the work a native caller turn hands to the subagent has gone when its reply completes.
@@ -848,27 +870,29 @@ func (s *AgentSuite) TestANativeCallerTurnThatSpokeBeforeItDelegatedIsObservedOn
 // Catches an update said while the turn waits out its playout grace after a filler moving the
 // turn's first audio from the filler to the update (AI-2969 R1.4).
 func (s *AgentSuite) TestAnUpdateSaidWhileTheFillerWaitsOnTheTrackKeepsTheFillersWait() {
-	s.edgeFactory = func(base *loopbackEdge) Edge { return &markedEdge{loopbackEdge: base, neverTakes: true} }
-	s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
-	s.delegates()
-	held := make(chan struct{})
-	s.subagent.holdCreate = held
-	defer close(held)
-	s.join(true)
-	s.model.reply = []string{`One moment. <ask skill="think">work through the itinerary</ask>`}
-	s.model.composes = []string{"Still mapping out your itinerary."}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	saidAt := time.Now()
-	before := turnLatencies(pipelineCascade)
+	s.onFakeClock(func() {
+		s.edgeFactory = func(base *loopbackEdge) Edge { return &markedEdge{loopbackEdge: base, neverTakes: true} }
+		s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
+		s.delegates()
+		held := make(chan struct{})
+		s.subagent.holdCreate = held
+		defer close(held)
+		s.join(true)
+		s.model.reply = []string{`One moment. <ask skill="think">work through the itinerary</ask>`}
+		s.model.composes = []string{"Still mapping out your itinerary."}
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+		saidAt := time.Now()
+		before := turnLatencies(pipelineCascade)
 
-	s.says(participant, "please work through the itinerary")
+		s.says(participant, "please work through the itinerary")
 
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the filler never went out")
-	fillerAt := time.Now()
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the update never went out")
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	s.LessOrEqual(turn.RoundtripMs, msBetween(saidAt, fillerAt), "timed to the update, past the filler")
-	s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the filler never went out")
+		fillerAt := time.Now()
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the update never went out")
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		s.LessOrEqual(turn.RoundtripMs, msBetween(saidAt, fillerAt), "timed to the update, past the filler")
+		s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+	})
 }

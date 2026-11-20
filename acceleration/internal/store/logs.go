@@ -375,6 +375,10 @@ func safeLogDetails(details map[string]any) map[string]any {
 	}
 	return out
 }
+
+// agentLogLockSeed seeds the advisory lock every writer of a customer's logs draws its id under.
+const agentLogLockSeed = 731
+
 func (s *Store) RecordAgentLog(ctx context.Context, entry *AgentLog) error {
 	if entry.CustomerID == "" {
 		return errors.New("log customer required")
@@ -386,7 +390,7 @@ func (s *Store) RecordAgentLog(ctx context.Context, entry *AgentLog) error {
 	}
 	entry.IngestedAt = time.Now().UTC()
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 731))", entry.CustomerID); err != nil {
+		if err := lockUntilCommit(ctx, tx, entry.CustomerID, agentLogLockSeed); err != nil {
 			return err
 		}
 		_, err := tx.NewInsert().Model(entry).Exec(ctx)
@@ -420,7 +424,7 @@ func (s *Store) AgentLogs(ctx context.Context, f LogFilter) ([]AgentLog, error) 
 		q = q.Where("source IN (?)", bun.In(f.Sources))
 	}
 	if f.Search != "" {
-		q = q.Where("message ILIKE ?", "%"+strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(f.Search, `\`, `\\`), "%", `\%`), "_", `\_`)+"%")
+		q = q.Where("message ILIKE ?", "%"+likeEscaper.Replace(f.Search)+"%")
 	}
 	if !f.From.IsZero() {
 		q = q.Where("occurred_at >= ?", f.From)

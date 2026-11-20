@@ -508,7 +508,7 @@ module GetStream
         }.freeze,
         "getAgentStats" => {
           method: :get, path: "/v1/stats/agents",
-          path_params: [].freeze, query: %w[from to].freeze,
+          path_params: [].freeze, query: %w[from to agent].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1886,19 +1886,19 @@ module GetStream
           required: %w[type].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[agents calls channels chat_channels connectors created_at dispatch episode_cards floor_control greeting guardrail harness id image instructions keyterms knowledge_namespace left_out_connectors llm llm_fallbacks mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[agents calls channels chat_channels connectors created_at dispatch episode_cards floor_control greeting guardrail harness id image instructions keyterms knowledge_namespace left_out_connectors llm llm_fallbacks mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts ui_instructions updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[agents calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness image instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[agents calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness image instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts ui_instructions video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[agents calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness image instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[agents calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness image instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts ui_instructions video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
-          properties: %w[connection connector_id events name policy require_approval required sandbox timeout_ms tool_patterns tools].freeze,
+          properties: %w[connection connector_id events loading name output_retention policy require_approval required sandbox timeout_ms tool_patterns tools].freeze,
           required: %w[name connector_id connection tools].freeze, open: false
         }.freeze,
         "AgentConnectorSelection" => {
@@ -1942,12 +1942,8 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentStats" => {
-          properties: %w[peak_at peak_concurrent_sessions tool_calls tools].freeze,
-          required: %w[peak_concurrent_sessions peak_at tool_calls tools].freeze, open: false
-        }.freeze,
-        "AgentTools" => {
-          properties: %w[output_retention progressive].freeze,
-          required: [].freeze, open: false
+          properties: %w[avg_turns peak_at peak_concurrent_sessions sessions tool_calls tools].freeze,
+          required: %w[peak_concurrent_sessions peak_at sessions avg_turns tool_calls tools].freeze, open: false
         }.freeze,
         "AgentUser" => {
           properties: %w[include_phone_history phone phone_history_since user_id].freeze,
@@ -2386,7 +2382,7 @@ module GetStream
           required: %w[title instructions schedule].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description floor_control greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags team timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description floor_control greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags team timezone title tool_timeout_ms tools tts ui user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -2504,6 +2500,10 @@ module GetStream
         "Greeting" => {
           properties: %w[mode text].freeze,
           required: %w[text].freeze, open: false
+        }.freeze,
+        "GuardrailCheck" => {
+          properties: %w[allowed failed held_ms kind latency_ms mode model probability threshold].freeze,
+          required: %w[allowed kind latency_ms mode].freeze, open: false
         }.freeze,
         "GuestUser" => {
           properties: %w[custom expires_at id name refresh_secret token].freeze,
@@ -2706,7 +2706,7 @@ module GetStream
           required: %w[cost_micros id markdown status].freeze, open: false
         }.freeze,
         "OfferedTool" => {
-          properties: %w[description name parameters source tokens].freeze,
+          properties: %w[description loading name parameters source tokens].freeze,
           required: %w[name description tokens].freeze, open: false
         }.freeze,
         "OfferedTools" => {
@@ -3174,7 +3174,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[agents base_change calls channels chat_channels check_changes connectors dispatch floor_control greeting guardrail harness hash image instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[agents base_change calls channels chat_channels check_changes connectors dispatch floor_control greeting guardrail harness hash image instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts ui_instructions video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -3214,7 +3214,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
-          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
+          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks guardrail heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[started_at turn_id].freeze, open: false
         }.freeze,
         "ToolApprovalAnswer" => {
@@ -3225,13 +3225,21 @@ module GetStream
           properties: %w[allowed request_id summary tool_call_id turn_id type].freeze,
           required: %w[allowed request_id tool_call_id type].freeze, open: false
         }.freeze,
+        "ToolCallState" => {
+          properties: %w[approved_at display_title duration_ms error progress rejected_at started_at status tool tool_call_id turn_id type].freeze,
+          required: %w[type tool_call_id tool turn_id status started_at duration_ms].freeze, open: false
+        }.freeze,
+        "ToolGroup" => {
+          properties: %w[loading name output_retention tools].freeze,
+          required: %w[name tools].freeze, open: false
+        }.freeze,
         "ToolResultCommand" => {
           properties: %w[error output request_id tool_call_id turn_id type].freeze,
           required: %w[tool_call_id type].freeze, open: false
         }.freeze,
         "ToolStats" => {
-          properties: %w[avg_ms avg_tokens calls failed p99_ms tool].freeze,
-          required: %w[tool calls failed avg_tokens avg_ms p99_ms].freeze, open: false
+          properties: %w[avg_ms avg_tokens avg_turns_before_use calls definition_tokens failed loading p99_ms session_share sessions summary_tokens tool].freeze,
+          required: %w[tool calls failed sessions session_share avg_turns_before_use avg_tokens avg_ms p99_ms loading definition_tokens summary_tokens].freeze, open: false
         }.freeze,
         "TranscriptEntity" => {
           properties: %w[end_ms start_ms text type].freeze,

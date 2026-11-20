@@ -3,6 +3,7 @@ package alerts
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"maps"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -333,6 +335,20 @@ func (s *AlertsSuite) TestAnItemIsDescribedInTheMessageAndNowhereElse() {
 	s.Equal(map[string]string{"usage_alert": "missing", "source": "usage/test", "shard": "here", "item": "b"}, events[1].Tags)
 }
 
+func (s *AlertsSuite) TestASummaryFollowsTheNameInTheMessageAndNowhereElse() {
+	summarized := Condition{Name: "lost", Level: Warn, Summary: "rows were dropped",
+		Check: func(time.Time) (bool, map[string]any) { return true, nil }}
+
+	s.run(s.loop(time.Hour, time.Hour, summarized), 50*time.Millisecond)
+
+	events := s.sent()
+	s.Require().Len(events, 1)
+	s.Equal("usage alert: lost: rows were dropped", events[0].Message)
+	s.Equal(sentry.LevelError, events[0].Level, "a summary keeps the level")
+	s.Equal([]string{"usage_alert:lost"}, events[0].Fingerprint, "the alert keeps its Sentry issue")
+	s.Equal(map[string]string{"usage_alert": "lost", "source": "usage/test", "shard": "here"}, events[0].Tags)
+}
+
 // What a message was before a condition could describe its items.
 func (s *AlertsSuite) TestWithoutADescriptionTheMessagesAreAsTheyWere() {
 	missing := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_plain_total"}, []string{"model"})
@@ -346,4 +362,162 @@ func (s *AlertsSuite) TestWithoutADescriptionTheMessagesAreAsTheyWere() {
 	s.Require().Len(events, 2)
 	s.Equal("usage alert: missing a", events[0].Message)
 	s.Equal("usage alert: lost", events[1].Message)
+}
+
+// What a minute's limit lets out of a condition and an item condition that hold at every 15 s
+// tick for two minutes, two items of which one comes and goes, and one that never holds. The
+// expected events are what the loop sent on the base, before the counter.
+func (s *AlertsSuite) TestTheEventsSentAndTheirLimitAreAsTheyWere() {
+	start := time.Now()
+	now := start
+	ticks := 0
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	},
+		Condition{Name: "lost", Level: Page, Check: func(time.Time) (bool, map[string]any) { return true, nil }},
+		Condition{Name: "quiet", Level: Page, Check: func(time.Time) (bool, map[string]any) { return false, nil }},
+		Condition{Name: "missing", Level: Warn, Items: func(time.Time) map[string]map[string]any {
+			held := map[string]map[string]any{"a": nil}
+			if ticks%2 == 1 {
+				held["b"] = nil
+			}
+			return held
+		}},
+	)
+	for ; ticks <= 8; ticks++ {
+		now = start.Add(time.Duration(ticks) * 15 * time.Second)
+		loop.check()
+	}
+
+	var sent []string
+	for _, event := range s.sent() {
+		sent = append(sent, event.Fingerprint...)
+	}
+	s.Equal([]string{
+		"usage_alert:lost", "usage_missing:a", // 0 s
+		"usage_missing:b",                     // 15 s
+		"usage_alert:lost", "usage_missing:a", // 60 s
+		"usage_missing:b",                     // 75 s
+		"usage_alert:lost", "usage_missing:a", // 120 s
+	}, sent)
+}
+
+// clocked is a loop over conditions with a minute's limit, on a clock the test moves.
+func (s *AlertsSuite) clocked(now *time.Time, conditions ...Condition) *Loop {
+	return New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return *now },
+	}, conditions...)
+}
+
+// count reads the holds counter of an alert at a level. Each test names its alerts afresh:
+// the counter is the process's, which every test's loop adds to.
+func count(name string, level Level) float64 {
+	return testutil.ToFloat64(holds.WithLabelValues(name, string(level)))
+}
+
+func (s *AlertsSuite) TestTheCounterAddsOneAtEveryCheckTheConditionHoldsWhateverTheLimitSends() {
+	name := "held_" + rand.Text()
+	var held atomic.Bool
+	start := time.Now()
+	now := start
+	loop := s.clocked(&now, Condition{Name: name, Level: Page, Check: func(time.Time) (bool, map[string]any) { return held.Load(), nil }})
+
+	s.ticks(loop, &now, start, 0)
+	s.Equal(0.0, count(name, Page), "not held: the series is there, at 0")
+	held.Store(true)
+	s.ticks(loop, &now, start, 15*time.Second)
+	s.Equal(1.0, count(name, Page))
+	s.ticks(loop, &now, start, 30*time.Second)
+	s.Equal(2.0, count(name, Page), "held again, though the limit sends nothing")
+	held.Store(false)
+	s.ticks(loop, &now, start, 45*time.Second)
+	s.Equal(2.0, count(name, Page), "no longer held: the counter stays")
+	held.Store(true)
+	s.ticks(loop, &now, start, 60*time.Second)
+	s.Equal(3.0, count(name, Page))
+
+	s.Len(s.sent(), 1, "the limit let one event out")
+	s.Equal(0.0, count(name, Warn), "the series is the condition's level alone")
+}
+
+func (s *AlertsSuite) TestAConditionThatHoldsForOneCheckOnlyIsAnIncrease() {
+	name := "pulse_" + rand.Text()
+	var held atomic.Bool
+	start := time.Now()
+	now := start
+	loop := s.clocked(&now, Condition{Name: name, Level: Page, Check: func(time.Time) (bool, map[string]any) { return held.Load(), nil }})
+
+	s.ticks(loop, &now, start, 0)
+	before := count(name, Page)
+	held.Store(true)
+	s.ticks(loop, &now, start, 15*time.Second)
+	held.Store(false)
+	s.ticks(loop, &now, start, 30*time.Second, 45*time.Second)
+
+	s.Equal(1.0, count(name, Page)-before, "a scrape after the pulse sees it")
+}
+
+// A series that appears at its first hold has no earlier sample, so that first hold would not
+// be an increase.
+func (s *AlertsSuite) TestAConditionHasItsSeriesAt0BeforeItHolds() {
+	check := "checked_" + rand.Text()
+	items := "itemised_" + rand.Text()
+	now := time.Now()
+	loop := s.clocked(&now,
+		Condition{Name: check, Level: Page, Check: func(time.Time) (bool, map[string]any) { return false, nil }},
+		Condition{Name: items, Level: Page, Items: func(time.Time) map[string]map[string]any { return nil }},
+	)
+
+	loop.check()
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	exported := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "router_alert_holds_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "alert" {
+					exported[label.GetValue()] = metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	s.Contains(exported, check)
+	s.Contains(exported, items)
+	s.Equal(0.0, exported[check])
+}
+
+func (s *AlertsSuite) TestAWarningCountsAtItsLevel() {
+	name := "warned_" + rand.Text()
+	now := time.Now()
+	loop := s.clocked(&now, Condition{Name: name, Level: Warn, Check: func(time.Time) (bool, map[string]any) { return true, nil }})
+
+	loop.check()
+
+	s.Equal(1.0, count(name, Warn))
+	s.Equal(0.0, count(name, Page))
+}
+
+func (s *AlertsSuite) TestTheCounterOfAnItemConditionAddsTheNumberOfItemsItHoldsFor() {
+	name := "items_" + rand.Text()
+	held := map[string]map[string]any{"a": nil, "b": nil, "c": nil}
+	start := time.Now()
+	now := start
+	loop := s.clocked(&now, Condition{Name: name, Level: Page, Items: func(time.Time) map[string]map[string]any { return held }})
+
+	s.ticks(loop, &now, start, 0)
+	s.Equal(3.0, count(name, Page))
+	delete(held, "c")
+	s.ticks(loop, &now, start, 15*time.Second)
+	s.Equal(5.0, count(name, Page), "two items more, though the limit sends none of them")
+	held = nil
+	s.ticks(loop, &now, start, 30*time.Second)
+	s.Equal(5.0, count(name, Page), "no item held: nothing added")
+
+	s.Len(s.sent(), 3, "the limit let each item out once")
 }

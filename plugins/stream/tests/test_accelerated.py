@@ -920,33 +920,6 @@ class TestAccelerated:
         )
         assert seen[0].approved
 
-    async def test_a_function_tells_the_caller_how_it_is_going(
-        self, router: Router, joined: stream.Accelerated
-    ):
-        @joined.register_function(description="Search flights")
-        async def search(tool_call_context: ToolCallContext) -> str:
-            await tool_call_context.update("checking three airlines")
-            await tool_call_context.say("Still looking, one moment.")
-            return "found two"
-
-        await router.send(
-            {"type": "tool_call", "id": "call-4", "name": "search", "arguments": "{}"}
-        )
-
-        assert await router.answered() == {
-            "type": "tool_update",
-            "tool_call_id": "call-4",
-            "text": "checking three airlines",
-            "verbatim": False,
-        }
-        assert await router.answered() == {
-            "type": "tool_update",
-            "tool_call_id": "call-4",
-            "text": "Still looking, one moment.",
-            "verbatim": True,
-        }
-        assert (await router.answered())["output"] == "found two"
-
     async def test_a_held_call_is_not_cancelled_by_the_caller_talking_over(
         self, router: Router, joined: stream.Accelerated
     ):
@@ -1143,45 +1116,42 @@ class TestAccelerated:
         monkeypatch.chdir(tmp_path)
         return folder
 
-    async def test_joining_stores_the_directory_the_config_is_named_after(
+    async def test_joining_runs_on_the_stored_config_without_syncing_the_directory(
         self, router: Router, call: RemoteCall, john_dir
     ):
-        # Nobody called sync_agent: the directory is what the config is, so joining is
-        # what stores whatever it says now.
         pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
 
         await pipeline.join_remote(call)
         await pipeline.leave_remote()
 
-        assert router.synced is not None
-        assert router.synced["instructions"] == "Be brief."
+        assert router.synced is None
         assert router.created is not None
         assert router.created["config_id"] == "config-7"
 
-    async def test_joining_again_for_an_untouched_directory_stores_nothing(
-        self, router: Router, call: RemoteCall, john_dir
+    @pytest.mark.usefixtures("stream_credentials")
+    async def test_syncing_an_agent_stores_the_directory_its_config_is_named_after(
+        self, router: Router, john_dir
     ):
-        first = stream.Accelerated(config="john", url=router.url, customer_id="acme")
-        await first.join_remote(call)
-        await first.leave_remote()
-
-        router.synced = None
-        again = stream.Accelerated(config="john", url=router.url, customer_id="acme")
-        await again.join_remote(call)
-        await again.leave_remote()
-
-        assert router.synced is None, (
-            ".agent_sync should answer for a directory nothing has touched"
+        agent = Agent(
+            llm=stream.Accelerated(config="john", url=router.url, customer_id="acme"),
+            edge=getstream.Edge(),
+            agent_user=User(name="john"),
         )
 
-    async def test_a_config_name_nothing_is_stored_under_says_so(
+        await agent.sync()
+
+        assert router.synced is not None
+        assert router.synced["name"] == "john"
+        assert router.synced["instructions"] == "Be brief."
+
+    async def test_a_config_name_nothing_is_stored_under_says_to_sync_it(
         self, router: Router, call: RemoteCall
     ):
         pipeline = stream.Accelerated(
             config="nobody", url=router.url, customer_id="acme"
         )
 
-        with pytest.raises(RemotePipelineError, match="nobody"):
+        with pytest.raises(RemotePipelineError, match=r"'nobody'.*agent\.sync\(\)"):
             await pipeline.join_remote(call)
 
     async def test_a_session_the_router_refuses_is_raised_with_what_it_said(

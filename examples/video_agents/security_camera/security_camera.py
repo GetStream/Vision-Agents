@@ -6,9 +6,10 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, Runner
+from vision_agents.core import Agent
 from vision_agents.core.llm import ImageContent
 from vision_agents.core.llm.llm import jpeg_bytes
 from vision_agents.core.llm.remote import RemotePipelineError
@@ -188,7 +189,7 @@ class Camera:
             logger.info("not on a call, so nobody was told: %s", lines)
 
 
-async def create_agent(**kwargs) -> Agent:
+async def create_agent() -> Agent:
     known = Faces(FACES_FILE)
     objects = stream.DetectionProcessor(
         target="detection-open",
@@ -248,11 +249,16 @@ async def create_agent(**kwargs) -> Agent:
     return agent
 
 
-async def join_call(agent: Agent, call_id: str, **kwargs) -> None:
-    async with agent.join(call_id):
+async def main() -> None:
+    agent = await create_agent()
+    await agent.sync()
+    call = await agent.create_call("agent", str(uuid4()))
+    await agent.edge.open_demo(call)
+    async with agent.join(call):
         await agent.responses.create(
             "greet the user in one short sentence and say you are watching the door"
         )
+        await agent.finish()
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -262,4 +268,4 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 if __name__ == "__main__":
-    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
+    asyncio.run(main())

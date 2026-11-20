@@ -9,8 +9,10 @@
 //
 // It also says how the agent answers, which the app's settings choose: in Markdown, or with
 // interactive UI in A2UI or OpenUI. Writing an agent's config is server-side only, so this
-// rewrites the agent's instructions: instructions.md, and for a UI format what teaches the
-// model to write it with the app's components, a2ui/instructions.md or openui/instructions.md.
+// rewrites the agent's UI instructions: for a UI format what teaches the model to write it with
+// the app's components, a2ui/instructions.md or openui/instructions.md, and none for Markdown.
+// They are kept apart from instructions.md, so a conversation the app opens with ui false is
+// not told them, and is expected to answer in Markdown, since instructions.md teaches no UI.
 //
 // A demo has nobody signed in, so it acts for whichever user the phone names. A real one
 // would act for the user its own sign-in vouched for.
@@ -44,6 +46,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -173,24 +176,11 @@ func gmailSend(w http.ResponseWriter, r *http.Request) {
 
 // gmailConnections are the user's Gmail connections, newest first.
 func gmailConnections(ctx context.Context, user string) ([]acceleration.Connection, error) {
-	client, err := stream.Backend{ActingFor: user}.Client()
+	api, err := client.New(stream.Backend{})
 	if err != nil {
 		return nil, err
 	}
-	owner, connector := acceleration.ConnectionOwnerTypeUser, gmail
-	listed, err := client.ListConnectionsWithResponse(ctx, &acceleration.ListConnectionsParams{
-		OwnerType: &owner, ConnectorId: &connector,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if listed.JSON200 == nil {
-		return nil, errors.New(refused("listing Gmail connections", listed.StatusCode(), listed.Body))
-	}
-	if listed.JSON200.Items == nil {
-		return nil, nil
-	}
-	return *listed.JSON200.Items, nil
+	return api.Connections().List(ctx, client.ConnectionFilter{UserID: user, Connector: gmail})
 }
 
 // connectedOne is the first of connections that is connected, or nil.
@@ -205,7 +195,7 @@ func connectedOne(connections []acceleration.Connection) *acceleration.Connectio
 
 // proxy posts body to path under the connection's api_base, as the user's backend.
 func proxy(ctx context.Context, user, connection, path string, body any) ([]byte, error) {
-	resolved, err := stream.Backend{ActingFor: user}.Resolve()
+	resolved, err := stream.Backend{}.Resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +203,7 @@ func proxy(ctx context.Context, user, connection, path string, body any) ([]byte
 	if err != nil {
 		return nil, err
 	}
+	credentials.Set(stream.UserHeader, user)
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -261,8 +252,8 @@ func plainMail(to, subject, body string) ([]byte, error) {
 	return message.Bytes(), nil
 }
 
-// replyFormat answers with how the agent answers: the UI format its instructions teach it, or
-// markdown when they teach it none.
+// replyFormat answers with how the agent answers: the UI format its UI instructions teach it,
+// or markdown when it has none.
 func replyFormat(agent *agents.Agent) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, config, err := agentConfig(r.Context(), agent)
@@ -272,7 +263,7 @@ func replyFormat(agent *agents.Agent) http.HandlerFunc {
 		}
 		format := markdown
 		for id, name := range uiFormats {
-			if config.Instructions != nil && strings.Contains(*config.Instructions, "\n"+uiHeading(name)+"\n") {
+			if config.UiInstructions != nil && strings.HasPrefix(*config.UiInstructions, uiHeading(name)+"\n") {
 				format = id
 			}
 		}
@@ -291,7 +282,7 @@ func setReplyFormat(agent *agents.Agent, dir string) http.HandlerFunc {
 			http.Error(w, "a format is required: markdown, a2ui or openui", http.StatusBadRequest)
 			return
 		}
-		instructions, err := instructionsFor(dir, asked.Format)
+		ui, err := uiInstructionsFor(dir, asked.Format)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -303,38 +294,35 @@ func setReplyFormat(agent *agents.Agent, dir string) http.HandlerFunc {
 			return
 		}
 		patched, err := client.PatchAgentConfigWithResponse(ctx, config.Id,
-			acceleration.PatchAgentConfigJSONRequestBody{Instructions: &instructions})
+			acceleration.PatchAgentConfigJSONRequestBody{UiInstructions: &ui})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		if patched.JSON200 == nil {
-			http.Error(w, refused("changing the agent's instructions", patched.StatusCode(), patched.Body), http.StatusBadGateway)
+			http.Error(w, refused("changing the agent's UI instructions", patched.StatusCode(), patched.Body), http.StatusBadGateway)
 			return
 		}
 		answer(w, map[string]string{"format": asked.Format})
 	}
 }
 
-// instructionsFor are what the agent is told to answer in format: instructions.md, and for a UI
-// format what teaches the model to write it, generated from the app's components by the
-// format's prompt writer (a2ui-prompt or openui-prompt).
-func instructionsFor(dir, format string) (string, error) {
-	told, err := os.ReadFile(filepath.Join(dir, "instructions.md"))
-	if err != nil {
-		return "", err
-	}
+// uiInstructionsFor teach the agent to answer in format: for a UI format what teaches the model
+// to write it, generated from the app's components by the format's prompt writer (a2ui-prompt
+// or openui-prompt), and nothing for Markdown, which an empty string stores.
+func uiInstructionsFor(dir, format string) (string, error) {
 	if format == markdown {
-		return string(told), nil
+		return "", nil
 	}
 	ui, err := os.ReadFile(filepath.Join(dir, format, "instructions.md"))
 	if err != nil {
 		return "", err
 	}
-	return string(told) + "\n\n" + uiHeading(uiFormats[format]) + "\n\n" + string(ui), nil
+	return uiHeading(uiFormats[format]) + "\n\n" + string(ui), nil
 }
 
-// uiHeading introduces what teaches the agent a UI format, and is how its instructions say which.
+// uiHeading introduces what teaches the agent a UI format, and is how its UI instructions say
+// which.
 func uiHeading(name string) string {
 	return "## Interactive UI in " + name
 }

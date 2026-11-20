@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
@@ -179,6 +180,37 @@ func (s *RecordSuite) TestItemsKeepTheOrderTheyHappenedIn() {
 	for i, item := range s.held.items {
 		s.Equal(i, item.Ordinal, "the writer assigns the position, not the database")
 	}
+}
+
+func (s *RecordSuite) TestACallRecordsWhatItsToolsDefinitionAndItsUseCost() {
+	spec := Spec{ToolGroups: []store.ToolGroup{{Name: "orders", Loading: store.ToolLoadingSummary, Tools: []string{"lookup_order"}}}}
+	s.session.spec = spec
+	s.session.loading = newToolLoading(spec)
+	s.session.otherTools = []harness.Tool{{
+		Name: "lookup_order",
+		Description: "Finds an order.\n\nPass the order number exactly as the customer said it, " +
+			"with its letters, and never guess one.",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{
+			"order": map[string]any{"type": "string", "description": "The order number, such as A-1042."},
+		}},
+	}}
+	s.took(
+		agent.Responding{TurnID: "turn-1", Prompt: "Where is A-1042?"},
+		agent.ToolStarted{TurnID: "turn-1", ID: "call-1", Tool: "lookup_order"},
+		agent.ToolRan{TurnID: "turn-1", ID: "call-1", Tool: "lookup_order",
+			Arguments: `{"order":"A-1042"}`, Result: "shipped on Monday"},
+		agent.ToolStarted{TurnID: "turn-1", ID: "call-2", Tool: "end_call"},
+		agent.Responded{TurnID: "turn-1", Text: "It shipped on Monday."},
+	)
+
+	call, result, builtIn := s.held.items[1].Payload, s.held.items[2].Payload, s.held.items[3].Payload
+	s.Equal(store.ToolLoadingSummary, call["loading"])
+	whole, summary := call["definition_tokens"].(int64), call["summary_tokens"].(int64)
+	s.Positive(summary)
+	s.Greater(whole, summary, "the summary leaves out the description's detail and the schema's words")
+	// lookup_order, {"order":"A-1042"} and shipped on Monday are 12, 18 and 17 bytes: 3, 5 and 5 tokens.
+	s.EqualValues(13, result["tokens"])
+	s.NotContains(builtIn, "definition_tokens", "a tool the session does not describe has nothing to weigh")
 }
 
 // The tool_ran frame of a failed tool is redacted (sessionws errorText); the tool_result item
@@ -605,7 +637,8 @@ func (s *RecordSuite) TestAToolOutputRetentionOfNoneRecordsNoneOfIt() {
 	s.Equal(store.ItemToolResult, result.Kind)
 	s.Equal("orders", result.ToolName)
 	s.Empty(result.Text)
-	s.Equal(map[string]any{"call_id": "call-1", "error": "redacted", "redacted": true}, result.Payload)
+	// What the call cost in tokens is a count tool usage reads, not what the tool was given.
+	s.Equal(map[string]any{"call_id": "call-1", "error": "redacted", "redacted": true, "tokens": int64(14)}, result.Payload)
 	s.Nil(result.RedactAt, "nothing is left to redact later")
 	s.Equal("It ships tomorrow.", s.held.items[4].Text)
 }

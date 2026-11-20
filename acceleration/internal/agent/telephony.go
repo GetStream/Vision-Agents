@@ -639,7 +639,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	delete(a.refusedCalls, requested.Call.ID)
 	a.mu.Unlock()
 	// ran is whether the tool was called: the router refuses some calls itself, before it.
-	var ran bool
+	// asked is whether it was answered with its approval question instead.
+	var ran, asked bool
 	// What the caller said and the tools returned is checked against the whole call, not the
 	// history the model reads: compaction summarises that, and a value it summarised away
 	// was still said or returned.
@@ -678,7 +679,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		said, err = a.generateImage(ctx, requested.Call)
 		parts = llm.TextParts(said)
 	} else if question := a.approvalQuestion(tool); question != "" {
-		parts = a.askApproval(requested.Call, question)
+		parts, asked = a.askApproval(requested.Call, question), true
 	} else {
 		ran = true
 		parts, left, err = a.callTool(ctx, requested.Call)
@@ -724,6 +725,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		Result:    result,
 		Files:     files,
 		Err:       err,
+		Asked:     asked,
 	})
 	// A native model is answered on its own session and carries on by itself; there is no
 	// follow-up turn to queue because the model speaks the moment it has the result.
@@ -898,6 +900,11 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		return llm.TextParts(result), false, err
 	}
 
+	if slices.Contains(harness.DeferredToolNames, call.Name) && a.defers() {
+		result, err := a.runDeferred(call)
+		return llm.TextParts(result), false, err
+	}
+
 	if a.options.ToolRunner == nil {
 		return nil, false, fmt.Errorf("agent: %s is not a tool this agent can run", call.Name)
 	}
@@ -973,6 +980,8 @@ func (a *Agent) availableTools() harness.Tools {
 	if draws {
 		available.Tools = append(available.Tools, generateImageTool())
 	}
+	// Last, so a tool the model loads is added after everything it was offered before.
+	available.Tools = append(available.Tools, a.offeredDeferred()...)
 	return available
 }
 
@@ -1342,7 +1351,7 @@ func (a *Agent) resolveToolLocked(call llm.ToolCall, parts []llm.ContentPart, ho
 		}
 		if hold.answered {
 			// On the caller's side for the provider's sake, and said by nobody on the call.
-			message = llm.Message{Role: llm.User, Typed: true}
+			message = llm.Message{Role: llm.User, Typed: true, Router: true}
 			parts = append(llm.TextParts(fmt.Sprintf(lateResult, call.Name, call.ID)), parts...)
 			late = true
 		}
