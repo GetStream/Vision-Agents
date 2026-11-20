@@ -39,8 +39,9 @@ base {
 }
 
 // .github/workflows/publish-sdk-kotlin.yml publishes this to the Stream repository: Gradle signs
-// and stages a Maven tree under build/staged-repo, and a job that never holds the signing key
-// uploads it. The version is gradle.properties' unless the workflow passes -Pversion.
+// and stages a Maven tree under build/staged-repo, and a second job uploads it. Both jobs run in
+// the `release` environment; the tests run in a job outside it. The version is gradle.properties'
+// unless the workflow passes -Pversion.
 publishing {
     publications {
         register<MavenPublication>("release") {
