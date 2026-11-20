@@ -2,6 +2,10 @@
 
 ## Features
 
+### Usage alerts are a counter on /metrics
+
+The router and the usage service add to `router_alert_holds_total{alert,level}` at every check of their alerts: 1 when a condition holds, or the number of items a condition of items holds for, and nothing when it does not. It counts whether or not the Sentry limit sends the event, so a monitor outside Sentry can page on `increase(...{level="page"}[5m]) > 0`, including for a condition that holds at one check only. A hold at the last check, on shutdown, or during a drain reaches Sentry only. The Sentry events and their limit are unchanged (AI-3424).
+
 ### The Python, Go, Ruby and Rust SDKs refuse a user on a device's connections call
 
 A client that holds a user's token (`as_user`, `SetUser`) and names `user_id` on a connections call now fails at once with the SDK's configuration error, the way the JavaScript and PHP SDKs do, instead of sending the call for the router's 403. A device acts only as its own user: name the user from a backend that holds the API secret. A call naming no user, and a client on a router that trusts the customer id, work as before. A Go `Backend` with the API secret and a `UserID` that names another user on a connections call now acts for that user with the app's token, as the other SDKs do, instead of signing a token for its own user that the proxy refused.
