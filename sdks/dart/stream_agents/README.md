@@ -83,9 +83,18 @@ final agents = StreamAgents(
 ### Start a conversation
 
 ```dart
-final session = await agents.agent('support').chat();
+final session = await agents.agent('support').sessions.create();
 await session.responses.create('What are your opening hours?');
 ```
+
+`sessions.create` opens the session and follows it: it returns once the socket is open, so the
+device's tools are answered from the first turn. `SessionOptions(startVoice: true)` puts the agent
+on the session's call instead of holding it in writing. `chat()` and `voice()` are the same call
+with `startVoice` false and true.
+
+`SessionOptions(watch: false)` opens it without a socket, for a caller reading and writing turns
+over HTTP alone: no tool is declared, turns go in through `responses.create` and are read back
+from `responses.items`, and `say`, `interrupt`, `events` and `addTools` throw a `StateError`.
 
 `session.conversation` is a `LiveValue<Conversation>`: the current transcript and what the
 agent is doing, plus a stream of every change. A widget renders it with a `StreamBuilder`:
@@ -111,10 +120,29 @@ final lookup = AgentTool(
   run: (arguments) async => orders.find('${arguments['order_id']}'),
 );
 
-final session = await agents.agent('support').chat(SessionOptions(tools: [lookup]));
+final session = await agents.agent('support').sessions.create(SessionOptions(tools: [lookup]));
 ```
 
 The agent only sees what the tool returns.
+
+Dart has no reflection, so to read the arguments into a class of your own, give the tool its
+`fromJson`. The model is still shown `parameters`; arguments that do not read, such as a missing
+one, tell the model the tool failed, as a `run` that throws does:
+
+```dart
+class WeatherLookup {
+  WeatherLookup.fromJson(Map<String, Object?> json) : location = json['location']! as String;
+  final String location;
+}
+
+final weatherLookup = AgentTool.typed<WeatherLookup>(
+  name: 'weather_lookup',
+  description: 'Look up the current weather for a location',
+  parameters: AgentTool.strings({'location': 'a city or region'}, required: ['location']),
+  fromJson: WeatherLookup.fromJson,
+  run: (lookup) => weather.today(lookup.location),
+);
+```
 
 A running session takes more tools, such as the ones a card shown in it brings, and gives them
 back. The model is offered the change from the next turn, once the reply in progress and its tool

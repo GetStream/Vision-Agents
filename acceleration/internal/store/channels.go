@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -288,13 +290,21 @@ func (s *Store) ClaimChannelLink(ctx context.Context, customerID, code string) (
 // ErrUnknownChannelLink is a code nobody was given, one already spent, or one past its time.
 var ErrUnknownChannelLink = errors.New("store: there is no such code")
 
+// channelDelivery is one message a line was delivered (ClaimChannelMessage).
+type channelDelivery struct {
+	bun.BaseModel `bun:"table:channel_deliveries,alias:cdel"`
+
+	AccountID   string    `bun:"account_id,pk"`
+	MessageID   string    `bun:"message_id,pk"`
+	ReceivedAt  time.Time `bun:"received_at,notnull"`
+	FromAddress string    `bun:"from_address,notnull"`
+}
+
 // ClaimChannelMessage records a message as delivered, and who sent it. False is one
 // already taken, which a provider retrying a slow delivery sends.
 func (s *Store) ClaimChannelMessage(ctx context.Context, accountID, messageID, from string) (bool, error) {
-	result, err := s.db.NewRaw(
-		"INSERT INTO channel_deliveries (account_id, message_id, received_at, from_address) "+
-			"VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
-		accountID, messageID, time.Now().UTC(), from).Exec(ctx)
+	delivery := channelDelivery{AccountID: accountID, MessageID: messageID, ReceivedAt: time.Now().UTC(), FromAddress: from}
+	result, err := s.db.NewInsert().Model(&delivery).On("CONFLICT DO NOTHING").Exec(ctx)
 	if err != nil {
 		return false, fmt.Errorf("store: claim channel message: %w", err)
 	}
@@ -309,10 +319,12 @@ func (s *Store) ClaimChannelMessage(ctx context.Context, accountID, messageID, f
 // they never have. WhatsApp's window for writing first is counted from it.
 func (s *Store) LastChannelMessageAt(ctx context.Context, accountID, from string) (time.Time, error) {
 	var received time.Time
-	err := s.db.NewRaw(
-		"SELECT received_at FROM channel_deliveries "+
-			"WHERE account_id = ? AND from_address = ? ORDER BY received_at DESC LIMIT 1",
-		accountID, from).Scan(ctx, &received)
+	err := s.db.NewSelect().Model((*channelDelivery)(nil)).
+		Column("received_at").
+		Where("account_id = ? AND from_address = ?", accountID, from).
+		OrderExpr("received_at DESC").
+		Limit(1).
+		Scan(ctx, &received)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, nil
 	}

@@ -52,6 +52,24 @@ func (s *DisplaySuite) TestAHeldCallsQuestionIsWrittenToChat() {
 	s.Contains(s.raw(receipt.AssistantMessageID), "awaiting_approval")
 }
 
+// The question of a tool that asks first is written to Chat as soon as the call waits, as a
+// held connector call's is, and so is the answer: an app reopened while the call waits reads the
+// question there, and one reopened after the answer is not asked again.
+func (s *DisplaySuite) TestAToolsQuestionAndAnswerAreWrittenToChat() {
+	c := s.open("on_call")
+	c.DescribeTools(map[string]ToolDisplay{"issue_refund": {Approval: &ToolApproval{Title: "Refund this order?"}}})
+	receipt, err := c.BeginCommand("command-a", "Refund order 42", "")
+	s.Require().NoError(err)
+
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "issue_refund", Arguments: `{}`, StartedAt: time.Now().UTC()})
+	saved(s.T(), c)
+	s.Contains(s.raw(receipt.AssistantMessageID), "awaiting_approval")
+
+	c.Observe(agent.ToolApprovalDecided{ID: "call-1", Allowed: true})
+	saved(s.T(), c)
+	s.NotContains(s.raw(receipt.AssistantMessageID), "awaiting_approval")
+}
+
 // A call the config shows already has its step, which then waits rather than a second one.
 func (s *DisplaySuite) TestAShownCallWaitsOnTheStepItHas() {
 	c := s.open("on_call")

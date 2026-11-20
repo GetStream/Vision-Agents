@@ -301,8 +301,11 @@ type Agent struct {
 	switching atomic.Bool
 	// swapping serialises swaps.
 	swapping sync.Mutex
-	// toolsMu guards options.Tools, which SetTools replaces while turns read it.
+	// toolsMu guards options.Tools, which SetTools replaces while turns read it, and
+	// loadedTools.
 	toolsMu sync.RWMutex
+	// loadedTools are the deferred tools the model loaded with load_tool, in the order it did.
+	loadedTools []string
 
 	llm *llmrouter.Session
 	// replies is where every reply in flight is fanned in to, so the one goroutine that
@@ -4708,6 +4711,7 @@ func turnOf(synthesisID string) string {
 // so the people already heard keep their labels when a session switches between voice and
 // writing.
 func (a *Agent) Continue(previous *Agent) {
+	a.offerLoaded(previous.loaded())
 	previous.mu.Lock()
 	history := append([]llm.Message(nil), previous.history...)
 	compactedAway := append([]llm.Message(nil), previous.compactedAway...)
@@ -4734,6 +4738,7 @@ func (a *Agent) Continue(previous *Agent) {
 // The authors of turns read back from a thread channel are counted as speakers, in the order
 // they first wrote, and once two have written each of their turns goes under its label.
 func (a *Agent) RestoreHistory(history []llm.Message) {
+	a.offerLoaded(loadedIn(history))
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = append([]llm.Message(nil), history...)

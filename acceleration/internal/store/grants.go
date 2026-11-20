@@ -402,12 +402,17 @@ func addGrantUses(ctx context.Context, tx bun.Tx, uses []GrantUse) (int, error) 
 	for i, use := range uses {
 		grants[i], usageIDs[i], micros[i] = use.GrantID, use.UsageID.String(), use.Micros
 	}
-	if _, err := tx.ExecContext(ctx, "SELECT id FROM limit_grants WHERE id = ANY(?::bigint[]) ORDER BY id FOR UPDATE",
-		pgdialect.Array(slices.Compact(slices.Sorted(slices.Values(grants))))); err != nil {
+	_, err := tx.NewSelect().Model((*LimitGrant)(nil)).
+		Column("lg.id").
+		Where("lg.id = ANY(?::bigint[])", pgdialect.Array(slices.Compact(slices.Sorted(slices.Values(grants))))).
+		Order("lg.id").
+		For("UPDATE").
+		Exec(ctx)
+	if err != nil {
 		return 0, err
 	}
 	var added int
-	err := tx.NewRaw(`
+	err = tx.NewRaw(`
 WITH sent AS (
     SELECT * FROM unnest(?::bigint[], ?::uuid[], ?::bigint[]) AS s (grant_id, usage_id, micros)
 ), counted AS (
@@ -447,6 +452,24 @@ DELETE FROM limit_grant_uses WHERE (grant_id, usage_id) IN (
 	}
 }
 
+// grantUse is one row counted toward a grant (limit_grant_uses).
+type grantUse struct {
+	bun.BaseModel `bun:"table:limit_grant_uses,alias:lgu"`
+
+	GrantID int64     `bun:"grant_id,pk"`
+	UsageID uuid.UUID `bun:"usage_id,pk,type:uuid"`
+	Micros  int64     `bun:"micros,notnull"`
+}
+
+// grantReconcile is where a shard's reconcile of grant uses got (limit_grant_reconciles).
+type grantReconcile struct {
+	bun.BaseModel `bun:"table:limit_grant_reconciles,alias:lgr"`
+
+	Shard     string    `bun:"shard,pk"`
+	StartedAt time.Time `bun:"started_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
+}
+
 // GrantUsesCounted is, of the rows named by usage id, how many grants each counts toward.
 func (s *Store) GrantUsesCounted(ctx context.Context, usageIDs []uuid.UUID) (map[uuid.UUID]int, error) {
 	counted := map[uuid.UUID]int{}
@@ -461,8 +484,12 @@ func (s *Store) GrantUsesCounted(ctx context.Context, usageIDs []uuid.UUID) (map
 		UsageID uuid.UUID `bun:"usage_id"`
 		Grants  int       `bun:"grants"`
 	}
-	err := s.db.NewRaw("SELECT usage_id, count(*) AS grants FROM limit_grant_uses WHERE usage_id = ANY(?::uuid[]) GROUP BY usage_id",
-		pgdialect.Array(ids)).Scan(ctx, &rows)
+	err := s.db.NewSelect().Model((*grantUse)(nil)).
+		Column("usage_id").
+		ColumnExpr("count(*) AS grants").
+		Where("usage_id = ANY(?::uuid[])", pgdialect.Array(ids)).
+		Group("usage_id").
+		Scan(ctx, &rows)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: grant uses counted: %w", err))
 	}
@@ -536,7 +563,7 @@ const reconcileGrantsQuery = "SELECT id, started_at, usage_id, cost_micros, limi
 // reconcileShard is ReconcileGrantUses for one shard, read up to now.
 func (s *Store) reconcileShard(ctx context.Context, shard bun.IDB, name string, now time.Time) (int, error) {
 	var mark time.Time
-	err := s.db.NewRaw("SELECT started_at FROM limit_grant_reconciles WHERE shard = ?", name).Scan(ctx, &mark)
+	err := s.db.NewSelect().Model((*grantReconcile)(nil)).Column("started_at").Where("shard = ?", name).Scan(ctx, &mark)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("shard %s: %w", name, err)
 	}
@@ -577,9 +604,13 @@ func (s *Store) reconcileShard(ctx context.Context, shard bun.IDB, name string, 
 				reached = last.StartedAt
 			}
 		}
-		if _, err := s.db.NewRaw("INSERT INTO limit_grant_reconciles (shard, started_at) VALUES (?, ?) "+
-			"ON CONFLICT (shard) DO UPDATE SET started_at = GREATEST(limit_grant_reconciles.started_at, EXCLUDED.started_at), updated_at = now()",
-			name, reached).Exec(ctx); err != nil {
+		_, err = s.db.NewInsert().Model(&grantReconcile{Shard: name, StartedAt: reached}).
+			Column("shard", "started_at").
+			On("CONFLICT (shard) DO UPDATE").
+			Set("started_at = GREATEST(lgr.started_at, EXCLUDED.started_at)").
+			Set("updated_at = now()").
+			Exec(ctx)
+		if err != nil {
 			return counted, fmt.Errorf("shard %s: keep where it got: %w", name, err)
 		}
 		if len(rows) < grantReconcilePage {

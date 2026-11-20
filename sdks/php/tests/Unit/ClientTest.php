@@ -32,6 +32,16 @@ final class ClientTest extends TestCase
         $this->router->stop();
     }
 
+    public function testAClientActingForAUserSharesTheAppsTools(): void
+    {
+        $client = $this->router->client();
+        $client->tools->register('weather_lookup', 'The weather somewhere', [], static fn (array $args): string => 'sunny');
+
+        $user = $client->asUser('ada', 'token');
+
+        self::assertSame(['weather_lookup'], array_map(static fn ($tool): string => $tool->name, $user->tools->declared()));
+    }
+
     public function testNamingNoRouterGoesToTheHostedOneThroughTheProxy(): void
     {
         $saved = getenv(Backend::URL_ENV);

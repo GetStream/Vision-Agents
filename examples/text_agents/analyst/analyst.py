@@ -35,6 +35,7 @@ which months went backwards?
 
 async def main() -> None:
     agent = Agent(config="analyst")
+    await agent.sync()
 
     async with agent.chat():
         async for event in agent.ask(QUESTION.strip()):

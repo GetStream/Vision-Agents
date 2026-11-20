@@ -35,14 +35,18 @@ module GetStream
       # Creating a session returns once the agent is in the call, which can take seconds.
       READ_TIMEOUT = 60
 
-      attr_reader :backend
+      # The app's tools, registered once for every agent and run by #run_dispatch. An agent is
+      # offered one only where a tool group of its agent.yaml names it.
+      attr_reader :backend, :tools
 
       # @param backend [Backend] one already built, instead of building one from the options.
+      # @param tools [Tools] the app's tools, shared with a client this one is derived from.
       # @param options the Backend options: url, customer_id, api_key, api_secret, token,
       #   user_id and authenticate, each falling back to the environment, and the team and
       #   usage_categories the work is counted against.
-      def initialize(backend: nil, **options)
+      def initialize(backend: nil, tools: nil, **options)
         @backend = backend || Backend.new(**options)
+        @tools = tools || Tools.new
       end
 
       def get(template, path: {}, query: {}, user_id: nil)
@@ -89,7 +93,7 @@ module GetStream
       # credential and one per user, and switching the user on a shared client would make
       # which user a request was for depend on when it happened to run.
       def as_user(user, token)
-        Client.new(backend: @backend.as_user(user, token))
+        Client.new(backend: @backend.as_user(user, token), tools: @tools)
       end
 
       # A client acting for a guest, which is what their conversations belong to.
@@ -131,6 +135,20 @@ module GetStream
       # An agent addressed by the name it is configured under. No request is made.
       def agent(name, **options)
         Agent.new(config: name, client: self, **options)
+      end
+
+      # Runs the app's #tools for every session they are offered to, whoever opened it, until
+      # the socket closes. A tool's own timeout is how long the router waits for one of its
+      # calls; without one it waits 30 seconds. A worker that also answers calls or messages
+      # hosts the tools with Dispatch#host instead.
+      #
+      #   client = GetStream::VisionAgents::Client.new
+      #   client.tools.register("lookup_order", description: "An order by id") { |args| orders.find(args["id"]) }
+      #   client.run_dispatch
+      #
+      # @raise [Error] when the router refuses the tools.
+      def run_dispatch
+        Dispatch.new(client: self).host(self).run
       end
 
       # Routes through a stored router config, named by what it was stored under or by its

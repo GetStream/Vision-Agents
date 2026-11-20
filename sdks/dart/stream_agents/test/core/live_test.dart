@@ -212,7 +212,7 @@ void main() {
               returnUrl: 'io.getstream.visionagents.flutterassistant:/connected',
             ),
           );
-          await sessions.delete(session.id);
+          await session.delete();
 
           await expectLater(
             sessions.create(const SessionOptions(returnUrl: 'flutterassistant:/connected')),

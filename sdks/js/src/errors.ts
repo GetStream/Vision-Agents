@@ -66,15 +66,12 @@ export class SocketClosedError extends Error {
  * again would only be told the same thing.
  */
 export class HostingRefusedError extends Error {
-  /** The agent the tools were offered for. */
-  readonly agentId: string;
   /** Why the router said no. */
   readonly reason: string;
 
-  constructor(agentId: string, reason: string) {
-    super(`the router refused to host tools for agent ${agentId}: ${reason}`);
+  constructor(reason: string) {
+    super(`the router refused to host tools: ${reason}`);
     this.name = "HostingRefusedError";
-    this.agentId = agentId;
     this.reason = reason;
   }
 }

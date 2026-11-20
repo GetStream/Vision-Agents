@@ -309,24 +309,22 @@ func (s *Store) ClaimEpisodeSummaries(ctx context.Context, now time.Time, limit 
 	return claimed, nil
 }
 
-// finishEpisodeSummaryQuery sets an ended episode's status and drops its lease, in one
-// statement.
-const finishEpisodeSummaryQuery = `
-WITH finished AS (
-    UPDATE episodes SET status = ?
-    WHERE customer_id = ? AND id = ? AND status = 'ended'
-    RETURNING id
-)
-UPDATE episode_activity AS act SET summary_lease_until = NULL
-FROM finished WHERE act.episode_id = finished.id`
-
 // FinishEpisodeSummary sets an ended episode summarized or summary_failed and drops its
 // lease. An episode no longer ended, finished already, is left as it is.
 func (s *Store) FinishEpisodeSummary(ctx context.Context, customerID, id, status string) error {
 	if status != EpisodeSummarized && status != EpisodeSummaryFailed {
 		return stack.Wrap(fmt.Errorf("store: %q is not a status a summary finishes with", status))
 	}
-	_, err := s.db.NewRaw(finishEpisodeSummaryQuery, status, customerID, id).Exec(ctx)
+	finished := s.db.NewUpdate().Model((*Episode)(nil)).
+		Set("status = ?", status).
+		Where("ep.customer_id = ? AND ep.id = ? AND ep.status = ?", customerID, id, EpisodeEnded).
+		Returning("ep.id")
+	_, err := s.db.NewUpdate().With("finished", finished).
+		TableExpr("episode_activity AS act").
+		TableExpr("finished").
+		Set("summary_lease_until = NULL").
+		Where("act.episode_id = finished.id").
+		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: finish episode summary: %w", err))
 	}
