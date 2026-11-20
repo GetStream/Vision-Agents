@@ -66,8 +66,9 @@ func (s *Store) FirstAnswers(ctx context.Context, area string, day time.Time) ([
 		Where("ca.area = ?", area).
 		Where("ca.requests > ca.refused").
 		Where("ca.organization_id <> ''").
-		Where("NOT EXISTS (SELECT 1 FROM customer_activity AS earlier WHERE earlier.organization_id = ca.organization_id"+
-			" AND earlier.area = ca.area AND earlier.day < ca.day AND earlier.requests > earlier.refused)").
+		Where("NOT EXISTS (SELECT 1 FROM customer_activity AS earlier"+
+			" WHERE earlier.organization_id = ca.organization_id AND earlier.area = ca.area"+
+			" AND earlier.day < ca.day AND earlier.requests > earlier.refused)").
 		Group("ca.organization_id").
 		Order("ca.organization_id").
 		Scan(ctx, &answers)

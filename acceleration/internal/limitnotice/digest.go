@@ -196,14 +196,15 @@ func digestMessage(environment string, links Links, digest DayDigest) string {
 		fmt.Fprintf(&b, "\nStuck: %d", len(stuck))
 		writeList(&b, stuck, func(organization OrganizationDay) string {
 			requests, refused := organization.counts()
-			return fmt.Sprintf("%s   %d%% of %s refused%s", organizationName(links, organization.ID), refused*100/requests,
-				countOf(requests), inParentheses(organization.refusalCode()))
+			return fmt.Sprintf("%s   %d%% of %s refused%s", organizationName(links, organization.ID),
+				refused*100/requests, countOf(requests), inParentheses(organization.refusalCode()))
 		})
 	}
 	if len(digest.FirstConversations) > 0 {
 		fmt.Fprintf(&b, "\nFirst conversation: %d", len(digest.FirstConversations))
 		writeList(&b, digest.FirstConversations, func(first store.FirstAnswer) string {
-			return fmt.Sprintf("%s   %s after its first request", organizationName(links, first.OrganizationID), daysOf(first.Days))
+			return fmt.Sprintf("%s   %s after its first request", organizationName(links, first.OrganizationID),
+				daysOf(first.Days))
 		})
 	}
 	fmt.Fprintf(&b, "\nActive orgs: %d (day before: %d)", len(digest.Organizations), digest.ActiveBefore)
