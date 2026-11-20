@@ -2,6 +2,10 @@
 
 ## Features
 
+### Usage alerts are a counter on /metrics
+
+The router and the usage service add to `router_alert_holds_total{alert,level}` at every check of their alerts: 1 when a condition holds, or the number of items a condition of items holds for, and nothing when it does not. It counts whether or not the Sentry limit sends the event, so a monitor outside Sentry can page on `increase(...{level="page"}[5m]) > 0`, including for a condition that holds at one check only. A hold at the last check, on shutdown, or during a drain reaches Sentry only. The Sentry events and their limit are unchanged (AI-3424).
+
 ### The Python, Go, Ruby and Rust SDKs refuse a user on a device's connections call
 
 A client that holds a user's token (`as_user`, `SetUser`) and names `user_id` on a connections call now fails at once with the SDK's configuration error, the way the JavaScript and PHP SDKs do, instead of sending the call for the router's 403. A device acts only as its own user: name the user from a backend that holds the API secret. A call naming no user, and a client on a router that trusts the customer id, work as before. A Go `Backend` with the API secret and a `UserID` that names another user on a connections call now acts for that user with the app's token, as the other SDKs do, instead of signing a token for its own user that the proxy refused.
@@ -686,9 +690,14 @@ A `Backend` holding the API secret put its token on every socket's URL, as `toke
 
 An agent handle no longer has tools to host: Go `client.Agent.Tools()`, Python `Agent.register` and `Agent.functions`, JavaScript `AgentHandle.tools`, Rust `AgentRef.tools` and PHP `AgentHandle::$tools` are gone. Register the tools on the client and run them with its `run_dispatch` (see above), and name each one in a tool group of the agents that use it. `Dispatch.host` takes the client in place of an agent in every SDK, and the hosting refusal no longer names an agent: JavaScript's `HostingRefusedError` and PHP's `HostingRefusedException` lose `agentId`, and PHP's `Dispatch::$hosting` is a boolean. A session's own tools stay: Go `SessionOptions.Tools`, Python `SessionOptions(tools=...)`, and the in-process `Agent`'s tools in JavaScript, .NET, Ruby and Go's `agents` package.
 
-### A tool call no longer has update or say
+### A tool call no longer has say
 
-A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Say` (and `tools.Line` has only `Hold`), JavaScript `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), Python `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), .NET `UpdateAsync`/`SayAsync`, Ruby `update`/`say`, Rust `update`/`say` and PHP `update()`/`say()`. A session's own `say` stays. A tool says nothing while it runs: the agent tells a waiting caller the work is still going, and a tool's `display_title` is what its call shows. The router still takes `tool_update` from an older SDK, so a released app keeps working.
+A tool call's say is gone from every SDK: Go `tools.Call.Say`, JavaScript and Python `ToolCallContext.say`, .NET `SayAsync`, and Ruby, Rust and PHP `say`. A session's own `say` stays. A tool call's update stays in every server SDK, with a title shortcut and a full update that can carry `custom` data: Go `Update(ctx, title)` and `SendUpdate(ctx, tools.Update{Title, Custom})`, JavaScript `update(title)` and `update({ title, custom })`, Python `update(title, custom=...)`, .NET `UpdateAsync(title)` and `UpdateAsync(new ToolCallUpdate(Title, Custom))`, Ruby `update(title, custom: ...)`, Rust `update(title)` and `send_update(ToolCallUpdate { .. })`, and PHP `update($title, custom: ...)`. The title is the call's title while it runs, in place of its `display_title`, and a voice agent tells the caller about it in its own words. `custom` replaces the call's `custom` whole and stays once the call finishes, so an app can draw a card from it; the client SDKs read it as `ToolCallState.custom`. An update with only `custom` leaves the title alone and is not spoken. The router still takes `tool_update` with `verbatim` from an older SDK, so a released app keeps working.
+
+### A greeting in agent.yaml is its text, and is reworded unless it says exact
+
+`greeting: Thanks for calling Acme. How can I help?` is the greeting's text, which the agent rewords on every call. The mapping still works for saying it word for word: `greeting: {text: ..., mode: exact}`. A mapping that names no mode is now a variation too, where it was exact. Go reads both forms; the other SDKs' folder loaders still need a mapping.
+
 ### `agents.DefineSkills` takes the id of the agent config the skills belong to
 
 `agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
@@ -815,6 +824,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A POST from a sandbox through a tunnel to an allowed domain no longer fails after a pause
 
 The router's sandbox proxy closed a tunnel to an allowed domain after 90 s with no traffic. That is also how long a Go client keeps a pooled connection, and the proxy's clock starts first. So a POST that a Go client sent on a kept connection near that limit could fail with `EOF`. The proxy now keeps such a tunnel for 4 min, as it keeps a connection to the proxy, so the client closes it first. The sandbox's TLS forwarder waits as long for a silent proxy (#2161, AI-2346).
+
+### A POST through the sandbox proxy no longer fails when the host closes an idle connection
+
+The sandbox egress proxy reused a kept-alive connection for every request. A host that closes idle connections sooner than the router's 90 s (Apache after 5 s by default) could close one just as a POST went out on it: the call failed, and the sandbox got a 502. The proxy now sends a request it cannot safely send twice, such as a POST, on a new HTTP/1.1 connection; HTTP/2 connections and GETs are still shared. Other outbound callers keep their connection pooling (#2160).
 
 ### A guardrail is no longer shown a tool's output as the caller's words
 

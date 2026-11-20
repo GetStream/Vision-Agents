@@ -57,6 +57,13 @@ export class Holds {
 export function socketLine(send: (frame: Record<string, unknown>) => void, holds: Holds): ToolLine {
   return {
     hold: (id, signal) => holds.ask(id, () => send({ type: "tool_hold", tool_call_id: id }), signal),
+    update: (id, { title, custom }) =>
+      send({
+        type: "tool_update",
+        tool_call_id: id,
+        ...(title ? { text: title } : {}),
+        ...(custom ? { custom } : {}),
+      }),
   };
 }
 

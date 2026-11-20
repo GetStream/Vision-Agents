@@ -147,6 +147,6 @@ type hostedProgress struct{ session *Session }
 
 func (p hostedProgress) HoldTool(id string) bool { return p.session.current().HoldTool(id) }
 
-func (p hostedProgress) ToolUpdate(id, text string, verbatim bool) {
-	p.session.current().ToolUpdate(id, text, verbatim)
+func (p hostedProgress) ToolUpdate(id, text string, verbatim bool, custom map[string]any) {
+	p.session.current().ToolUpdate(id, text, verbatim, custom)
 }

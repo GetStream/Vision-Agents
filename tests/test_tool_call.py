@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from vision_agents.core.llm import (
     CallNotHeld,
@@ -15,6 +17,11 @@ class Line:
 
     async def hold(self, call_id: str) -> bool:
         return self.holds
+
+    async def update(
+        self, call_id: str, title: str, custom: dict[str, Any] | None
+    ) -> None:
+        pass
 
 
 class TestPolicies:

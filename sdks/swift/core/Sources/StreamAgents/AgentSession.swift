@@ -38,6 +38,14 @@ public final class AgentSession: ObservableObject {
     public var turns: [Turn] { conversation.turns }
     public var state: Conversation.State { conversation.state }
 
+    /// The calls one agent turn made, in the order they started: the ones to show under that
+    /// turn's message. A view reading it redraws as they change, as with `toolCalls`.
+    public func toolCalls(forTurn turnID: String) -> [ToolCallState] {
+        toolCalls.values
+            .filter { $0.turnID == turnID }
+            .sorted { ($0.startedAt ?? .distantPast, $0.id) < ($1.startedAt ?? .distantPast, $1.id) }
+    }
+
     /// This session's turns as the router wrote them down: asking, reading back, rewinding.
     ///
     /// What is asked here is shown in `turns` straight away, since a conversation in writing

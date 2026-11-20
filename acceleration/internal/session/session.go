@@ -1796,9 +1796,9 @@ func (s *Session) HoldTool(id string) bool {
 
 // ToolUpdate passes on what whoever runs a call says about it while it runs (agent
 // ToolUpdate). An update for a call this session is not waiting on is dropped.
-func (s *Session) ToolUpdate(id, text string, verbatim bool) {
+func (s *Session) ToolUpdate(id, text string, verbatim bool, custom map[string]any) {
 	if _, waiting := s.tools.nameOf(id); waiting {
-		s.current().ToolUpdate(id, text, verbatim)
+		s.current().ToolUpdate(id, text, verbatim, custom)
 	}
 }
 

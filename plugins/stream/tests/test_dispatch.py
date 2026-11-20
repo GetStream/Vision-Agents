@@ -1241,6 +1241,7 @@ class TestDispatch:
             interruptible=True,
             timeout=90,
             needs_approval="Book flight {flight_id}?",
+            display_title="Booking your flight",
         )
         async def book_flight(flight_id: str) -> str:
             return "booked"
@@ -1258,6 +1259,7 @@ class TestDispatch:
         assert tool["interruptible"] is True
         assert tool["timeout_ms"] == 90000
         assert tool["approval"] == {"title": "Book flight {flight_id}?"}
+        assert tool["display_title"] == "Booking your flight"
 
     async def test_a_hosted_call_the_router_cancels_stops(self, router: Router):
         client = stream.Client(url=router.url, customer_id="acme")

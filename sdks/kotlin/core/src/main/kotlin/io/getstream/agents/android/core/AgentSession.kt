@@ -136,6 +136,13 @@ public class AgentSession internal constructor(
     public fun toolCall(id: String): Flow<AgentEvent.ToolCallState?> = calls.map { it[id] }.distinctUntilChanged()
 
     /**
+     * The calls one agent turn made, in the order they started: the ones to show under that
+     * turn's message. Emits again only when one of them changes.
+     */
+    public fun toolCallsForTurn(turnId: String): Flow<List<AgentEvent.ToolCallState>> =
+        calls.map { all -> all.values.filter { it.turnId == turnId } }.distinctUntilChanged()
+
+    /**
      * Calls [handler] with every event of [kind], such as [AgentEvent.Kind.ToolCallFinished], on
      * the session's scope until the returned job is cancelled or the session closes. It is
      * subscribed before this returns, so it misses nothing sent after.

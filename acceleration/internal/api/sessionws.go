@@ -345,6 +345,8 @@ type watcherCommand struct {
 	Text string `json:"text"`
 	// Verbatim says a tool_update's text is to be said as written.
 	Verbatim bool `json:"verbatim"`
+	// Custom is a tool_update's data for the call, replacing what it had.
+	Custom map[string]any `json:"custom"`
 	// Images attach to a respond command, and become image parts on that turn.
 	Images []wireImage `json:"images"`
 }
@@ -462,7 +464,7 @@ func (s *Server) applyCommand(found *session.Session, seat session.Seat, sender 
 				"session", found.ID(), "call", command.ToolCallID)
 			return true
 		}
-		found.ToolUpdate(command.ToolCallID, command.Text, command.Verbatim)
+		found.ToolUpdate(command.ToolCallID, command.Text, command.Verbatim, command.Custom)
 
 	case "tool_approval":
 		if command.Allowed == nil {
@@ -630,10 +632,18 @@ func frameOf(event session.Event) (frame, bool) {
 		return toolStateFrame(typed), true
 
 	case agent.ToolUpdated:
-		return frame{
+		// An update with only custom data is in the call's state, and says nothing.
+		if typed.Text == "" {
+			return nil, false
+		}
+		updated := frame{
 			"type": "tool_updated", "id": typed.ID, "turn_id": typed.TurnID, "tool": typed.Tool,
 			"text": typed.Text, "verbatim": typed.Verbatim,
-		}, true
+		}
+		if typed.Custom != nil {
+			updated["custom"] = typed.Custom
+		}
+		return updated, true
 
 	case agent.Joined:
 		return frame{"type": "joined", "at": typed.At}, true
@@ -1029,6 +1039,9 @@ func toolStateFrame(changed session.ToolCallChanged) frame {
 			rendered[key] = at
 		}
 	}
+	if state.Custom != nil {
+		rendered["custom"] = state.Custom
+	}
 	return rendered
 }
 
@@ -1046,6 +1059,7 @@ type ToolCallState struct {
 	ApprovedAt   *time.Time        `json:"approved_at,omitempty" doc:"When a person allowed the call."`
 	RejectedAt   *time.Time        `json:"rejected_at,omitempty" doc:"When a person declined the call, or its wait for them passed."`
 	Error        string            `json:"error,omitempty" doc:"Why a failed call failed, or what a declined one shows, such as \"Not allowed in time\"."`
+	Custom       map[string]any    `json:"custom,omitempty" doc:"The data whoever runs the call last sent with a tool_update, such as what a card under the message shows. Each update with custom replaces it whole, and it is kept once the call finishes."`
 }
 
 func (*ToolCallState) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

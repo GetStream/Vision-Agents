@@ -18,6 +18,10 @@
 - `session.say(text, interrupt: true)` - stops what the agent is saying first.
 - `session.addTools` and `session.removeTool` - change a running session's tools.
 - `AgentTool.typed` - a tool whose arguments its `fromJson` reads into a class of yours.
+- `ToolCallState.displayTitle` and `title` - what a call is doing: its latest progress update
+  while it runs, such as "Comparing 40 flights", otherwise its display title, such as "Checking
+  the weather", falling back to the tool's name.
+- `session.toolCallsForTurn(turnId)` - the calls one agent turn made, to show under its message.
 
 ## 0.7.0
 

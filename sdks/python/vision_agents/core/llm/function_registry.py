@@ -54,6 +54,9 @@ class ToolPolicy:
     # approval is the question a person answers before each call runs, with {name} for an
     # argument. Empty runs calls as they come.
     approval: str = ""
+    # display_title is what a call is doing, in words for the people in the conversation,
+    # such as "Checking the weather". Empty shows the function's name.
+    display_title: str = ""
 
 
 @dataclass
@@ -99,6 +102,7 @@ class FunctionRegistry:
         interruptible: bool = False,
         timeout: float = 0.0,
         needs_approval: str = "",
+        display_title: str = "",
     ) -> Callable:
         """
         Decorator to register a function with the registry.
@@ -120,6 +124,9 @@ class FunctionRegistry:
                 call. On a voice call the agent asks it out loud and waits 15 seconds for a
                 yes; in writing the question goes to the app. Applies where Stream runs the
                 agent.
+            display_title: What a call is doing, such as "Checking the weather", at most
+                80 characters, shown on the reply's tool call. Applies where Stream runs
+                the agent.
 
         Returns:
             Decorator function.
@@ -134,7 +141,10 @@ class FunctionRegistry:
         if needs_approval and not approval:
             raise ValueError("an approval question cannot be blank")
         policy = ToolPolicy(
-            interruptible=interruptible, timeout=timeout, approval=approval
+            interruptible=interruptible,
+            timeout=timeout,
+            approval=approval,
+            display_title=display_title,
         )
 
         def decorator(func: Callable) -> Callable:
