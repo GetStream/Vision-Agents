@@ -162,7 +162,27 @@ export type WebSocketLike = Pick<
   "send" | "close" | "addEventListener" | "removeEventListener" | "readyState"
 > & { binaryType: string };
 
+/**
+ * A WebSocket class, as a page passes one: called with the URL alone, so the browser's own
+ * `WebSocket` is one.
+ */
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
+
+/**
+ * What a backend holding the secret opens its sockets with besides the URL: the credential, as
+ * headers (see `Backend.socketHeaders`). Node's own WebSocket and the `ws` package both take
+ * `{ headers }` as their second argument; a WebSocket passed as the `webSocket` option to such a
+ * backend has to as well.
+ */
+export interface WebSocketInit {
+  headers?: Record<string, string>;
+}
+
+/**
+ * A WebSocket class that takes `WebSocketInit` as its second argument, which a backend holding the
+ * secret calls it with. A page's sockets carry no headers, so one is never called that way there.
+ */
+export type HeaderWebSocketConstructor = new (url: string, init: WebSocketInit) => WebSocketLike;
 
 export interface BackendOptions {
   /**
@@ -258,8 +278,12 @@ export interface BackendOptions {
   maxRetries?: number;
   /** Used for every request. Defaults to the global fetch. */
   fetch?: typeof fetch;
-  /** Used for every socket. Defaults to the global WebSocket. */
-  webSocket?: WebSocketConstructor;
+  /**
+   * Used for every socket. Defaults to the global WebSocket. With `apiSecret` it is called with
+   * a second argument, `{ headers }`, which carry the credential, as Node's own WebSocket and
+   * the `ws` package take them.
+   */
+  webSocket?: WebSocketConstructor | HeaderWebSocketConstructor;
 }
 
 /**
@@ -315,7 +339,7 @@ export class Backend {
    */
   private minted = new Map<string, { token: Promise<string>; expiresAt: number }>();
   private readonly fetchImpl: typeof fetch;
-  private readonly webSocketImpl: WebSocketConstructor | undefined;
+  private readonly webSocketImpl: WebSocketConstructor | HeaderWebSocketConstructor | undefined;
 
   constructor(options: BackendOptions = {}) {
     this.team = options.team || undefined;
@@ -629,9 +653,10 @@ export class Backend {
   }
 
   /**
-   * The WebSocket URL for a path on the router, credentials included.
+   * The WebSocket URL for a path on the router, credentials included unless `socketHeaders`
+   * carries them.
    *
-   * They go in the query string because a browser WebSocket carries no headers of its own.
+   * A page's go in the query string because a browser WebSocket carries no headers of its own.
    * A socket never says it is a backend: `Stream-Auth-Type: server` has no query counterpart
    * on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is what it
    * reads for a user whoever the token is for.
@@ -644,18 +669,16 @@ export class Backend {
     }
 
     if (!this.byCustomer) {
-      const token = this.authenticate
-        ? await this.proxyToken()
-        : this.apiSecret
-          ? await this.serverToken()
-          : await this.userToken();
-      url.searchParams.set("api_key", this.apiKey);
-      url.searchParams.set("token", token);
-      if (this.authenticate) {
-        // The proxy reads a socket's credential the way it reads a request's, as
-        // `authorization` and `stream-auth-type`, and refuses one carrying only `token`.
-        url.searchParams.set("authorization", token);
-        url.searchParams.set("stream-auth-type", "jwt");
+      if (!this.socketCarriesHeaders) {
+        const token = this.authenticate ? await this.proxyToken() : await this.userToken();
+        url.searchParams.set("api_key", this.apiKey);
+        url.searchParams.set("token", token);
+        if (this.authenticate) {
+          // The proxy reads a socket's credential the way it reads a request's, as
+          // `authorization` and `stream-auth-type`, and refuses one carrying only `token`.
+          url.searchParams.set("authorization", token);
+          url.searchParams.set("stream-auth-type", "jwt");
+        }
       }
       if (this.userId) {
         url.searchParams.set("user_id", this.userId);
@@ -672,14 +695,52 @@ export class Backend {
     return url.toString();
   }
 
-  /** Opens a socket with the runtime's WebSocket, or the one that was passed in. */
-  openSocket(url: string): WebSocketLike {
+  /**
+   * The headers a socket to the router is opened with, which carry its credential, or
+   * undefined for a socket whose credential is in its URL (see `socketURL`).
+   *
+   * A backend holding the secret sends a token that speaks for the app, and a URL is written
+   * into every access log between here and the router, so it goes as a header, the way a
+   * request's does. It is the same credential the query would have carried, so a socket still
+   * never says it is a backend. A page has neither the secret nor a WebSocket that sends
+   * headers, and its user's token stays in the query.
+   */
+  async socketHeaders(): Promise<Record<string, string> | undefined> {
+    if (!this.socketCarriesHeaders) {
+      return undefined;
+    }
+    this.assertCredentialed();
+    if (this.authenticate) {
+      return {
+        api_key: this.apiKey,
+        "stream-auth-type": "jwt",
+        Authorization: `Bearer ${await this.proxyToken()}`,
+      };
+    }
+    return { "X-Api-Key": this.apiKey, Authorization: `Bearer ${await this.serverToken()}` };
+  }
+
+  /** Whether sockets carry the credential as headers: see `socketHeaders`. */
+  private get socketCarriesHeaders(): boolean {
+    return !this.byCustomer && Boolean(this.apiSecret);
+  }
+
+  /**
+   * Opens a socket with the runtime's WebSocket, or the one that was passed in, sending
+   * `headers` where there are any.
+   */
+  openSocket(url: string, headers?: Record<string, string>): WebSocketLike {
     if (!this.webSocketImpl) {
       throw new ConfigurationError(
         "there is no WebSocket here; pass one as the webSocket option or run on Node 22 or newer",
       );
     }
-    return new this.webSocketImpl(url);
+    if (!headers) {
+      return new (this.webSocketImpl as WebSocketConstructor)(url);
+    }
+    // Only a backend holding the secret has headers to send, and it runs where the WebSocket
+    // takes them: see the `webSocket` option.
+    return new (this.webSocketImpl as HeaderWebSocketConstructor)(url, { headers });
   }
 
   /**

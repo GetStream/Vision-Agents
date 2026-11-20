@@ -71,7 +71,10 @@ may reach also gets a review with the [security](../security/SKILL.md) skill.
    with a user token that the app's backend minted.
 2. Credentials travel in headers, never in a URL, query string or WebSocket subprotocol: URLs
    end up in logs, proxies and browser history. A URL that has to carry a token, such as a
-   monitor link, is short-lived, documented as a secret, and never logged.
+   monitor link, is short-lived, documented as a secret, and never logged. The one other
+   exception is a browser's socket, whose WebSocket sends no headers: it carries the end user's
+   own token in the query, and nothing more. A server-side SDK's socket sends its credential as
+   headers, as its requests do, since its token speaks for the whole app.
 3. Tokens are short-lived by default. A minted user token has an expiry unless the caller asks
    for none.
 4. A credential is never printed. A type that holds one masks it in every rendering the
@@ -80,7 +83,11 @@ may reach also gets a review with the [security](../security/SKILL.md) skill.
    Logging follows the "Logging (server-side SDKs)" section.
 5. No credential is written to disk by the SDK. `.agent_sync` holds a hash and a time. A
    client-side SDK keeps a user token in the platform's keystore (Keychain, Android
-   Keystore), or in memory in a browser, never in `localStorage` or plain preferences.
+   Keystore), or in memory in a browser, never in `localStorage` or plain preferences. The
+   exception is a guest, whom `guestUser` exists to remember across reloads: their token and
+   refresh secret belong to that one guest and expire. A browser keeps them in `localStorage`,
+   falling back to a `Secure` cookie only where localStorage is missing, blocked or full, never
+   in a cookie first: a cookie goes out with every request to the app's own site.
 6. An error never carries a credential or a full request: no headers, no body that held a
    secret. It carries the status, the operation and `request_id`.
 7. Compare secrets and signatures in constant time (`hmac.Equal`, `hmac.compare_digest`,
@@ -258,7 +265,7 @@ language's keyword arguments; a field left out is left as it is.
 
 Guest users
 
-user = client.guestUser(options); // gets or creates a guest user (searches in cookie or device storage)
+user = client.guestUser(options); // gets or creates a guest user (remembered in localStorage or device storage; a cookie only as a fallback)
 
 client.claimGuestUser(guestUser, realUser); // only supported server side.
 ```
