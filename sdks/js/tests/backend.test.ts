@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { inspect } from "node:util";
 
+import * as node from "../src/node.js";
+
 import {
   Backend,
   Client,
@@ -13,6 +15,7 @@ import {
   type BackendOptions,
   type WebSocketInit,
 } from "../src/index.js";
+import * as root from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 describe("Backend", () => {
@@ -43,6 +46,12 @@ describe("Backend", () => {
     assert.equal(backend.speakingFor, undefined);
     assert.equal(typeof backend.actingFor, "function");
     assert.equal(backend.actingFor("ana").actsFor, "ana");
+  });
+
+  it("exports speakingFor from no entry point and as no static of Backend", () => {
+    assert.equal("speakingFor" in root, false);
+    assert.equal("speakingFor" in node, false);
+    assert.equal(Object.getOwnPropertyNames(Backend).includes("speakingFor"), false);
   });
 
   it("goes to the hosted router, through the proxy, when nothing names another", () => {
