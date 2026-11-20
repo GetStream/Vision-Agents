@@ -15,6 +15,7 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 ## Creating
 
 - Always `gh pr create --draft`. Push the branch first.
+- A draft runs no CI workflow; CodeQL, the labeler and CodeRabbit still run. `gh pr ready` starts the workflows whose paths the PR touches, and every push after it runs them again, so mark it ready once the branch is done, not before.
 - Follow `.github/pull_request_template.md`. Read every commit on the branch, do not summarise from the latest commit alone.
 
 ## Title

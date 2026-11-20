@@ -32,6 +32,9 @@ on:
       - '!**/*.md'
   pull_request:
     branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'acceleration/**'
       - 'sdks/go/**'
@@ -67,6 +70,7 @@ concurrency:
 
 jobs:
   go:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     # Every backend test that needs Redis skips without ROUTER_REDIS_ADDR: the service gives
     # them one, on a host port the runner picks so a port already held on the runner cannot

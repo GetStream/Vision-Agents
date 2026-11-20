@@ -859,9 +859,20 @@ export class Session {
           if (message["run"] === false || !functions?.has(text(message, "name"))) {
             continue;
           }
+          const id = text(message, "id");
+          // Allowed from the conversation before its arguments were known: this is the call
+          // that answer was waiting for.
+          const allowedShown = this.allowedShown.delete(id);
+          // A call this session already answered, is running or is asking about, delivered
+          // again, as the router does to a socket that attaches while it waits. Asking again
+          // would put a settled question back in front of the person, and running it again
+          // would do what it does twice.
+          if (!allowedShown && (this.answered.has(id) || this.running.has(id) || this.asking.has(id))) {
+            continue;
+          }
           // A caller who already said yes, on a voice call or to the call shown in the
           // conversation before it reached here, is not asked again.
-          const allowed = message.approved === true || this.allowedShown.delete(text(message, "id"));
+          const allowed = message.approved === true || allowedShown;
           const approval = allowed ? undefined : functions.approval(text(message, "name"));
           if (approval) {
             this.hold(message, approval);
@@ -1018,6 +1029,9 @@ export class Session {
 
     const cancel = new AbortController();
     this.running.set(id, cancel);
+    // Answered by this session from here on, also once it has finished and left `running`: the
+    // same call delivered again afterwards is not run again.
+    this.answered.add(id);
     try {
       const functions = this.functionsFor(name);
       if (!functions) {
