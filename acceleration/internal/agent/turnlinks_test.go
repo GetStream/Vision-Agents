@@ -395,35 +395,39 @@ func (s *AgentSuite) TestAMurmurIsRecordedAsABackchannel() {
 }
 
 func (s *AgentSuite) TestAnAnswerToDelegatedWorkIsRecordedAsAFollowUpToTheCallerTurn() {
-	s.delegates()
-	s.join(true)
-	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
-	s.model.then = []string{"That comes to 12.63."}
-	s.subagent.reply = []string{"It is 12.63."}
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		s.delegates()
+		s.join(true)
+		s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+		s.model.then = []string{"That comes to 12.63."}
+		s.subagent.reply = []string{"It is 12.63."}
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "what is 15% of 84.20")
+		s.says(participant, "what is 15% of 84.20")
 
-	s.eventually(func() bool { return s.spokenText("That comes to 12.63.") }, "the answer was never said")
-	s.Equal(origin{kind: kindFollowUp, parent: s.callerTurn(), pipeline: pipelineCascade}, s.originOfSpoken("That comes to 12.63."))
+		s.eventually(func() bool { return s.spokenText("That comes to 12.63.") }, "the answer was never said")
+		s.Equal(origin{kind: kindFollowUp, parent: s.callerTurn(), pipeline: pipelineCascade}, s.originOfSpoken("That comes to 12.63."))
+	})
 }
 
 func (s *AgentSuite) TestTheIntroductionOfAWarmTransferIsRecordedAsAHandoffToTheCallerTurn() {
-	s.onACall()
-	s.join(false)
-	s.agent.prompt = "Hand callers who want a person to +15550001111."
-	s.model.reply = []string{"One moment."}
-	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		s.onACall()
+		s.join(false)
+		s.agent.prompt = "Hand callers who want a person to +15550001111."
+		s.model.reply = []string{"One moment."}
+		s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "I want to speak to a person")
-	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
-	s.speak(stt.Participant{ID: "human"})
+		s.says(participant, "I want to speak to a person")
+		s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+		s.speak(stt.Participant{ID: "human"})
 
-	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") }, "the human was never introduced")
-	s.Equal(origin{kind: kindHandoff, parent: s.callerTurn(), pipeline: pipelineCascade}, s.originOfSpoken("Alice needs a refund on order 12."))
+		s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") }, "the human was never introduced")
+		s.Equal(origin{kind: kindHandoff, parent: s.callerTurn(), pipeline: pipelineCascade}, s.originOfSpoken("Alice needs a refund on order 12."))
+	})
 }
 
 func (s *AgentSuite) TestAQuestionAskedIntoSilenceIsLoggedAsACheckIn() {

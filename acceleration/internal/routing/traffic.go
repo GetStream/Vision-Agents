@@ -12,11 +12,14 @@ import (
 
 // The outcomes a request is counted under: a bounded set, never the row's own error code. Work
 // on a customer's own key that failed is customer_key, whatever failed, so one customer's revoked
-// key or spent account is not the vendor's error rate.
+// key or spent account is not the vendor's error rate. A hedge's first attempt that lost in
+// silence is hedge_lost, not timeout: a hedge is meant to outrun a slow reply, so its loser is
+// no vendor running past a deadline.
 const (
 	outcomeOK          = "ok"
 	outcomeCancelled   = "cancelled"
 	outcomeRefused     = "refused"
+	outcomeHedgeLost   = "hedge_lost"
 	outcomeTimeout     = "timeout"
 	outcomeCustomerKey = "customer_key"
 	outcomeError       = "error"
@@ -50,7 +53,7 @@ var (
 	trafficRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "requests_total",
-		Help:      "Requests recorded as usage rows, vendor calls and also the router's own metered work (runtime and sandbox slices, phone legs, numbers, storage), so filter by modality; by outcome: ok when Success, cancelled by ErrorCode, customer_key for any other failure of work on the customer's own key, timeout by ErrorCode, otherwise error",
+		Help:      "Requests recorded as usage rows, vendor calls and also the router's own metered work (runtime and sandbox slices, phone legs, numbers, storage), so filter by modality; by outcome: ok when Success, cancelled by ErrorCode, customer_key for any other failure of work on the customer's own key, hedge_lost for the first of two hedged requests still silent when the other answered (ErrorCode timeout), timeout by ErrorCode for any other deadline run past, otherwise error",
 	}, []string{"modality", "provider", "model", "outcome"})
 	trafficTokens = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -113,14 +116,15 @@ func CountLLMConnection(provider string, reused bool) {
 }
 
 // countTraffic counts a priced row in the traffic metrics, byok for work on the customer's own
-// key. A quantity of zero adds nothing, so no series is made for what a modality never has.
-func countTraffic(request store.Request, byok bool) {
+// key and hedgeLost for a hedge's silent loser (Stat.HedgeLost). A quantity of zero adds
+// nothing, so no series is made for what a modality never has.
+func countTraffic(request store.Request, byok, hedgeLost bool) {
 	modality, provider, model := request.Modality, request.Provider, request.Model
 	if provider == CustomProvider {
 		// The model is a name each customer chose: unbounded as a label.
 		model = CustomProvider
 	}
-	trafficRequests.WithLabelValues(modality, provider, model, outcome(request, byok)).Inc()
+	trafficRequests.WithLabelValues(modality, provider, model, outcome(request, byok, hedgeLost)).Inc()
 	tokens := func(kind string, count int64) {
 		if count > 0 {
 			trafficTokens.WithLabelValues(modality, provider, model, kind).Add(float64(count))
@@ -147,7 +151,7 @@ func countTraffic(request store.Request, byok bool) {
 }
 
 // outcome is what the request is counted under.
-func outcome(request store.Request, byok bool) string {
+func outcome(request store.Request, byok, hedgeLost bool) string {
 	switch {
 	case request.Success:
 		return outcomeOK
@@ -157,6 +161,8 @@ func outcome(request store.Request, byok bool) string {
 		return outcomeRefused
 	case byok:
 		return outcomeCustomerKey
+	case hedgeLost:
+		return outcomeHedgeLost
 	case request.ErrorCode == ErrorTimeout:
 		return outcomeTimeout
 	default:

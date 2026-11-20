@@ -353,17 +353,17 @@ func (s *SessionConnectorsSuite) awaitingApprovalOn(events *websocket.Conn) map[
 	}
 }
 
-// awaitingApprovalWithTurnOn is awaitingApprovalOn with the turn_id of the call's tool_started.
+// awaitingApprovalWithTurnOn is awaitingApprovalOn with the turn_id of the message the call is in.
+// The call's tool_started can come after its approval is asked: the two are sent on separate
+// goroutines.
 func (s *SessionConnectorsSuite) awaitingApprovalWithTurnOn(events *websocket.Conn) (map[string]any, string) {
-	turnID := ""
 	s.Require().NoError(events.SetReadDeadline(time.Now().Add(settleFor)))
 	for {
 		var frame map[string]any
 		s.Require().NoError(events.ReadJSON(&frame))
-		if frame["type"] == "tool_started" && frame["tool"] == connectorEcho {
-			turnID, _ = frame["turn_id"].(string)
-		}
 		if found := echoStepIn(frame); frame["type"] == "conversation_updated" && found != nil && found["status"] == "awaiting_approval" {
+			message, _ := frame["message"].(map[string]any)
+			turnID, _ := message["turn_id"].(string)
 			s.Require().NotEmpty(turnID)
 			return found, turnID
 		}
