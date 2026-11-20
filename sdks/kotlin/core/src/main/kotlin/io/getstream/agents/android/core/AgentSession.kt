@@ -82,6 +82,16 @@ public class AgentSession internal constructor(
     /** Held through a change of tools, so that one runs at a time, in the order they were asked for. */
     private val changing = Mutex()
     private val running = ConcurrentHashMap<String, Job>()
+    /**
+     * The calls answered or run here, each claimed before its answer is sent, so a call answered
+     * twice, by id or as shown, is answered once, and one the router sends again is not asked
+     * about or run again.
+     */
+    private val answered = ConcurrentHashMap.newKeySet<String>()
+    /** Calls allowed from the conversation without their arguments, run once the router sends them. */
+    private val allowedShown = ConcurrentHashMap.newKeySet<String>()
+    /** The calls the router cancelled, which an answer must not run. */
+    private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private val started = AtomicBoolean(false)
 
     private val state = MutableStateFlow(Conversation())
@@ -200,10 +210,23 @@ public class AgentSession internal constructor(
      *
      * Allowed, the tool runs and its result goes back as it would have. Declined, it never runs:
      * the model is told the person declined, and the call's step shows [summary]. A call that
-     * is not waiting is left alone, so answering twice does nothing. If the answer cannot be
-     * sent, the call waits again.
+     * is not waiting is left alone, so answering twice does nothing; one the conversation shows
+     * waiting that this session was never asked is answered with a [ShownToolCall]. If the answer
+     * cannot be sent, the call waits again, unless the router cancelled it meanwhile.
      */
     public suspend fun decide(toolCallId: String, allowed: Boolean, summary: String = "") {
+        // A conversation nothing is watching has nowhere to send the answer.
+        held()
+        if (toolCallId in cancelled || held.value.none { it.id == toolCallId } || !answered.add(toolCallId)) return
+        decideHeld(toolCallId, allowed, summary)
+    }
+
+    /**
+     * Answers the call claimed in [answered] if it is waiting in [approvals], and says whether it
+     * was. If the answer cannot be sent, its claim is let go and the call waits again, unless the
+     * router cancelled it meanwhile.
+     */
+    private suspend fun decideHeld(toolCallId: String, allowed: Boolean, summary: String): Boolean {
         val socket = held()
         var index = -1
         var request: ToolApprovalRequest? = null
@@ -212,12 +235,19 @@ public class AgentSession internal constructor(
             request = waiting.getOrNull(index)
             if (index < 0) waiting else waiting.filterIndexed { i, _ -> i != index }
         }
-        val decided = request ?: return
+        val decided = request ?: return false
         val call = decided.call
         try {
             socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
-        } catch (e: AgentsException) {
+        } catch (e: Exception) {
+            // Cancelled, the answer is taken as not sent, since a call left claimed can never be
+            // answered again. One the router cancelled meanwhile does not wait again: the cancel
+            // is remembered before it is taken out of the calls waiting, so it is either seen
+            // here or takes the call out after it is put back.
+            if (e !is AgentsException && e !is CancellationException) throw e
             held.update { it.toMutableList().apply { add(minOf(index, size), decided) } }
+            if (call.id in cancelled) held.update { waiting -> waiting.filterNot { it.id == call.id } }
+            answered -= call.id
             throw e
         }
         if (allowed) {
@@ -226,6 +256,45 @@ public class AgentSession internal constructor(
             socket.send(
                 Command.ToolResult(call.id, error = "The person declined this call.", requestId = call.requestId, turnId = call.turnId),
             )
+        }
+        return true
+    }
+
+    /**
+     * Answers a call the conversation shows waiting for the person, such as an approval card
+     * restored from the channel after the session was carried on or the app restarted, which this
+     * session's socket was never asked. A call waiting in [approvals] is answered as [decide] by
+     * id answers it.
+     *
+     * The router settles a client call only with its result, so a declined one is told the person
+     * declined, and an allowed one of this session's tools runs here. One whose arguments the
+     * conversation left out runs when the router sends the call, which it does to a session that
+     * attaches while the call waits. An allowed call of a tool this session lacks is left to
+     * whoever has it. A call answered or run here before is left alone, so answering twice does
+     * nothing, and so is one the router cancelled; one answered here is neither asked about nor
+     * run again when the router sends it. Answer only a call whose step is `awaiting_approval`:
+     * the router ignores an answer to one that is not, but an allowed one would still run here.
+     * If the answer cannot be sent, it can be answered again.
+     */
+    public suspend fun decide(call: ShownToolCall, allowed: Boolean, summary: String = "") {
+        val socket = held()
+        if (call.id in cancelled || !answered.add(call.id)) return
+        if (decideHeld(call.id, allowed, summary) || call.id in cancelled) return
+        try {
+            socket.send(Command.ToolApproval(call.id, allowed, summary, call.requestId, call.turnId))
+        } catch (e: Exception) {
+            if (e !is AgentsException && e !is CancellationException) throw e
+            answered -= call.id
+            throw e
+        }
+        val tool = tools[call.name]
+        when {
+            !allowed -> socket.send(
+                Command.ToolResult(call.id, error = "The person declined this call.", requestId = call.requestId, turnId = call.turnId),
+            )
+            tool == null -> Unit
+            call.arguments == null -> allowedShown.add(call.id)
+            else -> run(AgentEvent.ToolCall(call.id, call.name, call.arguments, call.requestId, call.turnId), tool)
         }
     }
 
@@ -414,6 +483,7 @@ public class AgentSession internal constructor(
             AgentEvent.Kind.ToolCall -> event.toolCall?.let(::answer)
             AgentEvent.Kind.ToolCancel -> {
                 val id = event.string("id")
+                cancelled += id
                 running.remove(id)?.cancel()
                 held.update { waiting -> waiting.filterNot { it.id == id } }
             }
@@ -441,8 +511,15 @@ public class AgentSession internal constructor(
             cameraFrames?.let { return show(it, call) }
         }
         val tool = tools[call.name] ?: return
+        // Allowed from the conversation before its arguments were known: this is the call that
+        // answer was waiting for.
+        val allowed = allowedShown.remove(call.id)
+        // A call this session already answered, is running or is asking about, sent again, as the
+        // router does to a socket that attaches while it waits. Asking again would put a settled
+        // question back in front of the person, and running it again would do what it does twice.
+        if (!allowed && (call.id in answered || running.containsKey(call.id) || held.value.any { it.id == call.id })) return
         val approval = tool.approval
-        if (approval != null && !call.approved) {
+        if (approval != null && !call.approved && !allowed) {
             held.update { it + ToolApprovalRequest(call, approval, tool) }
         } else {
             run(call, tool)
@@ -525,10 +602,31 @@ public class AgentSession internal constructor(
             }
         }
         running[call.id] = job
+        // Answered by this session from here on, also once it has finished and left `running`:
+        // the same call sent again afterwards is not run again.
+        answered += call.id
         job.invokeOnCompletion { running.remove(call.id, job) }
         job.start()
     }
 }
+
+/**
+ * A tool call as the conversation shows it waiting for the person: the call's step on the reply,
+ * and the request and turn the reply was written for (its `support_runtime`), for
+ * [AgentSession.decide] to answer a call this session's socket was never asked.
+ */
+public data class ShownToolCall(
+    /** The model provider's id for the call, the step's `id`. */
+    val id: String,
+    /** The tool's name, the step's `name`. */
+    val name: String,
+    /** The arguments as JSON, or null when they were too long for the step to keep. */
+    val arguments: String?,
+    /** The request the call is part of, `support_runtime.command_id`. Empty when the reply has none. */
+    val requestId: String = "",
+    /** The turn the call is part of, `support_runtime.turn_id`. Empty when the reply has none. */
+    val turnId: String = "",
+)
 
 /** A call of one of your tools, waiting for the person to allow it. */
 public class ToolApprovalRequest internal constructor(

@@ -159,6 +159,8 @@ type openTurn struct {
 	// starts each of its lines with its own kind.
 	answer      string
 	interrupted bool
+	// guardrail is the guardrail's check of the turn, nil when nothing screened it.
+	guardrail *live.GuardrailCheck
 	// why is why the reply was abandoned, set with interrupted.
 	why interruption
 	// marks is what the edge reports queuedAt and pulledAt to.
@@ -374,6 +376,15 @@ func (t *turnTracker) begin(turnID string, participant stt.Participant, readyAt,
 	}
 	current.marks = turnMarks{tracker: t, id: turnID, turn: current}
 	t.open[turnID] = current
+}
+
+// screened keeps the guardrail's check of a turn, to be reported with it.
+func (t *turnTracker) screened(turnID string, check *live.GuardrailCheck) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.guardrail = check
+	}
 }
 
 func (t *turnTracker) modelStarted(turnID string, at time.Time) {
@@ -633,6 +644,7 @@ func measure(turnID string, current *openTurn) Turn {
 		AudioOutMs:           current.audioOutMs,
 		AudioDroppedMs:       current.audioDroppedMs,
 		Interrupted:          current.interrupted,
+		Guardrail:            current.guardrail,
 	}
 }
 
@@ -768,6 +780,7 @@ func (r *turnRecorder) Record(turn Turn) {
 		AudioOutMs:           measured(turn.AudioOutMs),
 		AudioDroppedMs:       measured(turn.AudioDroppedMs),
 		Interrupted:          turn.Interrupted,
+		Guardrail:            turn.Guardrail,
 	}
 
 	// A turn can finish after the recorder has been closed: interrupting a session closes

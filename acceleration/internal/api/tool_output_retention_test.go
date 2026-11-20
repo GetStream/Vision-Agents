@@ -33,7 +33,7 @@ func (s *ToolOutputRetentionSuite) TestAnAppPolicyOfNoneRecordsNoneOfAToolsOutpu
 	result := s.ranTheTool(config.Id, map[string]any{"output": "it ships tomorrow"})
 
 	s.Empty(value(result.Text))
-	s.Equal(map[string]any{"call_id": result.callID, "redacted": true}, value(result.Payload))
+	s.Equal(map[string]any{"call_id": result.callID, "redacted": true, "tokens": float64(12)}, value(result.Payload))
 }
 
 func (s *ToolOutputRetentionSuite) TestAGroupThatKeepsNoneRecordsNoneOfItsToolsOutput() {
@@ -43,7 +43,7 @@ func (s *ToolOutputRetentionSuite) TestAGroupThatKeepsNoneRecordsNoneOfItsToolsO
 	result := s.ranTheTool(config.Id, map[string]any{"output": "it ships tomorrow"})
 
 	s.Empty(value(result.Text))
-	s.Equal(map[string]any{"call_id": result.callID, "redacted": true}, value(result.Payload))
+	s.Equal(map[string]any{"call_id": result.callID, "redacted": true, "tokens": float64(12)}, value(result.Payload))
 }
 
 func (s *ToolOutputRetentionSuite) TestASessionDeclaringAToolNoGroupNamesIsRefused() {

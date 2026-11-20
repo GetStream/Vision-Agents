@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -121,7 +122,7 @@ func (s *JudgeSuite) TestTheThresholdMeansTheSameThingItMeansToAClassifier() {
 		s.Run(test.name, func() {
 			stub := &stubModel{says: test.says}
 			verdict, err := s.guardrail(stub, test.threshold).
-				Check(s.ctx, "turn-1", "how do I make a pizza")
+				Check(s.ctx, "turn-1", "how do I make a pizza", "")
 			s.Require().NoError(err)
 
 			s.Equal(test.allowed, verdict.Allowed)
@@ -134,7 +135,7 @@ func (s *JudgeSuite) TestTheThresholdMeansTheSameThingItMeansToAClassifier() {
 func (s *JudgeSuite) TestAJudgeThatThinksBeforeItAnswersStillWritesTheWholeVerdict() {
 	thinker := &llmtest.Thinker{Thinks: 1300, Answer: `{"violates":0.98,"reason":"about cooking"}`}
 
-	verdict, err := s.guardrail(thinker, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza")
+	verdict, err := s.guardrail(thinker, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza", "")
 
 	s.Require().NoError(err)
 	s.False(verdict.Allowed)
@@ -147,7 +148,7 @@ func (s *JudgeSuite) TestTheJudgeIsToldToScreenRatherThanToAnswer() {
 	// it would be judging its own answer.
 	stub := &stubModel{says: `{"violates":0.05,"reason":"an SDK question"}`}
 
-	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I install stream-chat-react")
+	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I install stream-chat-react", "")
 	s.Require().NoError(err)
 
 	s.Require().Len(stub.asked, 1)
@@ -164,7 +165,7 @@ func (s *JudgeSuite) TestTheJudgeIsToldToScreenRatherThanToAnswer() {
 func (s *JudgeSuite) TestTheJudgesOwnWordsAreTheReasonWhenItGivesThem() {
 	stub := &stubModel{says: `{"violates":0.93,"reason":"it asks for a recipe"}`}
 
-	verdict, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza")
+	verdict, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza", "")
 	s.Require().NoError(err)
 
 	s.False(verdict.Allowed)
@@ -175,7 +176,7 @@ func (s *JudgeSuite) TestTheJudgesOwnWordsAreTheReasonWhenItGivesThem() {
 func (s *JudgeSuite) TestARefusalWithNoReasonStillSaysSomethingToTheLog() {
 	stub := &stubModel{says: `{"violates":0.93}`}
 
-	verdict, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza")
+	verdict, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza", "")
 	s.Require().NoError(err)
 
 	s.False(verdict.Allowed)
@@ -193,7 +194,7 @@ func (s *JudgeSuite) TestAnAnswerThatIsNotAVerdictIsAFailureRatherThanAGuess() {
 		s.Run(said, func() {
 			stub := &stubModel{says: said}
 
-			_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "anything")
+			_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "anything", "")
 
 			s.ErrorContains(err, "not a verdict")
 		})
@@ -203,7 +204,7 @@ func (s *JudgeSuite) TestAnAnswerThatIsNotAVerdictIsAFailureRatherThanAGuess() {
 func (s *JudgeSuite) TestAModelThatFailedIsReportedRatherThanReadAsAVerdict() {
 	stub := &stubModel{err: errors.New("overloaded")}
 
-	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "anything")
+	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "anything", "")
 
 	s.ErrorContains(err, "overloaded")
 }
@@ -218,4 +219,29 @@ func (s *JudgeSuite) TestAPolicyWithNoModelToJudgeItIsRefusedWhenBuilt() {
 	}, Deps{Owner: routing.Owner{CustomerID: "acme"}, Logger: slog.New(slog.DiscardHandler)})
 
 	s.ErrorContains(err, "llm")
+}
+
+func (s *JudgeSuite) TestAFollowUpIsJudgedWithWhatCameBeforeIt() {
+	stub := &stubModel{says: `{"violates": 0.1, "reason": "on topic"}`}
+	before := "user: what dose of ibuprofen for an adult?\nassistant: I can't help with that."
+
+	verdict, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-2", "and how about for my kid?", before)
+	s.Require().NoError(err)
+
+	s.Require().Len(stub.asked, 1)
+	asked := stub.asked[0].Input[0].Content
+	s.Contains(asked, before)
+	s.Less(strings.Index(asked, before), strings.Index(asked, "REQUEST:\nand how about for my kid?"),
+		"the conversation was not put before the request it leads to")
+	s.Equal("stub/judge", verdict.Model)
+}
+
+func (s *JudgeSuite) TestATurnThatOpensAConversationIsJudgedWithNoneBeforeIt() {
+	stub := &stubModel{says: `{"violates": 0.1, "reason": "on topic"}`}
+
+	_, err := s.guardrail(stub, 0.6).Check(s.ctx, "turn-1", "how do I make a pizza", "")
+	s.Require().NoError(err)
+
+	s.Equal("POLICY:\nOnly answer questions about Stream's SDKs.\n\nREQUEST:\nhow do I make a pizza",
+		stub.asked[0].Input[0].Content)
 }
