@@ -787,3 +787,59 @@ func mustURL(raw string) *url.URL {
 	}
 	return parsed
 }
+
+// the unpooled route dials only a checked public address.
+func (s *EgressSuite) TestAPostOnTheUnpooledRouteNeverDialsALoopbackAddress() {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer server.Close()
+	policy := testPolicy(server, &answers{byHost: map[string][]string{"api.example.com": {"127.0.0.1"}}})
+	policy.unpooled = true
+
+	_, err := policy.client(5*time.Second, nil).Post("https://api.example.com/mcp", "application/json", strings.NewReader(`{"id":1}`))
+
+	s.ErrorContains(err, "non-public address")
+	s.Zero(hits.Load())
+}
+
+// the URL check after the wrapper runs before the unpooled route.
+func (s *EgressSuite) TestAWrapperRewriteToPlainHTTPIsRefusedOnTheUnpooledRoute() {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer server.Close()
+	policy := testPolicy(server, publicAnswers())
+	policy.unpooled = true
+	downgrade := func(next http.RoundTripper) http.RoundTripper {
+		return roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			request = request.Clone(request.Context())
+			request.URL.Scheme = "http"
+			return next.RoundTrip(request)
+		})
+	}
+
+	_, err := policy.client(5*time.Second, downgrade).Post("https://api.example.com/mcp", "application/json", strings.NewReader(`{"id":1}`))
+
+	s.ErrorContains(err, "only HTTPS")
+	s.Zero(hits.Load())
+}
+
+// a client from NewUnpooledClient keeps the redirect policy.
+func (s *EgressSuite) TestNewUnpooledClientRefusesARedirectOutOfTheOrigin() {
+	var stolen atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host == "other.example.com" {
+			stolen.Add(1)
+			return
+		}
+		http.Redirect(w, r, "https://other.example.com/stolen", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	saved := defaultPolicy
+	defaultPolicy = testPolicy(server, publicAnswers())
+	defer func() { defaultPolicy = saved }()
+
+	_, err := NewUnpooledClient(5*time.Second, nil).Post("https://api.example.com/mcp", "application/json", strings.NewReader(`{"id":1}`))
+
+	s.ErrorIs(err, errCrossHostRedirect)
+	s.Zero(stolen.Load())
+}
