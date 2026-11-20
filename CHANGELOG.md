@@ -6,6 +6,10 @@
 
 `Client::connections()` creates, authorizes, reads, lists and deletes connections: `create(&NewConnection { connector, label, user_id })`, `authorize(id, &AuthorizeOptions { return_url, user_id })` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(&ConnectionFilter { connector, user_id })` (every page) and `delete(id, user_id)`. A user given goes out as both the owner and `X-Stream-User-Id`; `None` is the app's own connection and leaves the client's own `ClientOptions::user_id` as it is.
 
+### The Go SDK deprecates `Backend.ActingFor`
+
+Name the user on the call where it takes one: the `UserID` of a `client.Connections()` call's options (`client.ConnectionFilter{UserID: "alice"}`), the `XStreamUserId` of `acceleration.CreateScheduledTaskParams`, or, for another generated call, an `X-Stream-User-Id` set on that request with a per-call `acceleration.RequestEditorFn`. `client.Agent(...)` calls take no per-call user yet, so `ActingFor` is still how they act for one. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
+
 ### Swift's `SessionOptions` takes its tools in the initializer
 
 `agents.agent("support").sessions.create(SessionOptions(tools: [location]))` opens a session that answers its tools, the same call as Kotlin's `SessionOptions(tools = listOf(location))`, Dart's `SessionOptions(tools: [location])` and JavaScript's `sessions.create({ tools })`. `agents.chat(agent:tools:)` and `agents.voice(agent:tools:)` stay.

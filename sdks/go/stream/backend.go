@@ -143,6 +143,14 @@ type Backend struct {
 	// reaches a conversation that belongs to somebody. Unlike UserID it keeps the app's own
 	// credential, so the request is still the server's: what it writes is answered by the
 	// model rather than handed to a dispatch worker, and no daily limit is counted.
+	//
+	// Deprecated: name the user on the call where the call takes one: the UserID of
+	// client.Connections() options such as client.ConnectionFilter, or the XStreamUserId of a
+	// generated call's params such as acceleration.CreateScheduledTaskParams. For any other
+	// generated call, set X-Stream-User-Id on that one request with an acceleration.RequestEditorFn
+	// passed to the call. client.Agent(...) calls take no per-call user yet, so ActingFor is still
+	// how they act for one. A backend that holds one user for every request it makes cannot also
+	// make one for somebody else. It keeps working as it did.
 	ActingFor string
 	// Team is the customer's team the work is counted against, such as finance: its spend
 	// and its spend limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
