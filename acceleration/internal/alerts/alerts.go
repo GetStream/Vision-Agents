@@ -3,7 +3,9 @@
 // route by the usage_alert tag. Without a Sentry DSN an alert is only logged, at ERROR, which
 // it always is too. Every check also adds to the counter router_alert_holds_total{alert,level}
 // what the condition holds at that check (1, or the number of items), whatever the limit
-// sends, so a monitor outside Sentry can page on an increase of the level page ones.
+// sends, so a monitor outside Sentry can page on an increase of the level page ones. A hold at
+// the last check, on shutdown, or during a drain reaches Sentry only: by then /metrics is closed
+// or handed over.
 package alerts
 
 import (
