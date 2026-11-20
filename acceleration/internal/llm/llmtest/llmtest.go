@@ -73,6 +73,11 @@ func (s *Script) ToolCalls(calls ...llm.ToolCall) {
 	})
 }
 
+// ProviderResponseID reports what the provider stored the response as.
+func (s *Script) ProviderResponseID(id string) {
+	s.write(func(w *llm.ResponseWriter) { w.SetProviderResponseID(id) })
+}
+
 // Usage reports what the response consumed.
 func (s *Script) Usage(usage llm.Usage) {
 	s.write(func(w *llm.ResponseWriter) { w.Usage(usage) })
