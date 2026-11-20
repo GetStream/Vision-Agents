@@ -412,3 +412,35 @@ func TestADecisionNoticeStaysWithinTheTasksLimit(t *testing.T) {
 		t.Errorf("the notice lost its ticket id or its instructions, or kept a control character: %.200q", notice)
 	}
 }
+
+// Catches a scheduled task created without naming its user: the router refuses one, so the
+// agent would never speak first.
+func TestTheAgentSpeaksFirstInTheUsersConversation(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.Method+" "+r.URL.Path] = r.Header.Get("X-Stream-User-Id")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/scheduled-tasks") {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"t1","title":"T","instructions":"I","state":"active","created_at":"2026-11-19T00:00:00Z","updated_at":"2026-11-19T00:00:00Z","user_id":"anya"}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer router.Close()
+	t.Setenv("STREAM_ACCELERATION_URL", router.URL)
+	t.Setenv("STREAM_ACCELERATION_CUSTOMER_ID", "acme")
+
+	if _, err := agentSpeaksFirst(t.Context(), "anya", "s1", "T", "I", "UTC"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got := seen["POST /v1/agents/scheduled-tasks"]; got != "anya" {
+		t.Errorf("the task was created naming %q, want anya", got)
+	}
+}

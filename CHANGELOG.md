@@ -6,6 +6,10 @@
 
 `$client->connections` creates, authorizes, reads, lists and deletes connections: `create(new NewConnection('linear', userId: 'ada'))`, `authorize($id, new AuthorizeOptions($returnUrl, userId: 'ada'))` for the launch URL, handoff token and expiry of the consent, `get($id, userId: 'ada')`, `list(new ConnectionFilter(userId: 'ada'))` (every page) and `delete($id, userId: 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
 
+### The Go SDK deprecates `Backend.ActingFor`
+
+Name the user on the call where it takes one: the `UserID` of a `client.Connections()` call's options (`client.ConnectionFilter{UserID: "alice"}`), the `XStreamUserId` of `acceleration.CreateScheduledTaskParams`, or, for another generated call, an `X-Stream-User-Id` set on that request with a per-call `acceleration.RequestEditorFn`. `client.Agent(...)` calls take no per-call user yet, so `ActingFor` is still how they act for one. A `Backend` built with `ActingFor` keeps sending the same requests, and `crew_assistant` and `swift_assistant` no longer use it.
+
 ### Swift's `SessionOptions` takes its tools in the initializer
 
 `agents.agent("support").sessions.create(SessionOptions(tools: [location]))` opens a session that answers its tools, the same call as Kotlin's `SessionOptions(tools = listOf(location))`, Dart's `SessionOptions(tools: [location])` and JavaScript's `sessions.create({ tools })`. `agents.chat(agent:tools:)` and `agents.voice(agent:tools:)` stay.

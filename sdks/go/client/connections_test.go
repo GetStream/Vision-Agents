@@ -215,7 +215,7 @@ func TestAUsersConnectionNamesThemAsOwnerAndActingUser(t *testing.T) {
 // acts for in X-Stream-User-Id, which would make each read depend on who the client was built for.
 func TestAnAppConnectionNamesNoUser(t *testing.T) {
 	backend := newRouter(t)
-	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme", ActingFor: "bob"})
+	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme", ActingFor: "bob"}) //nolint:staticcheck // SA1019: the client acts for a user, which a call that names none must not send
 	if err != nil {
 		t.Fatal(err)
 	}
