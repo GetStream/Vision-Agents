@@ -151,6 +151,7 @@ class ClaudeLLM(LLM):
         if isinstance(original, ClaudeMessage):
             # Extract text from Claude's response format - safely handle all text blocks
             final_original = original
+            responses: List[Any] = [original]
             final_text = self._concat_text_blocks(original.content)
 
             # Multi-hop tool calling loop for non-streaming
@@ -212,6 +213,7 @@ class ClaudeLLM(LLM):
                     }
 
                     follow_up_response = await self.client.messages.create(**tools_cfg)
+                    responses.append(follow_up_response)
 
                     # Extract new tool calls from follow-up response
                     current_calls = self._extract_tool_calls_from_response(
@@ -229,13 +231,23 @@ class ClaudeLLM(LLM):
                         stream=False,
                         max_tokens=1000,
                     )
+                    responses.append(final_response)
                     final_original = final_response
                     final_text = self._concat_text_blocks(final_response.content)
 
             latency_ms = (time.perf_counter() - request_start_time) * 1000
-            usage = getattr(final_original, "usage", None)
-            input_tokens = getattr(usage, "input_tokens", None)
-            output_tokens = getattr(usage, "output_tokens", None)
+            # Sum usage over every request made for this turn (initial call,
+            # tool hops and the finalization pass), not just the last one.
+            input_tokens = None
+            output_tokens = None
+            for response in responses:
+                usage = getattr(response, "usage", None)
+                in_tok = getattr(usage, "input_tokens", None)
+                out_tok = getattr(usage, "output_tokens", None)
+                if in_tok is not None:
+                    input_tokens = (input_tokens or 0) + in_tok
+                if out_tok is not None:
+                    output_tokens = (output_tokens or 0) + out_tok
             yield LLMResponseFinal(
                 original=final_original,
                 text=final_text,
@@ -257,6 +269,9 @@ class ClaudeLLM(LLM):
             # Track usage from message_start and message_delta events
             input_tokens = None
             output_tokens = None
+            # Output tokens already counted for the message currently streaming
+            # (message_delta reports a running total for that message).
+            message_output_tokens = 0
             sequence_number = 0
 
             # 1) First round: read stream, gather initial tool_use calls
@@ -267,9 +282,16 @@ class ClaudeLLM(LLM):
                     and event.message
                     and event.message.usage
                 ):
-                    input_tokens = event.message.usage.input_tokens
+                    input_tokens = (input_tokens or 0) + (
+                        event.message.usage.input_tokens or 0
+                    )
+                    message_output_tokens = 0
                 elif event.type == "message_delta" and event.usage:
-                    output_tokens = event.usage.output_tokens
+                    new_output = event.usage.output_tokens or 0
+                    output_tokens = (
+                        (output_tokens or 0) + new_output - message_output_tokens
+                    )
+                    message_output_tokens = new_output
 
                 text_delta = self._extract_text_delta(event)
                 if text_delta is not None:
@@ -361,9 +383,16 @@ class ClaudeLLM(LLM):
                     last_followup_stream = ev
                     # Track usage from streaming events
                     if ev.type == "message_start" and ev.message and ev.message.usage:
-                        input_tokens = ev.message.usage.input_tokens
+                        input_tokens = (input_tokens or 0) + (
+                            ev.message.usage.input_tokens or 0
+                        )
+                        message_output_tokens = 0
                     elif ev.type == "message_delta" and ev.usage:
-                        output_tokens = ev.usage.output_tokens
+                        new_output = ev.usage.output_tokens or 0
+                        output_tokens = (
+                            (output_tokens or 0) + new_output - message_output_tokens
+                        )
+                        message_output_tokens = new_output
 
                     text_delta = self._extract_text_delta(ev)
                     if text_delta is not None:
@@ -410,9 +439,16 @@ class ClaudeLLM(LLM):
                     last_followup_stream = ev
                     # Track usage from streaming events
                     if ev.type == "message_start" and ev.message and ev.message.usage:
-                        input_tokens = ev.message.usage.input_tokens
+                        input_tokens = (input_tokens or 0) + (
+                            ev.message.usage.input_tokens or 0
+                        )
+                        message_output_tokens = 0
                     elif ev.type == "message_delta" and ev.usage:
-                        output_tokens = ev.usage.output_tokens
+                        new_output = ev.usage.output_tokens or 0
+                        output_tokens = (
+                            (output_tokens or 0) + new_output - message_output_tokens
+                        )
+                        message_output_tokens = new_output
 
                     text_delta = self._extract_text_delta(ev)
                     if text_delta is not None:
