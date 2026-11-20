@@ -459,6 +459,39 @@ func (s *AlertsSuite) TestAConditionThatHoldsForOneCheckOnlyIsAnIncrease() {
 	s.Equal(1.0, count(name, Page)-before, "a scrape after the pulse sees it")
 }
 
+// A series that appears at its first hold has no earlier sample, so that first hold would not
+// be an increase.
+func (s *AlertsSuite) TestAConditionHasItsSeriesAt0BeforeItHolds() {
+	check := "checked_" + rand.Text()
+	items := "itemised_" + rand.Text()
+	now := time.Now()
+	loop := s.clocked(&now,
+		Condition{Name: check, Level: Page, Check: func(time.Time) (bool, map[string]any) { return false, nil }},
+		Condition{Name: items, Level: Page, Items: func(time.Time) map[string]map[string]any { return nil }},
+	)
+
+	loop.check()
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	exported := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "router_alert_holds_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "alert" {
+					exported[label.GetValue()] = metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	s.Contains(exported, check)
+	s.Contains(exported, items)
+	s.Equal(0.0, exported[check])
+}
+
 func (s *AlertsSuite) TestAWarningCountsAtItsLevel() {
 	name := "warned_" + rand.Text()
 	now := time.Now()
