@@ -671,7 +671,7 @@ A Python agent used to store its directory on the router when it joined a call, 
 
 ### Kotlin: `Turn` has `steps` and `isDone`
 
-`Turn` takes two new last parameters, `steps` and `isDone`, both with defaults, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt; the source needs no change. `AgentEvent.Kind` gains `ReasoningDelta` and `ToolUpdated`, so a `when` over it with no `else` needs the two cases (AND-1984).
+`Turn` takes two new last parameters, `steps` and `isDone`, both with defaults, so code compiled against the old `Turn` constructor or `copy` fails with `NoSuchMethodError` until it is rebuilt. Kotlin calls of the constructor and `copy` need only the rebuild. `Turn` has no `@JvmOverloads`, so Java passes both to its constructor, an empty list and `false` for a turn as it was before. `AgentEvent.Kind` gains `ReasoningDelta` and `ToolUpdated`, so a `when` over it with no `else` needs the two cases (AND-1984).
 
 ### Kotlin: `Conversation` is no longer a data class, and `Turn` has `ui`
 
