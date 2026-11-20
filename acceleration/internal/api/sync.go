@@ -3,17 +3,18 @@ package api
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agentdir"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -146,9 +147,126 @@ func (*SimulationDeclaration) TransformSchema(_ huma.Registry, schema *huma.Sche
 
 // SyncAgentResult is the config a sync left stored.
 type SyncAgentResult struct {
-	Unchanged bool        `json:"unchanged" doc:"True when the hash matched and nothing was written."`
-	Config    AgentConfig `json:"config"`
-	Warnings  []string    `json:"warnings,omitempty" doc:"What was stored but will not work yet, such as a channel line the app has not connected."`
+	Unchanged bool         `json:"unchanged" doc:"True when the hash matched and nothing was written."`
+	Config    AgentConfig  `json:"config"`
+	Warnings  []string     `json:"warnings,omitempty" doc:"What was stored but will not work yet, such as a channel line the app has not connected."`
+	Changes   []SyncChange `json:"changes,omitempty" nullable:"false" doc:"What the sync did, or with dry_run would do, to what the agent holds beside its config: each skill, knowledge document, knowledge url and simulation it created, updated or deleted. One it leaves as it is is not listed, and nothing is for a sync that found the hash unchanged."`
+}
+
+// SyncChange is one thing a sync writes beside the config.
+type SyncChange struct {
+	ResourceType string `json:"resource_type" enum:"skill,knowledge,knowledge_url,simulation" doc:"What it is, named as GET /v1/agents/configs/{id}/changes names a skill, a knowledge document and a knowledge url, and simulation, which that record does not keep."`
+	Name         string `json:"name" doc:"Which one: a skill's name, a knowledge document's source, a knowledge url's url, a simulation's name."`
+	Action       string `json:"action" enum:"created,updated,deleted"`
+}
+
+func (*SyncChange) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One skill, knowledge document, knowledge url or simulation a sync creates, updates or deletes."
+	return schema
+}
+
+// syncChanges works out what a sync would write beside the config, before it writes any of
+// it: the same question each write below answers for itself, asked together so a dry run can
+// say it.
+func (s *Server) syncChanges(
+	ctx context.Context, customerID string, existing store.AgentConfig, body SyncAgentRequest, fill knowledgeFill, forgets bool,
+) ([]SyncChange, error) {
+	var changes []SyncChange
+	say := func(kind, name, action string) {
+		changes = append(changes, SyncChange{ResourceType: kind, Name: name, Action: action})
+	}
+	written := func(held bool) string {
+		if held {
+			return store.AuditUpdated
+		}
+		return store.AuditCreated
+	}
+
+	var skills []store.Skill
+	var simulations []store.Simulation
+	if existing.ID != "" {
+		var err error
+		if skills, err = s.store.CustomerSkills(ctx, customerID, existing.ID); err != nil {
+			return nil, err
+		}
+		all, err := s.store.CustomerSimulations(ctx, customerID)
+		if err != nil {
+			return nil, err
+		}
+		for _, simulation := range all {
+			if simulation.ConfigID == existing.ID {
+				simulations = append(simulations, simulation)
+			}
+		}
+	}
+	for _, skill := range skillsOf(body.Skills) {
+		was, held := skillNamedStored(skills, strings.TrimSpace(skill.Name))
+		if !held || !sameSkill(was, storedSkill(skill, was.CustomerID)) {
+			say(store.AuditSkill, strings.TrimSpace(skill.Name), written(held))
+		}
+	}
+
+	for _, document := range fill.written {
+		_, held := fill.before[document.Source]
+		say(store.AuditKnowledge, document.Source, written(held))
+	}
+	if forgets {
+		stored, err := s.store.CustomerKnowledgeDocuments(ctx, customerID, body.Name)
+		if err != nil {
+			return nil, err
+		}
+		for _, document := range stored {
+			kept := slices.ContainsFunc(documentsOf(body.Knowledge), func(sent KnowledgeDocument) bool {
+				return strings.TrimSpace(sent.Source) == document.Source && strings.TrimSpace(sent.Text) != ""
+			})
+			if !kept {
+				say(store.AuditKnowledge, document.Source, store.AuditDeleted)
+			}
+		}
+	}
+	if pages := value(body.KnowledgeUrls); len(pages) > 0 {
+		subscribed, err := s.pages.List(ctx, customerID, body.Name)
+		if err != nil {
+			return nil, err
+		}
+		for _, page := range pages {
+			at := slices.IndexFunc(subscribed, func(was store.KnowledgeURL) bool { return was.URL == strings.TrimSpace(page.Url) })
+			if at < 0 || subscribed[at].DeclaredTitle != value(page.Title) || subscribed[at].Description != value(page.Description) ||
+				subscribed[at].RefreshHours != value(page.RefreshHours) {
+				say(store.AuditKnowledgeURL, strings.TrimSpace(page.Url), written(at >= 0))
+			}
+		}
+	}
+
+	if body.Simulations != nil {
+		declared := map[string]bool{}
+		for _, declaration := range *body.Simulations {
+			name := strings.TrimSpace(declaration.Name)
+			declared[name] = true
+			at := slices.IndexFunc(simulations, func(was store.Simulation) bool { return was.Name == name })
+			if at < 0 || !sameSimulation(simulations[at], declaration) {
+				say("simulation", name, written(at >= 0))
+			}
+		}
+		for _, simulation := range simulations {
+			if !declared[simulation.Name] {
+				say("simulation", simulation.Name, store.AuditDeleted)
+			}
+		}
+	}
+	return changes, nil
+}
+
+// sameSimulation reports whether a declaration says what a stored simulation is, with what
+// the store fills in for what a declaration leaves out.
+func sameSimulation(was store.Simulation, declared SimulationDeclaration) bool {
+	return was.Scenario == strings.TrimSpace(declared.Scenario) && was.Assertion == strings.TrimSpace(declared.Assertion) &&
+		was.Mode == cmp.Or(value(declared.Mode), store.SimulationText) &&
+		was.Variations == max(value(declared.Variations), 1) &&
+		was.MaxTurns == cmp.Or(value(declared.MaxTurns), store.DefaultSimulationTurns) &&
+		was.CallerTarget == value(declared.CallerTarget) && was.JudgeTarget == value(declared.JudgeTarget) &&
+		was.CallerSTT == value(declared.CallerStt) && was.CallerTTS == value(declared.CallerTts) &&
+		was.CallerVoice == value(declared.CallerVoice) && maps.Equal(was.Tags, value(declared.Tags))
 }
 
 type syncAgentRequest struct {
@@ -198,12 +316,20 @@ func (s *Server) registerSync(api huma.API) {
 // The hash is a fingerprint of that directory. A second call with the same hash does
 // nothing, so a process that syncs on startup is cheap when nothing has changed.
 func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syncAgentResponse, error) {
+	return s.sync(ctx, directorySync{body: request.Body})
+}
+
+// sync stores what a sync says the agent is: the request a client sent, or the one a
+// directory's files amount to.
+func (s *Server) sync(ctx context.Context, read directorySync) (*syncAgentResponse, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return nil, errMissingCustomer
 	}
-
-	body := request.Body
+	if s.store == nil {
+		return nil, errNoConfigs
+	}
+	body := read.body
 	name := strings.TrimSpace(body.Name)
 	hash := strings.TrimSpace(body.Hash)
 	if name == "" {
@@ -213,11 +339,21 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, invalidRequest("a hash is required, so a second sync can do nothing")
 	}
 
-	if s.store == nil {
-		return nil, errNoConfigs
+	// A sync of files is told everything its settings may not be at once, each where
+	// agent.yaml says it. One sent as fields is refused at the first, as it always was.
+	var problems agentdir.Problems
+	refuse := func(setting, message string) error {
+		if read.directory == nil {
+			return invalidRequest(message)
+		}
+		line, column := read.directory.Locate(setting)
+		problems = append(problems, agentdir.Problem{File: agentdir.AgentFile, Line: line, Column: column, Message: message})
+		return nil
 	}
-	if message, ok := syncComplaint(ctx, body); !ok {
-		return nil, invalidRequest(message)
+	for _, complaint := range syncComplaints(ctx, body) {
+		if err := refuse(complaint.setting, complaint.message); err != nil {
+			return nil, err
+		}
 	}
 	// Before the hash is read, so a directory that still names any is refused rather than
 	// found unchanged.
@@ -245,7 +381,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok, err := s.unboundConnectors(ctx, customerID, body.Connectors); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("connectors", message); err != nil {
+			return nil, err
+		}
 	}
 	config := existing
 	var stored *savedSandbox
@@ -259,44 +397,68 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	// into a base kept in another region than the agent's.
 	config.Region = cmp.Or(config.Region, pricing.DefaultRegion)
 	if message, ok := textSubagentComplaint(&config, body.Subagent); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("subagent", message); err != nil {
+			return nil, err
+		}
 	}
 	warnings, message, ok := s.channelsWarnings(ctx, config)
 	if !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("channels", message); err != nil {
+			return nil, err
+		}
 	}
+	warnings = append(read.warnings, warnings...)
 	if message, ok := schedulingComplaint(config); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("scheduling", message); err != nil {
+			return nil, err
+		}
 	}
 	if failure, refused := s.floorControlRefusal(body.FloorControl, body.EndOfTurn); refused {
-		return nil, failure
+		if read.directory == nil {
+			return nil, failure
+		}
+		_ = refuse("floor_control", failure.Message)
 	}
 	if warning, message, ok := s.floorControlComplaint(ctx, config.FloorControl, existing.FloorControl); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("floor_control", message); err != nil {
+			return nil, err
+		}
 	} else if warning != "" && body.FloorControl != nil {
 		warnings = append(warnings, warning)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("calls", message); err != nil {
+			return nil, err
+		}
 	}
 	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("tags", message); err != nil {
+			return nil, err
+		}
 	}
 	if message, ok := toolsComplaint(config); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("tools", message); err != nil {
+			return nil, err
+		}
 	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("connectors", message); err != nil {
+			return nil, err
+		}
 	}
 	if message, ok, err := s.sensitiveBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("connectors", message); err != nil {
+			return nil, err
+		}
 	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("stt", message); err != nil {
+			return nil, err
+		}
 	}
 	var prior *store.AgentConfig
 	if found {
@@ -305,14 +467,16 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, prior); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("agents", message); err != nil {
+			return nil, err
+		}
 	}
 	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, stored); refused {
 		return nil, failure
 	}
 	// Asked of the knowledge base the sync is about to write, the one named after the agent.
 	documents := documentsOf(body.Knowledge)
-	knows := len(documents) > 0 || (body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0)
+	knows := len(documents) > 0 || len(value(body.KnowledgeUrls)) > 0
 	regional := config
 	regional.KnowledgeNamespace = ""
 	if knows {
@@ -321,30 +485,64 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok, err := s.regionComplaint(ctx, regional, prior); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("region", message); err != nil {
+			return nil, err
+		}
 	}
 
 	skills := skillsOf(body.Skills)
 	// After the settings, so a sandbox stored before and not repeated still counts.
 	if message, ok := skillSandboxComplaint(skills, config.Sandbox != ""); !ok {
-		return nil, invalidRequest(message)
+		if err := refuse("sandbox", message); err != nil {
+			return nil, err
+		}
 	}
+	if len(problems) > 0 {
+		return nil, invalidDirectory(problems)
+	}
+	// Everything a write below would refuse is refused here, before the first of them: a sync
+	// refused halfway is an agent half written, and a dry run answers as the sync would.
 	named := make([]string, 0, len(skills))
 	for _, skill := range skills {
+		// The config owns its skills and may not be stored yet, so there is no id to name.
+		skill.ConfigId = name
+		if message, ok := skillComplaint(skill); !ok {
+			return nil, invalidRequest(message)
+		}
+		if slices.Contains(named, strings.TrimSpace(skill.Name)) {
+			return nil, invalidRequest(fmt.Sprintf("two skills are called %q", strings.TrimSpace(skill.Name)))
+		}
 		named = append(named, strings.TrimSpace(skill.Name))
 	}
+	pages := value(body.KnowledgeUrls)
+	if len(documents) > 0 && s.knowledge == nil {
+		return nil, errNoKnowledge
+	}
+	if len(pages) > 0 && s.pages == nil {
+		return nil, errNoKnowledgeURLs
+	}
+	for _, document := range documents {
+		if strings.TrimSpace(document.Source) == "" {
+			return nil, invalidRequest("every document needs a source, which is what its passages are keyed by")
+		}
+	}
+	for _, page := range pages {
+		if err := urls.Check(urls.Subscription{URL: page.Url, RefreshHours: value(page.RefreshHours)}); err != nil {
+			return nil, invalidRequest(err.Error())
+		}
+	}
 
+	config.Instructions = value(body.Instructions)
+	config.Guardrail = value(body.Guardrail)
+	config.UIInstructions = value(body.UiInstructions)
+	config.UISource = read.ui
+	config.Skills = named
 	// Before anything is written, and before the knowledge is filled: a caller that asked
 	// to be told is told instead of having its answer half applied. What the sync would
 	// store is worked out first, because the question is what it would write over rather
 	// than whether anything was edited.
 	if found && value(body.CheckChanges) {
-		prospective := config
-		prospective.Instructions = value(body.Instructions)
-		prospective.Guardrail = value(body.Guardrail)
-		prospective.UIInstructions = value(body.UiInstructions)
-		prospective.Skills = named
-		refusal, conflicting, err := s.syncConflict(ctx, customerID, existing, prospective, body)
+		refusal, conflicting, err := s.syncConflict(ctx, customerID, existing, config, body)
 		if err != nil {
 			return nil, err
 		}
@@ -352,31 +550,46 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 			return nil, refusal
 		}
 	}
-
-	// The writes are the agent's work, so a base nothing was written to is made in its region
-	// and one kept in another refuses them.
 	namespace := ""
-	if len(documents) > 0 {
-		if s.knowledge == nil {
-			return nil, errNoKnowledge
-		}
+	if knows {
 		namespace = name
-		if _, _, err := s.fillKnowledge(ctx, customerID, config.Region, namespace, documents, nil); err != nil {
+	}
+	config.KnowledgeNamespace = namespace
+	config.SyncHash = hash
+	// The knowledge is worked out, and the money for writing it asked for, before anything is
+	// written, so a dry run is refused for it as the sync would be.
+	var fill knowledgeFill
+	if len(documents) > 0 {
+		if fill, err = s.planKnowledge(ctx, customerID, config.Region, namespace, documents, nil); err != nil {
 			return nil, err
 		}
 	}
-	if body.KnowledgeUrls != nil && len(*body.KnowledgeUrls) > 0 {
-		if s.pages == nil {
-			return nil, errNoKnowledgeURLs
+	forgets := s.knowledge != nil && (namespace != "" || existing.KnowledgeNamespace == name)
+	changes, err := s.syncChanges(ctx, customerID, existing, body, fill, forgets)
+	if err != nil {
+		return nil, err
+	}
+	if read.dryRun {
+		// What a config that names no mode is stored as (store.normalizeConfig).
+		config.Mode = cmp.Or(config.Mode, store.AgentModeVoice)
+		return &syncAgentResponse{Body: SyncAgentResult{Config: agentConfigOf(config), Warnings: warnings, Changes: changes}}, nil
+	}
+
+	// The writes are the agent's work, so a base nothing was written to is made in its region
+	// and one kept in another refuses them.
+	if len(documents) > 0 {
+		if err := s.writeKnowledge(ctx, customerID, config.Region, namespace, fill); err != nil {
+			return nil, err
 		}
-		namespace = name
+	}
+	if len(pages) > 0 {
 		// A page is read later, by work naming no region, which writes where the base is kept.
 		if s.knowledge != nil {
 			if err := s.knowledgeFor(ctx, customerID, config.Region).Keep(ctx, namespace); err != nil {
 				return nil, err
 			}
 		}
-		for _, page := range *body.KnowledgeUrls {
+		for _, page := range pages {
 			wanted := urls.Subscription{Namespace: namespace, URL: page.Url}
 			wanted.Title = value(page.Title)
 			wanted.Description = value(page.Description)
@@ -388,18 +601,11 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	}
 	// The directory is the whole of what its knowledge base holds, so a file taken out of
 	// it is taken out of the base too, including the last one.
-	if s.knowledge != nil && (namespace != "" || existing.KnowledgeNamespace == name) {
+	if forgets {
 		if err := s.forgetKnowledge(ctx, customerID, name, documents); err != nil {
 			return nil, err
 		}
 	}
-
-	config.Instructions = value(body.Instructions)
-	config.Guardrail = value(body.Guardrail)
-	config.UIInstructions = value(body.UiInstructions)
-	config.Skills = named
-	config.KnowledgeNamespace = namespace
-	config.SyncHash = hash
 
 	if found {
 		if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
@@ -420,7 +626,7 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	// agent has no id to hang them off until it has been stored.
 	if len(skills) > 0 {
 		if err := s.upsertSkills(ctx, customerID, config.ID, skills); err != nil {
-			return nil, invalidRequest(err.Error())
+			return nil, storeFailure(err, errSkillNameTaken)
 		}
 	}
 	if body.Simulations != nil {
@@ -437,45 +643,51 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditSynced, Changes: synced,
 	})
-	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings}}, nil
+	return &syncAgentResponse{Body: SyncAgentResult{Unchanged: false, Config: agentConfigOf(config), Warnings: warnings, Changes: changes}}, nil
 }
 
-// syncComplaint reports what is wrong with the settings a directory declared, if
-// anything. It is the same reading configComplaint does, since a directory decides the
-// same things a config written by hand does.
-func syncComplaint(ctx context.Context, body SyncAgentRequest) (string, bool) {
+// syncSetting is something wrong with one setting of a sync, by the name agent.yaml has for it.
+type syncSetting struct {
+	setting, message string
+}
+
+// syncComplaints reports everything wrong with the settings a directory declared, each
+// with the agent.yaml setting it is about. It is the same reading configComplaint does,
+// since a directory decides the same things a config written by hand does.
+func syncComplaints(ctx context.Context, body SyncAgentRequest) (complaints []syncSetting) {
+	say := func(setting, message string) { complaints = append(complaints, syncSetting{setting, message}) }
 	if _, ok := modeOf(body.Mode); !ok {
-		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+		say("mode", fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText))
 	}
 	if complaint, ok := agentRegionComplaint(body.Region); !ok {
-		return complaint, false
+		say("region", complaint)
 	}
 	if complaint, ok := guardrailComplaint(ctx, body.Guardrail); !ok {
-		return complaint, false
+		say("guardrail", complaint)
 	}
 	if len(keytermsOf(body.Keyterms)) > stt.MaxKeyterms {
-		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
+		say("keyterms", fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms))
 	}
 	if _, ok := sandboxOf(body.Sandbox); !ok {
-		return fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox), false
+		say("sandbox", fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox))
 	}
 	if _, ok := harnessOf(body.Harness); !ok {
-		return fmt.Sprintf("there is no harness called %q", *body.Harness), false
+		say("harness", fmt.Sprintf("there is no harness called %q", *body.Harness))
 	}
 	if complaint, ok := dispatchComplaint(body.Dispatch); !ok {
-		return complaint, false
+		say("dispatch", complaint)
 	}
 	if body.LeftOutConnectors != nil && len(*body.LeftOutConnectors) > 0 && body.Connectors == nil {
-		return "left_out_connectors goes with connectors: send connectors too, an empty list if none is bound", false
+		say("connectors", "left_out_connectors goes with connectors: send connectors too, an empty list if none is bound")
 	}
 	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
-		return complaint, false
+		say("connectors", complaint)
 	}
 	if complaint, ok := chatChannelsComplaint(body.ChatChannels); !ok {
-		return complaint, false
+		say("chat_channels", complaint)
 	}
 	if complaint, ok := sandboxOptionsComplaint(body.SandboxOptions); !ok {
-		return complaint, false
+		say("sandbox_options", complaint)
 	}
 	// Simulations are checked here, before anything is written, since a config stored under
 	// the new hash would make the next sync skip the simulations that failed.
@@ -483,16 +695,16 @@ func syncComplaint(ctx context.Context, body SyncAgentRequest) (string, bool) {
 	for _, simulation := range simulationsOf(body.Simulations) {
 		name := strings.TrimSpace(simulation.Name)
 		if named[name] {
-			return fmt.Sprintf("two simulations are called %q", name), false
+			say("simulations", fmt.Sprintf("two simulations are called %q", name))
 		}
 		named[name] = true
 		if simulation.Tags != nil {
 			if err := routing.Tags(*simulation.Tags).Validate(); err != nil {
-				return fmt.Sprintf("simulation %q: %s", name, err), false
+				say("simulations", fmt.Sprintf("simulation %q: %s", name, err))
 			}
 		}
 	}
-	return "", true
+	return complaints
 }
 
 // replaceSimulations makes the config's simulations exactly the ones declared, finding each
@@ -655,12 +867,6 @@ func documentsOf(list *[]KnowledgeDocument) []KnowledgeDocument {
 func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, skills []SkillRequest) error {
 	names := make([]string, 0, len(skills))
 	for _, skill := range skills {
-		// The directory names the skill and the config owns it, so the caller does not
-		// repeat the config id per skill and it is filled in here.
-		skill.ConfigId = configID
-		if message, ok := skillComplaint(skill); !ok {
-			return stack.Wrap(errors.New(message))
-		}
 		names = append(names, strings.TrimSpace(skill.Name))
 	}
 
@@ -674,6 +880,7 @@ func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, 
 	}
 
 	for _, skill := range skills {
+		// The config owns the skill, so the caller does not repeat its id per skill.
 		skill.ConfigId = configID
 		row := storedSkill(skill, customerID)
 		if existing, ok := known[row.Name]; ok {

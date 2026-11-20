@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -15,13 +17,59 @@ import (
 //
 // The message names what would be lost, because the client's next move is to show the
 // person exactly that. The code is what a client branches on.
-func unsyncedChangesError(lost []string) APIError {
-	return APIError{
+func unsyncedChangesError(lost []SyncConflict, lastChange string) unsyncedRefusal {
+	said := make([]string, 0, len(lost))
+	for _, conflict := range lost {
+		said = append(said, conflict.String())
+	}
+	return unsyncedRefusal{conflicts: lost, lastChange: lastChange, APIError: APIError{
 		Type: ErrorTypeConflict, Code: codeUnsyncedChanges,
 		Message: "this would write over changes made since the last sync: " +
-			strings.Join(lost, ", ") +
+			strings.Join(said, ", ") +
 			". Read GET /v1/agents/configs/{id}/changes, then sync again with base_change to keep them or to write over them",
+	}}
+}
+
+// unsyncedRefusal is unsyncedChangesError as it is answered: the failure, with what the
+// message names as data a client can read without reading the message.
+type unsyncedRefusal struct {
+	APIError
+	conflicts  []SyncConflict
+	lastChange string
+}
+
+func (u unsyncedRefusal) MarshalJSON() ([]byte, error) {
+	detail := u.detail()
+	detail.Conflicts, detail.LastChange = u.conflicts, u.lastChange
+	return marshalFailure(detail)
+}
+
+// SyncConflict is one thing a sync would write over that somebody changed since the last one.
+type SyncConflict struct {
+	ResourceType AuditResourceType `json:"resource_type" doc:"What was changed, as GET /v1/agents/configs/{id}/changes names it: agent_config, skill, knowledge or knowledge_url."`
+	Name         string            `json:"name" doc:"Which one: the field of an agent_config, such as llm or instructions; a skill's name; a knowledge document's source; a knowledge url's url."`
+	Removed      bool              `json:"removed,omitempty" doc:"True for a knowledge document the directory no longer has, which the sync would delete."`
+}
+
+func (*SyncConflict) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "One thing a sync would write over that somebody changed since the last sync."
+	return schema
+}
+
+// String is the conflict as the refusal's message names it.
+func (c SyncConflict) String() string {
+	switch c.ResourceType {
+	case store.AuditSkill:
+		return "skill " + c.Name
+	case store.AuditKnowledge:
+		if c.Removed {
+			return "knowledge " + c.Name + ", which this directory no longer has"
+		}
+		return "knowledge " + c.Name
+	case store.AuditKnowledgeURL:
+		return "knowledge url " + c.Name
 	}
+	return c.Name
 }
 
 // driftedSinceSync reports whether a sync whose hash matches the stored one has anything
@@ -64,13 +112,13 @@ func (s *Server) driftedSinceSync(
 // and is not a conflict.
 func (s *Server) syncConflict(
 	ctx context.Context, customerID string, existing, prospective store.AgentConfig, body SyncAgentRequest,
-) (APIError, bool, error) {
+) (unsyncedRefusal, bool, error) {
 	changes, _, err := s.unsyncedChanges(ctx, customerID, existing.ID, value(body.BaseChange))
 	if err != nil {
-		return APIError{}, false, err
+		return unsyncedRefusal{}, false, err
 	}
 	if len(changes) == 0 {
-		return APIError{}, false, nil
+		return unsyncedRefusal{}, false, nil
 	}
 
 	writes := auditFieldsOf(auditDiff(agentConfigOf(existing), agentConfigOf(prospective)))
@@ -78,7 +126,7 @@ func (s *Server) syncConflict(
 	var documents []store.KnowledgeDocument
 	if body.Skills != nil {
 		if skills, err = s.store.CustomerSkills(ctx, customerID, existing.ID); err != nil {
-			return APIError{}, false, err
+			return unsyncedRefusal{}, false, err
 		}
 	}
 	if body.Knowledge != nil && existing.KnowledgeNamespace != "" {
@@ -86,52 +134,50 @@ func (s *Server) syncConflict(
 		// stored, which is a question about the text.
 		documents, err = s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, existing.KnowledgeNamespace)
 		if err != nil {
-			return APIError{}, false, err
+			return unsyncedRefusal{}, false, err
 		}
 	}
 
-	var lost []string
+	var lost []SyncConflict
 	for _, change := range changes {
 		switch change.ResourceType {
 		case store.AuditAgentConfig:
 			for _, field := range auditFieldsOf(change.Changes) {
-				if slices.Contains(writes, field) && !slices.Contains(lost, field) {
-					lost = append(lost, field)
+				if slices.Contains(writes, field) {
+					lost = appendOnce(lost, SyncConflict{ResourceType: store.AuditAgentConfig, Name: field})
 				}
 			}
 		case store.AuditSkill:
-			if named := conflictingSkill(change.ResourceName, body, skills); named != "" {
-				lost = appendOnce(lost, named)
+			if conflictingSkill(change.ResourceName, body, skills) {
+				lost = appendOnce(lost, SyncConflict{ResourceType: store.AuditSkill, Name: change.ResourceName})
 			}
 		case store.AuditKnowledge:
-			if named := conflictingDocument(change.ResourceName, body, documents); named != "" {
-				lost = appendOnce(lost, named)
+			if conflict, lost2 := conflictingDocument(change.ResourceName, body, documents); lost2 {
+				lost = appendOnce(lost, conflict)
 			}
 		case store.AuditKnowledgeURL:
-			if named := conflictingKnowledgeURL(change.ResourceName, body); named != "" {
-				lost = appendOnce(lost, named)
+			if conflictingKnowledgeURL(change.ResourceName, body) {
+				lost = appendOnce(lost, SyncConflict{ResourceType: store.AuditKnowledgeURL, Name: change.ResourceName})
 			}
 		}
 	}
 	if len(lost) == 0 {
-		return APIError{}, false, nil
+		return unsyncedRefusal{}, false, nil
 	}
-	return unsyncedChangesError(lost), true, nil
+	// Newest first, as GET /v1/agents/configs/{id}/changes lists them and names its last_change.
+	return unsyncedChangesError(lost, changes[0].ID), true, nil
 }
 
-// conflictingSkill is what to call a skill the directory would write differently from how
-// it is stored, or the empty string when the sync leaves it as it is. A skill the directory
-// does not declare is safe: a sync adds and updates the skills it names and takes none away.
-func conflictingSkill(name string, body SyncAgentRequest, stored []store.Skill) string {
+// conflictingSkill reports whether the directory would write a skill differently from how it
+// is stored. A skill the directory does not declare is safe: a sync adds and updates the
+// skills it names and takes none away.
+func conflictingSkill(name string, body SyncAgentRequest, stored []store.Skill) bool {
 	declared, found := skillNamed(skillsOf(body.Skills), name)
 	if !found {
-		return ""
+		return false
 	}
 	was, held := skillNamedStored(stored, name)
-	if held && sameSkill(was, storedSkill(declared, was.CustomerID)) {
-		return ""
-	}
-	return "skill " + name
+	return !held || !sameSkill(was, storedSkill(declared, was.CustomerID))
 }
 
 // sameSkill reports whether two skills say the same thing, whatever their ids and times.
@@ -140,36 +186,30 @@ func sameSkill(a, b store.Skill) bool {
 		a.DeadlineMs == b.DeadlineMs && a.CaptureVideo == b.CaptureVideo && maps.Equal(a.Files, b.Files)
 }
 
-// conflictingDocument is what to call a knowledge file the directory would write over or
-// take away. The directory is the whole of the agent's knowledge base, so a file somebody
+// conflictingDocument is a knowledge file the directory would write over or take away, if
+// it would. The directory is the whole of the agent's knowledge base, so a file somebody
 // added in the dashboard and the directory does not have is one this sync would delete.
-func conflictingDocument(source string, body SyncAgentRequest, stored []store.KnowledgeDocument) string {
+func conflictingDocument(source string, body SyncAgentRequest, stored []store.KnowledgeDocument) (SyncConflict, bool) {
+	conflict := SyncConflict{ResourceType: store.AuditKnowledge, Name: source}
 	for _, document := range documentsOf(body.Knowledge) {
 		if strings.TrimSpace(document.Source) != source {
 			continue
 		}
 		for _, was := range stored {
 			if was.Source == source && was.Text == document.Text {
-				return ""
+				return SyncConflict{}, false
 			}
 		}
-		return "knowledge " + source
+		return conflict, true
 	}
-	return "knowledge " + source + ", which this directory no longer has"
+	conflict.Removed = true
+	return conflict, true
 }
 
-// conflictingKnowledgeURL is what to call a page the directory declares and would write its
-// own settings onto. A page the directory does not declare is left alone.
-func conflictingKnowledgeURL(url string, body SyncAgentRequest) string {
-	if body.KnowledgeUrls == nil {
-		return ""
-	}
-	for _, page := range *body.KnowledgeUrls {
-		if page.Url == url {
-			return "knowledge url " + url
-		}
-	}
-	return ""
+// conflictingKnowledgeURL reports whether the directory declares a page, and so would write
+// its own settings onto it. A page the directory does not declare is left alone.
+func conflictingKnowledgeURL(url string, body SyncAgentRequest) bool {
+	return slices.ContainsFunc(value(body.KnowledgeUrls), func(page KnowledgeUrlDeclaration) bool { return page.Url == url })
 }
 
 func skillNamed(declared []SkillRequest, name string) (SkillRequest, bool) {
@@ -190,9 +230,9 @@ func skillNamedStored(stored []store.Skill, name string) (store.Skill, bool) {
 	return store.Skill{}, false
 }
 
-func appendOnce(list []string, value string) []string {
-	if slices.Contains(list, value) {
+func appendOnce(list []SyncConflict, conflict SyncConflict) []SyncConflict {
+	if slices.Contains(list, conflict) {
 		return list
 	}
-	return append(list, value)
+	return append(list, conflict)
 }

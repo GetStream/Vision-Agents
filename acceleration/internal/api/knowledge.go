@@ -252,7 +252,31 @@ func (s *Server) knowledgePassages(
 // that changed nothing in knowledge/ writes nothing and is not refused for money.
 func (s *Server) fillKnowledge(
 	ctx context.Context, customerID, region, namespace string, documents []KnowledgeDocument, chunkSize *int,
-) (_ int, _ int, err error) {
+) (int, int, error) {
+	fill, err := s.planKnowledge(ctx, customerID, region, namespace, documents, chunkSize)
+	if err != nil {
+		return 0, 0, err
+	}
+	return fill.read, fill.cut, s.writeKnowledge(ctx, customerID, region, namespace, fill)
+}
+
+// knowledgeFill is what filling a knowledge base with some documents would write.
+type knowledgeFill struct {
+	// read is how many documents held anything, and cut how many passages they became.
+	read, cut int
+	passages  []knowledge.Document
+	// written are the documents that are not already in the base as they are.
+	written []store.KnowledgeDocument
+	before  map[string]store.KnowledgeDocument
+}
+
+// planKnowledge works out what filling a base would write, and refuses what the write would
+// refuse before it wrote anything: documents with nothing to read, and an owner who may not
+// pay for the write. It writes nothing, so a dry run is refused as the sync would be. What it
+// cannot tell is whether the provider will take the passages, which only writing them does.
+func (s *Server) planKnowledge(
+	ctx context.Context, customerID, region, namespace string, documents []KnowledgeDocument, chunkSize *int,
+) (knowledgeFill, error) {
 	size := ingest.DefaultChunk
 	if chunkSize != nil && *chunkSize > 0 {
 		size = *chunkSize
@@ -264,7 +288,7 @@ func (s *Server) fillKnowledge(
 	if s.store != nil {
 		stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
 		if err != nil {
-			return 0, 0, err
+			return knowledgeFill{}, err
 		}
 		for _, document := range stored {
 			before[document.Source] = document
@@ -277,7 +301,7 @@ func (s *Server) fillKnowledge(
 	for _, document := range documents {
 		source := strings.TrimSpace(document.Source)
 		if source == "" {
-			return 0, 0, invalidRequest("every document needs a source, which is what its passages are keyed by")
+			return knowledgeFill{}, invalidRequest("every document needs a source, which is what its passages are keyed by")
 		}
 		// A document that is only whitespace is skipped rather than refused: a directory
 		// posted whole often has one in it, and failing the lot over it helps nobody.
@@ -303,24 +327,30 @@ func (s *Server) fillKnowledge(
 	}
 
 	if cut == 0 {
-		return 0, 0, invalidRequest("there is nothing to read in these documents")
+		return knowledgeFill{}, invalidRequest("there is nothing to read in these documents")
 	}
+	fill := knowledgeFill{read: read, cut: cut, passages: passages, written: written, before: before}
+	// Refused before any row is written, so a refused ingest leaves nothing listed.
+	if len(written) > 0 && s.store != nil {
+		if err := s.knowledgeFor(ctx, customerID, region).Admit(ctx); err != nil {
+			return knowledgeFill{}, err
+		}
+	}
+	return fill, nil
+}
+
+// writeKnowledge writes what planKnowledge worked out.
+func (s *Server) writeKnowledge(ctx context.Context, customerID, region, namespace string, fill knowledgeFill) (err error) {
+	passages, written, before := fill.passages, fill.written, fill.before
 	if len(written) == 0 {
-		return read, cut, nil
+		return nil
 	}
 	writer := s.knowledgeFor(ctx, customerID, region)
 	if s.store == nil {
-		if err := writer.Upsert(ctx, namespace, passages); err != nil {
-			return 0, 0, err
-		}
-		return read, cut, nil
-	}
-	// Refused before any row is written, so a refused ingest leaves nothing listed.
-	if err := writer.Admit(ctx); err != nil {
-		return 0, 0, err
+		return writer.Upsert(ctx, namespace, passages)
 	}
 	if err := writer.Keep(ctx, namespace); err != nil {
-		return 0, 0, err
+		return err
 	}
 
 	// Every row is saved before the passages, counting the old version's passages as well as
@@ -336,11 +366,11 @@ func (s *Server) fillKnowledge(
 		document.Passages = max(document.Passages, before[document.Source].Passages)
 		document.State = store.KnowledgeDocumentPending
 		if err = s.store.SaveKnowledgeDocument(ctx, &document); err != nil {
-			return 0, 0, err
+			return err
 		}
 	}
 	if err = writer.Upsert(ctx, namespace, passages); err != nil {
-		return 0, 0, err
+		return err
 	}
 
 	agentID := s.agentOfKnowledge(ctx, customerID, namespace)
@@ -349,11 +379,11 @@ func (s *Server) fillKnowledge(
 		was, had := before[document.Source]
 		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
 		if err = writer.Delete(ctx, namespace, stale); err != nil {
-			return 0, 0, err
+			return err
 		}
 		document.State = store.KnowledgeDocumentIndexed
 		if err = s.store.SaveKnowledgeDocument(ctx, document); err != nil {
-			return 0, 0, err
+			return err
 		}
 		indexed++
 		action := store.AuditCreated
@@ -368,7 +398,7 @@ func (s *Server) fillKnowledge(
 			Changes: auditDiff(previous, auditedKnowledgeOf(*document)),
 		})
 	}
-	return read, cut, nil
+	return nil
 }
 
 // knowledgeWriteFailed is why a failed document failed, as its row tells the customer. The

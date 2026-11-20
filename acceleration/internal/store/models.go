@@ -596,6 +596,10 @@ type AgentConfig struct {
 	// UIInstructions teach the model to answer with UI, such as agent.yaml's ui: compiled by
 	// the SDK. Apart from Instructions so a session can leave them out (AgentSession.NoUI).
 	UIInstructions string `bun:"ui_instructions,notnull"`
+	// UISource is what UIInstructions were compiled from when a directory's files were synced:
+	// agent.yaml's ui key and the two files it named, which an export writes back. Nil for a
+	// config that has no UI, or whose UI a client compiled itself.
+	UISource *UISource `bun:"ui_source,type:jsonb"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
@@ -672,6 +676,18 @@ type AgentConfig struct {
 	CreatedAt time.Time  `bun:"created_at,notnull"`
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
+}
+
+// UISource is agent.yaml's ui key and the files it named, as a directory's sync last had them.
+type UISource struct {
+	Format    string   `json:"format,omitempty"`
+	Keep      []string `json:"keep,omitempty"`
+	PatchMode bool     `json:"patch_mode,omitempty"`
+	VoiceUI   bool     `json:"voice_ui,omitempty"`
+	Rules     []string `json:"rules,omitempty"`
+	// Components and Blueprints are ui/components.json and ui/blueprints.yaml, whole.
+	Components string `json:"components,omitempty"`
+	Blueprints string `json:"blueprints,omitempty"`
 }
 
 // WritesCards is whether the config's calls, app chats and channel threads write episode

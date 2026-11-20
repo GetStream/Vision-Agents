@@ -381,27 +381,29 @@ type Server struct {
 	knowledge          *metered.Knowledge
 	knowledgeLimits    ingest.Limits
 	pages              *urls.Service
-	knowledgeFiles     *files.Service
-	voices             *voices.Service
-	library            *voices.Catalogue
-	dispatch           *dispatch.Pool
-	secrets            *auth.Sealer
-	privateModels      bool
-	corsOrigins        []string
-	publicURL          string
-	dashboardURL       string
-	channels           *channels.Service
-	dlc                *dlc.Service
-	gate               *dlc.Gate
-	opsKey             string
-	manageKey          string
-	authenticator      auth.Authenticator
-	authMode           auth.Mode
-	dataRetention      time.Duration
-	exportWritesWait   time.Duration
-	quota              *quota.Limiter
-	policies           *policy.Enforcer
-	connectors         core.Registry
+	// schemas are the API's own, which a directory's settings are held to as a request's are.
+	schemas          huma.Registry
+	knowledgeFiles   *files.Service
+	voices           *voices.Service
+	library          *voices.Catalogue
+	dispatch         *dispatch.Pool
+	secrets          *auth.Sealer
+	privateModels    bool
+	corsOrigins      []string
+	publicURL        string
+	dashboardURL     string
+	channels         *channels.Service
+	dlc              *dlc.Service
+	gate             *dlc.Gate
+	opsKey           string
+	manageKey        string
+	authenticator    auth.Authenticator
+	authMode         auth.Mode
+	dataRetention    time.Duration
+	exportWritesWait time.Duration
+	quota            *quota.Limiter
+	policies         *policy.Enforcer
+	connectors       core.Registry
 	// connectorSecrets seals consent attempts; credentials stores what a consent got. Both
 	// are nil when connectors are off.
 	connectorSecrets *auth.Sealer

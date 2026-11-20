@@ -13,10 +13,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// defaultMaxTurns is how long a conversation a simulation that did not say runs for. A
+// DefaultSimulationTurns is how long a conversation a simulation that did not say runs for. A
 // scenario with three things to ask needs more turns than three, because the agent asks
 // questions back.
-const defaultMaxTurns = 12
+const DefaultSimulationTurns = 12
 
 // maxTurns and maxVariations bound what a customer may ask for, since every turn is a
 // model call and every variation is a whole conversation.
@@ -440,7 +440,7 @@ func normalizeSimulation(simulation *Simulation) {
 		simulation.Variations = 1
 	}
 	if simulation.MaxTurns <= 0 {
-		simulation.MaxTurns = defaultMaxTurns
+		simulation.MaxTurns = DefaultSimulationTurns
 	}
 	if simulation.Tags == nil {
 		simulation.Tags = map[string]string{}

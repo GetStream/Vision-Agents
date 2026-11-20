@@ -808,6 +808,26 @@ func (s *AdmissionSuite) TestAKnowledgeIngestWithNoCreditIsAPaymentRequiredAndWr
 	s.Empty(s.documents(namespace))
 }
 
+func (s *AdmissionSuite) TestADryRunOfADirectoryWithKnowledgeAndNoCreditIsRefusedAsTheSyncWouldBe() {
+	name := "agent-" + s.utils.uuid()
+	s.refused(http.MethodPost, "/v1/agents/runs", s.run("echo/echo-model"))
+	body := map[string]any{"files": []map[string]string{
+		{"path": "agent.yaml", "content": "name: " + name + "\n"},
+		{"path": "knowledge/refunds.md", "content": "Refunds take five days.\n"},
+	}}
+
+	wet, _ := s.serverClient.call(http.MethodPost, "/v1/agents/sync/files", body)
+	body["dry_run"] = true
+	dry, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sync/files", body)
+
+	s.Require().Equal(http.StatusPaymentRequired, dry, string(payload))
+	s.Equal(wet, dry)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal(codeInsufficientCredits, answered.Error.Code)
+	s.Empty(s.documents(name))
+}
+
 func (s *AdmissionSuite) TestAKnowledgeIngestForASuspendedAccountIsForbidden() {
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
 	s.usage.Suspend(s.T(), s.organization(), "fraud review "+s.utils.uuid())

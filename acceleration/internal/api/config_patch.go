@@ -204,6 +204,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.ReviewInstructions = reviewOf(config.ReviewInstructions, patch.Review)
+	config.UISource = keptUISource(config, override(config.UIInstructions, patch.UiInstructions))
 	config.UIInstructions = override(config.UIInstructions, patch.UiInstructions)
 	config.Skills = override(config.Skills, patch.Skills)
 	if patch.Connectors != nil {

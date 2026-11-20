@@ -215,13 +215,10 @@ func (s *Service) Add(ctx context.Context, customerID string, wanted Subscriptio
 	if namespace == "" {
 		return store.KnowledgeURL{}, stack.Wrap(errors.New("urls: a namespace is required, knowledge is never shared"))
 	}
-	address, err := clean(wanted.URL)
-	if err != nil {
+	if err := Check(wanted); err != nil {
 		return store.KnowledgeURL{}, err
 	}
-	if wanted.RefreshHours < 0 {
-		return store.KnowledgeURL{}, stack.Wrap(fmt.Errorf("urls: refresh_hours cannot be negative, got %d", wanted.RefreshHours))
-	}
+	address, _ := clean(wanted.URL)
 
 	page, subscribed, err := s.store.SubscribedKnowledgeURL(ctx, customerID, namespace, address)
 	if err != nil {
@@ -512,6 +509,17 @@ func (s *Service) kept(ctx context.Context, page *store.KnowledgeURL) error {
 		return errRemoved
 	}
 	return err
+}
+
+// Check reports why a subscription would be refused, without subscribing to anything.
+func Check(wanted Subscription) error {
+	if _, err := clean(wanted.URL); err != nil {
+		return err
+	}
+	if wanted.RefreshHours < 0 {
+		return stack.Wrap(fmt.Errorf("urls: refresh_hours cannot be negative, got %d", wanted.RefreshHours))
+	}
+	return nil
 }
 
 // clean reports the url as it will be stored, or why it is not one.

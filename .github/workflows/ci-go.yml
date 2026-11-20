@@ -29,7 +29,15 @@ on:
       - 'go.work'
       - 'go.work.sum'
       - '.github/workflows/ci-go.yml'
+      # What the router's ui_test.go holds its UI compiler and its A2UI catalog to.
+      - 'sdks/testdata/ui/**'
+      - 'examples/voice_agents/swift_assistant/a2ui/prompt.json'
+      - 'examples/voice_agents/swift_assistant/app/SwiftAssistant/UIComponents.json'
       - '!**/*.md'
+      # Markdown the router embeds or its ui_test.go reads: they must stay after the *.md
+      # exclusion, which would otherwise drop them.
+      - 'acceleration/internal/agentdir/a2ui/*.md'
+      - 'examples/voice_agents/swift_assistant/a2ui/instructions.md'
   pull_request:
     branches: [ "**" ]
     # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
@@ -57,7 +65,15 @@ on:
       - 'go.work'
       - 'go.work.sum'
       - '.github/workflows/ci-go.yml'
+      # What the router's ui_test.go holds its UI compiler and its A2UI catalog to.
+      - 'sdks/testdata/ui/**'
+      - 'examples/voice_agents/swift_assistant/a2ui/prompt.json'
+      - 'examples/voice_agents/swift_assistant/app/SwiftAssistant/UIComponents.json'
       - '!**/*.md'
+      # Markdown the router embeds or its ui_test.go reads: they must stay after the *.md
+      # exclusion, which would otherwise drop them.
+      - 'acceleration/internal/agentdir/a2ui/*.md'
+      - 'examples/voice_agents/swift_assistant/a2ui/instructions.md'
 
 permissions:
   contents: read

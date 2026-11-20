@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agentdir"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
@@ -313,6 +314,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	}
 	config.ReviewInstructions = reviewOf(existing.ReviewInstructions, request.Body.Review)
 	config.UIInstructions = override(existing.UIInstructions, request.Body.UiInstructions)
+	config.UISource = keptUISource(existing, config.UIInstructions)
 	// Field by field, as the doc says of an update: a block naming only the limit keeps
 	// enabled and the zone.
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
@@ -1528,8 +1530,7 @@ func skillComplaint(request SkillRequest) (string, bool) {
 	}
 	size := 0
 	for name, content := range files {
-		if name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." ||
-			strings.HasPrefix(name, "../") || strings.Contains(name, `\`) {
+		if !agentdir.ValidPath(name) {
 			return fmt.Sprintf("skill file %q is not a path inside the skill's folder", name), false
 		}
 		size += len(content)

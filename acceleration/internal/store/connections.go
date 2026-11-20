@@ -429,6 +429,24 @@ func (s *Store) SetConnectorConnectionTools(ctx context.Context, customerID, id 
 	return nil
 }
 
+// AppConnectionsNamed are the app's own live connections to a connector that have token as
+// their id or as their label, which is how agent.yaml names one.
+func (s *Store) AppConnectionsNamed(ctx context.Context, customerID, connectorID, token string) ([]ConnectorConnection, error) {
+	var connections []ConnectorConnection
+	err := s.db.NewSelect().Model(&connections).
+		Where("customer_id = ?", customerID).
+		Where("owner_type = ?", OwnerApp).
+		Where("connector_id = ?", connectorID).
+		Where("deleted_at IS NULL").
+		Where("(id = ? OR label = ?)", token, token).
+		Order("created_at DESC", "id DESC").
+		Scan(ctx)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: connections named %q: %w", token, err))
+	}
+	return connections, nil
+}
+
 // ConnectorConnectionsByOwner lists one owner's live connections, or with filter.EveryUser
 // every user's, newest first, one more than ConnectionLimit(filter.Limit).
 func (s *Store) ConnectorConnectionsByOwner(ctx context.Context, customerID string, filter ConnectionFilter) ([]ConnectorConnection, error) {

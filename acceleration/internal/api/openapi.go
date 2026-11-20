@@ -402,7 +402,9 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerOCR(api)
 	documentHandWritten(api)
 	s.registerConfigPatch(api)
+	s.schemas = api.OpenAPI().Components.Schemas
 	s.registerSync(api)
+	s.registerDirectory(api)
 	s.registerAudit(api)
 	s.registerConnectors(api)
 	s.registerOAuthClients(api)
