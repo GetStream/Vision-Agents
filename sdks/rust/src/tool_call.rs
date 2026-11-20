@@ -66,17 +66,6 @@ impl ToolCallContext {
         }
     }
 
-    /// Tells the people in the conversation how the call is going, such as "Found three
-    /// flights, comparing prices". The agent puts it in its own words.
-    pub async fn update(&self, text: &str) -> Result<()> {
-        self.send_update(text, false).await
-    }
-
-    /// [`ToolCallContext::update`], said word for word.
-    pub async fn say(&self, text: &str) -> Result<()> {
-        self.send_update(text, true).await
-    }
-
     /// Keeps the call going if the person talks over the agent from here on, for a call
     /// that is past the point of taking back, such as one that has started a payment.
     ///
@@ -97,15 +86,6 @@ impl ToolCallContext {
             Ok(true) => Ok(()),
             _ => Err(Error::NotHeld(self.id.clone())),
         }
-    }
-
-    async fn send_update(&self, text: &str, verbatim: bool) -> Result<()> {
-        let Some(line) = &self.line else {
-            return Ok(());
-        };
-        line.sender
-            .send(&json!({"type": "tool_update", "tool_call_id": self.id, "text": text, "verbatim": verbatim}))
-            .await
     }
 }
 

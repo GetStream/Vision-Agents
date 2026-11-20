@@ -227,8 +227,6 @@ describe("render", () => {
       description: "Who asked",
       run: async (_input, toolCallContext) => {
         seen = toolCallContext;
-        toolCallContext.update("checking");
-        toolCallContext.say("One moment.");
         await toolCallContext.disallowInterruptions();
         return "kept";
       },
@@ -272,22 +270,10 @@ describe("render", () => {
     await assert.rejects(answer, /slow was cancelled/);
   });
 
-  it("reports how a call is going on its line, and a call stopped before it was held", async () => {
-    const sent: [string, string, boolean][] = [];
-    const line = (holds: boolean) => ({
-      update: (id: string, text: string, verbatim: boolean) => void sent.push([id, text, verbatim]),
-      hold: async () => holds,
-    });
-    const toolCallContext = new ToolCallContext({ id: "call_1" }, line(true));
+  it("holds a call on its line, and rejects for a call stopped before it was held", async () => {
+    const line = (holds: boolean) => ({ hold: async () => holds });
 
-    toolCallContext.update("checking");
-    toolCallContext.say("One moment.");
-    await toolCallContext.disallowInterruptions();
-
-    assert.deepEqual(sent, [
-      ["call_1", "checking", false],
-      ["call_1", "One moment.", true],
-    ]);
+    await new ToolCallContext({ id: "call_1" }, line(true)).disallowInterruptions();
     await assert.rejects(
       new ToolCallContext({ id: "call_2" }, line(false)).disallowInterruptions(),
       CallNotHeldError,

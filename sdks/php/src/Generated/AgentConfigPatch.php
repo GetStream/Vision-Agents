@@ -63,7 +63,9 @@ final readonly class AgentConfigPatch
         public ?string $subagent = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        public ?AgentTools $tools = null,
+        // Replaces the tool groups whole; an empty list removes them all.
+        /** @var list<ToolGroup>|null */
+        public ?array $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
         // Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match pattern...
@@ -124,7 +126,7 @@ final readonly class AgentConfigPatch
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
             subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? AgentTools::fromArray(Json::object($data, 'tools')) : null,
+            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(ToolGroup::fromArray(...), Json::objects($data, 'tools')) : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
@@ -239,7 +241,7 @@ final readonly class AgentConfigPatch
             $out['tags'] = $this->tags;
         }
         if ($this->tools !== null) {
-            $out['tools'] = $this->tools->toArray();
+            $out['tools'] = array_map(static fn (ToolGroup $each): array => $each->toArray(), $this->tools);
         }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts;

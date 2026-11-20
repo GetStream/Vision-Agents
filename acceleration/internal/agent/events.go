@@ -432,6 +432,17 @@ type ToolApprovalDecided struct {
 
 func (ToolApprovalDecided) isAgentEvent() {}
 
+// ToolAwaitingApproval is a call held until a person answers its question: on a voice call
+// the caller's yes, on a connector binding the user's approval on its step.
+type ToolAwaitingApproval struct {
+	ID       string
+	TurnID   string
+	Tool     string
+	Question string
+}
+
+func (ToolAwaitingApproval) isAgentEvent() {}
+
 type ToolRan struct {
 	ID     string
 	TurnID string
@@ -443,6 +454,9 @@ type ToolRan struct {
 	// Files are what code the tool ran handed back, published where the person sees them.
 	Files []sandbox.Attachment
 	Err   error
+	// Asked says the call was answered with its approval question and not run: it runs, if
+	// at all, once the caller says yes (ToolApprovalDecided).
+	Asked bool
 }
 
 func (ToolRan) isAgentEvent() {}

@@ -7,7 +7,7 @@ from vision_agents.plugins.stream.folder import (
     ConnectorSettings,
     FloorControlSettings,
     GreetingSettings,
-    ToolSettings,
+    ToolGroupSettings,
     SandboxSettings,
     find,
     load,
@@ -658,18 +658,44 @@ class TestFolder:
             "list_issue_statuses",
         ]
 
-    def test_progressive_tools_are_read(self, tmp_path: Path):
+    def test_tool_groups_are_read(self, tmp_path: Path):
+        root = tmp_path / "triage"
+        write(
+            root,
+            "agent.yaml",
+            "name: triage\ntools:\n"
+            "  - name: booking\n    tools: [lookup_booking]\n"
+            "  - name: refunds\n    loading: deferred\n    output_retention: 30d\n"
+            "    tools: [refund_booking]\n",
+        )
+
+        assert load(root).settings.tools == [
+            ToolGroupSettings(name="booking", tools=["lookup_booking"]),
+            ToolGroupSettings(
+                name="refunds",
+                tools=["refund_booking"],
+                loading="deferred",
+                output_retention="30d",
+            ),
+        ]
+
+    def test_the_tool_settings_of_before_groups_say_where_they_went(
+        self, tmp_path: Path
+    ):
         root = tmp_path / "triage"
         write(root, "agent.yaml", "name: triage\ntools:\n  progressive: true\n")
 
-        assert load(root).settings.tools == ToolSettings(progressive=True)
+        with pytest.raises(ValueError, match="loading: summary"):
+            load(root)
 
     @pytest.mark.parametrize(
         "declared",
         [
             "tools: true\n",
-            "tools:\n  progressive: sometimes\n",
-            "tools:\n  lazy: true\n",
+            "tools:\n  - name: booking\n",
+            "tools:\n  - tools: [lookup_booking]\n",
+            "tools:\n  - name: booking\n    loading: lazy\n    tools: [a]\n",
+            "tools:\n  - name: booking\n    progressive: true\n    tools: [a]\n",
         ],
     )
     def test_tools_that_cannot_be_read_are_refused(self, tmp_path: Path, declared: str):

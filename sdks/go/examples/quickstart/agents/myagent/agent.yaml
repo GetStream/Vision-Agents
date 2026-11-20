@@ -1,2 +1,5 @@
 name: myagent
 description: A support agent that answers questions about orders.
+tools:
+  - name: orders
+    tools: [lookup_order]

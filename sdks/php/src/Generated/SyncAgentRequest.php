@@ -83,8 +83,9 @@ final readonly class SyncAgentRequest
         public ?string $subagent = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // How connector tools are offered. A setting left out keeps what is stored.
-        public ?AgentTools $tools = null,
+        // agent.yaml's tools: the functions an SDK provides that the agent may offer, in named groups, as AgentConfig...
+        /** @var list<ToolGroup>|null */
+        public ?array $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
@@ -143,7 +144,7 @@ final readonly class SyncAgentRequest
             stt: array_key_exists('stt', $data) && $data['stt'] !== null ? Json::string($data, 'stt') : null,
             subagent: array_key_exists('subagent', $data) && $data['subagent'] !== null ? Json::string($data, 'subagent') : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
-            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? AgentTools::fromArray(Json::object($data, 'tools')) : null,
+            tools: array_key_exists('tools', $data) && $data['tools'] !== null ? array_map(ToolGroup::fromArray(...), Json::objects($data, 'tools')) : null,
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
@@ -264,7 +265,7 @@ final readonly class SyncAgentRequest
             $out['tags'] = $this->tags;
         }
         if ($this->tools !== null) {
-            $out['tools'] = $this->tools->toArray();
+            $out['tools'] = array_map(static fn (ToolGroup $each): array => $each->toArray(), $this->tools);
         }
         if ($this->tts !== null) {
             $out['tts'] = $this->tts;

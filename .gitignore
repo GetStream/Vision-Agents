@@ -102,6 +102,7 @@ plugins/*/example/uv.lock
 /acceleration/say
 /acceleration/transcribe
 /examples/voice_agents/swift_demo/backend/backend
+/examples/voice_agents/swift_assistant/backend/backend
 /examples/voice_agents/swift_demo/configure/configure
 
 /performance_benchmark/out/

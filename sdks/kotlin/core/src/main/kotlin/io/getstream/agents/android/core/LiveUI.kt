@@ -32,7 +32,14 @@ public class LiveUI {
         synchronized(byTurn) {
             var changed = false
             for (turn in conversation.turns) {
-                val ui = turn.ui?.takeIf { turn.isAgent } ?: continue
+                if (!turn.isAgent) continue
+                val ui = turn.ui
+                // A turn whose UI was taken back, such as a patch the router merged nothing onto,
+                // shows none of what it streamed before.
+                if (ui == null) {
+                    if (byTurn.remove(turn.id) != null) changed = true
+                    continue
+                }
                 if (byTurn[turn.id] == ui) continue
                 byTurn[turn.id] = ui
                 changed = true

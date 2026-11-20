@@ -77,6 +77,38 @@ final class AgentTool {
   /// A call that asks waits in `AgentSession.approvals` until `AgentSession.decide` answers it.
   final ToolApproval? approval;
 
+  /// A tool whose arguments [fromJson] reads into a [T] before [run] gets them.
+  ///
+  /// [parameters] is still what the model is shown; [fromJson] only reads what it sends. One
+  /// that throws, such as on a missing argument, tells the model the tool failed, as [run]
+  /// throwing does.
+  ///
+  ///     AgentTool.typed<WeatherLookup>(
+  ///       name: 'weather_lookup',
+  ///       description: 'Look up the current weather for a location',
+  ///       parameters: AgentTool.strings({'location': 'a city or region'}, required: ['location']),
+  ///       fromJson: WeatherLookup.fromJson,
+  ///       run: (lookup) => weather.today(lookup.location),
+  ///     )
+  static AgentTool typed<T>({
+    required String name,
+    required String description,
+    required T Function(Map<String, Object?> json) fromJson,
+    required Future<String> Function(T arguments) run,
+    Map<String, Object?>? parameters,
+    String? displayTitle,
+    ToolExecutor? executor,
+    ToolApproval? approval,
+  }) => AgentTool(
+    name: name,
+    description: description,
+    run: (arguments) async => run(fromJson(arguments)),
+    parameters: parameters,
+    displayTitle: displayTitle,
+    executor: executor,
+    approval: approval,
+  );
+
   /// A JSON Schema object for a tool whose arguments are all strings.
   ///
   /// A convenience for the common shape; for anything else, write the object yourself.

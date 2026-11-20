@@ -122,7 +122,7 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples
 ```bash
 cd examples/voice_agents/simple_voice_ai
 uv sync
-uv run simple_voice_ai.py run
+uv run simple_voice_ai.py
 ```
 
 It opens a demo call in the browser; talk into it. More in the example's `README.md`.
