@@ -347,7 +347,7 @@ export class Backend {
   /** The fetch in flight, shared by every request that needs a token while it runs. */
   private fetching: Promise<string> | undefined;
   private user: StreamUser | undefined;
-  /** The end user `speakingFor` named, sent beside this backend's own credential. */
+  /** The end user `actingFor` named, sent beside this backend's own credential. */
   private actingForValue = "";
   /**
    * The tokens this backend signed with its secret, by their claims, kept until a minute before
@@ -425,7 +425,7 @@ export class Backend {
     return this.userIdValue;
   }
 
-  /** The end user `speakingFor` named, beside this backend's own credential, or the empty string. */
+  /** The end user `actingFor` named, beside this backend's own credential, or the empty string. */
   get actsFor(): string {
     return this.actingForValue;
   }
