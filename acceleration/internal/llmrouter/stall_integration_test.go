@@ -4,11 +4,13 @@ package llmrouter
 
 import (
 	"context"
+	"maps"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -121,6 +123,40 @@ func (s *StallSuite) available(name string, want bool) {
 	}, 2*stallWindow, 10*time.Millisecond, "%s never became available=%t", name, want)
 }
 
+// outcomes is what router_requests_total has counted for the provider, by outcome, read as
+// /metrics serves it. The provider is the test's own, so the counts are the test's alone.
+func (s *StallSuite) outcomes(provider string) map[string]float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	counted := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "router_requests_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["provider"] == provider {
+				counted[labels["outcome"]] += metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return counted
+}
+
+// counted waits for router_requests_total to have counted want for the provider, and fails
+// with what it counted instead.
+func (s *StallSuite) counted(provider string, want map[string]float64, why string) {
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if maps.Equal(s.outcomes(provider), want) {
+			return
+		}
+	}
+	s.Require().Equal(want, s.outcomes(provider), why)
+}
+
 // stall has the stalling provider say nothing until the steady one answers a decision.
 func (s *StallSuite) stall(r *rig) {
 	answered := s.decide(r)
@@ -218,4 +254,48 @@ func (s *StallSuite) TestAProviderWhoseCallerHungUpIsNotPenalised() {
 	s.Require().Eventually(func() bool { return len(r.called()) == 2 }, 3*time.Second, time.Millisecond)
 	s.Equal(map[string]string{s.stalling: routing.ErrorCancelled, s.steady: routing.ErrorCancelled}, r.called(),
 		"a decision nobody waits on any more says nothing about either provider")
+}
+
+func (s *StallSuite) TestAProviderThatLosesInSilenceIsCountedAsAHedgeLostNotATimeout() {
+	r, router := s.router()
+	s.start(r, router)
+	s.stall(r)
+
+	s.counted(s.stalling, map[string]float64{"hedge_lost": 1}, "a hedge outran it, which is what a hedge is for")
+	s.counted(s.steady, map[string]float64{"ok": 1}, "the hedge served the decision")
+	s.Equal(routing.ErrorTimeout, r.called()[s.stalling], "it is still reported as a stall")
+	var health live.Health
+	s.Require().Eventually(func() bool {
+		var err error
+		health, err = s.live.Health(s.ctx, string(routing.LLM), s.stalling, "model")
+		s.Require().NoError(err)
+		return health.Errors == 1
+	}, 2*stallWindow, 10*time.Millisecond, "and still counted against its provider's health")
+}
+
+func (s *StallSuite) TestAProviderStillBeingAskedWhenItLosesIsCountedAsAHedgeLost() {
+	r, router := s.router()
+	// Its headers never come, so the request is still being made when the hedge answers.
+	r.slow(s.stalling, time.Hour)
+	s.start(r, router)
+	answered := s.decide(r)
+	s.asked(r, s.steady, 1)
+	s.Equal(s.steady, s.answer(r, s.steady, answered).Provider)
+
+	s.counted(s.stalling, map[string]float64{"hedge_lost": 1}, "a request cut off unanswered lost its hedge as a stream does")
+	s.Equal(routing.ErrorTimeout, r.called()[s.stalling])
+}
+
+func (s *StallSuite) TestAProviderThatRunsPastADeadlineBeforeItsHedgeAnswersIsCountedAsATimeout() {
+	r, router := s.router()
+	s.start(r, router)
+	answered := s.decide(r)
+	s.asked(r, s.stalling, 1)
+	s.asked(r, s.steady, 1)
+	// It is read out, and so recorded, only once the hedge has won, as a loser is.
+	r.script(s.stalling).TimeOut()
+	s.Equal(s.steady, s.answer(r, s.steady, answered).Provider)
+
+	s.counted(s.stalling, map[string]float64{"timeout": 1}, "its provider ran past a deadline before it lost")
+	s.Equal(routing.ErrorTimeout, r.called()[s.stalling])
 }

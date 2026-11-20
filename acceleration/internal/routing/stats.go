@@ -100,7 +100,11 @@ type Stat struct {
 	Success           bool
 	// Interrupted is a reply the caller cut off, which served them and so carries no error
 	// code. It is not stored: an estimate for it is counted as a cut, not as usage lost.
-	Interrupted  bool
+	Interrupted bool
+	// HedgeLost marks a timeout that is the first of two hedged requests, still silent when the
+	// other answered. It is not stored, and its row and health are any timeout's: only
+	// router_requests_total counts it as hedge_lost, so a timeout there is a deadline run past.
+	HedgeLost    bool
 	ErrorCode    string
 	ErrorMessage string
 	// Fatal marks a failure that ended the session for a reason the provider gives every
@@ -227,8 +231,9 @@ const ErrorCancelled = store.ErrorCancelled
 
 // ErrorTimeout is the ErrorCode of work that ran past a deadline, its caller's or the router's
 // own limit on a provider, before it finished: the first of two hedged requests that still
-// had said nothing when the other answered included. It failed, and what the provider
-// generated until then is billed.
+// had said nothing when the other answered included, which counts against its provider's
+// health as a stall but is counted under its own outcome (Stat.HedgeLost). It failed, and what
+// the provider generated until then is billed.
 const ErrorTimeout = "timeout"
 
 // ErrorRefused is the ErrorCode of a response the prompt injection screen refused. The
@@ -328,7 +333,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 	}
 
 	r.watch(config, entry, request, priced)
-	countTraffic(request, config.BYOK)
+	countTraffic(request, config.BYOK, entry.HedgeLost)
 	entry.Spent.add(request.CostMicros, entry.Attributes[AttributeUsageEstimated] == "true")
 	// Before the row is queued, so an ack that comes back fast finds the hold it settles.
 	request.LimitGrants = r.spent(entry.Owner, request)
