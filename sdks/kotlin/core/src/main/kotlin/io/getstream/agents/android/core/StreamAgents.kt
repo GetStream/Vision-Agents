@@ -8,7 +8,7 @@ import okhttp3.OkHttpClient
  * Two lines get a conversation going:
  *
  *     val agents = StreamAgents(url = "https://your-router", customerId = "acme")
- *     val chat = agents.agent("docs").chat()
+ *     val chat = agents.agent("docs").sessions.create()
  *
  * Opening a conversation, reading back its turns, going back to one of them, branching off and
  * ending it is the whole of what is here, because it is the whole of what the router lets a
@@ -50,22 +50,23 @@ public class StreamAgents(public val backend: Backend) : AutoCloseable {
 
     /**
      * Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
+     * [Sessions.create] without [SessionOptions.startVoice].
      *
      * The replies still come through the model with the same instructions, skills and knowledge
-     * a call would have had, and stream into [AgentSession.conversation]. It returns with the
-     * socket open, so the tools are already being answered.
+     * a call would have had, and stream into [AgentSession.conversation].
      */
     public suspend fun chat(options: SessionOptions = SessionOptions()): AgentSession =
-        follow(sessions.create(checked(options.copy(startVoice = false))), options.tools)
+        sessions.create(options.copy(startVoice = false))
 
     /**
      * Puts an agent on the session's own call, `agent:<session id>`, and follows it.
+     * [Sessions.create] with [SessionOptions.startVoice].
      *
      * The agent joins as soon as this returns. Joining the same call from this device is what
      * [VoiceSession] is for; this only starts the agent and gives you the state.
      */
     public suspend fun voice(options: SessionOptions = SessionOptions()): AgentSession =
-        follow(sessions.create(checked(options.copy(startVoice = true))), options.tools)
+        sessions.create(options.copy(startVoice = true))
 
     /**
      * Follows a session this caller already has open, without creating one.
@@ -75,7 +76,7 @@ public class StreamAgents(public val backend: Backend) : AutoCloseable {
      * reading a conversation.
      */
     public suspend fun attach(sessionId: String, tools: List<AgentTool> = emptyList()): AgentSession =
-        follow(sessions.get(sessionId), tools)
+        AgentSession(backend, sessions.get(sessionId), tools).also { it.start() }
 
     /**
      * Gets or creates a guest, so somebody can talk to an agent before they sign up.
@@ -110,17 +111,6 @@ public class StreamAgents(public val backend: Backend) : AutoCloseable {
     override fun close() {
         backend.close()
     }
-
-    private suspend fun follow(session: Session, tools: List<AgentTool>): AgentSession =
-        AgentSession(backend, session, tools).also { it.start() }
-
-    private fun checked(options: SessionOptions): SessionOptions {
-        val duplicate = options.tools.groupBy { it.name }.entries.firstOrNull { it.value.size > 1 }
-        if (duplicate != null) {
-            throw AgentsException.Configuration("${duplicate.key} is declared twice")
-        }
-        return options
-    }
 }
 
 /**
@@ -133,15 +123,15 @@ public class Agent internal constructor(private val agents: StreamAgents, public
     /** This agent's conversations: opening one names it, and listing is narrowed to it. */
     public val sessions: Sessions = Sessions(agents.backend, name)
 
-    /** Holds a conversation with this agent in writing. See [StreamAgents.chat]. */
+    /** Holds a conversation with this agent in writing. [Sessions.create] without voice. */
     public suspend fun chat(options: SessionOptions = SessionOptions()): AgentSession =
-        agents.chat(options.copy(agent = options.agent ?: name))
+        sessions.create(options.copy(startVoice = false))
 
     /** Holds a conversation with this agent in writing, answering these tools here. */
     public suspend fun chat(vararg tools: AgentTool): AgentSession =
         chat(SessionOptions(tools = tools.toList()))
 
-    /** Puts this agent on the session's own call and follows it. See [StreamAgents.voice]. */
+    /** Puts this agent on the session's own call and follows it. [Sessions.create] with voice. */
     public suspend fun voice(options: SessionOptions = SessionOptions()): AgentSession =
-        agents.voice(options.copy(agent = options.agent ?: name))
+        sessions.create(options.copy(startVoice = true))
 }

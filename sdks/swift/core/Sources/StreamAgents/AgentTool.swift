@@ -105,6 +105,79 @@ public struct AgentTool: Sendable {
             displayTitle: displayTitle, approval: approval
         ) { ToolOutput(text: try await run($0)) }
     }
+
+    /// A tool whose arguments are decoded into a type of yours, answering with pictures as well
+    /// as words. Arguments that do not decode fail the call, and the model is told why.
+    public init<Arguments: Decodable>(
+        name: String,
+        description: String,
+        parameters: RawJSON? = nil,
+        executor: Executor? = nil,
+        displayTitle: String? = nil,
+        approval: Approval? = nil,
+        run: @escaping @Sendable (Arguments) async throws -> ToolOutput
+    ) {
+        self.init(
+            name: name, description: description, parameters: parameters, executor: executor,
+            displayTitle: displayTitle, approval: approval,
+            run: { (arguments: [String: RawJSON]) in try await run(Self.decode(arguments)) })
+    }
+
+    /// A tool whose arguments are decoded into a type of yours, answering in words. Arguments
+    /// that do not decode fail the call, and the model is told why.
+    ///
+    ///     struct WeatherLookup: Decodable { let location: String }
+    ///
+    ///     AgentTool(name: "weather_lookup", description: "Look up the weather",
+    ///               parameters: .strings(["location": "a city"], required: ["location"])) {
+    ///         (args: WeatherLookup) in try await weather.today(args.location)
+    ///     }
+    public init<Arguments: Decodable>(
+        name: String,
+        description: String,
+        parameters: RawJSON? = nil,
+        executor: Executor? = nil,
+        displayTitle: String? = nil,
+        approval: Approval? = nil,
+        run: @escaping @Sendable (Arguments) async throws -> String
+    ) {
+        self.init(
+            name: name, description: description, parameters: parameters, executor: executor,
+            displayTitle: displayTitle, approval: approval,
+            run: { (arguments: Arguments) in ToolOutput(text: try await run(arguments)) })
+    }
+
+    private static func decode<Arguments: Decodable>(_ arguments: [String: RawJSON]) throws -> Arguments {
+        do {
+            return try JSONDecoder().decode(Arguments.self, from: JSONEncoder().encode(arguments))
+        } catch let error as DecodingError {
+            throw ToolArgumentsError(failure: error)
+        }
+    }
+}
+
+/// Arguments the model sent that do not decode into a tool's type, said in words the model can
+/// correct them from: `DecodingError`'s own description names no field.
+struct ToolArgumentsError: LocalizedError {
+    let failure: DecodingError
+
+    var errorDescription: String? {
+        switch failure {
+        case .keyNotFound(let key, let context):
+            return "the arguments have no \"\(Self.path(context.codingPath + [key]))\""
+        case .typeMismatch(_, let context), .valueNotFound(_, let context), .dataCorrupted(let context):
+            let path = Self.path(context.codingPath)
+            return path.isEmpty
+                ? "the arguments do not fit the tool: \(context.debugDescription)"
+                : "the arguments do not fit the tool at \"\(path)\": \(context.debugDescription)"
+        @unknown default:
+            return failure.localizedDescription
+        }
+    }
+
+    private static func path(_ keys: [any CodingKey]) -> String {
+        keys.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+    }
 }
 
 extension AgentTool {

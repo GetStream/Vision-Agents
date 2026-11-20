@@ -20,6 +20,7 @@ These rules are the choices this repo makes. General Go style is not repeated he
 - Pass `ctx context.Context` as the first parameter. Do not store a request's context in a struct. A service may hold a lifetime context made in `New`, with its cancel function, as `channels.Service` does.
 - Start no goroutine in `init()` or in a constructor. Start it in `Start(ctx)` or `Run(ctx)`, as `chatlog.Log.Start` does.
 - Return a nil slice for "none". A JSON response is the exception: it sends `[]`, not `null`.
+- Query Postgres through bun's builders (`NewSelect`, `NewInsert ... On("CONFLICT ...")`, `NewUpdate`, `NewDelete`) on a model, not `NewRaw` or `ExecContext` with a SQL string. A table without a model gets a small unexported one. An insert lists `.Column(...)` so database defaults still apply. Keep SQL raw only where the builder cannot write it or would change what it does: advisory locks, `SET LOCAL`, DDL and catalog reads, `INSERT ... SELECT`, `WITH RECURSIVE`, window and `GROUPING SETS` queries, a statement whose SQL text a test matches, and jsonb that must refuse `\u0000` (bun stores it as text).
 - Defensive code (a retry, a fallback, a second check) gets a comment that names the concrete threat: concurrent writers, a network failure the caller retries, malformed input. If you cannot name one, do not add it (see "Code style" in AGENTS.md).
 
 ## Comments

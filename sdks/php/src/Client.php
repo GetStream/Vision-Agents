@@ -38,17 +38,24 @@ final readonly class Client
     public Simulations $simulations;
     public SpendLimits $spendLimits;
     public Teams $teams;
+    /** The app's tools, registered once for every agent and run by `runDispatch()`. An agent is offered one only where a tool group of its agent.yaml names it. */
+    public Tools $tools;
     private ClientInterface $http;
     private RequestFactoryInterface $requests;
     private StreamFactoryInterface $streams;
 
+    /**
+     * @param ?Tools $tools the app's tools, shared with a client this one is derived from
+     */
     public function __construct(
         ?Backend $backend = null,
         ?ClientInterface $http = null,
         ?RequestFactoryInterface $requests = null,
         ?StreamFactoryInterface $streams = null,
+        ?Tools $tools = null,
     ) {
         $this->backend = $backend ?? new Backend();
+        $this->tools = $tools ?? new Tools();
         $this->requests = $requests ?? Http::requests();
         $this->streams = $streams ?? Http::streams();
         $this->http = $http ?? Http::client();
@@ -78,7 +85,7 @@ final readonly class Client
 
     public function withBackend(Backend $backend): self
     {
-        return new self($backend, $this->http, $this->requests, $this->streams);
+        return new self($backend, $this->http, $this->requests, $this->streams, $this->tools);
     }
 
     /**
@@ -89,6 +96,23 @@ final readonly class Client
     public function agent(string $name): AgentHandle
     {
         return new AgentHandle($this, $name);
+    }
+
+    /**
+     * Runs the app's tools for every session they are offered to, whoever opened it, until the
+     * socket closes or the process is signalled. A tool's own timeout is how long the router
+     * waits for one of its calls; without one it waits 30 seconds. A worker that also answers
+     * calls or messages hosts the tools with `Dispatch::host()` instead.
+     *
+     *     $client = new Client();
+     *     $client->tools->register('lookup', 'Look up an order', $schema, $run);
+     *     $client->runDispatch();
+     *
+     * @throws Exception\HostingRefusedException when the router refuses the tools
+     */
+    public function runDispatch(): void
+    {
+        (new Worker\Dispatch(client: $this))->host($this)->run();
     }
 
     /**

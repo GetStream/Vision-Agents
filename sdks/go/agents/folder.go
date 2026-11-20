@@ -197,9 +197,10 @@ type Settings struct {
 	// file lists none, which removes them. A null entry is refused: dropping it
 	// would sync an empty list and wipe the stored bindings.
 	Connectors connectorList `yaml:"connectors"`
-	// Tools is how MCP server and connector tools are offered. Nil when the
-	// declaration says nothing about it.
-	Tools *ToolSettings `yaml:"tools"`
+	// Tools are the groups naming the functions this process provides that the agent may
+	// offer: a function no group names is never offered. Nil when the declaration says
+	// nothing, which leaves the groups stored.
+	Tools *toolGroupList `yaml:"tools"`
 	// Channels are the lines the agent answers on besides its Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
 	// connected on the router, which is where the provider's credentials live.
@@ -234,15 +235,66 @@ type Settings struct {
 	App map[string]any `yaml:"app"`
 }
 
-// ToolSettings is how MCP server and connector tools are offered, and how long what any tool
-// was given and gave back is kept.
-type ToolSettings struct {
-	// Progressive offers each tool by a summary, the first call to it returning its full
-	// description instead of running it. Nil when the declaration says nothing about it.
-	Progressive *bool `yaml:"progressive"`
-	// OutputRetention is how long the agent's sessions keep a tool's arguments and output:
-	// none, or a duration such as 12h or 30d. Nil when the declaration says nothing about it.
-	OutputRetention *string `yaml:"output_retention"`
+// ToolGroupSettings is one group of the agent's functions, and how they are offered.
+type ToolGroupSettings struct {
+	Name string `yaml:"name"`
+	// Loading is full, the whole description and schema; summary, the first line, with the
+	// first call returning the rest; or deferred, offered only once the model finds and loads
+	// it. Empty is full.
+	Loading string `yaml:"loading"`
+	// Tools are the names of the functions in the group.
+	Tools []string `yaml:"tools"`
+	// OutputRetention is how long the agent's sessions keep what the group's tools were
+	// given and gave back: none, or a duration such as 12h or 30d. Empty is as long as the
+	// session.
+	OutputRetention string `yaml:"output_retention"`
+}
+
+// toolLoadings are what a group's or a connector's loading may say.
+var toolLoadings = []string{"full", "summary", "deferred"}
+
+// toolGroupList is the tools list. The mapping tools was before groups is refused with where
+// each of its settings went.
+type toolGroupList []ToolGroupSettings
+
+func (t *toolGroupList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		return fmt.Errorf("line %d: tools is a list of groups, each with a name and its tools, such as "+
+			"- {name: booking, loading: full, tools: [lookup_booking]}; progressive: true is now "+
+			"loading: summary, and output_retention moves onto each group and connector", node.Line)
+	}
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("line %d: tools must be a list of groups", node.Line)
+	}
+	keys := []string{"name", "loading", "tools", "output_retention"}
+	groups := make(toolGroupList, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return fmt.Errorf("line %d: a tool group is a mapping with a name and its tools", item.Line)
+		}
+		for index := 0; index < len(item.Content); index += 2 {
+			if key := item.Content[index]; !slices.Contains(keys, key.Value) {
+				return fmt.Errorf("line %d: %q is not something a tool group says; %s are", key.Line, key.Value,
+					strings.Join(keys, ", "))
+			}
+		}
+		var group ToolGroupSettings
+		if err := item.Decode(&group); err != nil {
+			return err
+		}
+		switch {
+		case group.Name == "":
+			return fmt.Errorf("line %d: a tool group needs a name", item.Line)
+		case len(group.Tools) == 0:
+			return fmt.Errorf("line %d: tool group %q names no tools", item.Line, group.Name)
+		case group.Loading != "" && !slices.Contains(toolLoadings, group.Loading):
+			return fmt.Errorf("line %d: tool group %q: loading is %s, not %q", keyLine(item, "loading"), group.Name,
+				strings.Join(toolLoadings, ", "), group.Loading)
+		}
+		groups = append(groups, group)
+	}
+	*t = groups
+	return nil
 }
 
 // ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias
@@ -267,6 +319,13 @@ type ConnectorSettings struct {
 	// RequireApproval are names or path.Match patterns of the tools whose every call waits for
 	// the session's user to allow it. Nil sends no require_approval key.
 	RequireApproval *[]string `yaml:"require_approval"`
+	// Loading is how the connector's tools are offered, as a tool group's: full, summary or
+	// deferred. Empty is full.
+	Loading string `yaml:"loading"`
+	// OutputRetention is how long the agent's sessions keep what the connector's tools were
+	// given and gave back: none, or a duration such as 12h or 30d. Empty is as long as the
+	// session.
+	OutputRetention string `yaml:"output_retention"`
 }
 
 // connectorKeys are the keys a connector entry may hold: the yaml tags of ConnectorSettings.
@@ -307,6 +366,10 @@ func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
 	}
 	if c.Connection != nil && *c.Connection == "" {
 		return fmt.Errorf("line %d: connector %q: connection must be a connection id or label", keyLine(node, "connection"), c.Name)
+	}
+	if c.Loading != "" && !slices.Contains(toolLoadings, c.Loading) {
+		return fmt.Errorf("line %d: connector %q: loading is %s, not %q", keyLine(node, "loading"), c.Name,
+			strings.Join(toolLoadings, ", "), c.Loading)
 	}
 	return nil
 }

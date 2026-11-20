@@ -2,12 +2,13 @@
 Tests for function calling functionality.
 """
 
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from unittest.mock import Mock, patch
 
 import pytest
+from pydantic import BaseModel, Field
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm import FunctionRegistry, function_registry
+from vision_agents.core.llm import FunctionRegistry, ToolCallContext, function_registry
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.plugins.anthropic import LLM as ClaudeLLM
 from vision_agents.plugins.gemini import LLM as GeminiLLM
@@ -103,6 +104,134 @@ class TestFunctionRegistry:
         assert schemas[0]["name"] == "test_func"
         assert schemas[0]["description"] == "Test function"
         assert "parameters_schema" in schemas[0]
+
+    async def test_docstring_args_section_is_left_out_of_the_description(self):
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def weather_lookup(location: str) -> str:
+            """Look up the current weather for a location.
+
+            Uses the nearest station.
+
+            Args:
+                location: a city or region.
+
+            Returns:
+                The weather, in words.
+            """
+            return location
+
+        assert registry.get_tool_schemas()[0]["description"] == (
+            "Look up the current weather for a location.\n\nUses the nearest station."
+        )
+
+    async def test_docstring_args_describe_each_argument(self):
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def weather_lookup(
+            context: ToolCallContext, location: str, units: str = "metric"
+        ) -> str:
+            """Look up the current weather for a location.
+
+            Args:
+                context: the call this runs for.
+                location: a city or region.
+                units (str): metric or imperial.
+            """
+            return location
+
+        assert registry.get_tool_schemas()[0]["parameters_schema"] == {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "a city or region."},
+                "units": {
+                    "type": "string",
+                    "default": "metric",
+                    "description": "metric or imperial.",
+                },
+            },
+            "required": ["location"],
+        }
+
+    async def test_multi_line_docstring_arg_description_is_joined(self):
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def weather_lookup(location: str, days: int) -> str:
+            """Look up the weather.
+
+            Args:
+                location: a city or region,
+                    such as Amsterdam or Tuscany.
+                days: how many days ahead.
+            """
+            return location
+
+        properties = registry.get_tool_schemas()[0]["parameters_schema"]["properties"]
+        assert (
+            properties["location"]["description"]
+            == "a city or region, such as Amsterdam or Tuscany."
+        )
+        assert properties["days"]["description"] == "how many days ahead."
+
+    async def test_field_description_wins_over_docstring(self):
+        registry = FunctionRegistry()
+
+        @registry.register(description="Weather where you say")
+        async def weather_lookup(
+            location: Annotated[str, Field(description="City name, e.g. Amsterdam")],
+        ) -> str:
+            """Look up the weather.
+
+            Args:
+                location: a city or region.
+            """
+            return location
+
+        schema = registry.get_tool_schemas()[0]
+        assert schema["description"] == "Weather where you say"
+        assert schema["parameters_schema"]["properties"]["location"] == {
+            "type": "string",
+            "description": "City name, e.g. Amsterdam",
+        }
+
+    async def test_model_field_description_wins_over_docstring(self):
+        class Lookup(BaseModel):
+            location: str = Field(description="City name, e.g. Amsterdam")
+
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def weather_lookup(lookup: Lookup) -> str:
+            """Look up the weather.
+
+            Args:
+                lookup: where to look.
+            """
+            return lookup.location
+
+        assert registry.get_tool_schemas()[0]["parameters_schema"]["properties"] == {
+            "location": {"type": "string", "description": "City name, e.g. Amsterdam"}
+        }
+
+    async def test_docstring_without_args_is_the_description_as_written(self):
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def weather_lookup(location: str) -> str:
+            """Look up the weather.
+
+            Say which city: a region is too broad.
+            """
+            return location
+
+        schema = registry.get_tool_schemas()[0]
+        assert schema["description"] == weather_lookup.__doc__
+        assert schema["parameters_schema"]["properties"] == {
+            "location": {"type": "string"}
+        }
 
     async def test_get_callable(self):
         """Test getting callable function."""

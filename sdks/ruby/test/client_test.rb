@@ -13,6 +13,12 @@ class TestClient < LocalRouterTest
     assert_equal({ "name" => "docs" }, request.query)
   end
 
+  def test_a_client_acting_for_a_user_shares_the_apps_tools
+    client.tools.register("weather_lookup", description: "Weather for a place") { "sunny" }
+
+    assert_equal ["weather_lookup"], client.as_user("ada", "token").tools.declarations.map { |tool| tool[:name] }
+  end
+
   def test_path_parameters_are_escaped
     @router.on(:get, %r{\A/v1/agents/sessions/}, body: { "id" => "a b/c" })
 

@@ -16,6 +16,7 @@ import {
   type GuestStore,
   type GuestUserOptions,
 } from "./guests.js";
+import { Dispatch } from "./dispatch.js";
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
 import { Router, type RouterOptions } from "./router.js";
@@ -24,6 +25,7 @@ import { Simulations } from "./simulations.js";
 import { SpendLimits } from "./spend-limits.js";
 import { StreamPeers, type StreamClients } from "./stream.js";
 import { Teams } from "./teams.js";
+import { Tools } from "./tools.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -141,6 +143,11 @@ export class Client {
   readonly spendLimits: SpendLimits;
   /** The organization's teams and their spend limits. Server side only. */
   readonly teams: Teams;
+  /**
+   * The app's tools, registered once for every agent and run by `runDispatch`. An agent is
+   * offered one only where a tool group of its agent.yaml names it.
+   */
+  readonly tools = new Tools();
   /** @internal The chat and video clients this client's sessions share. */
   readonly peers: StreamPeers;
 
@@ -246,6 +253,22 @@ export class Client {
    */
   agent(name: string): AgentHandle {
     return new AgentHandle(this, name);
+  }
+
+  /**
+   * Runs the app's tools for every session they are offered to, whoever opened it, until
+   * `signal` aborts. A tool's own `timeoutMs` is how long the router waits for one of its
+   * calls; without one it waits 30 seconds. A worker that also answers calls or messages
+   * hosts the tools with `dispatch.host(client)` instead.
+   *
+   * ```ts
+   * const client = new Client();
+   * client.tools.register({ name: "weather_lookup", description: "Look up the weather", run });
+   * await client.runDispatch();
+   * ```
+   */
+  runDispatch(signal?: AbortSignal): Promise<void> {
+    return new Dispatch({ client: this }).host(this).run(signal);
   }
 
   /**

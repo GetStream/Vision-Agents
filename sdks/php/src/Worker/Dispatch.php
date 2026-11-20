@@ -11,7 +11,6 @@ use Amp\TimeoutCancellation;
 use Amp\CancelledException;
 use Closure;
 use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\AgentHandle;
 use GetStream\VisionAgents\AgentResponse;
 use GetStream\VisionAgents\Client;
 use GetStream\VisionAgents\Exception\ConfigurationException;
@@ -54,10 +53,10 @@ final class Dispatch
     public readonly Client $client;
     /** What the router calls this connection, for matching a log line here against one there. */
     public string $workerId = '';
-    /** @var list<string> the agent ids the router has said it sends this worker's tools for */
-    public array $hosting = [];
+    /** Whether the router has said it sends this worker the calls of the tools it hosts. */
+    public bool $hosting = false;
 
-    /** @var list<array{agentId: string, tools: Tools, toolTimeoutMs: int}> */
+    /** @var list<array{tools: Tools, toolTimeoutMs: int}> */
     private array $hosted = [];
     /** @var array<int, Future<mixed>> */
     private array $running = [];
@@ -127,23 +126,24 @@ final class Dispatch
     }
 
     /**
-     * Runs the agent's tools for every session opened under it, whoever opened it.
+     * Runs the app's tools, `$client->tools`, for every session they are offered to, whoever
+     * opened it.
      *
-     * A session's own tools run in the process that opened it, which is no use to a conversation
-     * opened from a browser. The router offers `$agent->tools` to each session naming the agent
-     * and sends every call here. Call before `run()`.
+     * The tools are registered once on the client, for every agent: the router offers one to a
+     * session only where a tool group of its agent's agent.yaml names it, and sends every call
+     * here. `Client::runDispatch()` does this alone, for a worker with no calls or messages to
+     * answer. Call before `run()`.
      *
-     *     $agent = $client->agent('my-agent');
-     *     $agent->tools->register('lookup', 'Look up an order', $schema, $run);
-     *     (new Dispatch())->host($agent)->run();
+     *     $client->tools->register('lookup', 'Look up an order', $schema, $run);
+     *     (new Dispatch(client: $client))->host($client)->run();
      *
      * @param int $toolTimeoutMs how long the router waits for one tool call to be answered before
      *                           telling the model it failed, not how long the worker runs; 0 takes
      *                           the router's default of 30 seconds
      */
-    public function host(AgentHandle $agent, int $toolTimeoutMs = 0): self
+    public function host(Client $client, int $toolTimeoutMs = 0): self
     {
-        $this->hosted[] = ['agentId' => $agent->name, 'tools' => $agent->tools, 'toolTimeoutMs' => $toolTimeoutMs];
+        $this->hosted[] = ['tools' => $client->tools, 'toolTimeoutMs' => $toolTimeoutMs];
         return $this;
     }
 
@@ -211,7 +211,7 @@ final class Dispatch
         }
         $socket = Socket::open($this->client, '/v1/dispatch', $this->waiting());
         $this->socket = $socket;
-        $this->hosting = [];
+        $this->hosting = false;
         $this->holds = new Holds();
 
         $watchers = [EventLoop::repeat($this->reportEvery, fn () => $this->report())];
@@ -232,9 +232,9 @@ final class Dispatch
                     'tool_call' => $this->runHosted($frame),
                     'tool_held' => $this->holds->answer(self::hostedKey($frame), true),
                     'tool_cancel' => $this->cancelHosted(self::hostedKey($frame)),
-                    'hosting' => $this->hosting[] = Json::string($frame, 'agent_id'),
+                    'hosting' => $this->hosting = true,
                     // A worker whose tools were refused is one nobody will call.
-                    'hosting_refused' => throw new HostingRefusedException(Json::string($frame, 'agent_id'), Json::string($frame, 'reason')),
+                    'hosting_refused' => throw new HostingRefusedException(Json::string($frame, 'reason')),
                     'pong' => $this->pong?->isComplete() === false ? $this->pong->complete(Json::float($frame, 'at')) : null,
                     default => null,
                 };
@@ -296,7 +296,7 @@ final class Dispatch
         foreach ($this->hosted as $offer) {
             $this->tell([
                 'type' => 'host_tools',
-                'agent_id' => $offer['agentId'],
+                'every_agent' => true,
                 'tools' => array_map(static fn (SessionTool $tool): array => $tool->toArray(), $offer['tools']->declared()),
                 'timeout_ms' => $offer['toolTimeoutMs'],
             ]);

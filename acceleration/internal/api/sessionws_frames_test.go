@@ -58,6 +58,22 @@ func TestAToolStartedWithoutPreSpeechIsTheFrameItAlwaysWas(t *testing.T) {
 		string(raw))
 }
 
+func TestAFinishedToolCallCarriesItsWholeState(t *testing.T) {
+	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+
+	sent, ok := frameOf(session.ToolCallChanged{Phase: session.ToolCallFinished, State: session.ToolCallState{
+		ID: "call-1", Tool: "book_flight", TurnID: "turn-1", Status: session.ToolCallSuccess,
+		Progress: "Booking", StartedAt: at, Duration: 1500 * time.Millisecond, ApprovedAt: at.Add(time.Second),
+	}})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"tool_call.finished","tool_call_id":"call-1","tool":"book_flight","turn_id":"turn-1",
+		"status":"success","progress":"Booking","started_at":"2026-10-07T12:00:00Z","duration_ms":1500,
+		"approved_at":"2026-10-07T12:00:01Z"}`, string(raw))
+}
+
 func TestAToolStartedCarriesItsBindingsPreSpeech(t *testing.T) {
 	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 

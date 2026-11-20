@@ -14,7 +14,7 @@ module GetStream
     #     dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
     #             .reply(message)
     #   end
-    #   dispatch.host(support) # an Agent whose tools are registered
+    #   dispatch.host(client) # a Client whose tools are registered
     #   dispatch.run
     #
     # Each call, message and hosted tool call runs on its own thread. When a call or message
@@ -50,20 +50,19 @@ module GetStream
         @latency = nil
       end
 
-      # Runs an agent's tools for every session opened under it, whoever opened it.
+      # Runs the app's tools, client.tools, for every session they are offered to, whoever
+      # opened it.
       #
-      # A session's own tools run in the process that opened it. Hosting is the other
-      # direction: the router offers agent.tools to each session naming the agent's config
-      # (its name when it has none, as #sync stores it) and sends every call to this worker.
-      # tool_timeout is how many seconds the router waits for one tool call to be answered
-      # before telling the model it failed, not how long the worker runs; nil takes the
-      # router's default of 30 seconds. Call before #run.
-      def host(agent, tool_timeout: nil)
-        agent_id = (agent.config || agent.name).to_s
-        raise ConfigurationError, "hosting needs an agent with a name" if agent_id.empty?
-        raise ConfigurationError, "#{agent_id} needs at least one tool to host" if agent.tools.empty?
+      # The tools are registered once on the client, for every agent: the router offers one to
+      # a session only where a tool group of its agent's agent.yaml names it, and sends every
+      # call to this worker. Client#run_dispatch does this alone, for a worker with no calls or
+      # messages to answer. tool_timeout is how many seconds the router waits for one tool call
+      # to be answered before telling the model it failed, not how long the worker runs; nil
+      # takes the router's default of 30 seconds. Call before #run.
+      def host(client, tool_timeout: nil)
+        raise ConfigurationError, "hosting needs at least one tool on the client" if client.tools.empty?
 
-        @lock.synchronize { @hosted << { agent_id: agent_id, tools: agent.tools, tool_timeout: tool_timeout } }
+        @lock.synchronize { @hosted << { tools: client.tools, tool_timeout: tool_timeout } }
         self
       end
 
@@ -167,7 +166,7 @@ module GetStream
         when "hosting_refused"
           # A worker whose tools were refused is one nobody will call; saying so beats sitting
           # connected looking healthy.
-          raise Error, "the router refused to host tools for agent #{frame['agent_id']}: #{frame['reason']}"
+          raise Error, "the router refused to host tools: #{frame['reason']}"
         when "pong" then pong(frame)
         end
       end
@@ -175,7 +174,7 @@ module GetStream
       def offer_hosted
         @lock.synchronize { @hosted.dup }.each do |offer|
           timeout_ms = offer[:tool_timeout] ? (offer[:tool_timeout] * 1000).round : 0
-          @socket.send_frame(type: "host_tools", agent_id: offer[:agent_id],
+          @socket.send_frame(type: "host_tools", every_agent: true,
                              tools: offer[:tools].declarations, timeout_ms: timeout_ms)
         end
       end

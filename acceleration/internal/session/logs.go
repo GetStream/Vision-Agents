@@ -136,6 +136,28 @@ func (s *Session) recordLog(event Event) {
 		row.Details["tool_call_id"] = e.ID
 		row.Details["turn_id"] = e.TurnID
 		row.Details["tool"] = e.Tool
+	case ToolCallChanged:
+		// Only a call's end: its start and its result have rows of their own.
+		if e.Phase != ToolCallFinished {
+			return
+		}
+		row.EventType = "tool_call_finished"
+		row.Source = "tool"
+		row.Message = e.State.Tool + " " + string(e.State.Status)
+		if e.State.Status == ToolCallFailed {
+			row.Severity = "error"
+		}
+		row.Details["tool_call_id"] = e.State.ID
+		row.Details["turn_id"] = e.State.TurnID
+		row.Details["tool"] = e.State.Tool
+		row.Details["status"] = string(e.State.Status)
+		row.Details["duration_ms"] = e.State.Duration.Milliseconds()
+		if !e.State.ApprovedAt.IsZero() {
+			row.Details["approved_at"] = e.State.ApprovedAt
+		}
+		if !e.State.RejectedAt.IsZero() {
+			row.Details["rejected_at"] = e.State.RejectedAt
+		}
 	case agent.Delegated:
 		row.EventType = "delegated"
 		row.Message = "Delegated to " + e.Skill

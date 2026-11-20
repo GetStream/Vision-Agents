@@ -5145,6 +5145,9 @@ pub struct GetAgentStatsQuery {
     /// End of the window, exclusive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
+    /// The id of an agent config: only its sessions are counted. Omitted is every agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 /// The query string `getSpend` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

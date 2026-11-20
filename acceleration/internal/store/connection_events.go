@@ -204,7 +204,7 @@ func (s *Store) claimConnectionEventSubscriptions(ctx context.Context, query str
 // found is false when none is ever due: there are no subscriptions, or none expires.
 func (s *Store) NextConnectionEventSubscriptionAt(ctx context.Context) (next time.Time, found bool, err error) {
 	var at sql.NullTime
-	if err := s.db.NewRaw("SELECT min(next_attempt_at) FROM connection_event_subscriptions").Scan(ctx, &at); err != nil {
+	if err := s.db.NewSelect().Model((*ConnectionEventSubscription)(nil)).ColumnExpr("min(next_attempt_at)").Scan(ctx, &at); err != nil {
 		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: next connection event subscription: %w", err))
 	}
 	return at.Time, at.Valid, nil
@@ -245,12 +245,20 @@ func (s *Store) DeleteConnectionEventSubscriptions(ctx context.Context, customer
 	return nil
 }
 
+// connectionEventDelivery is one event a subscription got (ClaimConnectionEvent).
+type connectionEventDelivery struct {
+	bun.BaseModel `bun:"table:connection_event_deliveries,alias:cevd"`
+
+	SubscriptionID string    `bun:"subscription_id,pk"`
+	EventID        string    `bun:"event_id,pk"`
+	ReceivedAt     time.Time `bun:"received_at,notnull"`
+}
+
 // ClaimConnectionEvent records that a subscription's event arrived, and reports whether this
 // is the first time: a retried delivery of the same event id is not.
 func (s *Store) ClaimConnectionEvent(ctx context.Context, subscriptionID, eventID string) (bool, error) {
-	result, err := s.db.NewRaw(
-		"INSERT INTO connection_event_deliveries (subscription_id, event_id, received_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-		subscriptionID, eventID, time.Now().UTC()).Exec(ctx)
+	delivery := connectionEventDelivery{SubscriptionID: subscriptionID, EventID: eventID, ReceivedAt: time.Now().UTC()}
+	result, err := s.db.NewInsert().Model(&delivery).On("CONFLICT DO NOTHING").Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: claim connection event: %w", err))
 	}
