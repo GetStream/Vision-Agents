@@ -406,6 +406,13 @@ An app's connection is reached by every call of a backend, one naming a user inc
 `ListAsync` with a `UserId` lists only that user's. Leave the user out for the app's own
 connection, which any of its agents may be bound to. Connections are server side only.
 
+A user given replaces the one the client was made for (`VisionAgentsOptions.UserId`), and the
+request keeps the server credential: behind the proxy it is a server token, not a token for the
+client's own user, which is what the router needs to let a backend act for somebody. A client
+with an API key holding a user's token is a device. It cannot act for another user, so a call
+naming one throws a `ConfigurationException` before any request, and a call naming none is sent
+as before.
+
 ## Working on this package
 
 Everything runs in Docker; nothing is installed on the host.
