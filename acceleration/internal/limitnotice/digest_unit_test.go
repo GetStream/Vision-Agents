@@ -78,8 +78,8 @@ func (s *DigestMessageSuite) TestOnlyAnOrganizationRefusedEveryTimeIsFlagged() {
 func (s *DigestMessageSuite) TestAnOrganizationWithAQuarterOfItsRequestsRefusedIsStuck() {
 	digest := DayDigest{Day: digestDay, Organizations: []OrganizationDay{
 		{ID: "org-dental", Areas: []store.ActivityArea{
-			refusedIn(activity.AreaConversations, 60, 30, "spend_limit_reached"),
 			refusedIn(activity.AreaAgentSetup, 40, 10, "invalid_api_key"),
+			refusedIn(activity.AreaConversations, 60, 30, "spend_limit_reached"),
 		}},
 		{ID: "org-noise", Areas: []store.ActivityArea{refusedIn(activity.AreaConversations, 100, 5, "not_found")}},
 		{ID: "org-all", Areas: []store.ActivityArea{refusedIn(activity.AreaConversations, 4, 4, "spend_limit_reached")}},
@@ -255,4 +255,28 @@ func (s *DigestMessageSuite) TestAnOrganizationThatAnsweredOnlyNoStepAreaHasNoLe
 
 	s.Contains(message, "`org-dental`   reached: —   model_api (sdk)\n")
 	s.NotContains(message, "+ model_api")
+}
+
+// Defect: an organization's refusals judged area by area, so one refused in two areas by 50%
+// each, 25% or more of its requests only when summed, is missed, and one refused 50% in a small
+// area among many answers in another is listed.
+func (s *DigestMessageSuite) TestTheStuckShareIsOfRequestsSummedAcrossAreas() {
+	message := digestMessage("prod", Links{}, DayDigest{Day: digestDay, Organizations: []OrganizationDay{
+		{ID: "org-split", Areas: []store.ActivityArea{
+			refusedIn(activity.AreaAgentSetup, 6, 3, "invalid_api_key"), refusedIn(activity.AreaConversations, 6, 3, "rate_limited")}},
+		{ID: "org-mixed", Areas: []store.ActivityArea{
+			refusedIn(activity.AreaAgentSetup, 10, 5, "rate_limited"), answered(activity.AreaConversations, "api", 100)}},
+	}})
+
+	s.Contains(message, "\nStuck: 1\n  • `org-split`   50% of 12 requests refused (invalid_api_key)\nActive orgs", message)
+}
+
+// Defect: a new organization left out of the stuck list, though the first day is when it is
+// most likely held back.
+func (s *DigestMessageSuite) TestANewOrganizationCanBeStuck() {
+	message := digestMessage("prod", Links{}, DayDigest{Day: digestDay, Organizations: []OrganizationDay{
+		{ID: "org-fresh", New: true, Areas: []store.ActivityArea{refusedIn(activity.AreaConversations, 20, 10, "rate_limited")}},
+	}})
+
+	s.Contains(message, "\nStuck: 1\n  • `org-fresh`   50% of 20 requests refused (rate_limited)\n", message)
 }

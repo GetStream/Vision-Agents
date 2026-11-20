@@ -88,7 +88,11 @@ func (o OrganizationDay) allRefused() bool {
 }
 
 // stuck says at least stuckRefusedPercent of the organization's requests were refused, of at
-// least stuckRequests, and not all of them: allRefused lists those.
+// least stuckRequests, and not all of them: allRefused lists those. The requests are those the
+// router made for the organization as well as the ones its callers made: a webhook delivery
+// given up, a task run not delivered, a campaign call deferred or an evaluation errored is a
+// refusal here, because it means the customer's own endpoint or setup is broken, and the code
+// on the line tells staff which.
 func (o OrganizationDay) stuck() bool {
 	requests, refused := o.counts()
 	return requests >= stuckRequests && refused*100 >= requests*stuckRefusedPercent && refused < requests

@@ -372,11 +372,12 @@ func (s *DigestSuite) TestAnOrganizationWithAQuarterOfItsRequestsRefusedIsListed
 }
 
 // Defect: an organization's first conversation not named, named again on a later day, named
-// once per app, counted from a refused conversation, or its days counted from its first
-// conversation rather than its first request of any area.
+// once per app, counted from a refused conversation, listed again because its earlier
+// conversation was another app's, or its days counted from its first conversation rather than
+// its first request of any area.
 func (s *DigestSuite) TestAnOrganizationsFirstAnsweredConversationIsListedWithTheDaysSinceItsFirstRequest() {
-	dental, again, refusedFirst, sameDay, today, other, blocked := organization(), organization(), organization(),
-		organization(), organization(), organization(), organization()
+	dental, again, refusedFirst, sameDay, today, other, blocked, moved := organization(), organization(), organization(),
+		organization(), organization(), organization(), organization(), organization()
 	s.active(dental, activity.AreaAgentSetup, 4, 2, 0)
 	s.active(dental, activity.AreaDashboardReads, 3, 1, 0)
 	s.active(dental, activity.AreaConversations, 1, 5, 0)
@@ -392,6 +393,10 @@ func (s *DigestSuite) TestAnOrganizationsFirstAnsweredConversationIsListedWithTh
 	s.active(other, activity.AreaAgentSetup, 5, 1, 0)
 	s.active(other, activity.AreaVoiceVideo, 1, 1, 0)
 	s.active(blocked, activity.AreaConversations, 1, 2, 2)
+	// An earlier conversation of another app of the same organization is the organization's
+	// earlier one.
+	s.appActive(moved, "app-"+moved, activity.AreaConversations, 2, 3, 0, "", 12)
+	s.appActive(moved, "app-"+moved+"-b", activity.AreaConversations, 1, 2, 0, "", 12)
 	s.active("", activity.AreaConversations, 1, 1, 0)
 	s.router().Start()
 	s.checked(0)
@@ -405,5 +410,5 @@ func (s *DigestSuite) TestAnOrganizationsFirstAnsweredConversationIsListedWithTh
 		"  • `" + dental + "`   3 days after its first request",
 		"  • `" + refusedFirst + "`   1 day after its first request",
 		"  • `" + sameDay + "`   0 days after its first request",
-	})), strings.Split(strings.TrimSuffix(first, "\nActive orgs: 6 (day before: 3)"), "\n"), digest)
+	})), strings.Split(strings.TrimSuffix(first, "\nActive orgs: 7 (day before: 4)"), "\n"), digest)
 }
