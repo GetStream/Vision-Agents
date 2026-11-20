@@ -144,7 +144,7 @@ would hang on a session nobody is watching.
 - A tool that throws is answered with `{ error }`, never dropped. The model can only say
   something useful about a tool that did not work if it is told that it did not work. What it
   says is `Tools.failure`: the `onError` of the `Tools` the function was registered in, else the
-  error's message, cut to 1 KiB either way. Session and Dispatch both go through it.
+  error's message, cut to 1,024 characters either way. Session and Dispatch both go through it.
 - `tool_cancel` aborts that call's `AbortController`; ending the session aborts all of them.
 - `events()` gives each loop its own queue, from when it started reading; the first loop also
   gets what arrived while nobody read (256, oldest dropped). A loop that falls 256 behind is
@@ -352,7 +352,7 @@ Other SDKs also need to audit these behaviours, empty skill overrides, non-JSON 
 truncated-body failures and folder parsing; update them separately.
 
 Also in JS, not yet in the other SDKs: a request is given up as never answered once the router
-has not started answering within `timeoutMs` (60 s); a non-envelope error body is cut to 1 KiB;
+has not started answering within `timeoutMs` (60 s); a non-envelope error body is cut to 1,024 characters;
 `Backend` and `Edge` print no secret or token through `toJSON` or Node's inspect; folder sync
 leaves hidden entries and `node_modules` out of skills and knowledge and refuses a symlink out of
 the agent directory; and a tool's failure reaches the model through an `onError` hook on `Tools`.

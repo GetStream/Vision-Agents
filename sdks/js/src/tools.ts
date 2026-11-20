@@ -226,12 +226,14 @@ export interface ToolsOptions {
    *
    * Left out, the message goes to the model as it is, which is how it can say something useful
    * about a tool that did not work, and is why a function may throw words meant for it. The model
-   * may repeat it to the person, and the conversation keeps it, so a function whose errors can
-   * carry what must not leave, such as a database's connection string or a signed URL, gives a
-   * hook that answers those with words of its own. Either way it is cut to 1 KiB.
+   * may repeat it to the person, and the conversation keeps it, and an error from a library a
+   * function calls can name an internal host, a table or a value from a record. The safe hook
+   * passes on only an error of the app's own, thrown with words meant for the model, and says
+   * something plain for anything else. Either way it is cut to 1,024 characters.
    *
    * ```ts
-   * new Tools({ onError: (error) => (error instanceof DatabaseError ? "The lookup failed." : String(error)) });
+   * class ToolError extends Error {}
+   * new Tools({ onError: (error, call) => (error instanceof ToolError ? error.message : `${call.name} failed`) });
    * ```
    */
   onError?: (error: unknown, call: { readonly name: string; readonly id: string }) => string;
@@ -366,7 +368,7 @@ export class Tools {
 
   /**
    * @internal What the model is told of a call of `name` that failed with `cause`: what the
-   * `onError` of the `Tools` it was registered in says, else the error's message, cut to 1 KiB
+   * `onError` of the `Tools` it was registered in says, else the error's message, cut to 1,024 characters
    * either way. A hook that throws is answered with no more than that the function failed, since
    * the message it was there to keep back is all there would be to say otherwise.
    */

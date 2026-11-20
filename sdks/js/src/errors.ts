@@ -151,7 +151,12 @@ function stringOf(value: unknown): string | undefined {
  */
 const MAX_MESSAGE_CHARS = 1024;
 
-/** `text`, cut to `MAX_MESSAGE_CHARS` with an ellipsis where it was cut. */
+/** `text`, cut to `MAX_MESSAGE_CHARS` with an ellipsis where it was cut, never inside an emoji's pair. */
 export function clipped(text: string): string {
-  return text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS)}…` : text;
+  if (text.length <= MAX_MESSAGE_CHARS) {
+    return text;
+  }
+  const high = text.charCodeAt(MAX_MESSAGE_CHARS - 1);
+  const end = high >= 0xd800 && high <= 0xdbff ? MAX_MESSAGE_CHARS - 1 : MAX_MESSAGE_CHARS;
+  return `${text.slice(0, end)}…`;
 }

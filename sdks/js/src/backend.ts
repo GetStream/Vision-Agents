@@ -24,6 +24,9 @@ const DEFAULT_MAX_RETRIES = 2;
 /** How long a request waits for the router to start answering when nothing says. */
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** The longest delay a timer takes, 2^31 - 1 milliseconds; a longer one fires at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /**
  * Where a router with no proxy in front of it reads the team and usage categories, the team
  * as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
@@ -381,8 +384,12 @@ export class Backend {
       throw new ConfigurationError(`maxRetries is a count of retries, not ${String(options.maxRetries)}`);
     }
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 0) {
-      throw new ConfigurationError(`timeoutMs is a number of milliseconds, not ${String(options.timeoutMs)}`);
+    // A timer longer than about 24.8 days overflows and fires at once, which would time every
+    // request out immediately rather than never: 0 is how to say no limit.
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs < 0 || this.timeoutMs > MAX_TIMER_MS) {
+      throw new ConfigurationError(
+        `timeoutMs is a number of milliseconds up to ${MAX_TIMER_MS}, or 0 for no limit, not ${String(options.timeoutMs)}`,
+      );
     }
     this.authenticate =
       options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || hosted(this.url));

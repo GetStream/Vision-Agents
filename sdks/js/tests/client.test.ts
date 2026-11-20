@@ -382,4 +382,23 @@ describe("Client", () => {
   it("refuses a timeout that is not one", () => {
     assert.throws(() => new Client({ url: router.url, customerId: "local", timeoutMs: -1 }), ConfigurationError);
   });
+
+  it("refuses a timeout too long for a timer, which would fire at once and fail every request", () => {
+    assert.throws(() => new Client({ url: router.url, customerId: "local", timeoutMs: 3_000_000_000 }), ConfigurationError);
+    assert.doesNotThrow(() => new Client({ url: router.url, customerId: "local", timeoutMs: 2_147_483_647 }));
+  });
+
+  it("cuts a long page between characters, never through the middle of an emoji", async () => {
+    const page = `${"x".repeat(1023)}${"😀".repeat(10)}`;
+    router.serve("GET", "/v1/agents/calls", { status: 500, headers: { "Content-Type": "text/plain" }, text: page });
+
+    await assert.rejects(
+      () => api.get("/v1/agents/calls"),
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.message, `${"x".repeat(1023)}…`, "no half of the emoji's surrogate pair is left");
+        return true;
+      },
+    );
+  });
 });

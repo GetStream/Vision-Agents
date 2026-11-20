@@ -156,11 +156,15 @@ async function loadSimulations(
  * whatever files it comes with, nested as deep as they are.
  */
 async function loadSkills(path: string, root: string): Promise<Skill[]> {
+  await insideAgent(root, path);
   const entries = (await readdir(path, { withFileTypes: true }).catch(missing)) ?? [];
   const skills: Skill[] = [];
   const declared = new Map<string, string>();
 
   for (const entry of entries.sort((one, other) => one.name.localeCompare(other.name))) {
+    if (skipped(entry.name)) {
+      continue;
+    }
     let name = entry.name;
     let file = join(path, name);
     if (entry.isDirectory()) {
@@ -171,6 +175,8 @@ async function loadSkills(path: string, root: string): Promise<Skill[]> {
       continue;
     }
 
+    // A skill folder's SKILL.md may itself be a link, which a walk of its other files never sees.
+    await insideAgent(root, file);
     const content = await readFile(file, "utf8").catch(missing);
     if (content === undefined) {
       throw new ConfigurationError(
@@ -261,6 +267,18 @@ async function syncedFile(root: string, file: string, entry: { isSymbolicLink():
     throw new ConfigurationError(`${file} links outside the agent directory`);
   }
   return !(await stat(target)).isDirectory();
+}
+
+/**
+ * Refuses `path` when it resolves outside the agent directory `root`, as a `skills/` or
+ * `knowledge/` that is itself a link would, taking every file under it along. A path that does
+ * not exist passes, for whoever reads it to say so.
+ */
+async function insideAgent(root: string, path: string): Promise<void> {
+  const target = await realpath(path).catch(missing);
+  if (target !== undefined && leaves(root, target)) {
+    throw new ConfigurationError(`${path} links outside the agent directory`);
+  }
 }
 
 /** Whether `target` is outside `root`, both real paths. */
@@ -367,6 +385,7 @@ async function loadKnowledge(path: string, root: string): Promise<{ source: stri
   if (!info.isDirectory()) {
     throw new ConfigurationError(`${path} is not a directory`);
   }
+  await insideAgent(root, path);
 
   const documents: { source: string; text: string }[] = [];
   const declaration = join(path, KNOWLEDGE_URLS_FILE);

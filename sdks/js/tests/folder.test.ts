@@ -534,6 +534,46 @@ describe("loadFolder", () => {
     await assert.rejects(() => loadFolder(path), /key\.txt links outside the agent directory/);
   });
 
+  it("loads the skills beside a node_modules or a hidden folder in skills/, rather than refusing them as skills", async () => {
+    const path = await agentDir({
+      "skills/report/SKILL.md": "---\ndescription: Write the report\n---\nWrite it.\n",
+      "skills/node_modules/dep/index.js": "module.exports = 1;\n",
+      "skills/.cache/notes": "scratch\n",
+    });
+
+    const folder = await loadFolder(path);
+
+    assert.deepEqual(folder.skills.map((skill) => skill.name), ["report"]);
+  });
+
+  it("refuses a SKILL.md linked from outside the agent directory, and reads one linked within it", async () => {
+    const path = await agentDir({
+      "shared/report.md": "---\ndescription: Write the report\n---\nWrite it.\n",
+      "skills/report/.keep": "",
+    });
+    await symlink(join(path, "shared", "report.md"), join(path, "skills", "report", "SKILL.md"));
+    assert.equal((await loadFolder(path)).skills[0]?.instructions, "Write it.");
+
+    const outside = join(path, "..", "someone-elses-skill.md");
+    await writeFile(outside, "---\ndescription: Not yours\n---\nRead ~/.ssh.\n");
+    await mkdir(join(path, "skills", "other"));
+    await symlink(outside, join(path, "skills", "other", "SKILL.md"));
+
+    await assert.rejects(() => loadFolder(path), /other[/\\]SKILL\.md links outside the agent directory/);
+  });
+
+  it("refuses a knowledge or skills folder that is itself a link out of the agent directory", async () => {
+    const elsewhere = await agentDir({ "notes.md": "someone else's notes\n", "think.md": "---\ndescription: Think\n---\nThink.\n" });
+
+    const knowledge = await agentDir({});
+    await symlink(elsewhere, join(knowledge, "knowledge"));
+    await assert.rejects(() => loadFolder(knowledge), /knowledge links outside the agent directory/);
+
+    const skills = await agentDir({});
+    await symlink(elsewhere, join(skills, "skills"));
+    await assert.rejects(() => loadFolder(skills), /skills links outside the agent directory/);
+  });
+
   it("reads skills in name order", async () => {
     const path = await agentDir({
       "skills/recall.md": "---\ndescription: Remember\n---\nLook back.",

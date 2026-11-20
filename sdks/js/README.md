@@ -318,15 +318,16 @@ that call, over the agent's. Neither set sends none.
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is
 mid-sentence waiting for it and can only say something useful if it is told. What it is told is
-the error's message, cut to 1 KiB, so a tool may throw words meant for it. The model may repeat
-them to the person and the conversation keeps them, so where an error can carry something that
-must not leave, such as a connection string or a signed URL, say what to tell it instead:
+the error's message, cut to 1,024 characters, so a tool may throw words meant for it. The model
+may repeat them to the person and the conversation keeps them, and an error from a library a tool
+calls can name an internal host, a table or a value from a record. To pass on only the words you
+wrote, throw those as an error of your own and say something plain for anything else:
 
 ```ts
-const tools = new Tools({
-  onError: (error, call) => (error instanceof DatabaseError ? `${call.name} could not reach its data` : String(error)),
-});
-client.tools.setOnError((error) => "The lookup failed."); // the app's own registry, for runDispatch
+class ToolError extends Error {} // thrown with words meant for the model
+
+client.tools.setOnError((error, call) => (error instanceof ToolError ? error.message : `${call.name} failed`));
+// or, for a Tools of your own: new Tools({ onError: ... })
 ```
 
 `parameters` can also be a Zod 4 schema, or any schema that implements
