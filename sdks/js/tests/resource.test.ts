@@ -1557,7 +1557,20 @@ describe("guest users", () => {
 
       await api.guestUser();
 
+      assert.equal(written.length, 1, "the guest was remembered in the cookie");
+      assert.match(written[0] ?? "", new RegExp(`^${GUEST_STORAGE_KEY}=[^;]*guest-token`));
       assert.doesNotMatch(written[0] ?? "", /Secure/);
+    });
+
+    it("clears a malformed guest cookie on sign-out, and takes it for no guest", async () => {
+      const { jar } = page({ https: true, cookie: `${GUEST_STORAGE_KEY}=%E0%A4%A` });
+
+      api.forgetGuest();
+      assert.equal(jar(), "", "forgetGuest finished, and the cookie is gone");
+
+      page({ https: true, cookie: `${GUEST_STORAGE_KEY}=%` });
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: minted });
+      assert.equal((await api.guestUser()).id, "guest-1", "a fresh guest rather than a thrown URIError");
     });
   });
 });

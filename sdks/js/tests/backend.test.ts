@@ -10,6 +10,7 @@ import {
   regionUrl,
   signToken,
   type BackendOptions,
+  type WebSocketInit,
 } from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
@@ -516,6 +517,29 @@ describe("Backend", () => {
     // its second argument, and a page passes it as it is.
     const options: BackendOptions = { url: router.url, apiKey: "key", token: "t", webSocket: WebSocket };
     assert.equal(new Backend(options).url, router.url);
+  });
+
+  it("takes a WebSocket class whose headers argument is required, and hands it the credential", async () => {
+    // Compile-time too: a class that requires `{ headers }` is accepted as the option.
+    const given: WebSocketInit[] = [];
+    const options: BackendOptions = {
+      url: router.url,
+      apiKey: "key",
+      apiSecret: "shh",
+      // Node's own WebSocket takes `{ headers }` at runtime, though its type says subprotocols.
+      webSocket: class extends WebSocket {
+        constructor(url: string, init: WebSocketInit) {
+          given.push(init);
+          super(url, init as unknown as string[]);
+        }
+      },
+    };
+    const arriving = router.socket();
+
+    const socket = await Socket.dial(new Backend(options), "/v1/dispatch");
+    await arriving;
+    assert.ok(given[0]?.headers?.["Authorization"]?.startsWith("Bearer "));
+    socket.close();
   });
 
   it("leaves a page's socket credential in the URL, the only place a browser can put it", async () => {

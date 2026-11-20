@@ -1029,6 +1029,9 @@ export class Session {
 
     const cancel = new AbortController();
     this.running.set(id, cancel);
+    // Answered by this session from here on, also once it has finished and left `running`: the
+    // same call delivered again afterwards is not run again.
+    this.answered.add(id);
     try {
       const functions = this.functionsFor(name);
       if (!functions) {

@@ -229,9 +229,11 @@ function localStorageOf(global: { localStorage?: Storage }): Storage | undefined
  * leaves the previous one's token behind in it, to be sent with every request and read back
  * once localStorage is cleared.
  */
-function localStore(storage: Storage, cookie: GuestStore | undefined): GuestStore {
+function localStore(storage: Storage, cookie: CookieStore | undefined): GuestStore {
+  // Whether the cookie is there is read without decoding it, so one an earlier page left
+  // malformed is still cleared rather than stopping a sign-out half way.
   const clearCookie = () => {
-    if (cookie?.read() !== undefined) {
+    if (cookie?.held()) {
       cookie.clear();
     }
   };
@@ -275,21 +277,41 @@ function localStore(storage: Storage, cookie: GuestStore | undefined): GuestStor
   };
 }
 
-function cookieStore(document: { cookie: string }): GuestStore {
+/** The guest cookie, which can also say whether it is there without reading what it holds. */
+interface CookieStore extends GuestStore {
+  held(): boolean;
+}
+
+function cookieStore(document: { cookie: string }): CookieStore {
   // Secure wherever the page is served over https, so the token never goes out in the clear;
   // left off a localhost page served over http, which could not set a Secure cookie at all.
   const secure = (globalThis as { location?: { protocol?: string } }).location?.protocol === "https:"
     ? "; Secure"
     : "";
-  return {
-    read() {
-      for (const pair of document.cookie.split(";")) {
-        const [name, ...rest] = pair.trim().split("=");
-        if (name === GUEST_STORAGE_KEY) {
-          return decodeURIComponent(rest.join("="));
-        }
+  /** The cookie's value as it is stored, still encoded, or undefined when there is none. */
+  const raw = (): string | undefined => {
+    for (const pair of document.cookie.split(";")) {
+      const [name, ...rest] = pair.trim().split("=");
+      if (name === GUEST_STORAGE_KEY) {
+        return rest.join("=");
       }
-      return undefined;
+    }
+    return undefined;
+  };
+  return {
+    held: () => raw() !== undefined,
+    read() {
+      const value = raw();
+      if (value === undefined) {
+        return undefined;
+      }
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        // Not a value this SDK wrote. Like JSON that does not parse, it is no guest: a fresh one
+        // is minted, and writing it clears this.
+        return undefined;
+      }
     },
     write(value) {
       const expires = new Date(Date.now() + COOKIE_DAYS * 86_400_000).toUTCString();

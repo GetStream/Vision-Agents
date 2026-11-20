@@ -178,8 +178,11 @@ export interface WebSocketInit {
   headers?: Record<string, string>;
 }
 
-/** A WebSocket class that also takes `WebSocketInit`, which a backend holding the secret calls. */
-type HeaderWebSocketConstructor = new (url: string, init: WebSocketInit) => WebSocketLike;
+/**
+ * A WebSocket class that takes `WebSocketInit` as its second argument, which a backend holding the
+ * secret calls it with. A page's sockets carry no headers, so one is never called that way there.
+ */
+export type HeaderWebSocketConstructor = new (url: string, init: WebSocketInit) => WebSocketLike;
 
 export interface BackendOptions {
   /**
@@ -280,7 +283,7 @@ export interface BackendOptions {
    * a second argument, `{ headers }`, which carry the credential, as Node's own WebSocket and
    * the `ws` package take them.
    */
-  webSocket?: WebSocketConstructor;
+  webSocket?: WebSocketConstructor | HeaderWebSocketConstructor;
 }
 
 /**
@@ -336,7 +339,7 @@ export class Backend {
    */
   private minted = new Map<string, { token: Promise<string>; expiresAt: number }>();
   private readonly fetchImpl: typeof fetch;
-  private readonly webSocketImpl: WebSocketConstructor | undefined;
+  private readonly webSocketImpl: WebSocketConstructor | HeaderWebSocketConstructor | undefined;
 
   constructor(options: BackendOptions = {}) {
     this.team = options.team || undefined;
@@ -733,11 +736,11 @@ export class Backend {
       );
     }
     if (!headers) {
-      return new this.webSocketImpl(url);
+      return new (this.webSocketImpl as WebSocketConstructor)(url);
     }
     // Only a backend holding the secret has headers to send, and it runs where the WebSocket
     // takes them: see the `webSocket` option.
-    return new (this.webSocketImpl as unknown as HeaderWebSocketConstructor)(url, { headers });
+    return new (this.webSocketImpl as HeaderWebSocketConstructor)(url, { headers });
   }
 
   /**

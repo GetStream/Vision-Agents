@@ -771,6 +771,21 @@ describe("Session", () => {
   });
 
   describe("a function that asks first", () => {
+    /** Waits until the session has read everything sent before, and whatever that started has had time to run. */
+    const readPast = async (
+      session: { on: (kind: string, handler: () => void) => () => void },
+      connection: { send: (frame: Record<string, unknown>) => void },
+    ): Promise<void> => {
+      const read = new Promise<void>((resolve) => {
+        const stop = session.on("read_past", () => {
+          stop();
+          resolve();
+        });
+      });
+      connection.send({ type: "read_past" });
+      await read;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    };
     const refundCall = {
       type: "tool_call",
       id: "call_1",
@@ -871,21 +886,6 @@ describe("Session", () => {
 
     describe("a call shown from the conversation that this socket was never asked", () => {
       const shown = { name: "issue_refund", arguments: refundCall.arguments, requestId: "m1", turnId: "t1" };
-      /** Waits until the session has read everything sent before, and whatever that started has had time to run. */
-      const readPast = async (
-        session: { on: (kind: string, handler: () => void) => () => void },
-        connection: { send: (frame: Record<string, unknown>) => void },
-      ): Promise<void> => {
-        const read = new Promise<void>((resolve) => {
-          const stop = session.on("read_past", () => {
-            stop();
-            resolve();
-          });
-        });
-        connection.send({ type: "read_past" });
-        await read;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      };
 
       it("allowed, answers it on its turn and runs it here", async () => {
         const [session, connection] = await opened(refunds());
@@ -1043,6 +1043,46 @@ describe("Session", () => {
         assert.deepEqual(ran, ["A-1042"]);
         await session.close();
       });
+    });
+
+    it("does not run a finished call again when the router delivers it again", async () => {
+      let lookups = 0;
+      const tools = new Tools().register({
+        name: "lookup",
+        description: "Look something up",
+        run: () => {
+          lookups += 1;
+          return "found";
+        },
+      });
+      const [session, connection] = await opened(tools);
+      const call = { type: "tool_call", id: "call_9", name: "lookup", arguments: "{}" };
+
+      connection.send(call);
+      assert.equal((await connection.next())["output"], "found");
+      connection.send(call);
+      await readPast(session, connection);
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" }, "no second result");
+      assert.equal(lookups, 1);
+      await session.close();
+    });
+
+    it("does not run a finished call sent as already approved again", async () => {
+      const [session, connection] = await opened(refunds());
+
+      connection.send({ ...refundCall, approved: true });
+      assert.equal((await connection.next())["output"], "Refunded A-1042");
+      connection.send({ ...refundCall, approved: true });
+      connection.send(refundCall);
+      await readPast(session, connection);
+      session.say("still there?");
+
+      assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+      assert.deepEqual(ran, ["A-1042"]);
+      assert.deepEqual(session.approvals, [], "nor asked about once it ran");
+      await session.close();
     });
 
     it("runs at once a call the caller already allowed out loud", async () => {
