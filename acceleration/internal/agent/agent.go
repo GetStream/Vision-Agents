@@ -2205,6 +2205,13 @@ func (a *Agent) ask(ready candidate) {
 		Paused:       time.Since(ready.RevisedAt),
 		FirstPause:   a.converse.firstPause(ready),
 	}
+	if ready.Stopped {
+		// The agent has stopped for these words, so the floor is not asked about them again.
+		if !a.speculate(current, ready, speaking, anotherVoice, afterStop) {
+			a.act([]Action{a.converse.spent(ready)})
+		}
+		return
+	}
 	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, ready.Utterance, tools)
 	if a.speculate(current, ready, speaking, anotherVoice, noOpinion) {
 		return

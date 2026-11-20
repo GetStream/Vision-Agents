@@ -243,8 +243,8 @@ func (s *Store) UnlinkUserPhone(ctx context.Context, customerID string, app int6
 // sighting, each find the link the one before left (joinLinked reads it under the lock).
 func (s *Store) lockLink(ctx context.Context, link UserPhone, fn func(context.Context, bun.Tx) error) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			link.CustomerID+"/"+strconv.FormatInt(link.StreamAppPK, 10)+"/"+link.UserID, userLinkLockSeed); err != nil {
+		key := link.CustomerID + "/" + strconv.FormatInt(link.StreamAppPK, 10) + "/" + link.UserID
+		if err := lockUntilCommit(ctx, tx, key, userLinkLockSeed); err != nil {
 			return stack.Wrap(fmt.Errorf("store: lock user phone: %w", err))
 		}
 		return fn(ctx, tx)

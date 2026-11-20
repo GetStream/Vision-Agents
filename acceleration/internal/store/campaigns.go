@@ -584,7 +584,8 @@ type ContactFilter struct {
 	After  *int64
 }
 
-// likeEscaper makes a typed number match as itself rather than as a pattern.
+// likeEscaper makes typed text match as itself rather than as a pattern: backslash is LIKE's
+// default escape.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // QueryContacts returns a campaign's contacts in the order they were added. Like

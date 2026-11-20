@@ -64,6 +64,10 @@ const (
 	// overAgent rules on words chorus-asr let the agent talk through: its [respond] stops
 	// the agent, and the words are then answered as any that interrupt it are.
 	overAgent
+	// afterStop rules on the words a stop over the agent was ruled on, once it has stopped:
+	// its [respond] is the reply the caller hears, and its [ignore] says they only told it
+	// to stop.
+	afterStop
 )
 
 // secondOpinion puts words chorus-asr ignored to the reply model, and reports whether it
@@ -143,6 +147,8 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 			parts = append(parts, harness.HeardIgnoredNote)
 		case overAgent:
 			parts = append(parts, harness.TalkedThroughNote)
+		case afterStop:
+			parts = append(parts, harness.StoppedNote)
 		}
 		if note != "" {
 			parts = append(parts, note)

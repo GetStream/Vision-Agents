@@ -816,6 +816,10 @@ With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the
 
 While a reply was still being written, with none of it heard, chorus-asr was told the agent was talking. It could then rule the caller's next words as said over the agent and let it talk through them, while the router dropped that reply as unheard: both turns went unanswered. A reply nobody has heard no longer counts as the agent talking.
 
+### A request the agent stopped for is answered
+
+When chorus-asr ruled a stop on a caller's whole sentence, such as "Okay. So can you tell me a story about Amsterdam?", the agent stopped and the sentence was set aside as the stop's own words: nobody answered it. The words a stop was ruled on are now put to the reply model, which answers them, or opens with `[ignore]` when they only told the agent to stop.
+
 ### The reply model gives chorus-asr's ignores a second opinion
 
 Chorus-asr hears the audio but not the conversation, so with the agent quiet it can take a caller's short answer for background speech. Words chorus-asr ignored on a quiet floor are now put to the reply model, which is told what chorus-asr made of them and opens its reply with `[respond]` or `[ignore]`. A reply that opens with `[respond]` is what the caller hears, so no second request is made; one that opens with `[ignore]` says nothing, as before. The same holds over the agent: real words chorus-asr lets the agent talk through, such as "Can you stop?", are put to the reply model, and its `[respond]` stops the agent, which then answers them. A murmur is not asked about, nor anything said while the reply is still being written. Chorus-asr still decides alone when a turn ends and when to shorten the agent. `unified_replies` is not needed for this, and still applies only to agents without chorus-asr.

@@ -56,6 +56,11 @@ const TalkedThroughNote = "The caller said their last words while you were still
 	"new: you will stop talking and they will be answered. Otherwise open with [ignore], and " +
 	"you carry on."
 
+// StoppedNote is added when the reply rules on the words the agent stopped talking for.
+const StoppedNote = "The caller said their last words over you, and you stopped talking for " +
+	"them. If they only told you to stop or to be quiet, open with [ignore] and say nothing. " +
+	"If they ask or tell you anything else, open with [respond] and answer it."
+
 // unifiedTags maps the tags a unified reply opens with to the ruling each stands for.
 var unifiedTags = map[string]Disposition{
 	"respond": Respond,
