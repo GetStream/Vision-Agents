@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Python SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections, each call naming the user as `user_id` (the owner and `X-Stream-User-Id`; none is the app's). `api.agent(name, user_id=...)` and `api.router(config, user_id=...)` run work for a user on the app's credential; `api.for_user` is deprecated and still works.
+
 ### A guardrail's every check is on the session timeline, and its classifier question is editable
 
 Every turn a guardrail screens now carries its check as `guardrail` on the session socket's `turn` frame and on the timeline entry: `kind`, `model`, `probability`, `threshold`, `allowed`, `latency_ms`, `held_ms`, `mode`, and `failed` for a check that could not be made and let the turn through. Allowed turns are recorded too, so a threshold can be tuned from what the model made of ordinary turns. A `decision_model` guardrail.md takes `question:`, the question asked of the classifier in place of the default, and the check now reads the turn in light of the recent conversation (the last 6 lines, at most 1,500 characters), which it gets as `conversation` beside `policy` and `message`. A webhook's request carries `conversation` too (AI-3402).
