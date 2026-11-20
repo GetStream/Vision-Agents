@@ -43,14 +43,15 @@ jobs:
         uses: ./.github/actions/python-uv-setup
         with:
           python-version: "3.12.13"
+          cpu-torch: "true"
       # Run ruff
       - name: Run Ruff linter
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
       - name: Run Ruff formatter
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
       # Validate extras are defined in pyproject.toml
       - name: Validate extra dependencies in "sdks/python/pyproject.toml"
-        run: uv run dev.py validate-extras
+        run: uv run --no-sync dev.py validate-extras
       # The generated client is committed; a spec change without a regen fails here. Status, not
       # `git diff`, so a new generated file that is untracked fails too.
       - name: Check the stream plugin's generated client is in step with the spec
@@ -125,6 +126,7 @@ jobs:
         uses: ./.github/actions/python-uv-setup
         with:
           python-version: "3.12.13"
+          cpu-torch: "true"
       # The VAD and turn models land in the temp dir by default and are otherwise fetched
       # from GitHub and Hugging Face on every run.
       - name: Cache ONNX models

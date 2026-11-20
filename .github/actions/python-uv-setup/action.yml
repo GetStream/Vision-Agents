@@ -17,6 +17,10 @@ inputs:
     description: Restore and save uv's download cache; "false" in a job that holds an OIDC token
     required: false
     default: "true"
+  cpu-torch:
+    description: Install the CPU build of torch, without the CUDA packages its PyPI build needs on Linux
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -28,7 +32,7 @@ runs:
         version: "0.13.6"
         enable-cache: ${{ inputs.enable-cache }}
         prune-cache: false
-        cache-suffix: ${{ inputs.python-version }}
+        cache-suffix: ${{ inputs.python-version }}${{ inputs.cpu-torch == 'true' && '-cpu-torch' || '' }}
         cache-dependency-glob: |
           **/pyproject.toml
           **/uv.lock
@@ -41,4 +45,17 @@ runs:
     - name: Install the project dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: uv sync ${{ inputs.sync-flags }}
+      env:
+        CPU_TORCH: ${{ inputs.cpu-torch }}
+      run: |
+        if [ "$CPU_TORCH" != true ]; then
+          uv sync ${{ inputs.sync-flags }}
+          exit 0
+        fi
+        # On Linux, torch from PyPI is the CUDA build. Its CUDA packages (about 3 GB) are
+        # locked for Linux only and named nvidia-*, cuda-* or triton.
+        locked=$(uv export ${{ inputs.sync-flags }} --no-hashes --no-header --no-annotate)
+        skip=$(grep -E "^(torch|torchvision|torchaudio)==|^(nvidia-|cuda-|triton)[^ ]*==.*sys_platform == 'linux'" <<< "$locked" | cut -d= -f1)
+        uv sync ${{ inputs.sync-flags }} $(printf -- '--no-install-package %s ' $skip)
+        uv pip install --no-deps --index-url https://download.pytorch.org/whl/cpu \
+          $(grep -E '^(torch|torchvision|torchaudio)==' <<< "$locked" | cut -d' ' -f1 | sed 's/$/+cpu/')
