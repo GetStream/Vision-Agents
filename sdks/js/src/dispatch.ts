@@ -1,5 +1,5 @@
 import type { Agent } from "./agent.js";
-import type { BackendOptions } from "./backend.js";
+import { speakingFor, type BackendOptions } from "./backend.js";
 import { Client } from "./client.js";
 import { ConfigurationError, HostingRefusedError, SocketClosedError } from "./errors.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
@@ -254,7 +254,7 @@ export class Dispatch {
     if (!message.sessionId) {
       throw new ConfigurationError("no session is holding this message; open one with sessionFor");
     }
-    const acting = new Client(this.client.backend.speakingFor(message.userId));
+    const acting = new Client(speakingFor(this.client.backend, message.userId));
     const images = (message.images ?? []).map(({ url }) => ({ url }));
     return createResponse(acting, message.sessionId, message.text, {
       images,

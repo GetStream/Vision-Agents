@@ -46,26 +46,28 @@ func (e *markedEdge) markedWrites() int {
 }
 
 func (s *AgentSuite) TestATurnIsMeasuredToWhenTheTrackTookTheFirstFrame() {
-	var edge *markedEdge
-	s.edgeFactory = func(base *loopbackEdge) Edge {
-		edge = &markedEdge{loopbackEdge: base, trackDelay: 120 * time.Millisecond}
-		return edge
-	}
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
+	s.onFakeClock(func() {
+		var edge *markedEdge
+		s.edgeFactory = func(base *loopbackEdge) Edge {
+			edge = &markedEdge{loopbackEdge: base, trackDelay: 120 * time.Millisecond}
+			return edge
+		}
+		s.join(true)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
 
-	s.says(participant, "hello")
+		s.says(participant, "hello")
 
-	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
-	turn, _ := firstOf[Turn](s.reported())
-	s.Positive(edge.markedWrites(), "the edge was never asked to report the speech")
-	s.Positive(turn.FirstFrameQueuedMs, "the first frame was never reported as queued")
-	s.Greater(turn.FirstAudibleFrameMs, turn.FirstFrameQueuedMs+60,
-		"the turn closed before the track took its speech, so it lost the moment")
-	s.LessOrEqual(turn.FirstFrameQueuedMs, turn.RoundtripMs, "queued before publishing returned")
-	s.Positive(turn.SpeechEndToAudibleMs)
-	s.Positive(turn.RoundtripMs, "the figure taken at the return is kept beside them")
+		s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+		turn, _ := firstOf[Turn](s.reported())
+		s.Positive(edge.markedWrites(), "the edge was never asked to report the speech")
+		s.Positive(turn.FirstFrameQueuedMs, "the first frame was never reported as queued")
+		s.Greater(turn.FirstAudibleFrameMs, turn.FirstFrameQueuedMs+60,
+			"the turn closed before the track took its speech, so it lost the moment")
+		s.LessOrEqual(turn.FirstFrameQueuedMs, turn.RoundtripMs, "queued before publishing returned")
+		s.Positive(turn.SpeechEndToAudibleMs)
+		s.Positive(turn.RoundtripMs, "the figure taken at the return is kept beside them")
+	})
 }
 
 func (s *AgentSuite) TestATurnIsStillReportedWhenTheTrackNeverTakesItsSpeech() {

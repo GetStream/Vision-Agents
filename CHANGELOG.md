@@ -21,6 +21,10 @@ A call, text or chat message the router rejects or cannot answer is logged with 
 ### The Go and JavaScript SDKs name themselves and their release
 
 Every Go SDK request sends `User-Agent: stream-agents-go/<version>` beside `X-Stream-Client: sdk`, with the new `stream.Version`. The JavaScript SDK now sends `X-Stream-Client: sdk`, so its calls are counted as the SDK's rather than the API's, and from Node also `User-Agent: stream-agents-js/<version>` (`VERSION`); a page sends `X-Stream-Client` alone (#2065).
+### The Python, Go, Ruby and Rust SDKs refuse a user on a device's connections call
+
+A client that holds a user's token (`as_user`, `SetUser`) and names `user_id` on a connections call now fails at once with the SDK's configuration error, the way the JavaScript and PHP SDKs do, instead of sending the call for the router's 403. A device acts only as its own user: name the user from a backend that holds the API secret. A call naming no user, and a client on a router that trusts the customer id, work as before. A Go `Backend` with the API secret and a `UserID` that names another user on a connections call now acts for that user with the app's token, as the other SDKs do, instead of signing a token for its own user that the proxy refused.
+
 ### The Rust SDK connects a user's own accounts
 
 `Client::connections()` creates, authorizes, reads, lists and deletes connections: `create(&NewConnection { connector, label, user_id })`, `authorize(id, &AuthorizeOptions { return_url, user_id })` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(&ConnectionFilter { connector, user_id })` (every page) and `delete(id, user_id)`. A user given goes out as both the owner and `X-Stream-User-Id`; `None` is the app's own connection and leaves the client's own `ClientOptions::user_id` as it is.

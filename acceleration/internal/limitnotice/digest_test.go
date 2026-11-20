@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,7 +133,8 @@ func (s *DigestSuite) TestAnOrganizationIsNewOnItsFirstDayAndTheCountIsOfOrganiz
 	digest := s.digests()[0]
 	s.Contains(digest, "Agents yesterday (9 Mar, prod)\nNew orgs (first request yesterday): 1\n"+
 		"  • `"+fresh+"`   reached: conversations   agent_setup (api) → conversations (api)\n")
-	s.NotContains(digest, seen, "active the day before, so not new")
+	newOrganizations, _, _ := strings.Cut(digest, "\nAll requests refused")
+	s.NotContains(newOrganizations, seen, "active the day before, so not new")
 	s.NotContains(digest, quiet, "not active yesterday")
 	var counted int
 	s.Require().NoError(s.db.DB().NewRaw("SELECT count(DISTINCT organization_id) FROM customer_activity"+
@@ -345,4 +347,68 @@ func (s *DigestSuite) TestTheCodeNamedIsTheLatestRefusalAcrossApps() {
 
 	s.Require().Len(s.digests(), 1)
 	s.Contains(s.digests()[0], "`"+org+"`   3 requests (newer_code)")
+}
+
+// Defect: an organization with a share of its requests refused not named because some went
+// through, or one named for a few refusals among many answers, or one refused every time named
+// as stuck too: the shares read wrong once the apps' rows are summed.
+func (s *DigestSuite) TestAnOrganizationWithAQuarterOfItsRequestsRefusedIsListedAsStuck() {
+	dental, noise, all := organization(), organization(), organization()
+	s.appActive(dental, "app-"+dental, activity.AreaConversations, 1, 70, 30, "spend_limit_reached", 10)
+	s.appActive(dental, "app-"+dental+"-b", activity.AreaConversations, 1, 30, 10, "spend_limit_reached", 11)
+	s.appActive(dental, "app-"+dental, activity.AreaConversations, 2, 50, 50, "invalid_api_key", 10)
+	s.appActive(noise, "app-"+noise, activity.AreaDashboardReads, 1, 100, 5, "not_found", 10)
+	s.appActive(all, "app-"+all, activity.AreaAgentSetup, 1, 4, 4, "spend_limit_reached", 10)
+	s.router().Start()
+	s.checked(0)
+
+	s.Require().Len(s.digests(), 1)
+	digest := s.digests()[0]
+	_, stuck, found := strings.Cut(digest, "\nStuck: 1\n")
+	s.Require().True(found, digest)
+	s.True(strings.HasPrefix(stuck, "  • `"+dental+"`   40% of 100 requests refused (spend_limit_reached)\nFirst conversation"), digest)
+	s.NotContains(stuck, noise)
+	s.Contains(digest, "All requests refused: 1\n  • `"+all+"`   4 requests (spend_limit_reached)\n")
+}
+
+// Defect: an organization's first conversation not named, named again on a later day, named
+// once per app, counted from a refused conversation, listed again because its earlier
+// conversation was another app's, or its days counted from its first conversation rather than
+// its first request of any area.
+func (s *DigestSuite) TestAnOrganizationsFirstAnsweredConversationIsListedWithTheDaysSinceItsFirstRequest() {
+	dental, again, refusedFirst, sameDay, today, other, blocked, moved := organization(), organization(), organization(),
+		organization(), organization(), organization(), organization(), organization()
+	s.active(dental, activity.AreaAgentSetup, 4, 2, 0)
+	s.active(dental, activity.AreaDashboardReads, 3, 1, 0)
+	s.active(dental, activity.AreaConversations, 1, 5, 0)
+	s.appActive(dental, "app-"+dental+"-b", activity.AreaConversations, 1, 2, 0, "", 12)
+	s.active(again, activity.AreaAgentSetup, 3, 1, 0)
+	s.active(again, activity.AreaConversations, 2, 1, 0)
+	s.active(again, activity.AreaConversations, 1, 4, 0)
+	s.active(refusedFirst, activity.AreaConversations, 2, 4, 4)
+	s.active(refusedFirst, activity.AreaConversations, 1, 3, 1)
+	s.active(sameDay, activity.AreaConversations, 1, 1, 0)
+	s.active(today, activity.AreaAgentSetup, 2, 1, 0)
+	s.active(today, activity.AreaConversations, 0, 1, 0)
+	s.active(other, activity.AreaAgentSetup, 5, 1, 0)
+	s.active(other, activity.AreaVoiceVideo, 1, 1, 0)
+	s.active(blocked, activity.AreaConversations, 1, 2, 2)
+	// An earlier conversation of another app of the same organization is the organization's
+	// earlier one.
+	s.appActive(moved, "app-"+moved, activity.AreaConversations, 2, 3, 0, "", 12)
+	s.appActive(moved, "app-"+moved+"-b", activity.AreaConversations, 1, 2, 0, "", 12)
+	s.active("", activity.AreaConversations, 1, 1, 0)
+	s.router().Start()
+	s.checked(0)
+
+	s.Require().Len(s.digests(), 1)
+	digest := s.digests()[0]
+	_, first, found := strings.Cut(digest, "\nFirst conversation: 3\n")
+	s.Require().True(found, digest)
+	// Listed by organization id, as the ids are random.
+	s.Equal(slices.Sorted(slices.Values([]string{
+		"  • `" + dental + "`   3 days after its first request",
+		"  • `" + refusedFirst + "`   1 day after its first request",
+		"  • `" + sameDay + "`   0 days after its first request",
+	})), strings.Split(strings.TrimSuffix(first, "\nActive orgs: 7 (day before: 4)"), "\n"), digest)
 }

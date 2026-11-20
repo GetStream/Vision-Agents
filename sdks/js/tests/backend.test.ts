@@ -3,6 +3,11 @@ import { readFile } from "node:fs/promises";
 import { after, before, describe, it } from "node:test";
 import { inspect } from "node:util";
 
+import * as chat from "../src/chat.js";
+import * as node from "../src/node.js";
+import * as react from "../src/react.js";
+import * as video from "../src/video.js";
+
 import {
   Backend,
   Client,
@@ -15,6 +20,7 @@ import {
   type BackendOptions,
   type WebSocketInit,
 } from "../src/index.js";
+import * as root from "../src/index.js";
 import { TestRouter, claimsOf } from "./router.js";
 
 /** What every request from Node says the SDK is, beside who is calling. */
@@ -170,6 +176,23 @@ describe("Backend", () => {
     const backend = new Backend({ url: "http://localhost:8080" });
 
     await assert.rejects(() => backend.headers(), ConfigurationError);
+  });
+
+  it("offers acting for a user only through the deprecated actingFor, not a second method", () => {
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    // @ts-expect-error speakingFor is not on Backend's published type
+    assert.equal(backend.speakingFor, undefined);
+    assert.equal(typeof backend.actingFor, "function");
+    assert.equal(backend.actingFor("ana").actsFor, "ana");
+  });
+
+  it("exports speakingFor from no entry point and as no static of Backend", () => {
+    assert.equal("speakingFor" in root, false);
+    assert.equal("speakingFor" in node, false);
+    assert.equal("speakingFor" in chat, false);
+    assert.equal("speakingFor" in video, false);
+    assert.equal("speakingFor" in react, false);
+    assert.equal(Object.getOwnPropertyNames(Backend).includes("speakingFor"), false);
   });
 
   it("goes to the hosted router, through the proxy, when nothing names another", () => {
