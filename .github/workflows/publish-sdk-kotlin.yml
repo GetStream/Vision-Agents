@@ -115,9 +115,12 @@ jobs:
     needs: version
     if: github.event_name == 'push' && needs.version.outputs.channel != 'none'
     runs-on: ubuntu-latest
-    # The signing key is a GetStream organization secret: this environment does not limit it, and any
-    # workflow in this repository can read it. AI-3372 tracks limiting it to the release jobs.
+    # The signing key is in GCP Secret Manager. Only a job in this environment gets a token that GCP
+    # accepts for it, and this environment admits only main and release-kotlin-* branches.
     environment: release
+    permissions:
+      contents: read
+      id-token: write   # the GitHub OIDC token GCP exchanges for the release service account
     defaults:
       run:
         working-directory: sdks/kotlin
@@ -141,12 +144,27 @@ jobs:
       - name: Test
         run: ./gradlew :core:testDebugUnitTest
 
+      # After the tests, so test code never holds the GCP credential.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.KOTLIN_RELEASE_WIF_PROVIDER }}
+          service_account: ${{ vars.KOTLIN_RELEASE_SERVICE_ACCOUNT }}
+
+      # The action masks every line of 4 or more characters of each value in the log (min_mask_length).
+      - id: keys
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |-
+            signing_key_id:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-signing-key-id
+            signing_key:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-signing-key
+            signing_password:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-signing-password
+
       - name: Sign and stage
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          SIGNING_KEY_ID: ${{ steps.keys.outputs.signing_key_id }}
+          SIGNING_KEY: ${{ steps.keys.outputs.signing_key }}
+          SIGNING_PASSWORD: ${{ steps.keys.outputs.signing_password }}
         run: ./gradlew :core:publishReleasePublicationToStreamRepoStagingRepository -Pversion="$VERSION"
 
       # The repository rejects an unsigned file, so fail here rather than after the upload.
@@ -166,30 +184,46 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Secrets are per job: this one holds the repository credential and never the signing key.
+  # Secrets are per job: this one reads the repository credential and never the signing key.
   upload:
     name: Upload to the Stream repository
     needs: [ version, publish ]
     runs-on: ubuntu-latest
-    # The repository endpoint, bucket and credentials are GetStream organization secrets too: this
-    # environment does not limit them either. AI-3372 tracks limiting them to the release jobs.
+    # The repository endpoint, bucket and credentials are in GCP Secret Manager too, behind the same
+    # environment.
     environment: release
     permissions:
       contents: write   # the sdk-kotlin-v* tag of a release
+      id-token: write   # the GitHub OIDC token GCP exchanges for the release service account
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: stream-repo-staged
           path: build/staged-repo
 
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.KOTLIN_RELEASE_WIF_PROVIDER }}
+          service_account: ${{ vars.KOTLIN_RELEASE_SERVICE_ACCOUNT }}
+
+      # The action masks every line of 4 or more characters of each value in the log (min_mask_length).
+      - id: keys
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |-
+            endpoint:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-repo-endpoint
+            bucket:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-repo-bucket
+            access_key_id:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-repo-access-key-id
+            secret_access_key:${{ vars.KOTLIN_RELEASE_GCP_PROJECT }}/agents-kotlin-repo-secret-access-key
+
       - uses: GetStream/stream-build-conventions-android/.github/actions/publish-to-stream-repo@5821f7fdb8d656443b89fb0e28e219ba977cfe6a # v1.1.3
         with:
           staged-directory: build/staged-repo
           channel: ${{ needs.version.outputs.channel }}
-          endpoint: ${{ secrets.STREAM_REPO_ENDPOINT }}
-          bucket: ${{ secrets.STREAM_REPO_BUCKET }}
-          access-key-id: ${{ secrets.STREAM_REPO_ACCESS_KEY_ID }}
-          secret-access-key: ${{ secrets.STREAM_REPO_SECRET_ACCESS_KEY }}
+          endpoint: ${{ steps.keys.outputs.endpoint }}
+          bucket: ${{ steps.keys.outputs.bucket }}
+          access-key-id: ${{ steps.keys.outputs.access_key_id }}
+          secret-access-key: ${{ steps.keys.outputs.secret_access_key }}
 
       # Tagged only once the release is in the repository, so a failed release leaves no tag.
       - name: Tag the release
