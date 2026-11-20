@@ -62,6 +62,7 @@ public class Sessions internal constructor(
             returnUrl = options.returnUrl?.ifEmpty { null },
             memory = options.memory?.schema(backend.user?.id),
             timezone = options.timezone?.ifEmpty { null },
+            ui = options.ui,
         )
         val created = backend.post(
             listOf("v1", "agents", "sessions"),

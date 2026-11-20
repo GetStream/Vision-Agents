@@ -144,10 +144,8 @@ let lookup = AgentTool(
     await Orders.local.find(arguments["order_id"]?.stringValue ?? "")
 }
 
-var options = SessionOptions()
-options.tools = [lookup]
 // Watched once it returns: the socket is what carries tool calls to this device.
-let session = try await agents.agent("myagent").sessions.create(options)
+let session = try await agents.agent("myagent").sessions.create(SessionOptions(tools: [lookup]))
 ```
 
 `executor: .client` shows the people in a persistent conversation that a device is running it,
