@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Rust SDK connects a user's own accounts
+
+`Client::connections()` creates, authorizes, reads, lists and deletes connections: `create(&NewConnection { connector, label, user_id })`, `authorize(id, &AuthorizeOptions { return_url, user_id })` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(&ConnectionFilter { connector, user_id })` (every page) and `delete(id, user_id)`. A user given goes out as both the owner and `X-Stream-User-Id`; `None` is the app's own connection and leaves the client's own `ClientOptions::user_id` as it is.
+
 ### The PHP SDK connects a user's own accounts
 
 `$client->connections` creates, authorizes, reads, lists and deletes connections: `create(new NewConnection('linear', userId: 'ada'))`, `authorize($id, new AuthorizeOptions($returnUrl, userId: 'ada'))` for the launch URL, handoff token and expiry of the consent, `get($id, userId: 'ada')`, `list(new ConnectionFilter(userId: 'ada'))` (every page) and `delete($id, userId: 'ada')`; no `userId` is the app's own connection. `Backend::onBehalfOf` is deprecated in favour of that parameter.
