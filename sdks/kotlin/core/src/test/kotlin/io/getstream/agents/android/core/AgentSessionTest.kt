@@ -506,6 +506,8 @@ class AgentSessionTest {
         agents.setUser(User("jlahey"), "token")
         val ran = CopyOnWriteArrayList<String>()
         val chat = agents.chat(SessionOptions(incognito = true, tools = listOf(refund(ran))))
+        val created = router.requests.single { it.method == "POST" && it.path == "/v1/agents/sessions" }
+        assertEquals(JsonPrimitive(true), Json.parseToJsonElement(created.body).jsonObject["incognito"])
         chat.responses.create("Refund A-1042, it arrived unopened")
 
         router.script.send(Script.Send("""{"type":"responding","turn_id":"t1"}"""))
