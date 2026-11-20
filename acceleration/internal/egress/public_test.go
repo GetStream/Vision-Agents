@@ -549,8 +549,8 @@ const (
 type origin struct {
 	server              *httptest.Server
 	read, conns, closed atomic.Int32
-	mu          sync.Mutex
-	held        []net.Conn
+	mu                  sync.Mutex
+	held                []net.Conn
 }
 
 // startOrigin starts an HTTP/1.1 origin, or an HTTP/2 one with http2. With reuse set, the first connection answers its first request and then does what

@@ -130,8 +130,9 @@ func (p policy) client(timeout time.Duration, wrap func(http.RoundTripper) http.
 		transport.TLSClientConfig = p.tlsConfig
 	}
 	// unpooled sends what net/http will not send twice. MaxIdleConnsPerHost below zero makes
-	// tryPutIdleConn (net/http/transport.go) close each HTTP/1.1 connection after its one request;
-	// HTTP/2 connections, which an origin closes with GOAWAY rather than mid-request, stay shared.
+	// tryPutIdleConn (net/http/transport.go) close each HTTP/1.1 connection after its one
+	// request. HTTP/2 connections stay shared: an origin closes one with GOAWAY, which names the
+	// last request it processed (RFC 9113 section 6.8).
 	unpooled := transport.Clone()
 	unpooled.MaxIdleConnsPerHost = -1
 	var next http.RoundTripper = checkedRoundTripper{transport: transport, unpooled: unpooled}
@@ -242,11 +243,14 @@ func (t clientRoundTripper) CloseIdleConnections() {
 }
 
 // checkedRoundTripper repeats the URL check after the wrapper, which may rewrite the request.
-// It sends a request net/http would not send twice on a new HTTP/1.1 connection: an origin
-// may close a kept-alive one as the request arrives (nginx after keepalive_timeout, 75 s by
-// default, https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_timeout), and
-// once its bytes are written the client cannot tell that close from one after the origin
-// applied it (RFC 9110 section 9.2.2), so it fails rather than being sent again.
+// It sends a request net/http would not send twice on a new HTTP/1.1 connection. An origin
+// closes a kept-alive connection when it has been idle for its own limit, which can be shorter
+// than the transport's 90 s (nginx's keepalive_timeout is 75 s and Apache's KeepAliveTimeout 5 s
+// by default: https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_timeout,
+// https://httpd.apache.org/docs/2.4/mod/core.html#keepalivetimeout). A request written as that
+// close happens fails, and once its bytes are written the client cannot tell that close from one
+// after the origin applied the request (RFC 9110 section 9.2.2), so sending it again could apply
+// it twice.
 type checkedRoundTripper struct {
 	transport, unpooled *http.Transport
 }
