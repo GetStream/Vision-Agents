@@ -429,9 +429,10 @@ func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
 	origin := s.startOrigin(closeAtReuse, 0, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
-	s.send(client, http.MethodGet, nil)
+	_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+	s.Require().NoError(err)
 
-	status, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+	status, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":2}`))
 
 	s.Require().NoError(err)
 	s.Equal(http.StatusOK, status)
@@ -485,6 +486,7 @@ func (s *EgressSuite) TestRequestsGoCanSendAgainShareAConnection() {
 	for _, method := range []string{"", http.MethodHead, http.MethodOptions, http.MethodTrace} {
 		s.True(s.reusesAConnection(&http.Request{Method: method, Header: http.Header{}}), "method %q", method)
 	}
+	s.True(s.reusesAConnection(&http.Request{Method: http.MethodGet, Header: http.Header{}, Body: http.NoBody}), "no body")
 	for _, key := range []string{"Idempotency-Key", "X-Idempotency-Key"} {
 		request := &http.Request{Method: http.MethodPost, Header: http.Header{key: {"k"}}}
 		request.Body, request.GetBody = io.NopCloser(strings.NewReader("{}")), func() (io.ReadCloser, error) {
