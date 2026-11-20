@@ -1951,8 +1951,10 @@ func (s *RouterSuite) workBus(logger *slog.Logger) *relay.Bus {
 const suiteFresh = 100 * time.Millisecond
 
 // suiteFlushMaxLag is how long a suite sharing holds lets one wait unshared before billable
-// work is refused, rather than a router's ten seconds.
-const suiteFlushMaxLag = 300 * time.Millisecond
+// work is refused, rather than a router's ten seconds. It is longer than one flush pass may
+// take (the policy package's flushPassTimeout), so a pass a loaded machine holds up refuses
+// nothing.
+const suiteFlushMaxLag = 3 * time.Second
 
 // limitApp gives the suite's app a spend limit of its own, as the limits API writes one.
 func (s *RouterSuite) limitApp(interval usage.Interval, micros int64) store.Limit {
