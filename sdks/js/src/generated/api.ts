@@ -822,6 +822,30 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/configs/{id}/directory": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent config as the files of its directory
+         * @description The reverse of a sync: the agent as the directory it would be synced from. The files are agent.yaml, instructions.md, guardrail.md, each skill as skills/<name>/SKILL.md with the files beside it, the agent's knowledge base as knowledge/<source> with the pages it is kept filled from in knowledge/urls.yaml, its simulations in simulations/simulations.yaml, and ui/components.json and ui/blueprints.yaml when a directory's files gave the agent its UI. agent.yaml is canonical: its keys in a fixed order, what a sync fills in on its own left out (region us, the default harness, a call tool at its default, a connector's tools when it grants every one), and a connector that says only its name written as the name alone.
+         *
+         *     Sent to POST /v1/agents/sync/files, the files store the agent as it is, apart from what `not_exported` lists. What a directory never says is not in the files and a sync leaves it alone: llm_fallbacks, review, resume_history, visible_tools and episode_cards. A fixed connector is written with its connection's id, whatever label agent.yaml first named it by, and a skill the config no longer names is left out.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getAgentDirectory"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/connections": {
         readonly parameters: {
             readonly query?: never;
@@ -2800,6 +2824,32 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["syncAgent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sync/files": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Store an agent directory sent as its files
+         * @description POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+         *
+         *     A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+         *
+         *     `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["syncAgentFiles"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5138,6 +5188,15 @@ export type components = {
          * @enum {string}
          */
         readonly AgentConnectorSelectionType: "fixed" | "session";
+        /** @description An agent config as the directory it is synced from: agent.yaml, instructions.md, guardrail.md, its skills, its knowledge, its simulations and its UI files. */
+        readonly AgentDirectory: {
+            /** @description The directory's files, in path order. Sent back to POST /v1/agents/sync/files, they store the agent as it is. */
+            readonly files: readonly components["schemas"]["DirectoryFile"][];
+            /** @description What the agent is called, as agent.yaml names it. */
+            readonly name: string;
+            /** @description What this agent holds that its directory cannot say and a sync of these files would change, each in a sentence: a connector binding's events, policy or timeout, a connector that grants no tools, a knowledge document that is not a text file, UI instructions no directory's files were compiled into. Empty when a sync of these files leaves the agent as it is. */
+            readonly not_exported: readonly string[];
+        };
         /** @description What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled. */
         readonly AgentDispatch: {
             /** @description A call to one of the customer's numbers is handed to a dispatch worker. Every inbound call already is, since a number is not tied to an agent config. */
@@ -7369,6 +7428,37 @@ export type components = {
          * @enum {string}
          */
         readonly DetectionStatus: "completed" | "failed";
+        /** @description One file of an agent directory, as a sync takes it and an export writes it. */
+        readonly DirectoryFile: {
+            /** @description The file, whole, as text. */
+            readonly content: string;
+            /**
+             * @description Where the file is in the directory, with forward slashes: agent.yaml, instructions.md, guardrail.md, skills/<name>.md or skills/<name>/SKILL.md with the files beside it, knowledge/<file>, knowledge/urls.yaml, simulations/<file>.yaml, ui/components.json, ui/blueprints.yaml.
+             * @example skills/refunds/SKILL.md
+             */
+            readonly path: string;
+        };
+        /** @description One thing wrong with an agent directory, at its place in a file, so an editor can point at it. */
+        readonly DirectoryProblem: {
+            /**
+             * Format: int64
+             * @description The column, counted from 1. Left out with line.
+             * @example 3
+             */
+            readonly column?: number;
+            /**
+             * @description The file's path in the directory.
+             * @example agent.yaml
+             */
+            readonly file: string;
+            /**
+             * Format: int64
+             * @description The line, counted from 1. Left out when the problem is the file as a whole.
+             * @example 12
+             */
+            readonly line?: number;
+            readonly message: string;
+        };
         /**
          * @description Whether this kind of work is left to the customer's own dispatch worker.
          * @enum {string}
@@ -7422,17 +7512,28 @@ export type components = {
             readonly $in?: readonly string[];
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), invalid_agent_directory (a 400: the files of an agent directory do not read, and problems says where in which file), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
+            /** @description What a sync would write over that somebody changed since the last sync, as the message names them, present with unsynced_changes only. */
+            readonly conflicts?: readonly components["schemas"]["SyncConflict"][];
             /**
              * Format: uri
              * @description Where the code is explained.
              */
             readonly doc_url: string;
+            /** @description The newest change the sync was refused for, present with unsynced_changes only: send it as base_change on a sync to say these have been seen. */
+            readonly last_change?: string;
             /** @description Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or sandbox_disk_gb for an agent config's sandbox. More may be added. */
             readonly limit?: string;
             /** @description What went wrong, for a person to read. Its wording may change; branch on code. */
             readonly message: string;
+            /** @description What is wrong with an agent directory, each problem at its file, line and column, present with invalid_agent_directory only. At most 100 are named, and problems_omitted counts the rest. */
+            readonly problems?: readonly components["schemas"]["DirectoryProblem"][];
+            /**
+             * Format: int64
+             * @description How many more problems an agent directory has than problems names, present only when there are more than it lists: they are named once these are fixed.
+             */
+            readonly problems_omitted?: number;
             readonly type: components["schemas"]["ErrorType"];
         };
         /** @description The body of every failure. A failure that is not the caller's own is a 500 of type internal saying only "something went wrong": quote the response's X-Request-Id to find out more. */
@@ -10650,6 +10751,57 @@ export type components = {
             /** @description Who is suspending it. */
             readonly suspended_by: string;
         };
+        /**
+         * @description An agent directory as its files, which the router reads, so every client's directory means the same thing. The fields from instructions down are what a program sets in code beside the directory: each wins over what the files say, and is part of the hash.
+         *
+         *     A request sends at most 1024 files, and the directory among them holds at most 1048576 bytes a file and 8388608 bytes in all.
+         *
+         *     The hash of a sync is the router's own, answered as the config's sync_hash: the SHA-256, in hex, of a run of parts, each written as its length in bytes in decimal, a colon and the part. The parts are, for every file of the directory in path order by byte, its path and its content; then, for each field from instructions down that is sent, its name and its value, in this order: instructions, guardrail, harness, subagent, sandbox, llm, stt, tts, sts and voice as sent; greeting.text and greeting.mode; video.source and video.max_frames in decimal; tags.<key> for each tag in key order; skills with the number of skills in decimal, then for each skill in name order skills.<name>.description, .instructions, .deadline_ms in decimal, .capture_video as true or false, and .files.<path> for each file in path order; then, for a directory whose agent.yaml has a ui key, ui and the version of the router's UI compiler, so a router that compiles ui differently syncs the directory again. A file sent that is no part of the directory is no part of the hash, so every client's sync of one folder has one hash. While a connector is left out sync_hash is another hash, so the sync that finds its connection is not taken for the one that left it out.
+         *
+         *     What a sync does with a setting agent.yaml leaves out depends on the setting. A model, the voice, the mode, the region, a greeting, the sandbox, connectors, tools, channels, chat_channels, scheduling, floor_control, agents, video and dispatch are left as stored. calls is always written whole: a call tool the file does not name goes back to its default. keyterms and tags are left as stored when the file has none, an empty list or mapping included, so a file cannot clear them. instructions, guardrail, the skills the config names, its UI instructions and its knowledge base are the directory's: a file taken out is taken out of the agent. simulations are left alone without a simulations file, and are exactly what the files declare with one.
+         */
+        readonly SyncAgentFilesRequest: {
+            /** @description As base_change of POST /v1/agents/sync: the newest change the caller has already seen. */
+            readonly base_change?: string;
+            /** @description As check_changes of POST /v1/agents/sync: refuse the sync, with unsynced_changes, when it would write over a setting somebody changed since the last one. */
+            readonly check_changes?: boolean;
+            /** @description Work out what the sync would store and write nothing. The answer is the config as it would be stored, one a dry run would create having no id, with the warnings a sync would give, and the request is refused as the sync would be: for what the files say, for what the router cannot run, and with check_changes for what it would write over, the money for writing its knowledge included. What only the writes can tell is not told: whether the knowledge provider takes the passages, and whether a page of knowledge/urls.yaml can be read. unchanged is true when the hash matches and a sync would do nothing. */
+            readonly dry_run?: boolean;
+            /** @description The files of the agent's folder, as they are on disk. A client sends what it finds and the router decides what is the directory: agent.yaml, instructions.md, guardrail.md, what is under skills/, knowledge/ and simulations/, and the UI files agent.yaml names. A file or folder whose name starts with a dot, and anything under __pycache__ or node_modules, is skipped. Any other file is left out with a warning, and is no part of the limits or the hash. */
+            readonly files: readonly components["schemas"]["DirectoryFile"][];
+            /** @description In place of agent.yaml's greeting. */
+            readonly greeting?: components["schemas"]["Greeting"];
+            /** @description The guardrail a program gives in code, in place of guardrail.md. */
+            readonly guardrail?: string;
+            /** @description In place of agent.yaml's harness. */
+            readonly harness?: components["schemas"]["Harness"];
+            /** @description The system prompt a program gives in code, in place of instructions.md. */
+            readonly instructions?: string;
+            /** @description In place of agent.yaml's llm. */
+            readonly llm?: string;
+            /** @description What the config is called. It wins over agent.yaml's name, and may be left out when agent.yaml names the agent. */
+            readonly name?: string;
+            /** @description In place of agent.yaml's sandbox. */
+            readonly sandbox?: components["schemas"]["Sandbox"];
+            /** @description The skills a program writes in code, in place of every skill under skills/. An empty list names none. */
+            readonly skills?: readonly components["schemas"]["SkillRequest"][];
+            /** @description In place of agent.yaml's sts. */
+            readonly sts?: string;
+            /** @description In place of agent.yaml's stt. */
+            readonly stt?: string;
+            /** @description In place of agent.yaml's subagent. */
+            readonly subagent?: string;
+            /** @description Labels added to agent.yaml's tags, winning where both name a key: what an SDK's cost tracking writes. */
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+            /** @description In place of agent.yaml's tts. */
+            readonly tts?: string;
+            /** @description In place of agent.yaml's video. */
+            readonly video?: components["schemas"]["SessionVideo"];
+            /** @description In place of agent.yaml's voice. */
+            readonly voice?: string;
+        };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
             /** @description agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names. */
@@ -10741,11 +10893,34 @@ export type components = {
             readonly voice?: string;
         };
         readonly SyncAgentResult: {
+            /** @description What the sync did, or with dry_run would do, to what the agent holds beside its config: each skill, knowledge document, knowledge url and simulation it created, updated or deleted. One it leaves as it is is not listed, and nothing is for a sync that found the hash unchanged. */
+            readonly changes?: readonly components["schemas"]["SyncChange"][];
             readonly config: components["schemas"]["AgentConfig"];
             /** @description True when the hash matched and nothing was written. */
             readonly unchanged: boolean;
             /** @description What was stored but will not work yet, such as a channel line the app has not connected. */
             readonly warnings?: readonly string[] | null;
+        };
+        /** @description One skill, knowledge document, knowledge url or simulation a sync creates, updates or deletes. */
+        readonly SyncChange: {
+            /** @enum {string} */
+            readonly action: "created" | "updated" | "deleted";
+            /** @description Which one: a skill's name, a knowledge document's source, a knowledge url's url, a simulation's name. */
+            readonly name: string;
+            /**
+             * @description What it is, named as GET /v1/agents/configs/{id}/changes names a skill, a knowledge document and a knowledge url, and simulation, which that record does not keep.
+             * @enum {string}
+             */
+            readonly resource_type: "skill" | "knowledge" | "knowledge_url" | "simulation";
+        };
+        /** @description One thing a sync would write over that somebody changed since the last sync. */
+        readonly SyncConflict: {
+            /** @description Which one: the field of an agent_config, such as llm or instructions; a skill's name; a knowledge document's source; a knowledge url's url. */
+            readonly name: string;
+            /** @description True for a knowledge document the directory no longer has, which the sync would delete. */
+            readonly removed?: boolean;
+            /** @description What was changed, as GET /v1/agents/configs/{id}/changes names it: agent_config, skill, knowledge or knowledge_url. */
+            readonly resource_type: components["schemas"]["AuditResourceType"];
         };
         readonly TagKeySummary: {
             /** Format: int64 */
@@ -13706,6 +13881,39 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentChanges"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getAgentDirectory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The agent's directory */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDirectory"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -18510,6 +18718,58 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
             /** @description Conflict */
             readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly syncAgentFiles: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SyncAgentFilesRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The config as stored, as it already was, or with dry_run as it would be stored */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SyncAgentResult"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;
                 };

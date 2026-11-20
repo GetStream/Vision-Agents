@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,11 +22,6 @@ import {
 import { loadFolder } from "../src/node.js";
 import { inPage } from "./device.js";
 import { TestRouter } from "./router.js";
-
-// The sync body of a connector entry with neither sandbox nor require_approval, probed on
-// 8e132bd37, before agent.yaml read either.
-const PROBED_CONNECTOR_BODY =
-  '{"name":"jean","instructions":"Be brief.","connectors":[{"name":"github","connector_id":"github","tools":[],"tool_patterns":["*"],"required":true,"connection":{"type":"session"}}],"hash":"38df39c4d53c61a144cbb643b522795d61737c5239450b70fd44955053aedf10"}';
 
 const session = {
   id: "sess_1",
@@ -570,39 +566,6 @@ describe("Agent", () => {
       assert.notEqual(hashes[1], hashes[2]);
     });
 
-    it("sends a skill folder's files, and fingerprints a skill moved into a folder the same until it brings one", async () => {
-      router.serve("POST", "/v1/agents/sync", {
-        body: {
-          unchanged: false,
-          config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" },
-        },
-      });
-      // Nothing stored, so a stamp that still matches syncs again and the request is seen.
-      router.serve("GET", "/v1/agents/configs", { body: [] });
-      const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
-      const skill = "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n";
-      await mkdir(join(root, "skills"), { recursive: true });
-      await writeFile(join(root, "agent.yaml"), "name: jean\n");
-      await writeFile(join(root, "skills", "pdf.md"), skill);
-      await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-      await rm(join(root, "skills", "pdf.md"));
-      await mkdir(join(root, "skills", "pdf", "scripts"), { recursive: true });
-      await writeFile(join(root, "skills", "pdf", "SKILL.md"), skill);
-      await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-      await writeFile(join(root, "skills", "pdf", "scripts", "fill.py"), "print('filled')\n");
-      await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-      const [asFile, asFolder, withFile] = router
-        .requestsTo("POST", "/v1/agents/sync")
-        .map((one) => one.body as Schemas["SyncAgentRequest"]);
-      assert.equal(asFolder?.skills?.[0] && "files" in asFolder.skills[0], false);
-      assert.deepEqual(withFile?.skills?.[0]?.files, { "scripts/fill.py": "print('filled')\n" });
-      assert.equal(asFile?.hash, asFolder?.hash, "moving a skill into a folder would sync it again");
-      assert.notEqual(asFolder?.hash, withFile?.hash, "a file added to a skill would not sync");
-    });
-
     describe("connectors", () => {
       const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
       const folder = (connectors: ConnectorDeclaration[] | undefined): Folder => ({
@@ -652,72 +615,6 @@ describe("Agent", () => {
         await new Agent({ folder: await loadFolder(root), client: api }).sync();
         return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
       }
-
-      it("sends agent.yaml's image as written, an empty one that turns drawing off included", async () => {
-        const drawing = await syncedFrom("name: jean\nmode: text\nimage: image-fast\n");
-        const off = await syncedFrom('name: jean\nmode: text\nimage: ""\n');
-        const unsaid = await syncedFrom("name: jean\nmode: text\n");
-        const bare = await syncedFrom("name: jean\nmode: text\nimage:\n");
-
-        assert.equal(drawing["image"], "image-fast");
-        assert.equal(off["image"], "", "an empty image is how a file turns drawing off");
-        assert.equal("image" in unsaid, false, "a file that names none leaves the stored one");
-        assert.equal("image" in bare, false, "a bare image: says nothing, as in Go and Python");
-      });
-
-      it("sends sandbox and require_approval from agent.yaml on each binding that sets them", async () => {
-        router.serve("GET", "/v1/agents/connections", { body: { items: [connection("conn-1", "company")], has_more: false } });
-
-        const body = await syncedFrom(
-          [
-            "name: jean",
-            "connectors:",
-            "  - name: github",
-            "    sandbox: true",
-            "  - name: code",
-            "    connector: github",
-            "    connection: company",
-            "    sandbox: true",
-            "  - name: issues",
-            "    connector: linear",
-            "    require_approval: [create_*, update_issue]",
-            "  - name: mail",
-            "    sandbox: false",
-            "    require_approval: []",
-            "  - linear",
-            "",
-          ].join("\n"),
-        );
-
-        const session = { type: "session" };
-        assert.deepEqual(body["connectors"], [
-          { name: "github", connector_id: "github", tools: [], tool_patterns: ["*"], sandbox: true, connection: session },
-          {
-            name: "code",
-            connector_id: "github",
-            tools: [],
-            tool_patterns: ["*"],
-            sandbox: true,
-            connection: { type: "fixed", connection_id: "conn-1" },
-          },
-          {
-            name: "issues",
-            connector_id: "linear",
-            tools: [],
-            tool_patterns: ["*"],
-            require_approval: ["create_*", "update_issue"],
-            connection: session,
-          },
-          { name: "mail", connector_id: "mail", tools: [], tool_patterns: ["*"], require_approval: [], connection: session },
-          { name: "linear", connector_id: "linear", tools: [], tool_patterns: ["*"], connection: session },
-        ]);
-      });
-
-      it("sends the body it sent before for a connector that sets neither", async () => {
-        const body = await syncedFrom("name: jean\nconnectors:\n  - name: github\n    required: true\n");
-
-        assert.equal(JSON.stringify(body), PROBED_CONNECTOR_BODY);
-      });
 
       it("sends no connectors when agent.yaml has none, and an empty list when it lists none", async () => {
         const without = await synced(undefined);
@@ -796,108 +693,6 @@ describe("Agent", () => {
         return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
       }
 
-      it("sends them the way the Go SDK does", async () => {
-        const body = await synced(
-          [
-            "name: jean",
-            "channels:",
-            "  whatsapp:",
-            '    number: "+15551234567" # the main line',
-            "  sms:",
-            "    number: +15557654321",
-            "  imessage:",
-            "  identity: link # by link",
-            "",
-          ].join("\n"),
-        );
-
-        assert.deepEqual(body["channels"], {
-          whatsapp: { number: "+15551234567" },
-          sms: { number: "+15557654321" },
-          identity: "link",
-        });
-      });
-
-      it("sends empty channels for an empty mapping", async () => {
-        const body = await synced("name: jean\nchannels: {}\n");
-
-        assert.deepEqual(body["channels"], {});
-      });
-
-      it("fingerprints a change to channels", async () => {
-        const one = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000001\n");
-        const other = await synced("name: jean\nchannels:\n  sms:\n    number: +15550000002\n");
-
-        assert.notEqual(one["hash"], other["hash"]);
-      });
-
-      it("sends floor_control as written, and none when agent.yaml names none, so the stored choice stays", async () => {
-        for (const [declared, chosen] of [
-          [
-            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
-            { model: "stream/chorus-asr", max_wait_ms: 800 },
-          ],
-          ["floor_control: {model: stream/chorus-asr}\n", { model: "stream/chorus-asr" }],
-          // Sent rather than dropped: the router refuses what it does not know, naming why.
-          ["floor_control: {model: other, max_wait_ms: 0}\n", { model: "other", max_wait_ms: 0 }],
-          // An empty one is no choice again, which the router's default rules.
-          ["floor_control: {}\n", {}],
-          ["llm: llm-fast\n", undefined],
-          ["floor_control:\n", undefined],
-          ["floor_control: null\n", undefined],
-        ] as const) {
-          const body = await synced(`name: jean\n${declared}`);
-
-          assert.deepEqual(body["floor_control"], chosen, declared);
-          assert.equal("floor_control" in body, chosen !== undefined, declared);
-        }
-
-        const one = await synced("name: jean\nfloor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 900\n");
-        const other = await synced("name: jean\nfloor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 1200\n");
-        assert.notEqual(one["hash"], other["hash"], "a changed max_wait_ms would not sync");
-      });
-
-      it("sends how the sandbox is built and what it may reach", async () => {
-        const body = await synced(
-          [
-            "name: jean",
-            "sandbox: daytona",
-            "sandbox_options:",
-            "  setup:",
-            "    - pip install bpy==5.2.2",
-            "  timeout: 5m",
-            "  memory_gb: 4",
-            "  network: true",
-            "  allowed_domains: [api.example.com]",
-            "  network_allow_list: [10.0.0.0/8]",
-            "",
-          ].join("\n"),
-        );
-
-        assert.deepEqual(body["sandbox_options"], {
-          setup: ["pip install bpy==5.2.2"],
-          timeout_ms: 300_000,
-          memory_gb: 4,
-          network: true,
-          allowed_domains: ["api.example.com"],
-          network_allow_list: ["10.0.0.0/8"],
-        });
-      });
-
-      it("sends the same body as before for an agent.yaml with no plugins or mcp_servers, or empty ones", async () => {
-        for (const extra of ["", "plugins: []\n", "plugins:\n", "mcp_servers: []\n", "mcp_servers:\n", "plugins: []\nmcp_servers: ~\n"]) {
-          const body = await synced(`name: jean\nllm: llm-fast\n${extra}`);
-
-          assert.deepEqual(body, {
-            name: "jean",
-            instructions: "Be brief.",
-            llm: "llm-fast",
-            // Probed on the base, 39edf6a16, for each of these files.
-            hash: "bee9653c8f8302df07255b6d11a843a43b12ef5fee7e9be5b6201c4a3d92ba98",
-          });
-        }
-      });
-
       it("refuses plugins and mcp_servers that name something, and sends nothing", async () => {
         await assert.rejects(() => synced("name: jean\nplugins:\n  - weather\n"), /plugins is no longer read/);
         await assert.rejects(
@@ -908,138 +703,256 @@ describe("Agent", () => {
       });
     });
 
-    it("only reads back a directory nothing has touched since .agent_sync was written", async () => {
-      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z", sync_hash: "" };
-      router.serve("POST", "/v1/agents/sync", (request) => {
-        stored.sync_hash = (request.body as Schemas["SyncAgentRequest"]).hash;
-        return { body: { unchanged: false, config: stored } };
-      });
-      router.serve("GET", "/v1/agents/configs", { body: [stored] });
-      const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
-      await mkdir(root);
-      await writeFile(join(root, "agent.yaml"), "name: jean\n");
-      await writeFile(join(root, "instructions.md"), "Be brief.\n");
-
-      await new Agent({ folder: await loadFolder(root), client: api }).sync();
-      const again = await new Agent({ folder: await loadFolder(root), client: api }).sync();
-      await writeFile(join(root, "instructions.md"), "Be warm.\n");
-      await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-      assert.equal(again.unchanged, true);
-      assert.equal(again.config.id, "cfg_1");
-      assert.equal(router.requestsTo("POST", "/v1/agents/sync").length, 2);
-      assert.equal(router.requestsTo("GET", "/v1/agents/configs")[0]?.query.get("name"), "jean");
-      const recorded = JSON.parse(await readFile(join(root, ".agent_sync"), "utf8")) as {
-        hash: string;
-        synced_at: string;
-      };
-      const last = router.requestsTo("POST", "/v1/agents/sync").at(-1);
-      assert.equal(recorded.hash, (last?.body as Schemas["SyncAgentRequest"]).hash);
-      assert.match(recorded.synced_at, /^\d{4}-\d\d-\d\dT/);
-    });
-
-    describe("ui_instructions", () => {
-      let stored: Record<string, unknown>;
-      /** Off, the fake is a router older than ui_instructions: it takes a sync and drops them. */
-      let knowsUI: boolean;
-
-      beforeEach(() => {
-        knowsUI = true;
-        stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z", sync_hash: "" };
-        router.serve("POST", "/v1/agents/sync", (request) => {
-          const { ui_instructions: ui, hash, instructions } = request.body as Schemas["SyncAgentRequest"];
-          const { ui_instructions: _before, ...kept } = stored;
-          stored = { ...kept, sync_hash: hash, instructions, ...(knowsUI && ui ? { ui_instructions: ui } : {}) };
-          return { body: { unchanged: false, config: stored } };
-        });
-        router.serve("GET", "/v1/agents/configs", () => ({ body: [stored] }));
-      });
-
-      async function folder(yaml: string): Promise<string> {
+    describe("of a directory's files", () => {
+      /** Writes an agent directory under a temporary one, and hands back its path. */
+      async function agentDir(files: Record<string, string>): Promise<string> {
         const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
-        await mkdir(root);
-        await writeFile(join(root, "agent.yaml"), yaml);
-        await writeFile(join(root, "instructions.md"), "Be brief.\n");
+        for (const [name, content] of Object.entries(files)) {
+          await mkdir(join(root, name, ".."), { recursive: true });
+          await writeFile(join(root, name), content);
+        }
         return root;
       }
 
-      function syncs(): Schemas["SyncAgentRequest"][] {
-        return router.requestsTo("POST", "/v1/agents/sync").map((one) => one.body as Schemas["SyncAgentRequest"]);
+      /** Answers a sync as the router does: the config, under a hash of what was sent. */
+      function serveSync(leftOut: Schemas["LeftOutConnector"][] = []): { sync_hash: string } {
+        const stored = {
+          id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z", sync_hash: "",
+          ...(leftOut.length > 0 ? { left_out_connectors: leftOut } : {}),
+        };
+        router.serve("POST", "/v1/agents/sync/files", (request) => {
+          stored.sync_hash = createHash("sha256").update(JSON.stringify(request.body)).digest("hex");
+          return { body: { unchanged: false, config: stored } };
+        });
+        router.serve("GET", "/v1/agents/configs", { body: [stored] });
+        return stored;
       }
 
-      it("sends agent.yaml's ui apart from the instructions, so a session opened with ui false is not told it", async () => {
-        const root = await folder("name: jean\nui: {}\n");
+      function synced(): Schemas["SyncAgentFilesRequest"][] {
+        return router
+          .requestsTo("POST", "/v1/agents/sync/files")
+          .map((one) => one.body as Schemas["SyncAgentFilesRequest"]);
+      }
 
-        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+      it("sends a loaded directory's files as they are, and leaves reading them to the router", async () => {
+        const held = {
+          "agent.yaml": "llm: llm-smart\ntags:\n  team: support\nconnectors:\n  - {name: linear, connection: company}\nui: {}\n",
+          "instructions.md": "Be brief.\n",
+          "guardrail.md": "Refuse medical advice.\n",
+          "skills/think.md": "---\ndescription: Think\n---\nWork it out.\n",
+          "skills/pdf/SKILL.md": "---\ndescription: Fill a form\n---\nRun the script.\n",
+          "skills/pdf/scripts/fill.py": "print('filled')\n",
+          "knowledge/pricing.md": "The plans cost money.\n",
+          "knowledge/urls.yaml": "- https://example.com\n",
+          "simulations/order.yaml": "- name: order\n  scenario: Order a wrap.\n  assertion: One wrap.\n",
+          "ui/blueprints.yaml": "- name: booking\n  when: booking a table\n  order: [CardHeader]\n",
+        };
+        const root = await agentDir(held);
+        serveSync();
 
-        const [body] = syncs();
-        assert.equal(body?.instructions, "Be brief.");
-        assert.match(body?.ui_instructions ?? "", /^## Interactive UI Generation\n/);
+        const result = await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        assert.equal(result.config.id, "cfg_1");
+        assert.equal(router.received.length, 1, "the whole directory goes in one request, and no connection is looked up here");
+        const [body] = synced();
+        assert.deepEqual(Object.keys(body ?? {}).sort(), ["files", "name"], "what the files say is the router's to read");
+        assert.equal(body?.name, "jean");
+        assert.deepEqual(Object.fromEntries((body?.files ?? []).map((file) => [file.path, file.content])), held);
+        assert.deepEqual((body?.files ?? []).map((file) => file.path), Object.keys(held).sort(), "in path order");
       });
 
-      it("sends the folder's ui beside instructions the code gives in place of instructions.md", async () => {
-        const root = await folder("name: jean\nui: {}\n");
-
-        await new Agent({ folder: await loadFolder(root), instructions: "Be warm.", client: api }).sync();
-
-        const [body] = syncs();
-        assert.equal(body?.instructions, "Be warm.");
-        assert.match(body?.ui_instructions ?? "", /^## Interactive UI Generation\n/);
-      });
-
-      it("sends none without a ui:, so such a directory keeps the fingerprint it was stamped with", async () => {
-        const root = await folder("name: jean\n");
+      it("only reads back a directory nothing has touched since .agent_sync was written", async () => {
+        serveSync();
+        const root = await agentDir({ "agent.yaml": "name: jean\n", "instructions.md": "Be brief.\n" });
 
         await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-        const [body] = syncs();
-        assert.equal(body && "ui_instructions" in body, false);
-        // What the SDK sent for this directory before the UI was synced apart from the
-        // instructions, so a .agent_sync written then still matches.
-        assert.equal(body?.hash, "b25c07032945a5bbcb9ae171a85d69d9fc4350ea0e24cbc9422df8d16ec5b5d7");
-      });
-
-      it("keeps the ui in the instructions on a router older than ui_instructions, and asks again next time", async () => {
-        knowsUI = false;
-        const root = await folder("name: jean\nui: {}\n");
-
-        await new Agent({ folder: await loadFolder(root), client: api }).sync();
-        await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-        const [first, fallback] = syncs();
-        assert.match(String(stored["instructions"]), /^Be brief\.\n\n## Interactive UI Generation\n/);
-        assert.equal(fallback && "ui_instructions" in fallback, false);
-        assert.notEqual(fallback?.hash, first?.hash);
-        // Never stamped while the router drops the UI, so every sync asks it again.
-        assert.equal(syncs().length, 4);
-        await assert.rejects(() => readFile(join(root, ".agent_sync"), "utf8"));
-      });
-
-      it("moves the ui apart once the router knows ui_instructions", async () => {
-        knowsUI = false;
-        const root = await folder("name: jean\nui: {}\n");
-        await new Agent({ folder: await loadFolder(root), client: api }).sync();
-        knowsUI = true;
-
-        await new Agent({ folder: await loadFolder(root), client: api }).sync();
-        const settled = await new Agent({ folder: await loadFolder(root), client: api }).sync();
-
-        assert.equal(stored["instructions"], "Be brief.");
-        assert.match(String(stored["ui_instructions"]), /^## Interactive UI Generation\n/);
-        assert.equal(settled.unchanged, true);
-        assert.equal(syncs().length, 3);
-      });
-
-      it("syncs again a stamped config that lost its ui", async () => {
-        const root = await folder("name: jean\nui: {}\n");
-        await new Agent({ folder: await loadFolder(root), client: api }).sync();
-        const { ui_instructions: _lost, ...withoutUI } = stored;
-        stored = withoutUI;
-
         const again = await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        await writeFile(join(root, "instructions.md"), "Be warm.\n");
+        const edited = await new Agent({ folder: await loadFolder(root), client: api }).sync();
 
-        assert.equal(again.unchanged, false);
-        assert.match(String(stored["ui_instructions"]), /^## Interactive UI Generation\n/);
+        assert.equal(again.unchanged, true);
+        assert.equal(again.config.id, "cfg_1");
+        assert.equal(synced().length, 2);
+        assert.equal(router.requestsTo("GET", "/v1/agents/configs")[0]?.query.get("name"), "jean");
+        const recorded = JSON.parse(await readFile(join(root, ".agent_sync"), "utf8")) as {
+          hash: string;
+          synced_at: string;
+        };
+        assert.match(recorded.hash, /^[0-9a-f]{64}$/);
+        assert.equal(
+          (recorded as { sync_hash?: string }).sync_hash,
+          edited.config.sync_hash,
+          "the stamp keeps the hash the router stored it under, as the Go SDK writes it",
+        );
+        assert.match(recorded.synced_at, /^\d{4}-\d\d-\d\dT/);
+      });
+
+      it("sends a directory again while a connector of it is left out, so the sync that finds its connection is made", async () => {
+        serveSync([{ name: "linear", connector_id: "linear", connection: "company" }]);
+        const root = await agentDir({ "agent.yaml": "name: jean\nconnectors:\n  - {name: linear, connection: company}\n" });
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        assert.equal(synced().length, 2);
+      });
+
+      it("sends a stamped directory again once the stored config is no longer what was synced", async () => {
+        const stored = serveSync();
+        const root = await agentDir({ "agent.yaml": "name: jean\n" });
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+        // Somebody imports another directory in the dashboard, or edits the config, which clears it.
+        stored.sync_hash = "imported";
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        assert.equal(synced().length, 2, "once, not again while the config was as synced, and again once it was not");
+      });
+
+      it("sends the files the format names and nothing else of the folder", async () => {
+        serveSync();
+        const root = await agentDir({
+          "agent.yaml": "name: jean\nui:\n  blueprints: design/recipes.yaml\n",
+          "design/recipes.yaml": "- name: booking\n  when: booking\n  order: [CardHeader]\n",
+          "design/other.yaml": "not named by agent.yaml\n",
+          "ui/components.json": "[]\n",
+          "knowledge/pricing.md": "Pro.\n",
+          "knowledge/data.csv": "a,b\n",
+          "simulations/lunch.yaml": "- name: lunch\n  scenario: Ask.\n  assertion: Answered.\n",
+          "simulations/notes.md": "not a simulations file\n",
+          // What a project keeps beside its agent, none of which is the agent.
+          "index.ts": "export {};\n",
+          "package-lock.json": "{}\n",
+          ".env": "SECRET=1\n",
+          "keys/prod.pem": "-----BEGIN PRIVATE KEY-----\n",
+          "knowledge/node_modules/left-pad/index.js": "module.exports = 1;\n",
+        });
+        await writeFile(join(root, "knowledge", "logo.png"), new Uint8Array([0x89, 0x50, 0xff, 0xfe]));
+
+        await new Agent({ folder: await loadFolder(root), client: api }).sync();
+
+        assert.deepEqual(synced()[0]?.files.map((file) => file.path), [
+          "agent.yaml",
+          "design/recipes.yaml",
+          "knowledge/data.csv",
+          "knowledge/pricing.md",
+          "simulations/lunch.yaml",
+          "ui/components.json",
+        ]);
+      });
+
+      it("reads the files when it syncs, so an edit after the folder was loaded is what is sent", async () => {
+        serveSync();
+        const root = await agentDir({ "agent.yaml": "name: jean\n", "instructions.md": "Be brief.\n" });
+        const folder = await loadFolder(root);
+        await writeFile(join(root, "knowledge.md"), "beside the directory\n");
+        await mkdir(join(root, "knowledge"));
+        await writeFile(join(root, "knowledge", "pricing.md"), "Pro.\n");
+
+        await new Agent({ folder, client: api }).sync();
+
+        assert.deepEqual(synced()[0]?.files.map((file) => file.path), ["agent.yaml", "instructions.md", "knowledge/pricing.md"]);
+      });
+
+      it("refuses a directory over what a sync sends, by name, before it sends anything", async () => {
+        serveSync();
+        const files: Record<string, string> = { "agent.yaml": "name: jean\n" };
+        for (let index = 0; index < 9; index++) {
+          files[`knowledge/${index}.md`] = "a".repeat(1 << 20);
+        }
+        const folder = await loadFolder(await agentDir(files));
+
+        await assert.rejects(
+          () => new Agent({ folder, client: api }).sync(),
+          (cause: unknown) => cause instanceof ConfigurationError && /holds more than the 8388608 bytes a sync sends/.test(cause.message),
+        );
+        assert.equal(synced().length, 0);
+      });
+
+      it("stamps a request with the fingerprint the Go SDK takes of it", async () => {
+        serveSync();
+        let stamp = "";
+        const folder: Folder = {
+          path: "/agents/jean", name: "jean", instructions: "", guardrail: "", skills: [], knowledge: [], knowledgeURLs: [],
+          files: async () => [{ path: "agent.yaml", content: "name: jean\n" }],
+          stamp: { read: async () => stamp, write: async (value) => { stamp = value; } },
+        };
+
+        await new Agent({ folder, client: api, costTracking: { b: "<2>", a: "1" } }).sync();
+
+        // sha256 of {"files":[{"content":"name: jean\n","path":"agent.yaml"}],"name":"jean","tags":{"a":"1","b":"<2>"}},
+        // which sdks/go/agents/folder_test.go holds the Go SDK to as well.
+        assert.equal(stamp.split(":")[0], "8e57238c214f215939fb6a466b9791aae8abbfd7df14e752f9d0d767aaed3ad9");
+      });
+
+      it("sends what the code set beside the directory, which wins over its files", async () => {
+        const root = await agentDir({ "agent.yaml": "name: jean\nllm: llm-smart\n", "instructions.md": "Be brief.\n" });
+        const written = {
+          instructions: "Be warm.",
+          guardrail: "Refuse medical advice.",
+          pipeline: { llm: "llm-fast", tts: "sonic_36", greeting: "Hello", greetingMode: "variation" as const, video: { max_frames: 4 } },
+          costTracking: { team: "support", customer: "123" },
+          harness: {
+            name: "default" as const,
+            subagents: { default: "llm-slow" },
+            vm: daytona(),
+            skills: [
+              { name: "think", description: "Think", instructions: "Work it out.", deadlineMs: 30_000 },
+              { name: "fill", description: "Fill a form", instructions: "Run it.", files: { "fill.py": "print()\n" } },
+            ],
+          },
+        };
+        serveSync();
+
+        await new Agent({ folder: await loadFolder(root), client: api, ...written }).sync();
+        const again = await new Agent({ folder: await loadFolder(root), client: api, ...written }).sync();
+
+        assert.equal(again.unchanged, true);
+        assert.equal(synced().length, 1);
+        const [body] = synced();
+        assert.equal(body?.instructions, "Be warm.");
+        assert.equal(body?.guardrail, "Refuse medical advice.");
+        assert.equal(body?.llm, "llm-fast", "what the code set wins over agent.yaml");
+        assert.equal(body?.tts, "sonic_36");
+        assert.deepEqual(body?.greeting, { text: "Hello", mode: "variation" });
+        assert.deepEqual(body?.video, { max_frames: 4 });
+        assert.deepEqual(body?.tags, { team: "support", customer: "123" });
+        assert.equal(body?.harness, "default");
+        assert.equal(body?.subagent, "llm-slow");
+        assert.equal(body?.sandbox, "daytona");
+        assert.deepEqual(body?.skills?.map((skill) => skill.name), ["think", "fill"]);
+        assert.deepEqual(
+          body?.files.map((file) => file.content),
+          ["name: jean\nllm: llm-smart\n", "Be brief.\n"],
+          "the files go as they are",
+        );
+      });
+
+      it("sends an explicitly empty skill list, so the directory's skills are not the agent's", async () => {
+        serveSync();
+        const root = await agentDir({ "agent.yaml": "name: jean\n", "skills/think.md": "---\ndescription: Think\n---\nWork it out.\n" });
+
+        await new Agent({ folder: await loadFolder(root), client: api, harness: { skills: [] } }).sync();
+
+        assert.deepEqual(synced()[0]?.skills, []);
+      });
+
+      it("syncs a folder built by hand, with no files, as the fields it holds", async () => {
+        router.serve("POST", "/v1/agents/sync", {
+          body: { unchanged: false, config: { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" } },
+        });
+        const folder: Folder = {
+          path: "/agents/jean", name: "jean", instructions: "Be brief.", guardrail: "",
+          settings: { llm: "llm-smart" }, skills: [], knowledge: [], knowledgeURLs: [],
+        };
+
+        await new Agent({ folder, client: api }).sync();
+
+        const body = router.requestsTo("POST", "/v1/agents/sync")[0]?.body as Schemas["SyncAgentRequest"];
+        assert.equal(body.llm, "llm-smart");
+        assert.match(body.hash, /^[0-9a-f]{64}$/);
+        assert.equal(synced().length, 0);
       });
     });
   });

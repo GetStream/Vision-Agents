@@ -238,11 +238,28 @@ would have to be found and undone by whoever fixes it.
   socket of its own for the next caller.
 - Instructions are the stored config's, written by `sync`: a session takes none.
 - What is written in code wins over what a `folder` says. A directory is a starting point.
-- `sync` uses **`POST /v1/agents/sync`**, one request carrying the whole directory, not the
-  configs/skills/knowledge sequence, with the directory's knowledge urls as `knowledge_urls` in
-  the same body. It sends a SHA-256 `fingerprint` of everything in the body, and a folder
-  from `loadFolder` records it in `.agent_sync`, so syncing on startup sends nothing when
-  nothing changed. The stamp's file access is handed in as `Folder.stamp` by `./node`, which
+- `sync` of a folder from `loadFolder` uses **`POST /v1/agents/sync/files`**: one request
+  carrying what `Folder.files()` reads at sync time and what the code set beside them
+  (instructions, guardrail, harness, skills, `pipeline` models and the cost labels), which
+  wins over the files. The files are the ones the format names and no others (`agent.yaml`,
+  `instructions.md`, `guardrail.md`, `skills/`, `knowledge/`, `ui/`, the YAML files of
+  `simulations/`, and the two files `ui:` may name elsewhere), so a directory kept beside a
+  program's source sends none of it; `directoryFiles` skips what the router skips and anything
+  that is not a regular file of text, and refuses a link out of the directory and a directory
+  over `MAX_SYNC_BYTES`. The router (`acceleration/internal/agentdir`) reads the files, finds
+  the connections and compiles `ui:`, so never add a key, a default or a mapping for agent.yaml
+  to the sync path.
+- `.agent_sync` holds `hash`, the `sentHash` of the request, and `sync_hash`, what the router
+  stored it under: one format and one fingerprint with the Go SDK. A sync is skipped only while
+  both still hold: the request is the same, and the stored config has that `sync_hash` and left
+  no connector out.
+- `loadFolder` still parses the directory with the hand parsers in `folder.ts` and the UI
+  compilers, to fill `Folder.settings`, `skills` and the rest for the program holding it, and
+  refuses a file it cannot read. It decides nothing about what is stored. Removing those
+  parsers is AI-3441; until then a key added to agent.yaml is added to the router first, and
+  here only so `loadFolder` does not refuse it.
+- An agent written in code, or a `Folder` built by hand with no `files`, uses
+  **`POST /v1/agents/sync`** with the fields it holds and a SHA-256 `fingerprint` of them. The stamp's file access is handed in as `Folder.stamp` by `./node`, which
   keeps `Agent.sync` free of `node:fs` in the browser entry.
 - `resolveConfig` turns a config *name* into an id once and caches it. A name matching nothing
   stored is passed through, because it is then either an id or a mistake the router can report

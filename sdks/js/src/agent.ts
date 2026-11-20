@@ -209,6 +209,14 @@ export interface SyncStamp {
 export interface Folder {
   path: string;
   name: string;
+  /**
+   * Reads the directory's files for a sync: the ones the format names, each by its slash path,
+   * in path order. `loadFolder` gives it. A folder that has it is synced as its files, which
+   * the router reads: what agent.yaml means, and what it refuses, is then the router's to
+   * decide, the same for every client. A folder built by hand without it is synced as the
+   * fields below.
+   */
+  files?: () => Promise<Schemas["DirectoryFile"][]>;
   /** What agent.yaml declares. */
   settings?: Declaration;
   instructions: string;
@@ -550,6 +558,9 @@ export class Agent {
    * Server side only: how an agent is configured is not a browser's to rewrite.
    */
   async sync(): Promise<Schemas["SyncAgentResult"]> {
+    if (this.folder?.files) {
+      return this.syncFiles(this.folder, await this.folder.files());
+    }
     const pipeline = this.options.pipeline ?? {};
     const declared = this.folder?.settings ?? {};
     const skills = this.harness?.skills ?? this.folder?.skills ?? [];
@@ -636,6 +647,56 @@ export class Agent {
       });
     }
     await stamp?.write(hash);
+    return result;
+  }
+
+  /**
+   * Stores a directory as its files, with what the code set beside it, which wins over them.
+   * The router reads the files, finds the connections agent.yaml names and compiles its `ui`.
+   */
+  private async syncFiles(folder: Folder, files: Schemas["DirectoryFile"][]): Promise<Schemas["SyncAgentResult"]> {
+    const { instructions, guardrail, pipeline = {}, costTracking: tags, harness } = this.options;
+    const thinking = harness?.subagents?.["default"];
+    const greeting = greetingOf(pipeline).greeting;
+    const body: Schemas["SyncAgentFilesRequest"] = {
+      name: this.name,
+      files,
+      ...(instructions ? { instructions } : {}),
+      ...(guardrail ? { guardrail } : {}),
+      ...(harness?.name ? { harness: harness.name } : {}),
+      ...(thinking ? { subagent: thinking } : {}),
+      ...(harness?.vm ? { sandbox: harness.vm.provider } : {}),
+      ...(pipeline.llm ? { llm: pipeline.llm } : {}),
+      ...(pipeline.stt ? { stt: pipeline.stt } : {}),
+      ...(pipeline.tts ? { tts: pipeline.tts } : {}),
+      ...(pipeline.sts ? { sts: pipeline.sts } : {}),
+      ...(pipeline.voice ? { voice: pipeline.voice } : {}),
+      ...(greeting ? { greeting } : {}),
+      ...(pipeline.video ? { video: pipeline.video } : {}),
+      ...(tags && Object.keys(tags).length > 0 ? { tags } : {}),
+      // An empty list is sent too: skills written in code take the place of the directory's.
+      ...(harness?.skills ? { skills: harness.skills.map((skill) => ({ ...skillRequest(skill), config_id: "" })) } : {}),
+    };
+
+    // Nothing is sent when the directory and what the code set are what was last sent, and the
+    // config still is what the router then stored: one deleted, edited or synced since, or one
+    // on another router, is synced again, and so is one that left a connector out, so the sync
+    // that finds its connection is made. The stamp holds both: the fingerprint of what was
+    // sent and, after a colon, the sync_hash the router stored it under.
+    const sent = await sentHash(body);
+    const stamped = await folder.stamp?.read();
+    if (stamped?.startsWith(`${sent}:`)) {
+      const [stored] = await this.client.get("/v1/agents/configs", { query: { name: this.name } });
+      if (
+        stored?.name === this.name &&
+        stamped === `${sent}:${stored.sync_hash ?? ""}` &&
+        !stored.left_out_connectors?.length
+      ) {
+        return { unchanged: true, config: stored };
+      }
+    }
+    const result = await this.client.post("/v1/agents/sync/files", { body });
+    await folder.stamp?.write(`${sent}:${result.config.sync_hash ?? ""}`);
     return result;
   }
 
@@ -852,6 +913,22 @@ async function fingerprint(body: unknown): Promise<string> {
   const canonical = JSON.stringify(body, (_, value: unknown) =>
     value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.entries(value).sort(([one], [other]) => one.localeCompare(other)))
+      : value,
+  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The fingerprint `.agent_sync` keeps of a sync's request: the SHA-256, in hex, of the request
+ * as JSON with every object's keys in order and nothing between its tokens. It is the one the
+ * Go SDK takes (`sentHash` in sdks/go/agents/config.go), so a directory either of them synced
+ * is not sent again by the other.
+ */
+async function sentHash(body: Schemas["SyncAgentFilesRequest"]): Promise<string> {
+  const canonical = JSON.stringify(body, (_, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([one], [other]) => (one < other ? -1 : one > other ? 1 : 0)))
       : value,
   );
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));

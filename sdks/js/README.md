@@ -592,9 +592,11 @@ await agent.sync();
 ```
 
 `sync` stores it as a config a session can then be created from by name, in one request
-carrying the files, the pages and what `agent.yaml` declares. A key `agent.yaml` does not
-know is refused. The request carries a fingerprint of everything in it and `.agent_sync`
-records it, so syncing on every startup only reads the config back when nothing has changed.
+carrying the directory's files as they are, with whatever the code set beside them. The router
+reads the files, so what `agent.yaml` means is the same for every SDK, the CLI and the
+dashboard: it finds the connections the file names and compiles its `ui`. The router answers
+with its hash of the request and `.agent_sync` records it, so syncing on every startup only
+reads the config back when nothing has changed.
 A setting left out leaves whatever is stored — a model chosen in the dashboard survives a
 sync that says nothing about it. The harness (`harness`, subagent, sandbox and skills) is
 stored on the config this way too, never on a session: a session runs its config's.

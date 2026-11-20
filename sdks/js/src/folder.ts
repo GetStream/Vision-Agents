@@ -1,4 +1,4 @@
-import { readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, posix, relative, sep } from "node:path";
 
 import type { ConnectorDeclaration, Declaration, Folder, Skill, SyncStamp } from "./agent.js";
@@ -95,6 +95,7 @@ export async function loadFolder(path: string): Promise<Folder> {
   return {
     path,
     name: settings.name || basename(path.replace(/[/\\]+$/, "")),
+    files: () => directoryFiles(path, settings.ui),
     settings,
     stamp: stampAt(join(path, AGENT_STAMP)),
     instructions,
@@ -108,6 +109,82 @@ export async function loadFolder(path: string): Promise<Folder> {
     ),
     ...(simulations ? { simulations } : {}),
   };
+}
+
+/**
+ * How much a sync of a directory may send: what the router takes (`MaxBytes` in
+ * acceleration/internal/agentdir), checked here so a directory over it is told so by name
+ * rather than by a refused request.
+ */
+const MAX_SYNC_BYTES = 8 << 20;
+
+/**
+ * Reads the directory's files as a sync sends them to the router, which reads them: by slash
+ * path, in path order. They are the files the format names and no others, so a directory kept
+ * beside a program's source sends none of it: agent.yaml, instructions.md, guardrail.md, what
+ * is under skills/, knowledge/ and ui/, the .yaml and .yml files of simulations/, and the two
+ * files agent.yaml's `ui` may name elsewhere.
+ *
+ * Hidden files, `__pycache__` and `node_modules` are left behind, as the router skips them,
+ * and so is anything that is not a regular file of text. A link is read only to a file inside
+ * the directory: one that leads out of it is refused, and one to a folder is not followed.
+ */
+async function directoryFiles(path: string, ui: UIDeclaration | undefined): Promise<{ path: string; content: string }[]> {
+  const files = new Map<string, string>();
+  const root = await realpath(path);
+  const text = new TextDecoder("utf-8", { fatal: true });
+  const encoder = new TextEncoder();
+  let held = 0;
+  const read = async (file: string): Promise<void> => {
+    const info = await lstat(file).catch(missing);
+    if (!info || !(await syncedFile(root, file, info)) || !(await stat(file)).isFile()) {
+      return;
+    }
+    let content: string;
+    try {
+      content = text.decode(await readFile(file));
+    } catch (cause) {
+      if (cause instanceof TypeError) {
+        return;
+      }
+      throw cause;
+    }
+    held += encoder.encode(content).length;
+    if (held > MAX_SYNC_BYTES) {
+      throw new ConfigurationError(
+        `${path} holds more than the ${MAX_SYNC_BYTES} bytes a sync sends: take files out of it, knowledge first`,
+      );
+    }
+    files.set(relative(path, file).split(sep).join(posix.sep), content);
+  };
+  const walk = async (top: string, directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const file = join(directory, entry.name);
+      if (skipped(entry.name)) {
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(top, file);
+      } else if (top !== SIMULATIONS_DIR || [".yaml", ".yml"].includes(extname(entry.name).toLowerCase())) {
+        await read(file);
+      }
+    }
+  };
+
+  for (const name of [AGENT_FILE, INSTRUCTIONS_FILE, GUARDRAIL_FILE, ui?.components, ui?.blueprints]) {
+    if (name) {
+      await read(join(path, name));
+    }
+  }
+  for (const top of [SKILLS_DIR, KNOWLEDGE_DIR, SIMULATIONS_DIR, "ui"]) {
+    if ((await stat(join(path, top)).catch(missing))?.isDirectory()) {
+      await insideAgent(root, join(path, top));
+      await walk(top, join(path, top));
+    }
+  }
+  return [...files]
+    .map(([name, content]) => ({ path: name, content }))
+    .sort((one, other) => (one.path < other.path ? -1 : one.path > other.path ? 1 : 0));
 }
 
 /**
@@ -1735,7 +1812,11 @@ export function parseBlueprints(content: string, where = DEFAULT_UI_BLUEPRINTS):
   });
 }
 
-/** `.agent_sync`: the fingerprint a directory was last synced under, and when. */
+/**
+ * `.agent_sync`: what a directory was last synced as, and when. The file holds `hash`, the
+ * fingerprint of what was sent, and `sync_hash`, the hash the router stored it under, as the
+ * Go SDK writes it; a sync hands them over as one stamp, joined by a colon.
+ */
 function stampAt(path: string): SyncStamp {
   return {
     async read() {
@@ -1746,12 +1827,16 @@ function stampAt(path: string): SyncStamp {
       } catch {
         return "";
       }
-      const hash = recorded && typeof recorded === "object" ? (recorded as { hash?: unknown }).hash : "";
-      return typeof hash === "string" ? hash : "";
+      const { hash, sync_hash: synced } = (recorded && typeof recorded === "object" ? recorded : {}) as Record<string, unknown>;
+      if (typeof hash !== "string") {
+        return "";
+      }
+      return typeof synced === "string" && synced ? `${hash}:${synced}` : hash;
     },
-    async write(hash) {
+    async write(stamp) {
+      const [hash, synced] = stamp.split(":");
       const syncedAt = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
-      await writeFile(path, `${JSON.stringify({ hash, synced_at: syncedAt })}\n`);
+      await writeFile(path, `${JSON.stringify({ hash, ...(synced ? { sync_hash: synced } : {}), synced_at: syncedAt })}\n`);
     },
   };
 }
