@@ -123,7 +123,19 @@ module GetStream
       # Unlike #as_user no token is minted for the user, in any mode: the request is still the
       # server's, so what it writes is answered by the model rather than handed to a dispatch
       # worker. The user is named in X-Stream-User-Id.
+      #
+      # @deprecated Pass the user to the call instead, as the user_id: keyword of Client#get,
+      #   #post, #put, #patch, #delete and #socket, and of Client#connections: one client
+      #   serves every user, and each request names its own.
       def acting_for(user_id)
+        acting(user_id)
+      end
+
+      # #acting_for, for Dispatch#answer: the response it creates, and the items read from it,
+      # stay the writer's.
+      #
+      # @api private
+      def acting(user_id)
         Backend.new(url: @url, customer_id: @customer_id, api_key: @api_key, api_secret: @api_secret,
                     token: @token, user_id: @user_id, authenticate: @authenticate, user: @user,
                     acting_for: user_id, team: @team, usage_categories: @usage_categories)
@@ -131,9 +143,14 @@ module GetStream
 
       # What every request and socket handshake carries. Minted per read, so a client left
       # idle longer than a token lasts does not wake up holding an expired one.
-      def headers
-        said = credentials
-        said["X-Stream-User-Id"] = @acting_for unless @acting_for.empty?
+      #
+      # @param acting_for [String] the end user this one request speaks for, with this
+      #   backend's own credential, as the acting_for: option does for every request. nil
+      #   keeps that option's user; empty drops it.
+      def headers(acting_for: nil)
+        acting = acting_for.nil? ? @acting_for : acting_for.to_s
+        said = credentials(acting)
+        said["X-Stream-User-Id"] = acting unless acting.empty?
         categories = named_categories
         said[USAGE_CATEGORIES_HEADER] = categories.join(",") unless @authenticate || categories.empty?
         said
@@ -235,14 +252,14 @@ module GetStream
         trimmed != name && REGION.match?(trimmed)
       end
 
-      def credentials
+      def credentials(acting)
         return { CUSTOMER_HEADER => @customer_id } if @api_key.empty?
 
         if @authenticate
           # jwt whoever the token is for: the proxy works out the caller from the token and
           # refuses a request claiming to be the server.
           return { "api_key" => @api_key, "stream-auth-type" => "jwt",
-                   "Authorization" => "Bearer #{proxy_token}" }
+                   "Authorization" => "Bearer #{proxy_token(acting)}" }
         end
 
         headers = { "X-Api-Key" => @api_key }
@@ -279,9 +296,9 @@ module GetStream
 
       # The token the proxy is given, which names a user where there is one: the proxy has no
       # header to read a backend's choice of user from. Acting for a user keeps the server's.
-      def proxy_token
+      def proxy_token(acting)
         return @token unless @token.empty?
-        return sign(user_id: @user_id) unless @user_id.empty? || !@acting_for.empty?
+        return sign(user_id: @user_id) unless @user_id.empty? || !acting.empty?
 
         sign(server: true)
       end
