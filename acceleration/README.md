@@ -2213,14 +2213,15 @@ What each organization did with Agents lives in three places:
 | Where | What | Kept |
 | ----- | ---- | ---- |
 | `customer_activity` (Postgres) | One row per app, area, client and UTC day: requests, refusals, the last refusal's code | 400 days |
-| `GET /v1/ops/orgs/{org_id}/activity` | One organization: areas, `furthest_step`, `steps`, meters, sessions, latency | Reads the table |
+| `GET /v1/ops/orgs/{org_id}/activity` | One organization: areas, `furthest_step`, `steps`, meters, sessions, latency | What the table keeps |
 | The activity digest (Slack, `ROUTER_LIMITS_SLACK_CHANNEL`) | Every organization, the UTC day before; `activity_digests` holds the days posted | 400 days |
 
 The router keeps activity for 400 days (`activityKeepDays` in `internal/store/activity_digest.go`).
 That is 13 months and a margin, so staff can compare a month with the same month a year before.
 GDPR asks that personal data is kept no longer than needed (Art. 5(1)(e)). The router that holds
 the cost anomaly lock deletes the older `customer_activity` and `activity_digests` rows once per
-UTC day. A step or a "first day" is therefore the first one in the last 400 days: an organization
+UTC day. That check runs only on a deployment that sets `ROUTER_LIMITS_SLACK_TOKEN` and
+`ROUTER_LIMITS_SLACK_CHANNEL`; one without them keeps every row. A step or a "first day" is therefore the first one in the last 400 days: an organization
 that comes back after 400 days without a request shows as new.
 
 To see why an organization's requests are refused, list its refusals by code from the access
