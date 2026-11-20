@@ -1035,6 +1035,7 @@ func (s *AgentSuite) SetupTest() {
 	s.floor, s.floorMode, s.earsPause = nil, "", false
 	s.performing = ""
 	s.voiceName = ""
+	s.replacement = nil
 	s.replacementErr = nil
 	s.firstVoice = ""
 	s.logs = nil
