@@ -91,6 +91,13 @@ public data class SessionOptions(
      * is, and one the router does not know is refused.
      */
     val timezone: String? = deviceTimezone(),
+    /**
+     * Whether the model is told its config's UI instructions in this session. False is for an
+     * app that shows no UI: they are left out and prose is the expected answer, but it does not
+     * prevent the model from writing UI, and a block it writes still reaches the reply. Null
+     * leaves them in. Reopening or forking the session keeps it.
+     */
+    val ui: Boolean? = null,
 ) {
     /**
      * What a session remembers about the user [Backend.setUser] named. It is always theirs: a

@@ -278,6 +278,17 @@ class VisionAgentsTest {
     }
 
     @Test
+    fun `a session that shows no UI says so, and one that says nothing leaves it to the config`() = runTest {
+        router.answer = { Reply(201, sessionJson()) }
+
+        agents.sessions.create(SessionOptions(ui = false))
+        agents.sessions.create(SessionOptions(ui = true))
+        agents.sessions.create()
+
+        assertEquals(listOf("""{"ui":false}""", """{"ui":true}""", "{}"), router.requests.map { it.body })
+    }
+
+    @Test
     fun `a modality the SDK never heard of is unknown`() = runTest {
         router.answer = { Reply(200, sessionJson(modality = "telepathy")) }
 
