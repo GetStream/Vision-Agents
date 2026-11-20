@@ -172,6 +172,25 @@ func (s *AlertsSuite) TestAConditionWithoutARepeatKeepsTheLimitAcrossSpells() {
 	s.Len(s.sent(), 1, "a condition with no Repeat is held back for the Limit even after it stopped holding")
 }
 
+func (s *AlertsSuite) TestAnItemOfAConditionWithoutARepeatKeepsTheLimitAcrossSpells() {
+	start := time.Now()
+	now := start
+	loop := New(Options{
+		Hub: s.hub, Logger: slog.New(slog.NewTextHandler(s.logs, nil)), Every: 15 * time.Second, Limit: time.Minute,
+		Now: func() time.Time { return now },
+	}, Condition{Name: "rejected", Level: Page,
+		Items: func(now time.Time) map[string]map[string]any {
+			if now.Sub(start) == 15*time.Second {
+				return map[string]map[string]any{}
+			}
+			return map[string]map[string]any{"a": nil}
+		}})
+
+	s.ticks(loop, &now, start, 0, 15*time.Second, 30*time.Second)
+
+	s.Len(s.sent(), 1, "an item with no Repeat is held back for the Limit even after it went away")
+}
+
 func (s *AlertsSuite) TestWithNoDSNAnAlertIsLogged() {
 	held := Condition{Name: "ingest_failing", Level: Page, Check: func(time.Time) (bool, map[string]any) {
 		return true, map[string]any{"increase": 4}
