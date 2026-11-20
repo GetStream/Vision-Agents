@@ -239,10 +239,8 @@ import Testing
         let server = try RouterServer()
         defer { server.listener.cancel() }
         let agents = StreamAgents(url: try await server.url(), customerID: "acme")
-        var options = SessionOptions()
-        options.tools = [Self.lookup]
 
-        let session = try await agents.agent("myagent").sessions.create(options)
+        let session = try await agents.agent("myagent").sessions.create(SessionOptions(tools: [Self.lookup]))
         defer { Task { await session.close() } }
 
         #expect(session.isConnected)
