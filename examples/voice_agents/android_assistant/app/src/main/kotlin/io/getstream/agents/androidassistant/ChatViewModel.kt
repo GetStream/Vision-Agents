@@ -394,7 +394,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      *
      * The router addresses a question to the person whose message the call answers, and Stream's
      * components show it only to them. The answer goes back over the session's socket, which is
-     * also what runs the tool once it is allowed. Connect opens the sign-in page in an Auth Tab;
+     * also what runs the tool once it is allowed, a card shown from the channel's history included. Connect opens the sign-in page in an Auth Tab;
      * the page comes back to this app with `status=connected` when the account is connected, and
      * the call carries on at the router. Not now ends the call there.
      */
@@ -405,7 +405,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
         val installId = AIClientIdentity.installId(getApplication())
         return AIToolApprover(Assistant.user.id, installId, screenScope, authorizer) { call, allowed ->
-            transport.session.value?.decide(call.id, allowed)
+            transport.decide(call, allowed)
         }
     }
 
