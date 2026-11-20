@@ -637,9 +637,10 @@ func (s *Store) DeleteConnectorDefinition(ctx context.Context, customerID, id st
 		}
 		// The deliveries go with their destination (ON DELETE CASCADE,
 		// 20261007040000_connector_event_destinations.sql).
-		for _, table := range []string{"connector_oauth_clients", "connector_config_tokens", "connector_event_destinations"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE customer_id = ? AND connector_id = ?", customerID, id); err != nil {
-				return fmt.Errorf("store: delete the connector's %s: %w", table, err)
+		for _, model := range []any{(*ConnectorOAuthClient)(nil), (*ConnectorConfigToken)(nil), (*EventDestination)(nil)} {
+			q := tx.NewDelete().Model(model).Where("customer_id = ? AND connector_id = ?", customerID, id)
+			if _, err := q.Exec(ctx); err != nil {
+				return fmt.Errorf("store: delete the connector's %s: %w", q.GetTableName(), err)
 			}
 		}
 		_, err = tx.NewDelete().Model((*ConnectorDefinition)(nil)).

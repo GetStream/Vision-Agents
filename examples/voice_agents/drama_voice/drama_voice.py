@@ -1,9 +1,11 @@
+import asyncio
 import logging
 import os
 import sys
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, Runner
+from vision_agents.core import Agent
 from vision_agents.plugins import stream
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,7 @@ STREAM_ACCELERATION_URL at it.
 """
 
 
-async def create_agent(**kwargs) -> Agent:
+async def create_agent() -> Agent:
     name = "drama_voice"
     return Agent(
         config=name,
@@ -34,10 +36,15 @@ async def create_agent(**kwargs) -> Agent:
     )
 
 
-async def join_call(agent: Agent, call_id: str, **kwargs) -> None:
-    async with agent.join(call_id):
+async def main() -> None:
+    agent = await create_agent()
+    await agent.sync()
+    call = await agent.create_call("agent", str(uuid4()))
+    await agent.edge.open_demo(call)
+    async with agent.join(call):
         await agent.responses.create("greet the user in one short, expressive sentence")
+        await agent.finish()
 
 
 if __name__ == "__main__":
-    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
+    asyncio.run(main())

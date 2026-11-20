@@ -8,14 +8,10 @@ from vision_agents.core.llm import (
 
 
 class Line:
-    """A line that records what a call sent and answers holds as it is told."""
+    """A line that answers holds as it is told."""
 
     def __init__(self, holds: bool = True):
-        self.sent: list[tuple[str, str, bool]] = []
         self.holds = holds
-
-    async def update(self, call_id: str, text: str, verbatim: bool) -> None:
-        self.sent.append((call_id, text, verbatim))
 
     async def hold(self, call_id: str) -> bool:
         return self.holds
@@ -85,23 +81,16 @@ class TestPolicies:
 class TestToolCallContext:
     async def test_a_function_whose_first_parameter_is_a_tool_call_is_handed_it(self):
         registry = FunctionRegistry()
-        line = Line()
 
         @registry.register()
         async def search(tool_call_context: ToolCallContext, city: str) -> str:
-            await tool_call_context.update("checking")
-            await tool_call_context.say("One moment.")
             return f"{tool_call_context.id} {city}"
 
         answer = await registry.call_function(
-            "search", {"city": "Rome"}, ToolCallContext(id="call-1", line=line)
+            "search", {"city": "Rome"}, ToolCallContext(id="call-1", line=Line())
         )
 
         assert answer == "call-1 Rome"
-        assert line.sent == [
-            ("call-1", "checking", False),
-            ("call-1", "One moment.", True),
-        ]
 
     def test_the_model_is_not_told_about_the_tool_call(self):
         registry = FunctionRegistry()
@@ -132,7 +121,6 @@ class TestToolCallContext:
 
         @registry.register()
         async def search(tool_call_context: ToolCallContext) -> str:
-            await tool_call_context.update("still going")
             await tool_call_context.disallow_interruptions()
             seen.append(tool_call_context)
             return "ok"

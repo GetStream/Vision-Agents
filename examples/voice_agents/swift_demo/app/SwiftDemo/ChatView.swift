@@ -32,11 +32,16 @@ struct ChatView: View {
             do {
                 // A model that streams its reasoning, which is what fills the reply's thinking
                 // panel. The call keeps the agent's own model, which answers sooner.
-                var options = SessionOptions(agent: agent)
+                var options = SessionOptions()
                 options.llm = "xai/grok-4.7"
                 options.tools = Demo.tools
-                let session = try await Demo.agents.chat(options)
-                chat = try await AgentChat.open(session)
+                let session = try await Demo.agents.agent(agent).sessions.create(options)
+                do {
+                    chat = try await AgentChat.open(session)
+                } catch {
+                    await session.close()
+                    throw error
+                }
             } catch is CancellationError {
                 return
             } catch {

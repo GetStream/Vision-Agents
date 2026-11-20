@@ -25,17 +25,33 @@ func (l *Ledger) ForgetUser(ctx context.Context, forget usage.ForgetUser, actor 
 	var events, windows []counted
 	err := l.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if forget.DryRun {
-			if err := tx.NewRaw(`SELECT organization_id, count(*) FROM usage_events WHERE app_id = ? AND user_id = ?
-				GROUP BY organization_id`, forget.AppID, forget.UserID).Scan(ctx, &events); err != nil {
+			err := tx.NewSelect().Model((*UsageEvent)(nil)).
+				Column("organization_id").
+				ColumnExpr("count(*) AS count").
+				Where("app_id = ? AND user_id = ?", forget.AppID, forget.UserID).
+				Group("organization_id").
+				Scan(ctx, &events)
+			if err != nil {
 				return err
 			}
-			return tx.NewRaw(`SELECT organization_id, count(*) FROM usage_windows WHERE subject = ? AND app_id = ? AND user_id = ?
-				GROUP BY organization_id`, usage.SubjectUser, forget.AppID, forget.UserID).Scan(ctx, &windows)
+			return tx.NewSelect().Model((*UsageWindow)(nil)).
+				Column("organization_id").
+				ColumnExpr("count(*) AS count").
+				Where("subject = ? AND app_id = ? AND user_id = ?", usage.SubjectUser, forget.AppID, forget.UserID).
+				Group("organization_id").
+				Scan(ctx, &windows)
 		}
-		if err := tx.NewRaw(`WITH moved AS (
-				UPDATE usage_events SET user_id = ? WHERE app_id = ? AND user_id = ? RETURNING organization_id)
-			SELECT organization_id, count(*) FROM moved GROUP BY organization_id`,
-			forget.Replacement, forget.AppID, forget.UserID).Scan(ctx, &events); err != nil {
+		moved := tx.NewUpdate().Model((*UsageEvent)(nil)).
+			Set("user_id = ?", forget.Replacement).
+			Where("app_id = ? AND user_id = ?", forget.AppID, forget.UserID).
+			Returning("organization_id")
+		err := tx.NewSelect().With("moved", moved).
+			Table("moved").
+			Column("organization_id").
+			ColumnExpr("count(*) AS count").
+			Group("organization_id").
+			Scan(ctx, &events)
+		if err != nil {
 			return err
 		}
 		if err := tx.NewRaw(`WITH moved AS (

@@ -53,6 +53,7 @@ What are my open Linear issues?
 async def main(question: str) -> None:
     llm = stream.Accelerated(config="mcp_plugins", user_id=USER_ID)
     agent = Agent(config="mcp_plugins", llm=llm)
+    await agent.sync()
 
     async with agent.chat():
         dashboard = os.environ.get("DASHBOARD_BASE_URL")

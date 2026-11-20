@@ -43,6 +43,10 @@ final readonly class AgentConnectorBinding
         // Names or path.Match patterns of the tools this binding offers, such as search or linear_*. Set, they are th...
         /** @var list<string>|null */
         public ?array $toolPatterns = null,
+        // How the binding's tools are offered to the model. Omitted is full.
+        public ToolLoading|string|null $loading = null,
+        // How long the agent's sessions keep what the binding's tools were given and gave back on the turns they reco...
+        public ?string $outputRetention = null,
     ) {
     }
 
@@ -63,6 +67,8 @@ final readonly class AgentConnectorBinding
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? Json::bool($data, 'sandbox') : null,
             timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
             toolPatterns: array_key_exists('tool_patterns', $data) && $data['tool_patterns'] !== null ? Json::strings($data, 'tool_patterns') : null,
+            loading: array_key_exists('loading', $data) && $data['loading'] !== null ? Json::enum($data, 'loading', ToolLoading::class) : null,
+            outputRetention: array_key_exists('output_retention', $data) && $data['output_retention'] !== null ? Json::string($data, 'output_retention') : null,
         );
     }
 
@@ -98,6 +104,12 @@ final readonly class AgentConnectorBinding
         }
         if ($this->toolPatterns !== null) {
             $out['tool_patterns'] = $this->toolPatterns;
+        }
+        if ($this->loading !== null) {
+            $out['loading'] = Json::enumValue($this->loading);
+        }
+        if ($this->outputRetention !== null) {
+            $out['output_retention'] = $this->outputRetention;
         }
         return $out;
     }

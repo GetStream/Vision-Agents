@@ -106,7 +106,6 @@ struct VoiceMode: View {
                 agents: Assistant.agents, sessionID: session.id)
             before = Set(voice.session.turns.map(\.id))
             current.session = voice
-            await voice.session.start()
             await voice.join()
         } catch is CancellationError {
         } catch {

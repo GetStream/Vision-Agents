@@ -727,10 +727,10 @@ func (s *Store) ConnectorConnectionReferenced(ctx context.Context, customerID, i
 		return false, stack.Wrap(errors.New("store: a customer and a connection id are required"))
 	}
 	var referenced bool
-	err := s.db.QueryRowContext(ctx, `
-SELECT `+boundByConfig+`
-FROM connector_connections AS cc
-WHERE cc.customer_id = ? AND cc.id = ? AND cc.deleted_at IS NULL`, customerID, id).Scan(&referenced)
+	err := s.db.NewSelect().Model((*ConnectorConnection)(nil)).
+		ColumnExpr(boundByConfig).
+		Where("cc.customer_id = ? AND cc.id = ? AND cc.deleted_at IS NULL", customerID, id).
+		Scan(ctx, &referenced)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConnection, id))
 	}
@@ -806,15 +806,12 @@ func (s *Store) ConsumeConnectorAuthorizationAttempt(ctx context.Context, state 
 		return ConnectorAuthorizationAttempt{}, errors.New("store: an oauth state is required")
 	}
 	var attempt ConnectorAuthorizationAttempt
-	err := s.db.NewRaw(`
-UPDATE connector_authorization_attempts AS caa
-SET consumed_at = now()
-WHERE caa.state_hash = ?
-  AND caa.consumed_at IS NULL
-  AND caa.expires_at > now()
-  AND EXISTS (SELECT 1 FROM connector_connections AS cc
-              WHERE cc.id = caa.connection_id AND cc.customer_id = caa.customer_id AND cc.deleted_at IS NULL)
-RETURNING caa.*`, AuthorizationStateHash(state)).Scan(ctx, &attempt)
+	err := s.db.NewUpdate().Model(&attempt).
+		Set("consumed_at = now()").
+		Where("caa.state_hash = ?", AuthorizationStateHash(state)).
+		ApplyQueryBuilder(attemptOpen).
+		Returning("caa.*").
+		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorAuthorizationAttempt{}, ErrNoAuthorizationAttempt
 	}
@@ -833,16 +830,13 @@ func (s *Store) HandOffConnectorAuthorizationAttempt(ctx context.Context, id str
 	if id == "" || len(previous) == 0 || len(sealed) == 0 || kekVersion < 1 {
 		return errors.New("store: a handoff needs an attempt id, the blob it read and a new one under a key version of 1 or more")
 	}
-	result, err := s.db.NewRaw(`
-UPDATE connector_authorization_attempts AS caa
-SET attempt_sealed = ?, kek_version = ?
-WHERE caa.id = ?
-  AND caa.attempt_sealed = ?
-  AND caa.consumed_at IS NULL
-  AND caa.expires_at > now()
-  AND EXISTS (SELECT 1 FROM connector_connections AS cc
-              WHERE cc.id = caa.connection_id AND cc.customer_id = caa.customer_id AND cc.deleted_at IS NULL)`,
-		sealed, kekVersion, id, previous).Exec(ctx)
+	result, err := s.db.NewUpdate().Model((*ConnectorAuthorizationAttempt)(nil)).
+		Set("attempt_sealed = ?", sealed).
+		Set("kek_version = ?", kekVersion).
+		Where("caa.id = ?", id).
+		Where("caa.attempt_sealed = ?", previous).
+		ApplyQueryBuilder(attemptOpen).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: hand off authorization attempt: %w", err)
 	}
@@ -863,15 +857,21 @@ func AuthorizationStateHash(state string) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// attemptOpen keeps the attempts that are unconsumed, unexpired and for a live connection.
+func attemptOpen(q bun.QueryBuilder) bun.QueryBuilder {
+	return q.
+		Where("caa.consumed_at IS NULL").
+		Where("caa.expires_at > now()").
+		Where("EXISTS (SELECT 1 FROM connector_connections AS cc WHERE cc.id = caa.connection_id AND cc.customer_id = caa.customer_id AND cc.deleted_at IS NULL)")
+}
+
 // openAttempt is the one attempt matching where that is unconsumed, unexpired and for a
 // live connection.
 func (s *Store) openAttempt(ctx context.Context, where string, arg any) (ConnectorAuthorizationAttempt, error) {
 	var attempt ConnectorAuthorizationAttempt
 	err := s.db.NewSelect().Model(&attempt).
 		Where(where, arg).
-		Where("caa.consumed_at IS NULL").
-		Where("caa.expires_at > now()").
-		Where("EXISTS (SELECT 1 FROM connector_connections AS cc WHERE cc.id = caa.connection_id AND cc.customer_id = caa.customer_id AND cc.deleted_at IS NULL)").
+		ApplyQueryBuilder(attemptOpen).
 		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorAuthorizationAttempt{}, ErrNoAuthorizationAttempt

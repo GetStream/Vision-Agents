@@ -58,3 +58,5 @@ pub use teams::{TeamLimit, Teams};
 pub use tool_call::{ToolCallContext, ToolConversation, ToolUser};
 pub use tools::Tools;
 pub use usd::Usd;
+
+pub use schemars;
