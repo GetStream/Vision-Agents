@@ -417,13 +417,13 @@ func (s *Store) ActivePriceEntries(ctx context.Context, at time.Time) ([]PriceEn
 
 func activePriceEntries(ctx context.Context, db bun.IDB, at time.Time) ([]PriceEntry, error) {
 	var newest []PriceEntry
-	err := db.NewRaw(`
-SELECT DISTINCT ON (pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes) `+qualified("pe", priceEntryColumns)+`
-FROM price_list_entries AS pe
-JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL
-WHERE pe.effective_at <= ?
-ORDER BY pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes, pe.effective_at DESC, pe.change DESC, pe.id DESC`, at).
-		Scan(ctx, &newest)
+	err := db.NewSelect().Model(&newest).
+		DistinctOn("pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes").
+		Join("JOIN price_changes AS pc ON pc.name = pe.change AND pc.cancelled_at IS NULL").
+		Where("pe.effective_at <= ?", at).
+		Order("pe.modality", "pe.provider", "pe.model", "pe.region", "pe.byok", "pe.attributes").
+		OrderExpr("pe.effective_at DESC, pe.change DESC, pe.id DESC").
+		Scan(ctx)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: active price entries: %w", err))
 	}
@@ -434,15 +434,6 @@ ORDER BY pe.modality, pe.provider, pe.model, pe.region, pe.byok, pe.attributes, 
 		}
 	}
 	return active, nil
-}
-
-// qualified is a list of columns each prefixed with the table's alias.
-func qualified(alias, columns string) string {
-	names := strings.Split(columns, ", ")
-	for i, name := range names {
-		names[i] = alias + "." + name
-	}
-	return strings.Join(names, ", ")
 }
 
 // NextPriceChangeAt is when the next change not cancelled takes effect after after, and

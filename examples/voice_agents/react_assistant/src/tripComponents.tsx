@@ -12,7 +12,6 @@ import {
 // The components are described once, for the iOS and Android apps too, beside the iOS app.
 import described from "../../swift_assistant/app/SwiftAssistant/UIComponents.json";
 import { Assistant } from "./assistant";
-import bookingDescribed from "./bookingComponents.json";
 import type { ChatScreen, ChatScreenSnapshot } from "./chatScreen";
 import { calendarDays } from "./reminders";
 import { isReservationOf, offerOf, RESERVE_TABLE, reserveTable, type DiningTable, type Reservation } from "./reserveTable";
@@ -39,13 +38,11 @@ const views: Record<string, (definition: AIUIComponentDefinition) => AIUICompone
  * place with its Wikipedia photo, a map of a plan, the person's own calendar, and hospitality
  * booking elements (restaurant summary, live occupancy gauge, and table zone selector).
  */
-export const tripComponents: AIUIComponent[] = [...(described as unknown[]), ...(bookingDescribed as unknown[])].flatMap(
-  (json) => {
-    const definition = parseAIUIComponentDefinition(json);
-    const view = definition && views[definition.name];
-    return definition && view ? [view(definition)] : [];
-  },
-);
+export const tripComponents: AIUIComponent[] = (described as unknown[]).flatMap((json) => {
+  const definition = parseAIUIComponentDefinition(json);
+  const view = definition && views[definition.name];
+  return definition && view ? [view(definition)] : [];
+});
 
 type PlaceArguments = { title: string; note?: string };
 

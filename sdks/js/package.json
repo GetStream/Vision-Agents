@@ -5,10 +5,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GetStream/Vision-Agents.git",
+    "url": "git+https://github.com/GetStream/Agents.git",
     "directory": "sdks/js"
   },
-  "homepage": "https://github.com/GetStream/Vision-Agents/tree/main/sdks/js",
+  "homepage": "https://github.com/GetStream/Agents/tree/main/sdks/js",
   "publishConfig": {
     "access": "public"
   },
@@ -42,6 +42,10 @@
     "./video": {
       "types": "./dist/video.d.ts",
       "default": "./dist/video.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
     }
   },
   "files": [
@@ -69,8 +73,12 @@
     "@stream-io/node-sdk": "^0.8.15",
     "@stream-io/video-client": "^1.61.2",
     "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.5.13",
     "openapi-typescript": "^7.13.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "stream-chat": "^9.54.0",
     "typescript": "^5.7.0",
     "ws": "^8.18.0",
@@ -78,13 +86,17 @@
   },
   "peerDependencies": {
     "@stream-io/video-client": "^1.0.0",
-    "stream-chat": "^9.0.0 || ^10.0.2"
+    "stream-chat": "^9.0.0 || ^10.0.2",
+    "react": ">=18"
   },
   "peerDependenciesMeta": {
     "@stream-io/video-client": {
       "optional": true
     },
     "stream-chat": {
+      "optional": true
+    },
+    "react": {
       "optional": true
     }
   }

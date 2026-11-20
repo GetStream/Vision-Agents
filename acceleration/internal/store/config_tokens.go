@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/uptrace/bun"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -23,6 +25,8 @@ var ErrNoConnectorConfigToken = errors.New("store: no configuration token for th
 // router for one connector, with its refresh token, sealed by the caller as one blob. It is
 // what creates, updates and deletes the customer's managed provider app.
 type ConnectorConfigToken struct {
+	bun.BaseModel `bun:"table:connector_config_tokens,alias:cct"`
+
 	CustomerID   string    `bun:"customer_id,pk"`
 	ConnectorID  string    `bun:"connector_id,pk"`
 	TokensSealed []byte    `bun:"tokens_sealed,notnull"`
@@ -62,21 +66,20 @@ func (s *Store) PutConnectorConfigToken(ctx context.Context, token *ConnectorCon
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialDetachedTimeout)
 	defer cancel()
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	err := s.db.NewRaw(`
-INSERT INTO connector_config_tokens AS cct
-    (customer_id, connector_id, tokens_sealed, kek_version, expires_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (customer_id, connector_id) DO UPDATE
-SET tokens_sealed = EXCLUDED.tokens_sealed,
-    kek_version = EXCLUDED.kek_version,
-    expires_at = EXCLUDED.expires_at,
-    updated_at = EXCLUDED.updated_at
-RETURNING cct.created_at`,
-		token.CustomerID, token.ConnectorID, token.TokensSealed, token.KEKVersion, token.ExpiresAt.UTC(), now, now).
-		Scan(ctx, &token.CreatedAt)
+	row := *token
+	row.CreatedAt, row.UpdatedAt = now, now
+	err := s.db.NewInsert().Model(&row).
+		On("CONFLICT (customer_id, connector_id) DO UPDATE").
+		Set("tokens_sealed = EXCLUDED.tokens_sealed").
+		Set("kek_version = EXCLUDED.kek_version").
+		Set("expires_at = EXCLUDED.expires_at").
+		Set("updated_at = EXCLUDED.updated_at").
+		Returning("cct.created_at").
+		Scan(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: put connector config token: %w", err))
 	}
+	token.CreatedAt = row.CreatedAt
 	token.UpdatedAt = now
 	return nil
 }
@@ -87,10 +90,9 @@ func (s *Store) ConnectorConfigToken(ctx context.Context, customerID, connectorI
 		return ConnectorConfigToken{}, stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
 	var token ConnectorConfigToken
-	err := s.db.NewRaw(`
-SELECT customer_id, connector_id, tokens_sealed, kek_version, expires_at, created_at, updated_at
-FROM connector_config_tokens WHERE customer_id = ? AND connector_id = ?`, customerID, connectorID).
-		Scan(ctx, &token.CustomerID, &token.ConnectorID, &token.TokensSealed, &token.KEKVersion, &token.ExpiresAt, &token.CreatedAt, &token.UpdatedAt)
+	err := s.db.NewSelect().Model(&token).
+		Where("cct.customer_id = ? AND cct.connector_id = ?", customerID, connectorID).
+		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ConnectorConfigToken{}, stack.Wrap(fmt.Errorf("%w: %s", ErrNoConnectorConfigToken, connectorID))
 	}
@@ -106,7 +108,9 @@ func (s *Store) DeleteConnectorConfigToken(ctx context.Context, customerID, conn
 	if customerID == "" || connectorID == "" {
 		return stack.Wrap(errors.New("store: a customer and a connector id are required"))
 	}
-	_, err := s.db.ExecContext(ctx, "DELETE FROM connector_config_tokens WHERE customer_id = ? AND connector_id = ?", customerID, connectorID)
+	_, err := s.db.NewDelete().Model((*ConnectorConfigToken)(nil)).
+		Where("customer_id = ? AND connector_id = ?", customerID, connectorID).
+		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: delete connector config token: %w", err))
 	}

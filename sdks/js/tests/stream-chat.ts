@@ -2,7 +2,8 @@ import * as streamChat from "stream-chat";
 
 /**
  * A real stream-chat client reading Chat from a test router, for the installed major: 9, or 10
- * in CI's js-stream-chat-10 job (`npm install --no-save stream-chat@^10.0.2 && npm test`).
+ * in the stream-chat 10 pass of CI's sdks job (`npm install --no-save stream-chat@^10.0.2 &&
+ * npm test`).
  *
  * Typed by shape rather than by either version's declarations, so the suite compiles against both.
  * What differs between them, and why a 10 client pointed at the router the way a 9 one is reached

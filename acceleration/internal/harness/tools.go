@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,6 +66,9 @@ type ToolApproval struct {
 // Tools is the set a harness was configured with.
 type Tools struct {
 	Tools []Tool `yaml:"tools"`
+	// Deferred are tools not offered until the model loads them with load_tool, after
+	// finding them with search_tool. The agent offers both whenever there are any.
+	Deferred []Tool `yaml:"-"`
 }
 
 // Lookup returns a tool by name.
@@ -254,7 +258,7 @@ func (t Tools) SourceOrder() string {
 // Validate reports the first tool the harness could not use.
 func (t Tools) Validate() error {
 	seen := map[string]struct{}{}
-	for _, tool := range t.Tools {
+	for _, tool := range slices.Concat(t.Tools, t.Deferred) {
 		if tool.Name == "" {
 			return stack.Wrap(errors.New("harness: every tool needs a name"))
 		}

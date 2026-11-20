@@ -53,17 +53,6 @@ public sealed class ToolCallContext
     public bool Approved { get; init; }
 
     /// <summary>
-    /// Tells the people in the conversation how the call is going, such as "Found three
-    /// flights, comparing prices". The agent puts it in its own words.
-    /// </summary>
-    public Task UpdateAsync(string text, CancellationToken cancellationToken = default) =>
-        SendUpdateAsync(text, false, cancellationToken);
-
-    /// <summary><see cref="UpdateAsync"/>, said word for word.</summary>
-    public Task SayAsync(string text, CancellationToken cancellationToken = default) =>
-        SendUpdateAsync(text, true, cancellationToken);
-
-    /// <summary>
     /// Keeps the call going if the person talks over the agent from here on, for a call that
     /// is past the point of taking back, such as one that has started a payment.
     /// </summary>
@@ -85,11 +74,6 @@ public sealed class ToolCallContext
             throw new CallNotHeldException(Id);
         }
     }
-
-    private Task SendUpdateAsync(string text, bool verbatim, CancellationToken cancellationToken) =>
-        _line is null
-            ? Task.CompletedTask
-            : _line.Send(Frames.Of("tool_update", ("tool_call_id", Id), ("text", text), ("verbatim", verbatim)), cancellationToken);
 
     /// <summary>
     /// The call a <c>tool_call</c> frame asks for. <paramref name="sessionId"/> stands in for

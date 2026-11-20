@@ -279,10 +279,16 @@ describe("AgentChat", () => {
       ]);
     });
 
-    it("reads the request and turn under custom in a stream-chat 10 reply", async () => {
+    it("reads the step and the request and turn under custom in a stream-chat 10 reply", async () => {
       const channel = new ChannelV10();
+      // stream-chat 10 keeps an attachment's own fields under its custom, as it does a message's.
+      const { type, ...stepFields } = waitingStep;
       channel.latest = [
-        { id: "r1", attachments: [waitingStep], custom: { support_runtime: { command_id: "q1", turn_id: "t1" } } } as Message,
+        {
+          id: "r1",
+          attachments: [{ type, custom: stepFields }],
+          custom: { support_runtime: { command_id: "q1", turn_id: "t1" } },
+        } as Message,
       ];
       const { open, sessions } = opener(channel);
       const chat = new AgentChat<Message>({ sessionId: "s1", open });

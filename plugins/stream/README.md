@@ -102,7 +102,6 @@ from vision_agents.core.llm import ToolCallContext
     needs_approval="Book flight {flight_id}?",
 )
 async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
-    await tool_call_context.update("checking seats")
     await tool_call_context.disallow_interruptions()
     return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
 ```
@@ -456,31 +455,30 @@ The same `user_id` runs other work for a user on the app's credential: `api.agen
 user_id="alice")` opens sessions that are theirs, and `api.router("clinic", user_id="alice")`
 counts what it routes against their spend limits. `api.for_user` still works, and warns.
 
-## Tools hosted for an agent
+## Tools
 
-A session's own functions run in the process that opened it. `dispatch.host` is the other
-direction: the router offers an agent's functions to every session under that agent,
-wherever it was opened, and sends each call to this worker.
+Tools are registered once for the app, on the client. Each agent is offered the ones a tool
+group of its `agent.yaml` names, in every session, wherever it was opened, and each call is
+sent to a worker running `run_dispatch`.
 
 ```python
-agent = stream.Client().agent("stream-support")
+client = stream.Client()
 
 
-@agent.register(description="Read the SDK's source")
+@client.tools.register(description="Read the SDK's source", timeout=60)
 async def investigate_sdk(sdk: str) -> str:
     return await read_source(sdk)
 
 
-dispatch = stream.Dispatch()
-dispatch.host(agent, tool_timeout=60)
-await dispatch.run()
+await client.run_dispatch()
 ```
 
-`tool_timeout` is how long the router gives one call, in seconds; zero takes its default
-of 30. A hosted function takes the same `interruptible`, `timeout` and `needs_approval` as
+A tool's `timeout` is how long the router gives one call, in seconds; zero takes its default
+of 30. A tool takes the same `interruptible`, `timeout` and `needs_approval` as
 `register_function`, can take its call as its first argument, and is cancelled when the router
-gives up on it. The worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
-router refuses them.
+gives up on it. The worker declares its tools again whenever it reconnects, and `run_dispatch`
+raises `RouterError` if the router refuses them. A worker that also answers calls or messages
+hosts them with `dispatch.host(client)` before `dispatch.run()`.
 
 ## Calling somebody
 

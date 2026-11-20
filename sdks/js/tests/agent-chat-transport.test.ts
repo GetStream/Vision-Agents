@@ -131,8 +131,8 @@ describe("agentChatTransport, branching", () => {
   });
 
   /**
-   * An AgentChat over a real stream-chat client (9, or 10 in CI's js-stream-chat-10 job) reading
-   * the channel from the test router, and the transport, connected to a feed.
+   * An AgentChat over a real stream-chat client (9, or 10 in the stream-chat 10 pass of CI's sdks
+   * job) reading the channel from the test router, and the transport, connected to a feed.
    */
   async function connected(messages: Record<string, unknown>[] = conversationOf) {
     const streamChat = await chatClient(router.url);

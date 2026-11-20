@@ -155,15 +155,17 @@ export const DISPLAY_TITLES: Record<string, string> = {
 
 /** What the person is asked before a call runs, by tool. */
 export const APPROVALS: Record<string, ToolApproval> = {
-  book_check_in: { allowTitle: 'Book it', title: 'Book this check-in?' },
+  book_check_in: { allowTitle: 'Book it', reasonArgument: 'topic', title: 'Book this check-in?' },
   create_support_ticket: {
     allowTitle: 'Send for review',
     message: 'The owner approves it before it goes to repairs, and you hear back here.',
+    reasonArgument: 'summary',
     title: 'Draft this repair ticket?',
   },
   request_shift_swap: {
     allowTitle: 'Send request',
     message: 'Your teammate and the shift leader see it.',
+    reasonArgument: 'note',
     title: 'Ask a teammate to take your shift?',
   },
 };

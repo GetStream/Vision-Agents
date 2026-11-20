@@ -4,11 +4,12 @@ each call's arguments are held to before the function runs."""
 from __future__ import annotations
 
 import inspect
-from typing import Annotated, Any, Callable, Optional
+from typing import Annotated, Any, Callable, Optional, get_origin
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     PydanticSchemaGenerationError,
     TypeAdapter,
     ValidationError,
@@ -45,8 +46,12 @@ class Arguments:
         func: Callable,
         type_hints: dict[str, Any],
         context: Optional[str] = None,
+        descriptions: Optional[dict[str, str]] = None,
     ):
-        """`context` names the parameter handed the `ToolCallContext`, which the model does not fill in."""
+        """`context` names the parameter handed the `ToolCallContext`, which the model does not fill in.
+
+        `descriptions` says what each argument means, for one whose type does not already say.
+        """
         self.name = name
         parameters = [
             parameter
@@ -71,6 +76,9 @@ class Arguments:
                 if parameter.default is inspect.Parameter.empty
                 else parameter.default
             )
+            description = (descriptions or {}).get(parameter.name)
+            if description and not _described(annotation):
+                default = Field(default, description=description)
             fields[parameter.name] = (annotation, default)
         self.model = create_model(f"{name}_arguments", __config__=_CONFIG, **fields)
 
@@ -123,6 +131,14 @@ def _describable(annotation: Any) -> Any:
     if isinstance(annotation, FieldInfo):
         return _UNDESCRIBED
     return annotation
+
+
+def _described(annotation: Any) -> bool:
+    """Whether the annotation carries a `Field` description of its own."""
+    return get_origin(annotation) is Annotated and any(
+        isinstance(metadata, FieldInfo) and metadata.description
+        for metadata in annotation.__metadata__
+    )
 
 
 def _plain(schema: Any, definitions: dict[str, Any]) -> Any:

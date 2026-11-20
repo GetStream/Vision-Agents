@@ -21,6 +21,16 @@ class ToolStats:
         failed (int): Calls that ended in an error.
         p99_ms (float | None):
         tool (str):
+        avg_turns_before_use (float | None): Turns a session took before its first call, on average: 0 is a call on the
+            first turn. Null on the row over every tool.
+        definition_tokens (int | None): What the tool's whole definition, its name, description and schema, costs every
+            turn that carries it, estimated at four characters a token. Null when no call recorded it.
+        loading (str): How the latest call had the tool offered: full, summary or deferred. Empty when no call recorded
+            it, as calls made before it was recorded and built-in tools.
+        session_share (float | None): Sessions that called it, out of the window's sessions, from 0 to 1. Null when no
+            session took a turn.
+        sessions (int): Sessions that called it at least once.
+        summary_tokens (int | None): What its definition costs offered as a summary. Null unless its loading is summary.
     """
 
     avg_ms: float | None
@@ -29,6 +39,12 @@ class ToolStats:
     failed: int
     p99_ms: float | None
     tool: str
+    avg_turns_before_use: float | None
+    definition_tokens: int | None
+    loading: str
+    session_share: float | None
+    sessions: int
+    summary_tokens: int | None
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +62,22 @@ class ToolStats:
 
         tool = self.tool
 
+        avg_turns_before_use: float | None
+        avg_turns_before_use = self.avg_turns_before_use
+
+        definition_tokens: int | None
+        definition_tokens = self.definition_tokens
+
+        loading = self.loading
+
+        session_share: float | None
+        session_share = self.session_share
+
+        sessions = self.sessions
+
+        summary_tokens: int | None
+        summary_tokens = self.summary_tokens
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,6 +88,12 @@ class ToolStats:
                 "failed": failed,
                 "p99_ms": p99_ms,
                 "tool": tool,
+                "avg_turns_before_use": avg_turns_before_use,
+                "definition_tokens": definition_tokens,
+                "loading": loading,
+                "session_share": session_share,
+                "sessions": sessions,
+                "summary_tokens": summary_tokens,
             }
         )
 
@@ -87,6 +125,40 @@ class ToolStats:
 
         tool = d.pop("tool")
 
+        def _parse_avg_turns_before_use(data: object) -> float | None:
+            if data is None:
+                return data
+            return cast(float | None, data)
+
+        avg_turns_before_use = _parse_avg_turns_before_use(
+            d.pop("avg_turns_before_use")
+        )
+
+        def _parse_definition_tokens(data: object) -> int | None:
+            if data is None:
+                return data
+            return cast(int | None, data)
+
+        definition_tokens = _parse_definition_tokens(d.pop("definition_tokens"))
+
+        loading = d.pop("loading")
+
+        def _parse_session_share(data: object) -> float | None:
+            if data is None:
+                return data
+            return cast(float | None, data)
+
+        session_share = _parse_session_share(d.pop("session_share"))
+
+        sessions = d.pop("sessions")
+
+        def _parse_summary_tokens(data: object) -> int | None:
+            if data is None:
+                return data
+            return cast(int | None, data)
+
+        summary_tokens = _parse_summary_tokens(d.pop("summary_tokens"))
+
         tool_stats = cls(
             avg_ms=avg_ms,
             avg_tokens=avg_tokens,
@@ -94,6 +166,12 @@ class ToolStats:
             failed=failed,
             p99_ms=p99_ms,
             tool=tool,
+            avg_turns_before_use=avg_turns_before_use,
+            definition_tokens=definition_tokens,
+            loading=loading,
+            session_share=session_share,
+            sessions=sessions,
+            summary_tokens=summary_tokens,
         )
 
         tool_stats.additional_properties = d

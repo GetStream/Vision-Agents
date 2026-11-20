@@ -122,19 +122,20 @@ func (s *Store) ClaimImageJobs(ctx context.Context, now time.Time, limit int, le
 	if limit < 1 {
 		return claimed, nil
 	}
-	err := s.db.NewRaw(`
-WITH due AS (
-    SELECT ij.id FROM image_jobs AS ij
-    WHERE ij.state = 'queued' AND ij.next_attempt_at <= ? AND (ij.message <> '') = ?
-    ORDER BY ij.next_attempt_at, ij.id
-    LIMIT ?
-    FOR UPDATE OF ij SKIP LOCKED
-)
-UPDATE image_jobs AS ij
-SET next_attempt_at = ?, attempts = ij.attempts + 1
-FROM due
-WHERE ij.id = due.id
-RETURNING `+imageJobClaimed, now.UTC(), decided, limit, leaseUntil.UTC()).Scan(ctx, &claimed)
+	due := s.db.NewSelect().Model((*ImageJob)(nil)).
+		Column("ij.id").
+		Where("ij.state = 'queued' AND ij.next_attempt_at <= ?", now.UTC()).
+		Where("(ij.message <> '') = ?", decided).
+		Order("ij.next_attempt_at", "ij.id").
+		Limit(limit).
+		For("UPDATE OF ij SKIP LOCKED")
+	err := s.db.NewUpdate().With("due", due).Model((*ImageJob)(nil)).
+		TableExpr("due").
+		Set("next_attempt_at = ?", leaseUntil.UTC()).
+		Set("attempts = ij.attempts + 1").
+		Where("ij.id = due.id").
+		Returning(imageJobClaimed).
+		Scan(ctx, &claimed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim image jobs: %w", err))
 	}

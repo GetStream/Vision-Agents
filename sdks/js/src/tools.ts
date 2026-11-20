@@ -128,8 +128,6 @@ export interface ToolCallFields {
  * provides one; a test of a function's progress can too.
  */
 export interface ToolLine {
-  /** Says how the call is going, or with `verbatim`, words to say as written. */
-  update(id: string, text: string, verbatim: boolean): void;
   /** Asks for the call to keep going when the caller talks over the agent; resolves with whether it was still running to be held. */
   hold(id: string, signal?: AbortSignal): Promise<boolean>;
 }
@@ -170,27 +168,6 @@ export class ToolCallContext implements ToolCallFields {
     this.approved = fields.approved ?? false;
     this.line = line;
     this.lasting = lasting ?? new AbortController().signal;
-  }
-
-  /**
-   * Says how the call is going. A voice agent tells the caller in its own words once nobody
-   * is talking, and a conversation shows it on the call's step until the call ends. A newer
-   * update replaces one not yet said, and the result replaces both.
-   */
-  update(text: string): void {
-    if (this.line && this.id) {
-      this.line.update(this.id, text, false);
-    }
-  }
-
-  /**
-   * Has the agent say `text` as written while the call runs, or post it in a text
-   * conversation. A speech-to-speech model is asked for these words and may paraphrase them.
-   */
-  say(text: string): void {
-    if (this.line && this.id) {
-      this.line.update(this.id, text, true);
-    }
   }
 
   /**

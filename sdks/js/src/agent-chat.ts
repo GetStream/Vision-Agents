@@ -525,20 +525,26 @@ function sameActivity(a: AgentActivity | undefined, b: AgentActivity | undefined
 function callShown(messages: readonly AgentChatMessage[], id: string): Pick<ToolDecision, "call"> {
   for (const message of messages) {
     const attachments = messageField(message, "attachments");
-    const step = (Array.isArray(attachments) ? (attachments as Partial<Record<string, unknown>>[]) : []).find(
-      (part) => part?.["type"] === "ai_tool_call" && part["id"] === id,
+    // An attachment's own fields are under its `custom` in stream-chat 10, as a message's are.
+    const step = (Array.isArray(attachments) ? (attachments as unknown[]) : []).find(
+      (part): part is object =>
+        typeof part === "object" &&
+        part !== null &&
+        messageField(part, "type") === "ai_tool_call" &&
+        messageField(part, "id") === id,
     );
-    if (!step || typeof step["name"] !== "string" || step["status"] !== "awaiting_approval") {
+    const name = step && messageField(step, "name");
+    if (!step || typeof name !== "string" || messageField(step, "status") !== "awaiting_approval") {
       continue;
     }
     const runtime = messageField(message, "support_runtime") as Record<string, unknown> | undefined;
     const requestId = runtime?.["command_id"];
     const turnId = runtime?.["turn_id"];
     // Kept as JSON on the step, and left off one too long to show.
-    const args = step["arguments"];
+    const args = messageField(step, "arguments");
     return {
       call: {
-        name: step["name"],
+        name,
         ...(args === undefined ? {} : { arguments: typeof args === "string" ? args : JSON.stringify(args) }),
         ...(typeof requestId === "string" && requestId ? { requestId } : {}),
         ...(typeof turnId === "string" && turnId ? { turnId } : {}),

@@ -425,28 +425,54 @@ public sealed class DispatchTests
         {
             await peer.SendAsync(new { type = "ready", worker_id = "worker-1" });
             declared = await peer.ReceiveAsync("host_tools");
-            await peer.SendAsync(new { type = "hosting", agent_id = "stream-support" });
+            await peer.SendAsync(new { type = "hosting", every_agent = true });
             await peer.SendAsync(new { type = "tool_call", id = "call-1", session_id = "s", name = "investigate_sdk", arguments = """{"sdk":"android"}""" });
             answered.Add(await peer.ReceiveAsync("tool_result"));
             await peer.SendAsync(new { type = "tool_call", id = "call-2", session_id = "s", name = "delete_everything", arguments = "{}" });
             answered.Add(await peer.ReceiveAsync("tool_result"));
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("stream-support");
-        agent.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source",
+        client.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source",
             (investigation, _) => Task.FromResult("read " + investigation.Sdk));
-        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1));
+        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1));
 
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("", router.Only("GET", "/v1/dispatch").Query["handles"]);
-        Assert.Equal(("stream-support", 60000), (declared.Text("agent_id"), declared!["timeout_ms"]!.GetValue<int>()));
+        Assert.True(declared!["every_agent"]!.GetValue<bool>());
+        Assert.False(declared.ContainsKey("agent_id"));
+        Assert.Equal(60000, declared["timeout_ms"]!.GetValue<int>());
         var tool = Assert.Single(declared["tools"]!.AsArray())!;
         Assert.Equal(("investigate_sdk", "Read SDK source"), (tool["name"]!.GetValue<string>(), tool["description"]!.GetValue<string>()));
         Assert.NotNull(tool["parameters"]!["properties"]!["sdk"]);
         Assert.Equal(("call-1", "read android"), (answered[0].Text("id"), answered[0].Text("output")));
         Assert.Equal(("call-2", "this worker does not run delete_everything"), (answered[1].Text("id"), answered[1].Text("error")));
         Assert.Equal(0, dispatch.Active);
+    }
+
+    [Fact]
+    public async Task RunDispatchHostsTheClientsToolsForEveryAgent()
+    {
+        await using var router = await TestRouter.StartAsync();
+        JsonObject? declared = null;
+        JsonObject? answered = null;
+        router.OnSocket("/v1/dispatch", async peer =>
+        {
+            await peer.SendAsync(new { type = "ready", worker_id = "worker-1" });
+            declared = await peer.ReceiveAsync("host_tools");
+            await peer.SendAsync(new { type = "tool_call", id = "call-1", session_id = "s", name = "investigate_sdk", arguments = """{"sdk":"ios"}""" });
+            answered = await peer.ReceiveAsync("tool_result");
+        });
+        using var client = Fixtures.Client(router);
+        client.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source",
+            (investigation, _) => Task.FromResult("read " + investigation.Sdk));
+
+        await client.RunDispatchAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("", router.Only("GET", "/v1/dispatch").Query["handles"]);
+        Assert.True(declared!["every_agent"]!.GetValue<bool>());
+        Assert.Equal("investigate_sdk", Assert.Single(declared["tools"]!.AsArray())!["name"]!.GetValue<string>());
+        Assert.Equal(("call-1", "read ios"), (answered.Text("id"), answered.Text("output")));
     }
 
     [Fact]
@@ -479,10 +505,9 @@ public sealed class DispatchTests
             }
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("stream-support");
-        agent.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source", (_, _) => Task.FromResult(""));
+        client.Tools.Register<Investigation, string>("investigate_sdk", "Read SDK source", (_, _) => Task.FromResult(""));
         var dispatch = new Dispatch(new DispatchOptions { Client = client }) { FirstRetry = TimeSpan.FromMilliseconds(10) }
-            .Host(agent);
+            .Host(client);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         var running = dispatch.RunAsync(stop.Token);
@@ -491,7 +516,7 @@ public sealed class DispatchTests
         await running.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal("worker-3", dispatch.WorkerId);
-        Assert.Equal(["stream-support", "stream-support", "stream-support"], hosted.Select(frame => frame.Text("agent_id")));
+        Assert.Equal([true, true, true], hosted.Select(frame => frame["every_agent"]!.GetValue<bool>()));
         Assert.Equal(0, hosted.First()["timeout_ms"]!.GetValue<int>());
     }
 
@@ -503,16 +528,15 @@ public sealed class DispatchTests
         {
             await peer.SendAsync(new { type = "ready", worker_id = "worker-1" });
             await peer.ReceiveAsync("host_tools");
-            await peer.SendAsync(new { type = "hosting_refused", agent_id = "stream-support", reason = "hosting no tools is not hosting" });
+            await peer.SendAsync(new { type = "hosting_refused", reason = "hosting no tools is not hosting" });
             await peer.Closed;
         });
         using var client = Fixtures.Client(router);
-        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(client.Agent("stream-support"));
+        var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(client);
 
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(
             () => dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken));
 
-        Assert.Contains("stream-support", refused.Message);
         Assert.Contains("hosting no tools is not hosting", refused.Message);
     }
 
