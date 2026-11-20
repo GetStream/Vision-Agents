@@ -426,7 +426,7 @@ func (s *EgressSuite) TestCloseIdleConnectionsClosesThemThroughAWrapper() {
 // sends a GET again on a new connection, but not a POST, whose body it cannot send twice; so a POST never rides a
 // connection that has carried a request before.
 func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
-	origin := s.startOrigin(closeAtReuse, 0)
+	origin := s.startOrigin(closeAtReuse, 0, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
 	s.send(client, http.MethodGet, nil)
@@ -440,7 +440,7 @@ func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
 
 // Go itself sends a GET again when the connection it reused turns out closed, so GETs keep sharing connections.
 func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
-	origin := s.startOrigin(closeAtReuse, 0)
+	origin := s.startOrigin(closeAtReuse, 0, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
 	s.send(client, http.MethodGet, nil)
@@ -455,7 +455,7 @@ func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
 
 // A POST the origin read and then dropped without an answer may have been applied, so it is never sent again.
 func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
-	origin := s.startOrigin(0, dropAfterRead)
+	origin := s.startOrigin(0, dropAfterRead, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
 	s.send(client, http.MethodGet, nil)
@@ -468,7 +468,7 @@ func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
 
 // GETs to an HTTP/1.1 origin share one connection.
 func (s *EgressSuite) TestGetsShareOneConnection() {
-	origin := s.startOrigin(0, 0)
+	origin := s.startOrigin(0, 0, false)
 	defer origin.close()
 	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
 
@@ -480,6 +480,62 @@ func (s *EgressSuite) TestGetsShareOneConnection() {
 	s.Equal(int32(1), origin.conns.Load())
 }
 
+// Go sends again what it can replay, so those requests keep sharing a connection.
+func (s *EgressSuite) TestRequestsGoCanSendAgainShareAConnection() {
+	for _, method := range []string{"", http.MethodHead, http.MethodOptions, http.MethodTrace} {
+		s.True(s.reusesAConnection(&http.Request{Method: method, Header: http.Header{}}), "method %q", method)
+	}
+	for _, key := range []string{"Idempotency-Key", "X-Idempotency-Key"} {
+		request := &http.Request{Method: http.MethodPost, Header: http.Header{key: {"k"}}}
+		request.Body, request.GetBody = io.NopCloser(strings.NewReader("{}")), func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("{}")), nil
+		}
+		s.True(s.reusesAConnection(request), key)
+	}
+}
+
+// Go sends nothing again whose body it cannot send twice, such as the body the sandbox proxy forwards.
+func (s *EgressSuite) TestARequestWithABodyGoCannotSendTwiceRidesANewConnection() {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		request := &http.Request{Method: method, Header: http.Header{"Idempotency-Key": {"k"}}}
+		request.Body = io.NopCloser(strings.NewReader("{}"))
+		s.False(s.reusesAConnection(request), method)
+	}
+}
+
+// An HTTP/2 origin closes a connection with GOAWAY, which tells the client what it did not process, so POSTs to
+// it share one connection.
+func (s *EgressSuite) TestPostsToAnHTTP2OriginShareOneConnection() {
+	origin := s.startOrigin(0, 0, true)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+
+	for range 3 {
+		_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+
+	s.Equal(int32(1), origin.conns.Load())
+	client.CloseIdleConnections()
+	s.Eventually(func() bool { return origin.closed.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// reusesAConnection sends a GET and then request to a fresh HTTP/1.1 origin, and reports whether request went on
+// the GET's connection.
+func (s *EgressSuite) reusesAConnection(request *http.Request) bool {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	_, err := s.send(client, http.MethodGet, nil)
+	s.Require().NoError(err)
+	request.URL = mustURL("https://api.example.com/mcp")
+	response, err := client.Do(request)
+	s.Require().NoError(err)
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	return origin.conns.Load() == 1
+}
+
 const (
 	// closeAtReuse is an origin that closes a kept-alive connection as the next request on it arrives, unread: its
 	// keep-alive timer fired as the client reused the connection.
@@ -488,19 +544,19 @@ const (
 	dropAfterRead
 )
 
-// origin is an HTTP/1.1 origin that answers "ok". read counts the requests it read in full and conns its
-// connections.
+// origin is an origin that answers "ok". read counts the requests it read in full, conns its connections and
+// closed those it closed.
 type origin struct {
-	server      *httptest.Server
-	read, conns atomic.Int32
+	server              *httptest.Server
+	read, conns, closed atomic.Int32
 	mu          sync.Mutex
 	held        []net.Conn
 }
 
-// startOrigin starts an origin. With reuse set, the first connection answers its first request and then does what
+// startOrigin starts an HTTP/1.1 origin, or an HTTP/2 one with http2. With reuse set, the first connection answers its first request and then does what
 // reuse names with the next request on it. With second set, the second request the origin gets is read in full and
 // the connection closed without an answer.
-func (s *EgressSuite) startOrigin(reuse, second int) *origin {
+func (s *EgressSuite) startOrigin(reuse, second int, http2 bool) *origin {
 	o := &origin{}
 	var first atomic.Bool
 	o.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -521,10 +577,14 @@ func (s *EgressSuite) startOrigin(reuse, second int) *origin {
 		}
 	}))
 	o.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateNew {
+		switch state {
+		case http.StateNew:
 			o.conns.Add(1)
+		case http.StateClosed:
+			o.closed.Add(1)
 		}
 	}
+	o.server.EnableHTTP2 = http2
 	o.server.StartTLS()
 	return o
 }

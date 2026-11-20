@@ -129,12 +129,17 @@ func (p policy) client(timeout time.Duration, wrap func(http.RoundTripper) http.
 	if p.tlsConfig != nil {
 		transport.TLSClientConfig = p.tlsConfig
 	}
-	var next http.RoundTripper = checkedRoundTripper{transport: transport}
+	// unpooled sends what net/http will not send twice. MaxIdleConnsPerHost below zero makes
+	// tryPutIdleConn (net/http/transport.go) close each HTTP/1.1 connection after its one request;
+	// HTTP/2 connections, which an origin closes with GOAWAY rather than mid-request, stay shared.
+	unpooled := transport.Clone()
+	unpooled.MaxIdleConnsPerHost = -1
+	var next http.RoundTripper = checkedRoundTripper{transport: transport, unpooled: unpooled}
 	if wrap != nil {
 		next = wrap(next)
 	}
 	return &http.Client{
-		Transport:     clientRoundTripper{next: next, transport: transport},
+		Transport:     clientRoundTripper{next: next, transport: transport, unpooled: unpooled},
 		Timeout:       timeout,
 		CheckRedirect: checkRedirect,
 	}
@@ -217,11 +222,11 @@ func numericHost(host string) bool {
 
 // clientRoundTripper is the client's transport. It checks the URL before the scheme's
 // wrapper sees the request, so no credential is applied to a URL that will be refused,
-// and forwards CloseIdleConnections to the inner transport, which the wrapper would
+// and forwards CloseIdleConnections to the inner transports, which the wrapper would
 // otherwise hide from Client.
 type clientRoundTripper struct {
-	next      http.RoundTripper
-	transport *http.Transport
+	next                http.RoundTripper
+	transport, unpooled *http.Transport
 }
 
 func (t clientRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -233,18 +238,44 @@ func (t clientRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 
 func (t clientRoundTripper) CloseIdleConnections() {
 	t.transport.CloseIdleConnections()
+	t.unpooled.CloseIdleConnections()
 }
 
 // checkedRoundTripper repeats the URL check after the wrapper, which may rewrite the request.
+// It sends a request net/http would not send twice on a new HTTP/1.1 connection: an origin
+// may close a kept-alive one as the request arrives (nginx after keepalive_timeout, 75 s by
+// default, https://nginx.org/en/docs/http/ngx_http_core_module.html#keepalive_timeout), and
+// once its bytes are written the client cannot tell that close from one after the origin
+// applied it (RFC 9110 section 9.2.2), so it fails rather than being sent again.
 type checkedRoundTripper struct {
-	transport *http.Transport
+	transport, unpooled *http.Transport
 }
 
 func (t checkedRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	if err := checkURL(request.URL); err != nil {
 		return nil, err
 	}
+	if !replayable(request) {
+		return t.unpooled.RoundTrip(request)
+	}
 	return t.transport.RoundTrip(request)
+}
+
+// replayable is net/http's test for a request it sends again on a new connection when the
+// reused one turns out closed (Request.isReplayable in net/http/request.go, used by
+// persistConn.shouldRetryRequest in net/http/transport.go): a body it can send again, and a
+// method safe to repeat or an idempotency key.
+func replayable(request *http.Request) bool {
+	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
+		return false
+	}
+	switch request.Method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	}
+	_, key := request.Header["Idempotency-Key"]
+	_, xKey := request.Header["X-Idempotency-Key"]
+	return key || xKey
 }
 
 func (p policy) dialPublic(ctx context.Context, network, address string) (net.Conn, error) {
