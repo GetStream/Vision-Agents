@@ -214,7 +214,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		// The provider took nothing on, so nothing it would bill is held.
 		s.recorder.Release(reserved)
 		durationMs := float64(time.Since(startedAt).Microseconds()) / 1000
-		code := outrun(createErrorCode(ctx), true, hedge)
+		code, lost := outrun(createErrorCode(ctx), true, hedge)
 		message := err.Error()
 		if s.config.BYOK && code != routing.ErrorCancelled && keyRefused(err) {
 			code = routing.ErrorKeyRefused
@@ -231,14 +231,15 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 			Success:      false,
 			ErrorCode:    code,
 			ErrorMessage: message,
+			HedgeLost:    lost,
 		}
 		label(&stat, params, hedge)
 		s.recorder.Record(s.config, stat)
 		endInference(inference, nil, code)
-		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
+		slog.Info("model call timing", append(s.loggedCall(stat), "operation", params.ID,
 			"purpose", params.Purpose, "turn", params.TurnID,
-			"provider", s.config.Provider, "model", s.config.Model,
-			"duration_ms", durationMs, "success", false, "error_code", code)
+			"duration_ms", durationMs, "success", false, "error_code", code,
+			"error", store.SafeLogText(message), "transient", llm.Transient(err))...)
 		if params.OnTiming != nil {
 			params.OnTiming(llm.CallTiming{OperationID: params.ID, Purpose: params.Purpose,
 				TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
@@ -252,16 +253,61 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	// The response settles with its status alone, so what its failure said is taken from the
 	// event that reported it: the last one, as the stream's own Err keeps.
 	var failure string
+	var transient bool
 	return stream.Observe(func(event llm.Event) {
 		if failed, ok := event.(llm.ResponseFailed); ok {
 			failure = failed.Error()
+			transient = llm.Transient(failed.Err)
 		}
 		if completed, done := event.(llm.ResponseCompleted); done {
 			settled()
 			passed.observeStream(s.config, createdAt, completed.Response)
 		}
-		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved, failure, inference)
+		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved, failure, transient, inference)
 	}), nil
+}
+
+// loggedCall is what every "model call timing" line says about whose call it was and what
+// served it. The line is logged with no request context, so the app is named here, under the
+// field the request lines name it with (api.NewLogHandler), or it could not be filtered by app.
+// A hedged response names its hedge and whether it was kept, so the attempt that lost can be
+// told apart from the one the caller got.
+func (s *Session) loggedCall(stat routing.Stat) []any {
+	fields := []any{"call", s.owner.CallID}
+	if stat.CustomerID != "" {
+		fields = append(fields, "app_id", stat.CustomerID)
+	}
+	if stat.AgentID != "" {
+		fields = append(fields, "agent_id", stat.AgentID)
+	}
+	fields = append(fields, "provider", s.config.Provider, "model", s.config.Model)
+	if host := vendorHost(s.provider); host != "" {
+		fields = append(fields, "vendor_host", host)
+	}
+	if s.config.Region != "" {
+		fields = append(fields, "region", s.config.Region)
+	}
+	if s.config.BYOK {
+		fields = append(fields, "byok", true)
+	}
+	if hedge, hedged := stat.Attributes[routing.AttributeHedge]; hedged {
+		fields = append(fields, "hedge", hedge, "kept", stat.Attributes[routing.AttributeKept])
+	}
+	return fields
+}
+
+// vendorHost is the host a provider sends its requests to, for a provider that says
+// (openaicompat.LLM.Host). A provider that says nothing is one not built on openaicompat
+// (mock), or one whose native adapter takes an instance endpoint (openai, anthropic Messages).
+func vendorHost(provider Provider) string {
+	var inner any = provider
+	if wrapped, ok := provider.(started); ok {
+		inner = wrapped.LLM
+	}
+	if hosted, ok := inner.(interface{ Host() string }); ok {
+		return hosted.Host()
+	}
+	return ""
 }
 
 // label puts on a response's row what its caller and its hedge say about it. The response
@@ -343,7 +389,7 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID, failure string, inference trace.Span) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID, failure string, transient bool, inference trace.Span) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -355,7 +401,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	headersMs := float64(createdAt.Sub(startedAt).Microseconds()) / 1000
 	ttftMs := measuredLatency(response, headersMs+response.TimeToFirstTokenMs)
 	durationMs := headersMs + response.DurationMs
-	code := outrun(errorCode(response), response.TimeToFirstTokenMs <= 0, hedge)
+	code, lost := outrun(errorCode(response), response.TimeToFirstTokenMs <= 0, hedge)
 	endInference(inference, &response, code)
 	stat := reported(response)
 	estimated := unreported(response)
@@ -372,17 +418,6 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 		stat.Estimated()
 		estimated = true
 	}
-	slog.Info("model call timing", "call", s.owner.CallID, "operation", response.ID,
-		"purpose", params.Purpose, "turn", params.TurnID,
-		"provider", s.config.Provider, "model", s.config.Model,
-		"ttft_ms", ttftMs, "duration_ms", durationMs,
-		"input_tokens", stat.InputTokens,
-		"cached_tokens", stat.CachedInputTokens,
-		"cache_write_tokens", response.Usage.InputTokensDetails.CacheWriteTokens,
-		"output_tokens", stat.OutputTokens,
-		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
-		"estimated", estimated,
-		"success", served(response), "error_code", code)
 	composed := llm.Compose(params).Scaled(stat.InputTokens)
 	usage := stat.Usage
 	stat.Owner = owner
@@ -406,19 +441,41 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	stat.LatencyMs = measuredLatency(response, ttftMs)
 	stat.Success = served(response)
 	stat.ErrorCode = code
+	stat.HedgeLost = lost
 	// Only a response that did not run to its end says why, so a served one's row and timing
 	// are the ones they always were.
 	if code != "" {
 		stat.ErrorMessage = failure
 	}
 	label(&stat, params, hedge)
+	cost := s.recorder.QuoteStat(s.config, stat).CostMicros
+	logged := append(s.loggedCall(stat), "operation", response.ID,
+		"purpose", params.Purpose, "turn", params.TurnID,
+		"ttft_ms", ttftMs, "duration_ms", durationMs,
+		"input_tokens", stat.InputTokens,
+		"cached_tokens", stat.CachedInputTokens,
+		"cache_write_tokens", response.Usage.InputTokensDetails.CacheWriteTokens,
+		"output_tokens", stat.OutputTokens,
+		"reasoning_tokens", response.Usage.OutputTokensDetails.ReasoningTokens,
+		"estimated", estimated, "cost_micros", cost,
+		"status", string(response.Status), "success", served(response), "error_code", code)
+	if response.IncompleteReason != "" {
+		logged = append(logged, "incomplete_reason", response.IncompleteReason)
+	}
+	if response.ProviderResponseID != "" {
+		logged = append(logged, "provider_response_id", response.ProviderResponseID)
+	}
+	if stat.ErrorMessage != "" {
+		logged = append(logged, "error", store.SafeLogText(stat.ErrorMessage), "transient", transient)
+	}
+	slog.Info("model call timing", logged...)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
 			Success: served(response), ErrorCode: code, ErrorMessage: store.SafeLogText(stat.ErrorMessage),
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
-			OutputTokens: usage.OutputTokens, CostMicros: s.recorder.QuoteStat(s.config, stat).CostMicros})
+			OutputTokens: usage.OutputTokens, CostMicros: cost})
 	}
 
 	// The debit is taken here rather than where the response was asked for, because what a
@@ -515,12 +572,12 @@ func errorCode(response llm.Response) string {
 
 // outrun is code, unless the attempt was cancelled because it lost its hedge without having
 // said anything: then it ran past the router's own limit on silence, a timeout, which counts
-// against its provider's health where a cancellation would not.
-func outrun(code string, silent bool, hedge *hedgeAttempt) string {
+// against its provider's health where a cancellation would not. The bool says it was that.
+func outrun(code string, silent bool, hedge *hedgeAttempt) (string, bool) {
 	if code == routing.ErrorCancelled && silent && hedge.stalled() {
-		return routing.ErrorTimeout
+		return routing.ErrorTimeout, true
 	}
-	return code
+	return code, false
 }
 
 // measuredLatency is the time the caller waited for the first token, or nothing when none

@@ -459,3 +459,97 @@ async fn another_users_connection_is_the_routers_not_found() {
     };
     assert_eq!(failure.code, "connection_not_found");
 }
+
+/// An API key and its user's token, no secret: what a device holds.
+fn device(server: &Server) -> Client {
+    Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        api_key: Some("key".into()),
+        token: Some("jean-token".into()),
+        user_id: Some("jean".into()),
+        authenticate: Some(false),
+        ..Default::default()
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_device_naming_a_user_is_refused_before_the_router() {
+    let server = Server::start().await;
+    let connections = device(&server).connections();
+
+    let refused = [
+        connections.create(&new(Some("ada"))).await.map(drop),
+        connections
+            .authorize("conn_1", &authorization(Some("ada")))
+            .await
+            .map(drop),
+        connections.get("conn_1", Some("ada")).await.map(drop),
+        connections.list(&filter(Some("ada"))).await.map(drop),
+        connections.delete("conn_1", Some("ada")).await,
+    ];
+
+    for refused in refused {
+        match refused {
+            Err(Error::Configuration(message)) => {
+                assert!(message.contains("acts only as that user"), "{message}")
+            }
+            other => panic!("not refused as a configuration error: {other:?}"),
+        }
+    }
+    assert!(server.seen().is_empty());
+}
+
+#[tokio::test]
+async fn a_device_naming_no_user_sends_what_it_always_did() {
+    let server = Server::start().await;
+    server.route(
+        Method::GET,
+        "/v1/agents/connections/conn_1",
+        200,
+        connection("conn_1", "github", None),
+    );
+    server.route(
+        Method::GET,
+        "/v1/agents/connections",
+        200,
+        connections(vec![], None),
+    );
+    let connections = device(&server).connections();
+
+    for user in [None, Some("")] {
+        connections.get("conn_1", user).await.unwrap();
+        connections.list(&filter(user)).await.unwrap();
+    }
+
+    let seen = server.seen();
+    assert_eq!(seen.len(), 4);
+    for seen in seen {
+        assert_eq!(seen.header("authorization"), "Bearer jean-token");
+        assert_eq!(seen.header("stream-auth-type"), "jwt");
+        assert!(acting_users(&seen).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_customer_id_client_still_names_a_user() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/connections",
+        201,
+        users("conn_1", "linear", "ada"),
+    );
+    let page = server.client().as_user("jean", "jean-token").unwrap();
+
+    page.connections().create(&new(Some("ada"))).await.unwrap();
+
+    let seen = server.request(Method::POST, "/v1/agents/connections");
+    assert_eq!(
+        seen.body["owner"],
+        json!({"type": "user", "user_id": "ada"})
+    );
+    assert_eq!(acting_users(&seen), ["ada"]);
+    assert_eq!(seen.header("x-customer-id"), "examples");
+    assert_eq!(seen.header("authorization"), "");
+}

@@ -190,6 +190,14 @@ async def router() -> AsyncIterator[ConnectionsRouter]:
 
 
 @pytest.fixture
+def device(router: ConnectionsRouter) -> stream.Client:
+    """A device: the app's key and its user's token, no secret."""
+    return stream.Client(
+        url=router.url, api_key="key", token="jean-token", authenticate=False
+    )
+
+
+@pytest.fixture
 def api(router: ConnectionsRouter) -> stream.Client:
     """A backend holding the app's key and secret, which the router reads the user from."""
     return stream.Client(
@@ -464,3 +472,55 @@ class TestConnections:
         assert refused.value.status == 404
         assert refused.value.code == "connection_not_found"
         assert "reading the connection missing" in str(refused.value)
+
+    @pytest.mark.parametrize("call", ["create", "authorize", "get", "list", "delete"])
+    async def test_a_device_naming_a_user_is_refused_before_the_router(
+        self, device: stream.Client, router: ConnectionsRouter, call: str
+    ):
+        methods = {
+            "create": lambda: device.connections.create("linear", user_id="alice"),
+            "authorize": lambda: device.connections.authorize("c-1", user_id="alice"),
+            "get": lambda: device.connections.get("c-1", user_id="alice"),
+            "list": lambda: device.connections.list(user_id="alice"),
+            "delete": lambda: device.connections.delete("c-1", user_id="alice"),
+        }
+
+        with pytest.raises(ValueError, match="acts only as that user"):
+            await methods[call]()
+
+        assert router.requests == []
+
+    async def test_a_device_naming_no_user_sends_what_it_always_did(
+        self, device: stream.Client, router: ConnectionsRouter
+    ):
+        apps = router.add("github")
+
+        for user in (None, ""):
+            await device.connections.get(apps["id"], user_id=user)
+            await device.connections.list(user_id=user)
+
+        for sent in router.requests:
+            assert sent["headers"]["Authorization"] == "Bearer jean-token"
+            assert sent["headers"]["Stream-Auth-Type"] == "jwt"
+            assert USER not in sent["headers"]
+        assert [r["query"] for r in router.requests][1] == {
+            "owner_type": "app",
+            "limit": "200",
+        }
+
+    async def test_a_customer_id_client_still_names_a_user(
+        self, router: ConnectionsRouter
+    ):
+        # A router that trusts the customer id reads the user from the header; the client
+        # holds a token and no API key, and that call is not a device's.
+        page = stream.Client(url=router.url, customer_id="acme").as_user(
+            "jean", "jean-token"
+        )
+
+        await page.connections.create("linear", user_id="alice")
+
+        sent = router.sent("POST", CONNECTIONS)
+        assert sent["body"]["owner"] == {"type": "user", "user_id": "alice"}
+        assert sent["headers"][USER] == "alice"
+        assert sent["headers"]["X-Customer-Id"] == "acme"
+        assert "Authorization" not in sent["headers"]

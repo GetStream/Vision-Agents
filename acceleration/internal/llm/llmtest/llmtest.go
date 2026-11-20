@@ -73,6 +73,11 @@ func (s *Script) ToolCalls(calls ...llm.ToolCall) {
 	})
 }
 
+// ProviderResponseID reports what the provider stored the response as.
+func (s *Script) ProviderResponseID(id string) {
+	s.write(func(w *llm.ResponseWriter) { w.SetProviderResponseID(id) })
+}
+
 // Usage reports what the response consumed.
 func (s *Script) Usage(usage llm.Usage) {
 	s.write(func(w *llm.ResponseWriter) { w.Usage(usage) })
@@ -85,6 +90,13 @@ func (s *Script) Fail(err error, context string) {
 	s.failure = err
 	s.mu.Unlock()
 	s.Done()
+}
+
+// TimeOut ends the response as one that ran past a deadline, the way a provider reports it:
+// timed out, and failed with the deadline (openai.go, anthropic/messages.go, openaicompat.go).
+func (s *Script) TimeOut() {
+	s.write(func(w *llm.ResponseWriter) { w.TimedOut() })
+	s.Fail(context.DeadlineExceeded, "read")
 }
 
 // Cancel ends the response as abandoned before it finished, the way a provider ends a stream

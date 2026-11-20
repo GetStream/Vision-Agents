@@ -122,48 +122,52 @@ func (s *AgentSuite) TestAStreamedReplyIsReportedHeardWithTheStartOfWhatItSays()
 }
 
 func (s *AgentSuite) TestAnUtteranceIsReportedHeardWhenTheTrackTakesItsFirstFrame() {
-	s.edgeFactory = func(base *loopbackEdge) Edge {
-		return &markedEdge{loopbackEdge: base, trackDelay: 150 * time.Millisecond}
-	}
-	s.join(true)
-	said := s.sayQuietly("welcome")
-	published := time.Now()
+	s.onFakeClock(func() {
+		s.edgeFactory = func(base *loopbackEdge) Edge {
+			return &markedEdge{loopbackEdge: base, trackDelay: 150 * time.Millisecond}
+		}
+		s.join(true)
+		said := s.sayQuietly("welcome")
+		published := time.Now()
 
-	s.synthesises(said.TurnID)
+		s.synthesises(said.TurnID)
 
-	s.eventually(func() bool { return countOf[Speaking](s.reported()) == 1 }, "the line was never reported heard")
-	speaking, _ := firstOf[Speaking](s.reported())
-	s.GreaterOrEqual(speaking.At.Sub(published), 100*time.Millisecond,
-		"reported when it was published rather than when the track took it")
-	s.Equal("welcome", speaking.Text)
-	s.Zero(countOf[Spoke](s.reported()), "the voice has not finished it")
+		s.eventually(func() bool { return countOf[Speaking](s.reported()) == 1 }, "the line was never reported heard")
+		speaking, _ := firstOf[Speaking](s.reported())
+		s.GreaterOrEqual(speaking.At.Sub(published), 100*time.Millisecond,
+			"reported when it was published rather than when the track took it")
+		s.Equal("welcome", speaking.Text)
+		s.Zero(countOf[Spoke](s.reported()), "the voice has not finished it")
 
-	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: said.TurnID, Characters: 7, AudioDurationMs: 10})
+		s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: said.TurnID, Characters: 7, AudioDurationMs: 10})
 
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
-	reported := s.reported()
-	s.Less(heardAt(reported, said.TurnID), spokeAt(reported, said.TurnID))
-	s.Equal(1, countOf[Speaking](reported))
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
+		reported := s.reported()
+		s.Less(heardAt(reported, said.TurnID), spokeAt(reported, said.TurnID))
+		s.Equal(1, countOf[Speaking](reported))
+	})
 }
 
 func (s *AgentSuite) TestAnUtteranceFinishedBeforeTheTrackTakesItIsStillHeardBeforeItIsSpoken() {
-	// A short line behind speech already queued is all synthesised before the track gets to
-	// it, which is what the stub voice does with every line.
-	s.edgeFactory = func(base *loopbackEdge) Edge {
-		return &markedEdge{loopbackEdge: base, trackDelay: 150 * time.Millisecond}
-	}
-	s.join(true)
+	s.onFakeClock(func() {
+		// A short line behind speech already queued is all synthesised before the track gets to
+		// it, which is what the stub voice does with every line.
+		s.edgeFactory = func(base *loopbackEdge) Edge {
+			return &markedEdge{loopbackEdge: base, trackDelay: 150 * time.Millisecond}
+		}
+		s.join(true)
 
-	s.Require().NoError(s.agent.Say(s.ctx, "welcome"))
+		s.Require().NoError(s.agent.Say(s.ctx, "welcome"))
 
-	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
-	reported := s.reported()
-	spoke, _ := firstOf[Spoke](reported)
-	s.Require().GreaterOrEqual(heardAt(reported, spoke.SynthesisID), 0, "the line was never reported heard")
-	s.Less(heardAt(reported, spoke.SynthesisID), spokeAt(reported, spoke.SynthesisID))
-	events := s.events
-	s.Never(func() bool { return countOf[Speaking](events.seen()) > 1 }, 300*time.Millisecond, 10*time.Millisecond,
-		"the track taking it later reported it heard a second time")
+		s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the line was never spoken")
+		reported := s.reported()
+		spoke, _ := firstOf[Spoke](reported)
+		s.Require().GreaterOrEqual(heardAt(reported, spoke.SynthesisID), 0, "the line was never reported heard")
+		s.Less(heardAt(reported, spoke.SynthesisID), spokeAt(reported, spoke.SynthesisID))
+		events := s.events
+		s.Never(func() bool { return countOf[Speaking](events.seen()) > 1 }, 300*time.Millisecond, 10*time.Millisecond,
+			"the track taking it later reported it heard a second time")
+	})
 }
 
 func (s *AgentSuite) TestAnUtteranceTalkedOverIsStillReportedHeard() {
@@ -184,16 +188,18 @@ func (s *AgentSuite) TestAnUtteranceTalkedOverIsStillReportedHeard() {
 }
 
 func (s *AgentSuite) TestAnUtteranceCutOffBeforeAnyOfItWentOutIsNeverReportedHeard() {
-	s.join(true)
-	said := s.sayQuietly("welcome to the clinic")
-	s.agent.Interrupt()
-	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the line was never cut off")
+	s.onFakeClock(func() {
+		s.join(true)
+		said := s.sayQuietly("welcome to the clinic")
+		s.agent.Interrupt()
+		s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the line was never cut off")
 
-	s.synthesises(said.TurnID)
+		s.synthesises(said.TurnID)
 
-	events := s.events
-	s.Never(func() bool { return countOf[Speaking](events.seen()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
-		"audio that was dropped was reported heard")
+		events := s.events
+		s.Never(func() bool { return countOf[Speaking](events.seen()) > 0 }, 200*time.Millisecond, 10*time.Millisecond,
+			"audio that was dropped was reported heard")
+	})
 }
 
 func (s *AgentSuite) TestANativeReplyIsReportedHeardWithItsTranscriptBeforeItIsSpoken() {

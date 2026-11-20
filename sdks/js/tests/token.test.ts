@@ -292,6 +292,19 @@ describe("a token function", () => {
     assert.equal((await acting.headers())["Authorization"], "Bearer token-3");
   });
 
+  it("does not carry the original's fetched token or user to a copy acting for another user", async () => {
+    let asked = 0;
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", authenticate: true });
+    await backend.setUser({ id: "jlahey", name: "J" }, () => `token-${(asked += 1)}`);
+    assert.equal((await backend.headers())["Authorization"], "Bearer token-1");
+
+    const acting = backend.actingFor("ana");
+
+    assert.equal(acting.identity, undefined);
+    assert.equal((await acting.headers())["Authorization"], "Bearer token-2");
+    assert.equal(backend.identity?.id, "jlahey");
+  });
+
   it("hands Stream's clients the fetch already under way rather than starting another", async () => {
     let release: (token: string) => void = () => {};
     let asked = 0;
