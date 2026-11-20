@@ -265,6 +265,17 @@ func (s *LogAppSuite) TestACallerOfALevelItsAppTurnsAwayHasAnAccessLineNamingThe
 	s.Empty(s.field(line, "customer"))
 }
 
+// Defect: a hook naming another numeric app answered with the bare 404 of http.NotFound and
+// no code on the access line.
+func (s *LogAppSuite) TestTheAccessLineOfAHookNamingAnotherAppNamesNotFound() {
+	id := s.utils.uuid()
+
+	status, _ := s.unauthenticatedClient.with(RequestIDHeader, id).call(http.MethodPost, "/v1/phone/hooks/stream/987654321", nil)
+
+	s.Require().Equal(http.StatusNotFound, status)
+	s.Equal("not_found", s.field(s.lineOf(id), "error_code"))
+}
+
 func (s *LogAppSuite) TestTheAccessLineOfASuccessNamesNoErrorCode() {
 	line := s.sent(s.serverClient, http.MethodGet, "/v1/agents/skills", nil)
 
@@ -976,4 +987,35 @@ func (s *LogAppHookSuite) hookLine(request *http.Request) (int, string) {
 	s.Require().NoError(err)
 	s.Require().NoError(response.Body.Close())
 	return response.StatusCode, s.lineOf(id)
+}
+
+// LogAppMCPEventsSuite is a router that takes MCP events, to read what the line of a delivery
+// it turns away names.
+type LogAppMCPEventsSuite struct {
+	appLogSuite
+}
+
+func TestLogAppMCPEventsSuite(t *testing.T) {
+	runSuite(t, new(LogAppMCPEventsSuite))
+}
+
+func (s *LogAppMCPEventsSuite) SetupSuite() {
+	s.database = "log_app_mcp_events"
+	s.mcpEventsOn = true
+	s.appLogSuite.SetupSuite()
+}
+
+func (s *LogAppMCPEventsSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+// Defect: a delivery for a subscription nobody has answered 410 in mcpevents' own envelope, past
+// writeError, and left the access line without its code.
+func (s *LogAppMCPEventsSuite) TestTheAccessLineOfADeliveryForNoSubscriptionNamesGone() {
+	id := s.utils.uuid()
+
+	status, _ := s.unauthenticatedClient.with(RequestIDHeader, id).call(http.MethodPost, "/v1/connectors/mcp-events/"+s.utils.uuid(), map[string]any{})
+
+	s.Require().Equal(http.StatusGone, status)
+	s.Equal("gone", s.field(s.lineOf(id), "error_code"))
 }

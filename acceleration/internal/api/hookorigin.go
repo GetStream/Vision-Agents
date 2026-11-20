@@ -170,6 +170,7 @@ func (s *Server) verifyDeploymentHook(w http.ResponseWriter, r *http.Request, pa
 		own = s.stream.DeploymentApp()
 	}
 	if pathApp != 0 && pathApp != own {
+		noteAnswered(w, http.StatusNotFound)
 		http.NotFound(w, r)
 		return hookOrigin{}, false
 	}
