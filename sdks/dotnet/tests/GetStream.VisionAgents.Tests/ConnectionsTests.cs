@@ -158,7 +158,11 @@ public sealed class ConnectionsTests
         await using var router = await Answering();
         using var ada = new VisionAgentsClient(new VisionAgentsOptions
         {
-            Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, UserId = "ada", Authenticate = true,
+            Url = router.Url,
+            ApiKey = "key",
+            ApiSecret = Fixtures.Secret,
+            UserId = "ada",
+            Authenticate = true,
         });
         var cancel = TestContext.Current.CancellationToken;
 
@@ -184,11 +188,18 @@ public sealed class ConnectionsTests
         await using var router = await Answering();
         using var device = new VisionAgentsClient(new VisionAgentsOptions
         {
-            Url = router.Url, ApiKey = "key", Token = "ada-token", UserId = "ada", Authenticate = authenticate,
+            Url = router.Url,
+            ApiKey = "key",
+            Token = "ada-token",
+            UserId = "ada",
+            Authenticate = authenticate,
         });
         using var derived = new VisionAgentsClient(new VisionAgentsOptions
         {
-            Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, Authenticate = authenticate,
+            Url = router.Url,
+            ApiKey = "key",
+            ApiSecret = Fixtures.Secret,
+            Authenticate = authenticate,
         }).AsUser("ada", "ada-token");
         var cancel = TestContext.Current.CancellationToken;
 
