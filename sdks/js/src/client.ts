@@ -5,6 +5,7 @@ import {
   type TokenSource,
   type UserTokenOptions,
 } from "./backend.js";
+import { Connections } from "./connections.js";
 import { ConfigurationError, errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
@@ -143,6 +144,8 @@ export class Client {
   readonly spendLimits: SpendLimits;
   /** The organization's teams and their spend limits. Server side only. */
   readonly teams: Teams;
+  /** The accounts the app and its users hold at connectors, such as a user's Linear. Server side only. */
+  readonly connections: Connections;
   /**
    * The app's tools, registered once for every agent and run by `runDispatch`. An agent is
    * offered one only where a tool group of its agent.yaml names it.
@@ -158,6 +161,7 @@ export class Client {
     this.scheduledTasks = new ScheduledTasks(this);
     this.spendLimits = new SpendLimits(this);
     this.teams = new Teams(this, this.spendLimits);
+    this.connections = new Connections(this);
     this.peers = new StreamPeers(this.backend);
   }
 

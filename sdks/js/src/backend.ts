@@ -347,7 +347,7 @@ export class Backend {
   /** The fetch in flight, shared by every request that needs a token while it runs. */
   private fetching: Promise<string> | undefined;
   private user: StreamUser | undefined;
-  /** The end user `actingFor` named, sent beside this backend's own credential. */
+  /** The end user `speakingFor` named, sent beside this backend's own credential. */
   private actingForValue = "";
   /**
    * The tokens this backend signed with its secret, by their claims, kept until a minute before
@@ -425,7 +425,7 @@ export class Backend {
     return this.userIdValue;
   }
 
-  /** The end user `actingFor` named, beside this backend's own credential, or the empty string. */
+  /** The end user `speakingFor` named, beside this backend's own credential, or the empty string. */
   get actsFor(): string {
     return this.actingForValue;
   }
@@ -560,8 +560,17 @@ export class Backend {
    * Unlike `userId` it never mints a token for that user, so the request is still the
    * server's: what it writes is answered by the model rather than handed back to a dispatch
    * worker, and no daily limit is counted. The user goes in `X-Stream-User-Id`.
+   *
+   * @deprecated Name the user on the call instead, with its optional `userId`, such as
+   * `api.connections.create("linear", { userId })`. A dispatch worker's `answer`
+   * already speaks for whoever wrote the message.
    */
   actingFor(userId: string): Backend {
+    return this.speakingFor(userId);
+  }
+
+  /** @internal What `actingFor` does, for the calls that take the user as a parameter. */
+  speakingFor(userId: string): Backend {
     const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
     acting.userIdValue = "";
     acting.user = undefined;

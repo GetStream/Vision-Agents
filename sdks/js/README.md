@@ -179,6 +179,36 @@ and a device naming one at all with a 403. What the router answers is in micros 
 `USD.fromMicros(limit.limit_micros)` prints as `$20000.00`. Work a limit refuses is a
 `RouterError` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one end user's.
 
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through. A backend creates one for a user, sends the user's browser to the provider's consent,
+and reads whether it connected. Server side only:
+
+```ts
+const connection = await api.connections.create("linear", { userId: "alice" });
+const consent = await api.connections.authorize(connection.id, {
+  returnUrl: "https://app.example.com/settings",
+  userId: "alice",
+});
+// Open consent.launch_url in a popup from a page of the return URL's origin, and post it
+// consent.handoff_token. The attempt ends at consent.expires_at.
+
+await api.connections.get(connection.id, { userId: "alice" }); // status is pending until alice consents
+await api.connections.list({ userId: "alice" }); // or one connector's: { connectorId: "linear", userId }
+await api.connections.delete(connection.id, { userId: "alice" });
+```
+
+`userId` is named on each call, and the SDK sends it as the owner and as `X-Stream-User-Id`, so
+the two never differ. Without it a call is about the app's own connections, which any of its
+agents may be bound to. Another user's connection is not found, the same as one that does not
+exist; the app's are reached whatever `userId` a call names, but `list({ userId })` lists only
+that user's. Only a server holding the API secret may name a user: a device or page gets a
+`ConfigurationError` before anything is sent.
+
+`backend.actingFor(userId)` still works and is deprecated: name the user on the call instead. A
+client built on it sends no user on a call that names none.
+
 ## A conversation somebody comes back to
 
 A text conversation is kept in Stream Chat, so what was said outlives the session that
