@@ -6,6 +6,10 @@
 
 `Client::connections()` creates, authorizes, reads, lists and deletes connections: `create(&NewConnection { connector, label, user_id })`, `authorize(id, &AuthorizeOptions { return_url, user_id })` (the consent's launch URL, handoff token and expiry), `get(id, user_id)`, `list(&ConnectionFilter { connector, user_id })` (every page) and `delete(id, user_id)`. A user given goes out as both the owner and `X-Stream-User-Id`; `None` is the app's own connection and leaves the client's own `ClientOptions::user_id` as it is.
 
+### The Ruby SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", user_id: "alice")`, then `authorize(id, return_url:, user_id:)` for the launch URL, handoff token and expiry of the consent, and `get(id, user_id:)`, `list(connector:, user_id:)`, `delete(id, user_id:)`; no `user_id` is the app's own connection. `Client#get`, `post`, `put`, `patch`, `delete` and `socket` take an optional `user_id:` sent in `X-Stream-User-Id`, and `Backend#acting_for` is deprecated in its favour (AI-3380, AI-3387).
+
 ### The Python SDK connects a user's own accounts
 
 `api.connections` creates, authorizes, reads, lists and deletes connections, each call naming the user as `user_id` (the owner and `X-Stream-User-Id`; none is the app's). `api.agent(name, user_id=...)` and `api.router(config, user_id=...)` run work for a user on the app's credential; `api.for_user` is deprecated and still works.

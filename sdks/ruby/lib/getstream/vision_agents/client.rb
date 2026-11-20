@@ -17,11 +17,19 @@ module GetStream
     #   api.get("/v1/agents/configs", query: { name: "docs" })
     #   api.get("/v1/agents/sessions/{id}", path: { id: "sess_1" })
     #
-    # The resources (#agent, #router, #simulations, #memories, #spend_limits, #teams) are built
-    # on these, and are what callers use.
+    # The resources (#agent, #router, #simulations, #memories, #spend_limits, #teams,
+    # #connections) are built on these, and are what callers use.
     #
     # Answers are the router's JSON as string-keyed hashes, whole: a field added to the spec
     # after this gem shipped still reaches the caller. A 204 answers nil.
+    #
+    # The HTTP methods and #socket take an optional user_id: the end user that one request is
+    # for, sent in X-Stream-User-Id with this client's own credential, so one client serves
+    # every user:
+    #
+    #   api.get("/v1/agents/sessions/{id}", path: { id: "sess_1" }, user_id: "ada")
+    #
+    # nil keeps whoever the backend acts for; an empty one drops that user (a client's own user_id: stays).
     class Client
       OPEN_TIMEOUT = 10
       # Creating a session returns once the agent is in the call, which can take seconds.
@@ -41,37 +49,37 @@ module GetStream
         @tools = tools || Tools.new
       end
 
-      def get(template, path: {}, query: {})
-        request(:get, template, path: path, query: query)
+      def get(template, path: {}, query: {}, user_id: nil)
+        request(:get, template, path: path, query: query, user_id: user_id)
       end
 
-      def post(template, path: {}, query: {}, body: nil)
-        request(:post, template, path: path, query: query, body: body)
+      def post(template, path: {}, query: {}, body: nil, user_id: nil)
+        request(:post, template, path: path, query: query, body: body, user_id: user_id)
       end
 
-      def put(template, path: {}, query: {}, body: nil)
-        request(:put, template, path: path, query: query, body: body)
+      def put(template, path: {}, query: {}, body: nil, user_id: nil)
+        request(:put, template, path: path, query: query, body: body, user_id: user_id)
       end
 
-      def patch(template, path: {}, query: {}, body: nil)
-        request(:patch, template, path: path, query: query, body: body)
+      def patch(template, path: {}, query: {}, body: nil, user_id: nil)
+        request(:patch, template, path: path, query: query, body: body, user_id: user_id)
       end
 
       # @param resend [Boolean] false for a request whose lost answer must reach the caller as
       #   lost: Net::HTTP otherwise sends a DELETE again, once, when its connection drops before
       #   the answer, and the second answer is read as the first's.
-      def delete(template, path: {}, query: {}, resend: true)
-        request(:delete, template, path: path, query: query, resend: resend)
+      def delete(template, path: {}, query: {}, resend: true, user_id: nil)
+        request(:delete, template, path: path, query: query, resend: resend, user_id: user_id)
       end
 
       # Opens one of the router's sockets. OpenAPI stops at the upgrade, so what is said on it
       # is the caller's to read; see Socket.
-      def socket(template, path: {}, query: {})
+      def socket(template, path: {}, query: {}, user_id: nil)
         operation = operation_for(:get, template)
         raise ConfigurationError, "GET #{template} is not a socket" unless operation[:socket]
 
         url = @backend.socket_url(expand(operation, template, path, query))
-        Socket.open(url, headers: @backend.headers)
+        Socket.open(url, headers: @backend.headers(acting_for: user_id))
       end
 
       # Whether this speaks for a process the customer runs rather than for a device.
@@ -171,16 +179,21 @@ module GetStream
         Teams.new(self)
       end
 
+      # The accounts the app and its users hold at connectors, such as a user's Linear.
+      def connections
+        Connections.new(self)
+      end
+
       private
 
-      def request(method, template, path:, query:, body: nil, resend: true)
+      def request(method, template, path:, query:, user_id:, body: nil, resend: true)
         operation = operation_for(method, template)
         raise ConfigurationError, "#{template} is a socket; open it with #socket" if operation[:socket]
 
         target = URI(@backend.url + expand(operation, template, path, query))
         payload = encode_body(operation, body)
         started = Net::HTTP.const_get(method.to_s.capitalize).new(target)
-        @backend.headers.each { |name, value| started[name] = value }
+        @backend.headers(acting_for: user_id).each { |name, value| started[name] = value }
         started["Accept"] = "application/json"
         if payload
           started["Content-Type"] = "application/json"

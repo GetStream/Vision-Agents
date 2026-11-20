@@ -431,6 +431,35 @@ it a one-time amount past them. Work a limit refuses raises `RouterError` with s
 code `spend_limit_reached`, or 429 `user_limit_reached` for one end user's. All of it is server
 side only.
 
+## A user's own accounts
+
+A connection is one account at a connector, such as a user's Linear, that an agent's tools act
+through. A backend creates one for a user, sends the user's browser to the provider's consent,
+and reads whether it connected:
+
+```ruby
+connections = api.connections
+connection = connections.create("linear", user_id: "alice")
+consent = connections.authorize(connection["id"], return_url: "https://app.example.com/settings",
+                                                  user_id: "alice")
+# Open consent["launch_url"] in a popup from a page of the return URL's origin, and post it
+# consent["handoff_token"]. The attempt ends at consent["expires_at"].
+
+connections.get(connection["id"], user_id: "alice")["status"] # pending until alice consents
+mine = connections.list(user_id: "alice")
+connections.delete(connection["id"], user_id: "alice")
+```
+
+Each call takes the user, and the SDK sends it as the owner and in `X-Stream-User-Id`, so the
+two never differ. Another user's connection is not found, the same as one that does not exist.
+An app's connection is reached by every call, one naming a user included, but `list` with a
+`user_id` lists only that user's. Leave `user_id` out for the app's own connection, which any
+of its agents may be bound to (a client built with its own `user_id:` still sends that one). All of it is server side only.
+
+Any request can name its user the same way: `api.get`, `post`, `put`, `patch`, `delete` and
+`socket` take `user_id:` and send it in `X-Stream-User-Id` with the client's own credential.
+`Backend#acting_for` still works but is deprecated: one client serves every user.
+
 ## The router
 
 A router comes from the client, and which model answers lives in its config, never in the
