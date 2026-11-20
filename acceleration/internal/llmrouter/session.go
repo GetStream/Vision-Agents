@@ -296,7 +296,8 @@ func (s *Session) loggedCall(stat routing.Stat) []any {
 }
 
 // vendorHost is the host a provider sends its requests to, for a provider that says
-// (openaicompat.LLM.Host). A provider whose vendor has one fixed host says nothing.
+// (openaicompat.LLM.Host). A provider that says nothing is one not built on openaicompat
+// (mock), or one whose native adapter takes an instance endpoint (openai, anthropic Messages).
 func vendorHost(provider Provider) string {
 	var inner any = provider
 	if wrapped, ok := provider.(started); ok {
@@ -462,7 +463,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	if response.ProviderResponseID != "" {
 		logged = append(logged, "provider_response_id", response.ProviderResponseID)
 	}
-	if code != "" {
+	if stat.ErrorMessage != "" {
 		logged = append(logged, "error", store.SafeLogText(stat.ErrorMessage), "transient", transient)
 	}
 	slog.Info("model call timing", logged...)
