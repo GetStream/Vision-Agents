@@ -93,6 +93,33 @@ func (s *RecorderSuite) TestAFailureIsCountedUnderItsOutcomeNeverItsCode() {
 	}, traffic(trafficRequests, "provider", vendor.Provider))
 }
 
+func (s *RecorderSuite) TestAHedgesSilentLoserIsCountedApartFromATimeoutButStoredAsOne() {
+	vendor := vendorOfItsOwn()
+
+	rows := s.recordedAs(LLM, s.prices, vendor,
+		Stat{ErrorCode: ErrorTimeout, HedgeLost: true},
+		Stat{ErrorCode: ErrorTimeout})
+
+	s.Equal(map[string]float64{
+		"modality=llm,model=m,outcome=hedge_lost": 1,
+		"modality=llm,model=m,outcome=timeout":    1,
+	}, traffic(trafficRequests, "provider", vendor.Provider), "only a deadline run past is a timeout")
+	for _, row := range rows {
+		s.Equal(ErrorTimeout, row.ErrorCode, "the row is a timeout either way")
+		s.True(measuresProvider(row), "and so is the provider's health")
+	}
+}
+
+func (s *RecorderSuite) TestAHedgesSilentLoserOnTheCustomersKeyIsTheCustomers() {
+	vendor := vendorOfItsOwn()
+	vendor.BYOK = true
+
+	s.recordedAs(LLM, s.prices, vendor, Stat{ErrorCode: ErrorTimeout, HedgeLost: true})
+
+	s.Equal(map[string]float64{"modality=llm,model=m,outcome=customer_key": 1},
+		traffic(trafficRequests, "provider", vendor.Provider), "every failure on the customer's key is theirs")
+}
+
 func (s *RecorderSuite) TestATTSRowCountsItsCharactersAndAudioAndNoTokens() {
 	vendor := vendorOfItsOwn()
 
