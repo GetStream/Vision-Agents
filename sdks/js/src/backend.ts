@@ -347,7 +347,7 @@ export class Backend {
   /** The fetch in flight, shared by every request that needs a token while it runs. */
   private fetching: Promise<string> | undefined;
   private user: StreamUser | undefined;
-  /** The end user `speakingFor` named, sent beside this backend's own credential. */
+  /** The end user `actingFor` named, sent beside this backend's own credential. */
   private actingForValue = "";
   /**
    * The tokens this backend signed with its secret, by their claims, kept until a minute before
@@ -425,7 +425,7 @@ export class Backend {
     return this.userIdValue;
   }
 
-  /** The end user `speakingFor` named, beside this backend's own credential, or the empty string. */
+  /** The end user `actingFor` named, beside this backend's own credential, or the empty string. */
   get actsFor(): string {
     return this.actingForValue;
   }
@@ -566,20 +566,7 @@ export class Backend {
    * already speaks for whoever wrote the message.
    */
   actingFor(userId: string): Backend {
-    return this.speakingFor(userId);
-  }
-
-  /** @internal What `actingFor` does, for the calls that take the user as a parameter. */
-  speakingFor(userId: string): Backend {
-    const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
-    acting.userIdValue = "";
-    acting.user = undefined;
-    // A cache of its own: a fetch the original started settles into the original's fields,
-    // so a copied one would be held here forever.
-    acting.fetched = undefined;
-    acting.fetching = undefined;
-    acting.actingForValue = userId;
-    return acting;
+    return speakingFor(this, userId);
   }
 
   /**
@@ -994,6 +981,24 @@ function expiresSoon(token: string, now = Date.now()): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * A copy of `backend` that sends `userId` beside its own credential, for the calls that take
+ * the user as a parameter: what `actingFor` does. A function of its own rather than a method
+ * so that it stays out of `Backend`'s published type: the package exports no path to this
+ * module, and the private fields are reached by name for the same reason.
+ */
+export function speakingFor(backend: Backend, userId: string): Backend {
+  const acting = Object.assign(Object.create(Backend.prototype) as Backend, backend);
+  acting["userIdValue"] = "";
+  acting["user"] = undefined;
+  // A cache of its own: a fetch the original started settles into the original's fields,
+  // so a copied one would be held here forever.
+  acting["fetched"] = undefined;
+  acting["fetching"] = undefined;
+  acting["actingForValue"] = userId;
+  return acting;
 }
 
 /**

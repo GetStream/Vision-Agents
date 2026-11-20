@@ -166,6 +166,12 @@ class Connections:
         """The generated client acting for ``user_id``, replacing whoever this client acts
         for. Without one it acts for nobody extra: the user the client was built for stays."""
         if user_id:
+            if not self._backend.server_side:
+                raise ValueError(
+                    "a user's connections keep the app's credential, which only a backend "
+                    "holds; a device holds its user's token (as_user) and acts only as "
+                    "that user, so leave user_id off"
+                )
             return acting_for(self._backend, user_id).client()
         return replace(self._backend, acting_for="").client()
 
