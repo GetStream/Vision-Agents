@@ -74,7 +74,11 @@ class AgentConfigRequest:
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
-            model. Empty means every turn is answered.
+            model. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision
+            model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the
+            conversation before it as conversation, and by default is asked whether message, read in light of conversation,
+            is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets
+            question is refused. Empty means every turn is answered.
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
             skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the
             default, the only one there is.
