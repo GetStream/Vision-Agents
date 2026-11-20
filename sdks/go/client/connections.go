@@ -186,6 +186,6 @@ func (c *Connections) reach(id, userID string) (*acceleration.ClientWithResponse
 // client acts for otherwise.
 func (c *Connections) api(userID string) (*acceleration.ClientWithResponses, error) {
 	backend := c.client.backend
-	backend.ActingFor = userID
+	backend.ActingFor = userID //nolint:staticcheck // SA1019: a call names its user here, replacing the one the client acts for
 	return backend.Client()
 }
