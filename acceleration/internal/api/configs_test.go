@@ -334,21 +334,67 @@ func (s *ConfigsSuite) storedCards(id string, on, record bool) {
 	s.Equal(record, stored.EpisodeCardsRecord, "episode_cards_record")
 }
 
-// Tools are offered whole unless a config asks for them progressively, and an update that
-// leaves the setting out keeps it.
-func (s *ConfigsSuite) TestAConfigOffersToolsWholeUnlessItSaysProgressively() {
+// A config names its functions in tool groups, each offered whole unless it says otherwise,
+// and an update that leaves the groups out keeps them.
+func (s *ConfigsSuite) TestAConfigNamesItsToolsInGroups() {
 	unnamed := s.createConfig(map[string]any{"name": "support"})
-	s.False(value(unnamed.Tools.Progressive))
+	s.Require().NotNil(unnamed.Tools)
+	s.Empty(*unnamed.Tools, "a config names no function until it says so")
 
 	var patched AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
-		"/v1/agents/configs/"+unnamed.Id, map[string]any{"tools": map[string]any{"progressive": true}}, &patched))
-	s.True(value(patched.Tools.Progressive))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+unnamed.Id,
+		map[string]any{"tools": []any{
+			map[string]any{"name": "booking", "tools": []any{"lookup_booking"}},
+			map[string]any{"name": "refunds", "loading": "deferred", "tools": []any{"refund_booking", "void_ticket"}},
+		}}, &patched))
+	s.Require().NotNil(patched.Tools)
+	s.Require().Len(*patched.Tools, 2)
+	s.Equal(ToolLoadingFull, value((*patched.Tools)[0].Loading), "a group that says nothing is offered whole")
+	s.Equal(ToolLoadingDeferred, value((*patched.Tools)[1].Loading))
+	s.Equal([]string{"refund_booking", "void_ticket"}, (*patched.Tools)[1].Tools)
 
 	var saved AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
-		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support", "tools": map[string]any{}}, &saved))
-	s.True(value(saved.Tools.Progressive), "a setting left out on an update stays")
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support"}, &saved))
+	s.Require().NotNil(saved.Tools, "groups left out on an update stay")
+	s.Len(*saved.Tools, 2)
+}
+
+func (s *ConfigsSuite) TestAToolInTwoGroupsIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "tools": []any{
+			map[string]any{"name": "booking", "tools": []any{"lookup_booking"}},
+			map[string]any{"name": "lookups", "loading": "summary", "tools": []any{"lookup_booking"}},
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "lookup_booking is already in tool group")
+}
+
+func (s *ConfigsSuite) TestAToolGroupWithALoadingThereIsNoneOfIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "tools": []any{map[string]any{"name": "booking", "loading": "lazy", "tools": []any{"lookup_booking"}}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "loading")
+}
+
+func (s *ConfigsSuite) TestAFunctionTakingTheNameOfTheRoutersLoaderIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "support", "tools": []any{map[string]any{"name": "mine", "tools": []any{"load_tool"}}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "load_tool")
+}
+
+func (s *ConfigsSuite) TestTheToolSettingsOfBeforeGroupsAreRefused() {
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "support", "tools": map[string]any{"progressive": true}})
+
+	s.Equal(http.StatusBadRequest, status)
 }
 
 func (s *ConfigsSuite) TestAConfigRemembersItsScheduling() {
@@ -2640,47 +2686,35 @@ func (s *ConfigsSuite) TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAcce
 	s.Equal(http.StatusOK, status)
 }
 
-// Tool output is kept as long as the session unless a config says otherwise, an update
-// that leaves the setting out keeps it, and an empty one removes it.
-func (s *ConfigsSuite) TestAConfigKeepsToolOutputForAsLongAsItSays() {
-	unnamed := s.createConfig(map[string]any{"name": "support"})
-	s.Nil(unnamed.Tools.OutputRetention)
+// A group keeps its tools' output as long as it says, and a group that says nothing as long
+// as the session.
+func (s *ConfigsSuite) TestAToolGroupKeepsItsOutputForAsLongAsItSays() {
+	created := s.createConfig(map[string]any{"name": "billing", "tools": []any{
+		map[string]any{"name": "cards", "output_retention": "7d", "tools": []any{"charge_card"}},
+		map[string]any{"name": "lookups", "tools": []any{"lookup_invoice"}},
+	}})
 
-	created := s.createConfig(map[string]any{"name": "billing", "tools": map[string]any{"output_retention": "7d"}})
-	s.Equal("7d", value(created.Tools.OutputRetention))
-
-	var saved AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
-		"/v1/agents/configs/"+created.Id, map[string]any{"name": "billing", "tools": map[string]any{"progressive": true}}, &saved))
-	s.Equal("7d", value(saved.Tools.OutputRetention), "a setting left out on an update stays")
-
-	var patched AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
-		"/v1/agents/configs/"+created.Id, map[string]any{"tools": map[string]any{"output_retention": "none"}}, &patched))
-	s.Equal("none", value(patched.Tools.OutputRetention))
-
-	var cleared AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
-		"/v1/agents/configs/"+created.Id, map[string]any{"tools": map[string]any{"output_retention": ""}}, &cleared))
-	s.Nil(cleared.Tools.OutputRetention)
+	s.Require().NotNil(created.Tools)
+	s.Equal("7d", value((*created.Tools)[0].OutputRetention))
+	s.Nil((*created.Tools)[1].OutputRetention)
 }
 
 func (s *ConfigsSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefusedOnEveryWrite() {
 	created := s.createConfig(map[string]any{"name": "support"})
-	tooLong := map[string]any{"output_retention": "3651d"}
+	tooLong := []any{map[string]any{"name": "cards", "output_retention": "3651d", "tools": []any{"charge_card"}}}
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
 		map[string]any{"name": "billing", "tools": tooLong})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "tools.output_retention")
+	s.Contains(failure, "tools[0].output_retention")
 	status, failure = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
 		map[string]any{"name": "support", "tools": tooLong})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "tools.output_retention")
+	s.Contains(failure, "tools[0].output_retention")
 	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
 		map[string]any{"tools": tooLong})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "tools.output_retention")
+	s.Contains(failure, "tools[0].output_retention")
 }
 
 func callsExample() map[string]any {

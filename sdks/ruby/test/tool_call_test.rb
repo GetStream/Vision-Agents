@@ -56,25 +56,65 @@ class TestToolCall < Minitest::Test
     assert_equal "done", tools.call("none", "{}")
   end
 
+  def test_params_declares_each_argument_a_required_string
+    tools = VA::Tools.new.register("weather_lookup", description: "Weather", params: { location: "a city or region" },
+                                                     approval: "Weather in {location}?") { |location:| location }
+
+    assert_equal({ type: "object", properties: { location: { type: "string", description: "a city or region" } },
+                   required: ["location"] }, tools.declarations.first[:parameters])
+  end
+
+  def test_params_and_parameters_together_are_refused
+    assert_raises(ArgumentError) do
+      VA::Tools.new.register("weather_lookup", description: "Weather", params: { location: "a city" },
+                                               parameters: BOOKING) { "" }
+    end
+  end
+
+  def test_a_block_of_keywords_is_handed_the_arguments_it_names
+    tools = VA::Tools.new
+    tools.register("weather_lookup", description: "Weather", params: { location: "a city" }) do |location:, units: "C"|
+      "#{location} #{units}"
+    end
+    tools.register("everything", description: "All of it") { |location:, **rest| [location, rest] }
+
+    assert_equal "Paris C", tools.call("weather_lookup", '{"location":"Paris","mood":"sunny"}')
+    assert_equal "Oslo F", tools.call("weather_lookup", '{"location":"Oslo","units":"F"}')
+    assert_equal '["Paris",{"mood":"sunny"}]', tools.call("everything", '{"location":"Paris","mood":"sunny"}')
+  end
+
+  def test_a_block_of_keywords_missing_one_it_requires_fails_the_call
+    tools = VA::Tools.new
+    tools.register("weather_lookup", description: "Weather", params: { location: "a city" }) { |location:| location }
+
+    missing = assert_raises(ArgumentError) { tools.call("weather_lookup", '{"city":"Paris"}') }
+    assert_match(/location/, missing.message)
+  end
+
+  def test_a_block_of_keywords_with_a_positional_argument_is_handed_its_call_first
+    tools = VA::Tools.new
+    tools.register("weather_lookup", description: "Weather",
+                                     params: { location: "a city" }) do |tool_call_context, location:|
+      "#{tool_call_context.id} #{location}"
+    end
+
+    assert_equal "t1 Paris", tools.call("weather_lookup", '{"location":"Paris"}', VA::ToolCallContext.new(id: "t1"))
+  end
+
   def test_a_call_without_a_socket_does_nothing
     tool_call_context = VA::ToolCallContext.new
 
-    assert_nil tool_call_context.update("checking")
-    assert_nil tool_call_context.say("One moment.")
     assert_nil tool_call_context.disallow_interruptions
     refute tool_call_context.cancelled?
   end
 
-  def test_a_call_reports_how_it_is_going_and_a_call_stopped_first_is_not_held
+  def test_a_call_stopped_first_is_not_held
     sent = []
     tool_call_context = VA::ToolCallContext.new(id: "t1", send: ->(frame) { sent << frame })
 
-    tool_call_context.update("checking")
-    tool_call_context.say("One moment.")
     tool_call_context.cancel!
 
-    assert_equal [{ type: "tool_update", tool_call_id: "t1", text: "checking", verbatim: false },
-                  { type: "tool_update", tool_call_id: "t1", text: "One moment.", verbatim: true }], sent
+    assert_empty sent
     assert_raises(VA::CallNotHeldError) { tool_call_context.disallow_interruptions }
   end
 end

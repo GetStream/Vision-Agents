@@ -73,6 +73,7 @@ final class AgentSession {
     required this._sessions,
     List<AgentTool> tools = const [],
     this.interim = false,
+    this._watch = true,
   }) : _session = session,
        _tools = {for (final tool in tools.reversed) tool.name: tool};
 
@@ -105,6 +106,10 @@ final class AgentSession {
   final Backend _backend;
   final Sessions _sessions;
 
+  /// Whether the conversation is followed over a socket. False is `SessionOptions.watch`
+  /// false: read and written over HTTP, with nothing here to send to.
+  final bool _watch;
+
   /// The tools whose calls are answered here, by name.
   final Map<String, AgentTool> _tools;
 
@@ -119,6 +124,7 @@ final class AgentSession {
   final _conversation = LiveValueController(const Conversation());
   final _connection = LiveValueController<Connection>(Connection.notStarted);
   final _approvals = LiveValueController<List<ToolApprovalRequest>>(const []);
+  final _toolCalls = LiveValueController<Map<String, ToolCallState>>(const {});
   final Set<_Subscriber> _subscribers = {};
   final Set<String> _running = {};
   final Set<String> _cancelled = {};
@@ -142,6 +148,10 @@ final class AgentSession {
   /// first.
   LiveValue<List<ToolApprovalRequest>> get approvals => _approvals;
 
+  /// Every tool call of the session by its id, as it was last reported: running, waiting for a
+  /// person's approval, or how it ended, whichever process runs it. Finished calls stay.
+  LiveValue<Map<String, ToolCallState>> get toolCalls => _toolCalls;
+
   List<Turn> get turns => _conversation.value.turns;
   ConversationState get state => _conversation.value.state;
   bool get isConnected => _connection.value is Connected;
@@ -155,8 +165,12 @@ final class AgentSession {
   /// Opens the socket and starts following the conversation. Calling it again, even while it
   /// is opening, opens nothing more, and after [close] it opens nothing at all.
   ///
-  /// Throws, and reports it on [connection], when the socket cannot be opened.
-  Future<void> start() => _starting ??= _start();
+  /// Throws, and reports it on [connection], when the socket cannot be opened, and throws a
+  /// [StateError] for a session opened with `watch: false`.
+  Future<void> start() {
+    _watched();
+    return _starting ??= _start();
+  }
 
   Future<void> _start() async {
     final Uri uri;
@@ -202,6 +216,7 @@ final class AgentSession {
   /// Each call is a stream of its own, so two listeners each see every event. A listener
   /// more than 256 events behind is finished rather than buffered without bound.
   Stream<AgentEvent> events() {
+    _watched();
     final subscriber = _Subscriber();
     if (_connection.value is Disconnected) {
       subscriber.controller.close();
@@ -215,11 +230,29 @@ final class AgentSession {
     });
   }
 
+  /// Calls [handler] with every event of [kind], such as [AgentEventKind.toolCallFinished],
+  /// until the subscription is cancelled or the conversation ends.
+  StreamSubscription<AgentEvent> on(AgentEventKind kind, void Function(AgentEvent event) handler) =>
+      events().where((event) => event.kind == kind).listen(handler);
+
   /// Speaks this without going through the model.
-  void say(String text) => _held().send(SayCommand(text));
+  ///
+  /// [interrupt] stops what the agent is saying first, rather than waiting for it to finish.
+  void say(String text, {bool interrupt = false}) {
+    final socket = _held();
+    if (interrupt) {
+      socket.send(const InterruptCommand());
+    }
+    socket.send(SayCommand(text));
+  }
 
   /// Abandons the reply in flight.
-  void interrupt() => _held().send(const InterruptCommand());
+  ///
+  /// With [requestId], the `request_id` a reply answers (as `command_accepted` and its tool
+  /// calls carry it), only that reply is abandoned and the router reports `command_stopped`.
+  /// An id the router does not know, or any id on a conversation that keeps no commands,
+  /// comes back as an `error` event.
+  void interrupt({String requestId = ''}) => _held().send(InterruptCommand(requestId: requestId));
 
   /// Answers a call waiting in [approvals].
   ///
@@ -277,6 +310,8 @@ final class AgentSession {
   /// under each. Only a session this device opened takes tools from it, and a name the agent
   /// has of its own, such as a connector's tool, is refused.
   Future<void> addTools(List<AgentTool> tools) async {
+    // A conversation nothing is watching has nowhere to be asked for a call.
+    _watched();
     if (tools.isEmpty) {
       return;
     }
@@ -375,6 +410,7 @@ final class AgentSession {
       sessions: _sessions,
       tools: _tools.values.toList(),
       interim: interim,
+      watch: _watch,
     ).._unsettled.addAll(_unsettled),
   );
 
@@ -476,20 +512,21 @@ final class AgentSession {
     final asked = _conversation.value.said(text.trim());
     final id = asked.turns.last.id;
     _conversation.value = asked;
-    return () {
-      final now = _conversation.value;
-      _conversation.value = Conversation(
-        turns: [
-          for (final turn in now.turns)
-            if (turn.id != id) turn,
-        ],
-        state: now.state,
-        failure: now.failure,
+    return () => _conversation.value = _conversation.value.withoutTurn(id);
+  }
+
+  void _watched() {
+    if (!_watch) {
+      throw StateError(
+        'this conversation is not being watched, so there is nothing to send to: open it '
+        'without watch: false, or use responses.create() and read the turn back through '
+        'responses.items()',
       );
-    };
+    }
   }
 
   SessionSocket _held() {
+    _watched();
     final socket = _socket;
     if (socket == null) {
       throw StateError('start() the session before talking to it');
@@ -499,6 +536,9 @@ final class AgentSession {
 
   void _apply(AgentEvent event) {
     _conversation.value = _conversation.value.apply(event);
+    if (event.toolCallState case final call?) {
+      _toolCalls.value = {..._toolCalls.value, call.id: call};
+    }
     switch (event.kind) {
       case AgentEventKind.toolCall:
         _answer(event.toolCall!, run: event['run'] != false);
@@ -538,13 +578,16 @@ final class AgentSession {
       }
       return;
     }
+    if (!run) {
+      return;
+    }
     // Session events go to observers as well as to whoever owns the tool. A worker elsewhere
     // may own this one, and an observer must not answer it first.
     final tool = _tools[call.name];
     if (tool == null) {
       return;
     }
-    if (tool.approval case final approval?) {
+    if (tool.approval case final approval? when !call.approved) {
       _approvals.value = [..._approvals.value, ToolApprovalRequest._(call, approval, tool)];
     } else {
       _run(call, tool);
@@ -662,6 +705,7 @@ final class AgentSession {
     _conversation.close();
     _connection.close();
     _approvals.close();
+    _toolCalls.close();
   }
 }
 

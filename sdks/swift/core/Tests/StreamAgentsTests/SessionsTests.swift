@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 import Testing
@@ -226,6 +227,92 @@ import Testing
         #expect(request.query.contains("response_id=r1"))
         #expect(request.query.contains("limit=200"))
     }
+
+    private static let lookup = AgentTool(name: "local_lookup", description: "Read local state") { _ in
+        "local result"
+    }
+
+    /// A session opened is watched by the time it returns, so the router's call of one of its
+    /// tools is answered with nothing more asked of the caller.
+    @MainActor
+    @Test func aSessionOpenedAnswersItsToolsWithoutBeingStarted() async throws {
+        let server = try RouterServer()
+        defer { server.listener.cancel() }
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions()
+        options.tools = [Self.lookup]
+
+        let session = try await agents.agent("myagent").sessions.create(options)
+        defer { Task { await session.close() } }
+
+        #expect(session.isConnected)
+        var requests = server.requests.makeAsyncIterator()
+        let created = try #require(try await requests.next())
+        #expect(created.path == "/v1/agents/sessions")
+        #expect(created.body["agent"] == .string("myagent"))
+        #expect(created.body["tools"]?.arrayValue?.first?["name"] == .string("local_lookup"))
+        let watched = try #require(try await requests.next())
+        #expect(watched.method == "GET")
+        #expect(watched.path == "/v1/agents/sessions/s1/events")
+        let answer = try JSONDecoder().decode(
+            [String: RawJSON].self, from: try #require(try await server.commands.first { @Sendable _ in true }))
+        #expect(answer["type"] == .string("tool_result"))
+        #expect(answer["tool_call_id"] == .string("c1"))
+        #expect(answer["output"] == .string("local result"))
+    }
+
+    /// A session opened with `watch: false` has no socket and declares no tools, so what needs
+    /// the socket says how to do without it, and closing it stops it over HTTP.
+    @MainActor
+    @Test func aSessionOpenedUnwatchedHasNoSocketAndSaysWhatToDoInstead() async throws {
+        let server = try RouterServer()
+        defer { server.listener.cancel() }
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
+        var options = SessionOptions()
+        options.tools = [Self.lookup]
+        options.watch = false
+
+        let session = try await agents.agent("myagent").sessions.create(options)
+        await session.start()
+
+        #expect(!session.isConnected)
+        let said = await #expect(throws: AgentsError.self) { try await session.say("One moment.") }
+        let interrupted = await #expect(throws: AgentsError.self) { try await session.interrupt() }
+        for error in [said, interrupted] {
+            guard case .configuration(let message) = error else {
+                Issue.record("\(String(describing: error)) does not say how to do without the socket")
+                continue
+            }
+            #expect(message.contains("without watch: false"))
+            #expect(message.contains("responses.create"))
+        }
+        await session.close()
+        var requests = server.requests.makeAsyncIterator()
+        let created = try #require(try await requests.next())
+        #expect(created.path == "/v1/agents/sessions")
+        #expect(created.body["tools"]?.arrayValue?.isEmpty ?? true, "no tool is declared that nothing here runs")
+        let stopped = try #require(try await requests.next())
+        #expect(stopped.method == "POST")
+        #expect(stopped.path == "/v1/agents/sessions/s1/stop")
+    }
+
+    /// `chat` opens a session whose socket waits for `start`, which then answers its tools.
+    @MainActor
+    @Test func aChatAnswersItsToolsOnceStarted() async throws {
+        let server = try RouterServer()
+        defer { server.listener.cancel() }
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
+
+        let session = try await agents.chat(agent: "myagent", tools: [Self.lookup])
+        defer { Task { await session.close() } }
+        #expect(!session.isConnected)
+        await session.start()
+
+        let answer = try JSONDecoder().decode(
+            [String: RawJSON].self, from: try #require(try await server.commands.first { @Sendable _ in true }))
+        #expect(answer["tool_call_id"] == .string("c1"))
+        #expect(answer["output"] == .string("local result"))
+    }
 }
 
 @Suite struct ScheduledTasksTests {
@@ -452,5 +539,186 @@ struct SessionServer {
         connection.send(
             content: Data(head.utf8) + body,
             completion: .contentProcessed { _ in connection.cancel() })
+    }
+}
+
+/// Both halves of a router on one port, as a session uses them: HTTP, answered with the session
+/// `s1`, and the session's socket, upgraded here by hand, which asks for one call of
+/// `local_lookup` once it is open and hands over every frame sent back.
+private struct RouterServer {
+    struct Request: Sendable {
+        let method: String
+        let path: String
+        let body: [String: RawJSON]
+    }
+
+    let listener: NWListener
+    /// Every request in the order it arrived, the socket's upgrade included.
+    let requests: AsyncThrowingStream<Request, any Error>
+    let commands: AsyncThrowingStream<Data, any Error>
+    private let addresses: AsyncThrowingStream<URL, any Error>
+
+    init() throws {
+        let queue = DispatchQueue(label: "router-server")
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try NWListener(using: parameters)
+        self.listener = listener
+        let (addresses, address) = AsyncThrowingStream<URL, any Error>.makeStream()
+        let (requests, request) = AsyncThrowingStream<Request, any Error>.makeStream()
+        let (commands, command) = AsyncThrowingStream<Data, any Error>.makeStream()
+        self.addresses = addresses
+        self.requests = requests
+        self.commands = commands
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                if let port = listener.port {
+                    address.yield(URL(string: "http://127.0.0.1:\(port.rawValue)")!)
+                    address.finish()
+                }
+            case .failed(let error):
+                address.finish(throwing: error)
+                request.finish(throwing: error)
+                command.finish(throwing: error)
+            default: break
+            }
+        }
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: queue)
+            Self.read(connection, Data(), request, command)
+        }
+        queue.asyncAfter(deadline: .now() + 30) {
+            let error = AgentsError.unreadable("test server timed out")
+            address.finish(throwing: error)
+            request.finish(throwing: error)
+            command.finish(throwing: error)
+        }
+        listener.start(queue: queue)
+    }
+
+    func url() async throws -> URL {
+        try #require(try await addresses.first(where: { @Sendable _ in true }))
+    }
+
+    private static func read(
+        _ connection: NWConnection, _ buffer: Data,
+        _ request: AsyncThrowingStream<Request, any Error>.Continuation,
+        _ command: AsyncThrowingStream<Data, any Error>.Continuation
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, done, error in
+            var buffer = buffer
+            if let data { buffer.append(data) }
+            guard let end = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                if error == nil, !done { read(connection, buffer, request, command) }
+                return
+            }
+            let head = String(decoding: buffer[..<end.lowerBound], as: UTF8.self).components(separatedBy: "\r\n")
+            var headers: [String: String] = [:]
+            for field in head.dropFirst() {
+                let pair = field.split(separator: ":", maxSplits: 1)
+                guard pair.count == 2 else { continue }
+                headers[pair[0].lowercased()] = pair[1].trimmingCharacters(in: .whitespaces)
+            }
+            let length = Int(headers["content-length"] ?? "") ?? 0
+            let body = Data(buffer[end.upperBound...])
+            guard body.count >= length else {
+                if error == nil, !done { read(connection, buffer, request, command) }
+                return
+            }
+            let line = head[0].split(separator: " ").map(String.init)
+            let path = String(line[1].split(separator: "?", maxSplits: 1)[0])
+            request.yield(
+                Request(
+                    method: line[0], path: path,
+                    body: (try? JSONDecoder().decode([String: RawJSON].self, from: body)) ?? [:]))
+            if let key = headers["sec-websocket-key"] {
+                upgrade(connection, key: key, command)
+            } else {
+                respond(connection, path: path)
+            }
+        }
+    }
+
+    private static func respond(_ connection: NWConnection, path: String) {
+        let body =
+            path == "/v1/agents/sessions"
+            ? #"{"id":"s1","agent_id":"a1","call_id":"","call_type":"agent","created_at":"2026-10-02T17:00:00Z","modality":"text","state":"live","user_id":"jlahey"}"#
+            : ""
+        let head =
+            body.isEmpty
+            ? "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+            : "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
+        connection.send(
+            content: Data((head + body).utf8), completion: .contentProcessed { _ in connection.cancel() })
+    }
+
+    private static func upgrade(
+        _ connection: NWConnection, key: String, _ command: AsyncThrowingStream<Data, any Error>.Continuation
+    ) {
+        let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8)))
+            .base64EncodedString()
+        let head =
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            + "Sec-WebSocket-Accept: \(accept)\r\n\r\n"
+        let call = #"{"type":"tool_call","id":"c1","name":"local_lookup","arguments":"{}"}"#
+        connection.send(content: Data(head.utf8) + frame(0x1, Data(call.utf8)), completion: .idempotent)
+        listen(connection, Data(), command)
+    }
+
+    /// Reads the frames the session sends, answering its pings.
+    private static func listen(
+        _ connection: NWConnection, _ buffer: Data, _ command: AsyncThrowingStream<Data, any Error>.Continuation
+    ) {
+        var buffer = buffer
+        while let next = nextFrame(&buffer) {
+            let (opcode, payload) = next
+            switch opcode {
+            case 0x1, 0x2: command.yield(payload)
+            case 0x9: connection.send(content: frame(0xA, payload), completion: .idempotent)
+            case 0x8: return connection.cancel()
+            default: break
+            }
+        }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, done, error in
+            guard let data, error == nil else { return }
+            listen(connection, buffer + data, command)
+            if done { connection.cancel() }
+        }
+    }
+
+    /// A server's frame, which is never masked.
+    private static func frame(_ opcode: UInt8, _ payload: Data) -> Data {
+        var data = Data([0x80 | opcode])
+        if payload.count < 126 {
+            data.append(UInt8(payload.count))
+        } else {
+            data.append(contentsOf: [126, UInt8(payload.count >> 8), UInt8(payload.count & 0xff)])
+        }
+        return data + payload
+    }
+
+    /// Takes the first whole frame off `buffer`, unmasking it, or nil while it has none.
+    private static func nextFrame(_ buffer: inout Data) -> (UInt8, Data)? {
+        let bytes = [UInt8](buffer)
+        guard bytes.count >= 2 else { return nil }
+        var length = Int(bytes[1] & 0x7f)
+        var offset = 2
+        if length == 126 {
+            guard bytes.count >= 4 else { return nil }
+            length = Int(bytes[2]) << 8 | Int(bytes[3])
+            offset = 4
+        } else if length == 127 {
+            guard bytes.count >= 10 else { return nil }
+            length = bytes[2..<10].reduce(0) { $0 << 8 | Int($1) }
+            offset = 10
+        }
+        let masked = bytes[1] & 0x80 != 0
+        guard bytes.count >= offset + (masked ? 4 : 0) + length else { return nil }
+        let mask = masked ? Array(bytes[offset..<offset + 4]) : [0, 0, 0, 0]
+        if masked { offset += 4 }
+        let payload = Data((0..<length).map { bytes[offset + $0] ^ mask[$0 % 4] })
+        buffer = Data(bytes[(offset + length)...])
+        return (bytes[0] & 0x0f, payload)
     }
 }

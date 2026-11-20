@@ -1,0 +1,4 @@
+name: jean
+tools:
+  - name: weather
+    tools: [get_weather]

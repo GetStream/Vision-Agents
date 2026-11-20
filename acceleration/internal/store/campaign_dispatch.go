@@ -140,18 +140,21 @@ func (s *Store) TakeOverExpired(ctx context.Context, owner string, now time.Time
 		return nil, nil
 	}
 
+	expired := s.db.NewSelect().Model((*Contact)(nil)).
+		Column("cc.id").
+		Where("cc.stage = ? AND cc.leased_until < ?", InProgress, now).
+		Where("NOT EXISTS (SELECT 1 FROM campaigns cp WHERE cp.id = cc.campaign_id AND cp.move_paused)").
+		Order("cc.leased_until").
+		Limit(limit).
+		For("UPDATE SKIP LOCKED")
 	var contacts []Contact
-	err := s.db.NewRaw(`WITH expired AS (
-	SELECT id FROM campaign_contacts cc
-	WHERE stage = ? AND leased_until < ?
-		AND NOT EXISTS (SELECT 1 FROM campaigns cp WHERE cp.id = cc.campaign_id AND cp.move_paused)
-	ORDER BY leased_until
-	LIMIT ?
-	FOR UPDATE SKIP LOCKED
-)
-UPDATE campaign_contacts cc SET leased_by = ?, leased_until = ?
-FROM expired WHERE cc.id = expired.id
-RETURNING cc.*`, InProgress, now, limit, owner, now.Add(lease)).Scan(ctx, &contacts)
+	err := s.db.NewUpdate().With("expired", expired).Model((*Contact)(nil)).
+		TableExpr("expired").
+		Set("leased_by = ?", owner).
+		Set("leased_until = ?", now.Add(lease)).
+		Where("cc.id = expired.id").
+		Returning("cc.*").
+		Scan(ctx, &contacts)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: take over expired leases: %w", err))
 	}
@@ -219,26 +222,26 @@ func (s *Store) settleContact(ctx context.Context, owner, contactID string, sett
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE campaign_contacts cc SET
-	stage = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN ? ELSE ? END,
-	next_attempt_at = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN NULL ELSE ?::timestamptz END,
-	reason = CASE WHEN (? AND cc.reason = 'stopped') OR (? AND cp.state = ?) THEN cc.reason ELSE ? END,
-	step_id = COALESCE(?, cc.step_id),
-	attempt = ?,
-	outcome = ?,
-	converted = ?,
-	call_id = COALESCE(?, cc.call_id),
-	vendor_call_id = COALESCE(?, cc.vendor_call_id),
-	leased_by = '',
-	leased_until = NULL
-FROM campaigns cp
-WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN (?, ?)`,
-			stoppable, Stopped, ContactStopped, settle.Stage,
-			stoppable, Stopped, settle.NextAttemptAt,
-			keepsMark, stoppable, Stopped, nullable(settle.Reason),
-			nullable(settle.StepID), settle.Attempt, settle.Outcome, settle.Converted,
-			nullable(settle.CallID), nullable(settle.VendorCallID),
-			contactID, owner, InProgress, AwaitingOutcome)
+		result, err := tx.NewUpdate().Model((*Contact)(nil)).
+			TableExpr("campaigns AS cp").
+			Set("stage = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN ? ELSE ? END",
+				stoppable, Stopped, ContactStopped, settle.Stage).
+			Set("next_attempt_at = CASE WHEN ? AND (cc.reason = 'stopped' OR cp.state = ?) THEN NULL ELSE ?::timestamptz END",
+				stoppable, Stopped, settle.NextAttemptAt).
+			Set("reason = CASE WHEN (? AND cc.reason = 'stopped') OR (? AND cp.state = ?) THEN cc.reason ELSE ? END",
+				keepsMark, stoppable, Stopped, nullable(settle.Reason)).
+			Set("step_id = COALESCE(?, cc.step_id)", nullable(settle.StepID)).
+			Set("attempt = ?", settle.Attempt).
+			Set("outcome = ?", settle.Outcome).
+			Set("converted = ?", settle.Converted).
+			Set("call_id = COALESCE(?, cc.call_id)", nullable(settle.CallID)).
+			Set("vendor_call_id = COALESCE(?, cc.vendor_call_id)", nullable(settle.VendorCallID)).
+			Set("leased_by = ''").
+			Set("leased_until = NULL").
+			Where("cp.id = cc.campaign_id").
+			Where("cc.id = ? AND cc.leased_by = ?", contactID, owner).
+			Where("cc.stage IN (?, ?)", InProgress, AwaitingOutcome).
+			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("store: settle contact: %w", err)
 		}
@@ -457,10 +460,13 @@ func (s *Store) PutOffClassification(ctx context.Context, owner, attemptID strin
 	}
 	var released int64
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE campaign_contacts cc SET leased_by = '', leased_until = NULL
-FROM campaign_attempts ca
-WHERE ca.id = ? AND ca.classify_state = ? AND cc.id = ca.contact_id AND cc.stage = ? AND cc.leased_by = ?`,
-			attemptID, classifyPending, AwaitingOutcome, owner)
+		result, err := tx.NewUpdate().Model((*Contact)(nil)).
+			TableExpr("campaign_attempts AS ca").
+			Set("leased_by = ''").
+			Set("leased_until = NULL").
+			Where("ca.id = ? AND ca.classify_state = ?", attemptID, classifyPending).
+			Where("cc.id = ca.contact_id AND cc.stage = ? AND cc.leased_by = ?", AwaitingOutcome, owner).
+			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("store: release a contact to classify later: %w", err)
 		}

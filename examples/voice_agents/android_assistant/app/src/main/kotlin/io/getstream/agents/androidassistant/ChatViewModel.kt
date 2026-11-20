@@ -372,7 +372,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             context = getApplication(),
             scope = screenScope,
             start = {
-                sessionId?.let { Assistant.agents.attach(it, tools) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).chat(
+                sessionId?.let { Assistant.agents.attach(it, tools) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).sessions.create(
                     SessionOptions(
                         modelOverwrites = ModelOverwrites(llm = Assistant.CHAT_MODEL),
                         tools = tools,

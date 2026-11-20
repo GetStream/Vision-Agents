@@ -34,7 +34,6 @@ struct VoiceView: View {
                         .padding(.horizontal)
                 }
                 CallControls(voice: voice)
-                    .task { await voice.session.start() }
                     .padding(.bottom)
             } else {
                 if let failure {

@@ -124,9 +124,11 @@ func (s *Store) ReapproveConnectorTools(ctx context.Context, connection Connecto
 		// FOR SHARE: a consent or a credentials write that begins a new grant updates this row,
 		// so one that comes later waits for this transaction, and one that came first is seen.
 		var sameGrant bool
-		err := tx.QueryRowContext(ctx, "SELECT connected_at IS NOT DISTINCT FROM ? FROM connector_connections "+
-			"WHERE customer_id = ? AND id = ? AND deleted_at IS NULL FOR SHARE",
-			connection.ConnectedAt, connection.CustomerID, connection.ID).Scan(&sameGrant)
+		err := tx.NewSelect().Model((*ConnectorConnection)(nil)).
+			ColumnExpr("cc.connected_at IS NOT DISTINCT FROM ?", connection.ConnectedAt).
+			Where("cc.customer_id = ? AND cc.id = ? AND cc.deleted_at IS NULL", connection.CustomerID, connection.ID).
+			For("SHARE").
+			Scan(ctx, &sameGrant)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %s", ErrNoConnectorConnection, connection.ID)
 		}

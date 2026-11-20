@@ -3,6 +3,7 @@
 package store
 
 import (
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -153,6 +154,28 @@ func (s *StoreSuite) TestAnAppIsInTheOrganizationItIsRegisteredOrSeenUnder() {
 		s.Require().NoError(err)
 		s.False(other, app)
 	}
+}
+
+func (s *StoreSuite) TestAnOrganizationsAppsAreTheOnesSeenOrRegisteredUnderItAndItsOwn() {
+	org := Organization{Name: "registering"}
+	s.Require().NoError(s.store.CreateOrganization(s.ctx, &org))
+	registered := App{OrganizationID: org.ID, Name: "registered"}
+	s.Require().NoError(s.store.CreateApp(s.ctx, &registered))
+	moved := App{OrganizationID: org.ID, Name: "moved"}
+	s.Require().NoError(s.store.CreateApp(s.ctx, &moved))
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, moved.ID, "org-other"))
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, "app-seen-b", org.ID))
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, "app-seen-a", org.ID))
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, "app-elsewhere", "org-other"))
+
+	apps, err := s.store.OrganizationApps(s.ctx, org.ID)
+
+	s.Require().NoError(err)
+	s.Require().NotEmpty(apps)
+	s.Equal(org.ID, apps[0], "its own id first")
+	s.ElementsMatch([]string{org.ID, registered.ID, "app-seen-a", "app-seen-b"}, apps,
+		"not the app a request named another organization for, nor another organization's")
+	s.Less(slices.Index(apps, "app-seen-a"), slices.Index(apps, "app-seen-b"), "in order")
 }
 
 func scopeIDs(policies []Policy) []string {

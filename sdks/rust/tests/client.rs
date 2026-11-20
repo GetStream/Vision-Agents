@@ -6,6 +6,21 @@ use support::{SECRET, Server, claims, refusal};
 use vision_agents::{Client, ClientOptions, Error, ListResponsesQuery, RouterFailure, types};
 
 #[tokio::test]
+async fn a_client_acting_for_a_user_shares_the_apps_tools() {
+    let server = Server::start().await;
+    let backend = server.backend();
+    backend
+        .tools()
+        .register("lookup", "Look it up", json!({}), |_| async {
+            Ok::<_, String>("found")
+        });
+
+    let user = backend.as_user("ada", "ada-token").unwrap();
+
+    assert_eq!(user.tools().declared()[0].name, "lookup");
+}
+
+#[tokio::test]
 async fn a_router_with_nothing_in_front_is_told_the_customer() {
     let server = Server::start().await;
     server.route(

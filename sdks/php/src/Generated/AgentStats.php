@@ -20,6 +20,10 @@ final readonly class AgentStats
         // One row per tool, most called first.
         /** @var list<ToolStats> */
         public array $tools,
+        // Turns a session took in the window, on average. A turn is a reply to the person, not a rewound one or a del...
+        public float $avgTurns,
+        // Sessions that took a turn in the window: what a tool's session_share is out of.
+        public int $sessions,
     ) {
     }
 
@@ -33,6 +37,8 @@ final readonly class AgentStats
             peakConcurrentSessions: Json::int($data, 'peak_concurrent_sessions'),
             toolCalls: ToolStats::fromArray(Json::object($data, 'tool_calls')),
             tools: array_map(ToolStats::fromArray(...), Json::objects($data, 'tools')),
+            avgTurns: Json::float($data, 'avg_turns'),
+            sessions: Json::int($data, 'sessions'),
         );
     }
 
@@ -48,6 +54,8 @@ final readonly class AgentStats
         $out['peak_concurrent_sessions'] = $this->peakConcurrentSessions;
         $out['tool_calls'] = $this->toolCalls->toArray();
         $out['tools'] = array_map(static fn (ToolStats $each): array => $each->toArray(), $this->tools);
+        $out['avg_turns'] = $this->avgTurns;
+        $out['sessions'] = $this->sessions;
         return $out;
     }
 }

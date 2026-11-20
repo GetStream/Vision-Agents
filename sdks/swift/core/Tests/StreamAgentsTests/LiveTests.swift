@@ -69,8 +69,9 @@ struct LiveTests {
             return "Order A-1042: 2 wool throws, 78.00, delivered 14 August, unopened."
         }
 
-        let session = try await Live.agents.chat(agent: Live.agent, tools: [tool])
-        await session.start()
+        var options = SessionOptions()
+        options.tools = [tool]
+        let session = try await Live.agents.agent(Live.agent).sessions.create(options)
         defer { Task { await session.close() } }
 
         _ = try await session.responses.create("Look up order A-1042 and tell me what is in it.")
@@ -124,7 +125,9 @@ struct LiveTests {
 
     /// Asking over HTTP gets an answer the router writes down, without the socket.
     @Test func askingThroughResponsesGetsAnAnswerWrittenDown() async throws {
-        let session = try await Live.agents.agent(Live.agent).sessions.create(SessionOptions())
+        var options = SessionOptions()
+        options.watch = false
+        let session = try await Live.agents.agent(Live.agent).sessions.create(options)
         defer { Task { await session.close() } }
 
         let turn = try await session.responses.create("What are your opening hours? Answer in one sentence.")

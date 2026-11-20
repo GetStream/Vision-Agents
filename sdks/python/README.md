@@ -29,13 +29,14 @@ examples/voice_agents/customer_support/
   knowledge/policy.md    what the agent may look things up in
 ```
 
-`agent.yaml` is what makes the directory an agent, and naming the config is enough to store
-it: an agent finds its own directory on starting and pushes it to the acceleration backend.
-`.agent_sync` records the md5 of what was last stored, so a run over the same files does
-nothing:
+`agent.yaml` is what makes the directory an agent. `agent.sync()` finds the directory named
+after the config and stores it on the acceleration backend, and a sync of the same files
+changes nothing. Nothing syncs on its own: a session runs on whatever config is stored, so
+sync before the agent takes calls, e.g. as a deploy step:
 
 ```python
 agent = Agent(config="customer_support")
+await agent.sync()
 ```
 
 A page published elsewhere lands in the same knowledge base, cut into the same passages, so

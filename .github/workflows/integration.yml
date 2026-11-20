@@ -2,7 +2,7 @@ name: Integration (router)
 # The router's `-tags integration` suites that need Postgres, in six jobs: each runs its group of
 # packages one at a time on its own Postgres and Redis. Groups, not a job per package, because each
 # job spends about 35 s on setup; the groups are balanced by test time on CI, so a new package goes
-# in the lightest one. CI (unit) runs `go test ./...` without the tag, so only this workflow runs
+# in the lightest one. CI (Go) runs `go test ./...` without the tag, so only this workflow runs
 # these suites on CI. Not a required check. Vendor suites (tts, stt, llm, sts, search, imagegen, detection)
 # need API keys, so they are not here. internal/campaign, internal/phone/outcome,
 # internal/searchrouter and internal/simulation are Postgres suites left out of the matrix too

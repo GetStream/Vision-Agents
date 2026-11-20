@@ -43,6 +43,12 @@ func ToolTokens(tool Tool) int64 {
 	return textTokens(tool.Name) + textTokens(tool.Description) + textTokens(string(schema))
 }
 
+// ToolUseTokens estimates what one call puts in front of the model: its name, the
+// arguments it was given and the result it returned.
+func ToolUseTokens(name, arguments, result string) int64 {
+	return textTokens(name) + textTokens(arguments) + textTokens(result)
+}
+
 // Compose estimates what a request's prompt is made of.
 func Compose(params ResponseParams) Composition {
 	composed := Composition{Instructions: textTokens(params.Instructions)}

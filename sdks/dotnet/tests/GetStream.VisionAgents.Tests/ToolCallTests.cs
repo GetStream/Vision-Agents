@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -28,26 +29,20 @@ public sealed class ToolCallTests
                 user = new { id = "u1", name = "Ada", custom = new { tier = "gold" } },
                 conversation = new { cid = "messaging:c1", custom = new { } },
             });
-            sent.Add(await peer.ReceiveAsync());
-            sent.Add(await peer.ReceiveAsync());
             sent.Add(await peer.ReceiveAsync("tool_result"));
             await Finish(peer);
         });
         await using var agent = Agent(router);
-        agent.Tools.Register("book", "Books a flight", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
+        agent.Tools.Register("book", "Books a flight", [], (ToolCallContext toolCallContext, JsonElement _, CancellationToken _) =>
         {
-            await toolCallContext.UpdateAsync("Looking at flights", cancellationToken);
-            await toolCallContext.SayAsync("One moment.", cancellationToken);
             var user = toolCallContext.User;
-            return (object?)$"{toolCallContext.Id} {toolCallContext.SessionId} {toolCallContext.TurnId} {user.Id} {user.Name} " +
-                $"{user.Custom.Text("tier")} {toolCallContext.Conversation.Cid} {toolCallContext.Approved}";
+            return Task.FromResult<object?>($"{toolCallContext.Id} {toolCallContext.SessionId} {toolCallContext.TurnId} {user.Id} {user.Name} " +
+                $"{user.Custom.Text("tier")} {toolCallContext.Conversation.Cid} {toolCallContext.Approved}");
         });
 
         await Converse(agent);
 
-        Assert.Equal("""{"type":"tool_update","tool_call_id":"t1","text":"Looking at flights","verbatim":false}""", sent[0].ToJsonString());
-        Assert.Equal("""{"type":"tool_update","tool_call_id":"t1","text":"One moment.","verbatim":true}""", sent[1].ToJsonString());
-        Assert.Equal("t1 s1 turn-1 u1 Ada gold messaging:c1 True", sent[2].Text("output"));
+        Assert.Equal("t1 s1 turn-1 u1 Ada gold messaging:c1 True", sent[0].Text("output"));
     }
 
     [Fact]
@@ -136,132 +131,6 @@ public sealed class ToolCallTests
     }
 
     [Fact]
-    public async Task ACallCancelledWhileItIsSendingDoesNotEndTheSession()
-    {
-        await using var router = await TestRouter.StartAsync();
-        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
-        var sending = new TaskCompletionSource();
-        var cancelled = new TaskCompletionSource();
-        JsonObject? answered = null;
-        router.OnSocket(Events, async peer =>
-        {
-            // Nothing reads the update, so it is still being written when the cancel arrives.
-            peer.Pause();
-            await peer.SendAsync(new { type = "tool_call", id = "t1", name = "talk", arguments = "{}" });
-            await sending.Task.WaitAsync(TestRouter.Patience);
-            await peer.SendAsync(new { type = "tool_cancel", id = "t1" });
-            await cancelled.Task.WaitAsync(TestRouter.Patience);
-            peer.Resume();
-            await peer.SendAsync(new { type = "tool_call", id = "f1", name = "fast", arguments = "{}" });
-            answered = await peer.ReceiveAsync("tool_result");
-            await Finish(peer);
-        });
-        await using var agent = Agent(router);
-        agent.Tools
-            .Register("talk", "Talks at length", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
-            {
-                var update = toolCallContext.UpdateAsync(new string('x', 32 << 20), cancellationToken);
-                cancellationToken.Register(cancelled.SetResult);
-                sending.SetResult();
-                await update;
-                cancellationToken.ThrowIfCancellationRequested();
-                return (object?)"done";
-            })
-            .Register("fast", "Does not", [], (JsonElement _, CancellationToken _) => Task.FromResult<object?>("done"));
-
-        await Converse(agent);
-
-        Assert.Equal("f1", answered.Text("tool_call_id"));
-    }
-
-    [Fact]
-    public async Task ACancelledTokenStopsTheCallerWaitingForAStalledSendButNotTheFrame()
-    {
-        await using var router = await TestRouter.StartAsync();
-        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
-        var thrown = new TaskCompletionSource();
-        JsonObject? update = null;
-        JsonObject? answered = null;
-        router.OnSocket(Events, async peer =>
-        {
-            peer.Pause();
-            await peer.SendAsync(new { type = "tool_call", id = "t1", name = "talk", arguments = "{}" });
-            await thrown.Task.WaitAsync(TestRouter.Patience);
-            peer.Resume();
-            update = await peer.ReceiveAsync("tool_update");
-            answered = await peer.ReceiveAsync("tool_result");
-            await Finish(peer);
-        });
-        await using var agent = Agent(router);
-        agent.Tools
-            .Register("talk", "Talks at length", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken _) =>
-            {
-                using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-                try
-                {
-                    await toolCallContext.UpdateAsync(new string('x', 32 << 20), caller.Token).WaitAsync(TestRouter.Patience);
-                }
-                catch (OperationCanceledException)
-                {
-                    thrown.SetResult();
-                }
-                return (object?)"done";
-            });
-
-        await Converse(agent);
-
-        Assert.Equal(32 << 20, update.Text("text").Length);
-        Assert.Equal("t1", answered.Text("tool_call_id"));
-    }
-
-    [Fact]
-    public async Task ACancelledCallSendsNothingMore()
-    {
-        await using var router = await TestRouter.StartAsync();
-        router.On("POST", "/v1/agents/sessions", 201, Fixtures.Session());
-        var attempted = new TaskCompletionSource();
-        JsonObject? next = null;
-        router.OnSocket(Events, async peer =>
-        {
-            await peer.SendAsync(new { type = "tool_call", id = "t1", name = "talk", arguments = "{}" });
-            await peer.SendAsync(new { type = "tool_cancel", id = "t1" });
-            await attempted.Task.WaitAsync(TestRouter.Patience);
-            await peer.SendAsync(new { type = "tool_call", id = "f1", name = "fast", arguments = "{}" });
-            next = await peer.ReceiveAsync();
-            await Finish(peer);
-        });
-        await using var agent = Agent(router);
-        agent.Tools
-            .Register("talk", "Talks", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
-            {
-                try
-                {
-                    await Task.Delay(Timeout.Infinite, cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Cancelled by the router; now try to talk anyway.
-                }
-                try
-                {
-                    await toolCallContext.UpdateAsync("late", cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    attempted.SetResult();
-                    throw;
-                }
-                attempted.SetResult();
-                return (object?)"x";
-            })
-            .Register("fast", "Does not", [], (JsonElement _, CancellationToken _) => Task.FromResult<object?>("done"));
-
-        await Converse(agent);
-
-        Assert.Equal(("tool_result", "f1"), (next.Text("type"), next.Text("tool_call_id")));
-    }
-
-    [Fact]
     public async Task ACallThatOutlastsItsTimeoutFails()
     {
         await using var router = await TestRouter.StartAsync();
@@ -343,6 +212,62 @@ public sealed class ToolCallTests
     }
 
     [Fact]
+    public void ARecordParametersDescriptionIsItsArgumentsDescription()
+    {
+        var schema = Schema<WeatherLookup>();
+
+        Assert.Equal("""{"type":"string","description":"a city or region"}""", schema["properties"]!["location"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void APropertysDescriptionIsItsArgumentsDescription()
+    {
+        var schema = Schema<Booking>();
+
+        Assert.Equal("how many people are coming", schema["properties"]!["guests"]!.Text("description"));
+    }
+
+    [Fact]
+    public void ATypesDescriptionDescribesTheArgumentsAndAnyObjectOfThatType()
+    {
+        var schema = Schema<Trip>();
+
+        Assert.Equal("a journey of one leg", schema.Text("description"));
+        Assert.Equal("one hop between two places", schema["properties"]!["leg"]!.Text("description"));
+    }
+
+    [Fact]
+    public void ArgumentsWithNoDescriptionAreDeclaredAsTheyAre()
+    {
+        var schema = Schema<Undescribed>();
+
+        Assert.Equal("""{"type":["object","null"],"properties":{"location":{"type":"string"}},"required":["location"]}""",
+            schema.ToJsonString());
+    }
+
+    private static JsonObject Schema<TArguments>()
+    {
+        var tools = new Tools().Register<TArguments, string>("tool", "A tool", (_, _) => Task.FromResult(""));
+        return JsonSerializer.SerializeToNode(Assert.Single(tools.Declared()).Parameters)!.AsObject();
+    }
+
+    private sealed record WeatherLookup([Description("a city or region")] string Location);
+
+    private sealed record Booking
+    {
+        [Description("how many people are coming")]
+        public int Guests { get; init; }
+    }
+
+    [Description("a journey of one leg")]
+    private sealed record Trip(Leg Leg);
+
+    [Description("one hop between two places")]
+    private sealed record Leg(string From);
+
+    private sealed record Undescribed(string Location);
+
+    [Fact]
     public async Task AHostedToolIsDeclaredWithItsPoliciesAndAnsweredByCallId()
     {
         await using var router = await TestRouter.StartAsync();
@@ -356,10 +281,9 @@ public sealed class ToolCallTests
             answered = await peer.ReceiveAsync("tool_result");
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("payments");
-        Payments(agent.Tools);
+        Payments(client.Tools);
 
-        await new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1))
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
             .RunAsync(TestContext.Current.CancellationToken);
 
         var tools = declared!["tools"]!.AsArray().ToDictionary(tool => tool.Text("name"), tool => tool!.AsObject());
@@ -392,10 +316,9 @@ public sealed class ToolCallTests
             }
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("payments");
-        Payments(agent.Tools);
+        Payments(client.Tools);
 
-        await new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1))
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
             .RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("c2", Assert.Single(answered, frame => frame.Text("type") == "tool_result").Text("id"));
@@ -417,10 +340,9 @@ public sealed class ToolCallTests
             sent.Add(await peer.ReceiveAsync("tool_result"));
         });
         using var client = Fixtures.Client(router);
-        var agent = client.Agent("payments");
-        Payments(agent.Tools);
+        Payments(client.Tools);
 
-        await new Dispatch(new DispatchOptions { Client = client }).Host(agent, TimeSpan.FromMinutes(1))
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
             .RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("""{"type":"tool_hold","tool_call_id":"c1"}""", sent[0].ToJsonString());

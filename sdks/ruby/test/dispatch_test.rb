@@ -55,9 +55,8 @@ class TestDispatch < LocalRouterTest
   end
 
   def test_a_worker_that_only_hosts_tools_handles_nothing_and_finishes_work_it_is_handed
-    agent = client.agent("my-agent")
-    agent.tools.register("weather_lookup", description: "Weather") { "sunny" }
-    dispatch.host(agent)
+    client.tools.register("weather_lookup", description: "Weather") { "sunny" }
+    dispatch.host(client)
 
     run_until_closed do |peer|
       assert_equal({ "capacity" => "2", "active" => "0", "handles" => "" }, peer.request.query)
@@ -236,20 +235,20 @@ class TestDispatch < LocalRouterTest
 
   def test_a_hosted_tool_is_declared_on_every_ready_and_answered_without_blocking_the_socket
     release = Thread::Queue.new
-    agent = client.agent("my-agent", name: "Max")
-    tools = agent.tools
+    tools = client.tools
     tools.register("weather_lookup", description: "Weather for a place",
                                      parameters: { type: "object", properties: { location: { type: "string" } } }) do |args|
       { "location" => args["location"], "sky" => "sunny" }
     end
     tools.register("slow", description: "Waits to be released") { release.pop(timeout: 5) }
     tools.register("broken", description: "Always fails") { raise ArgumentError, "no sky today" }
-    dispatch.host(agent, tool_timeout: 2.5)
+    dispatch.host(client, tool_timeout: 2.5)
 
     run_until_closed do |peer|
       peer.send_frame(type: "ready", worker_id: "w1")
       declared = peer.receive_type("host_tools")
-      assert_equal "my-agent", declared["agent_id"]
+      assert_equal true, declared["every_agent"]
+      refute declared.key?("agent_id")
       assert_equal 2500, declared["timeout_ms"]
       assert_equal %w[weather_lookup slow broken], declared["tools"].map { |tool| tool["name"] }
       assert_equal({ "type" => "object", "properties" => { "location" => { "type" => "string" } } },
@@ -270,24 +269,22 @@ class TestDispatch < LocalRouterTest
       assert_equal({ "type" => "tool_result", "tool_call_id" => "t4", "id" => "t4", "error" => "this worker does not run missing" },
                    peer.receive_type("tool_result"))
 
-      peer.send_frame(type: "hosting", agent_id: "my-agent", tools: %w[weather_lookup slow broken])
+      peer.send_frame(type: "hosting", every_agent: true, tools: %w[weather_lookup slow broken])
       peer.send_frame(type: "ready", worker_id: "w2")
-      assert_equal "my-agent", peer.receive_type("host_tools")["agent_id"]
+      assert_equal true, peer.receive_type("host_tools")["every_agent"]
     end
     assert_equal "w2", dispatch.worker_id
   end
 
-  def test_a_hosted_tools_policies_call_and_updates_go_over_the_dispatch_socket
+  def test_a_hosted_tools_policies_and_call_go_over_the_dispatch_socket
     seen = Thread::Queue.new
-    agent = client.agent("travel")
-    agent.tools.register("book_flight", description: "Book a flight",
+    client.tools.register("book_flight", description: "Book a flight",
                                         parameters: { type: "object", properties: { flight_id: { type: "string" } } },
                                         interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |tool_call_context, _args|
       seen << tool_call_context
-      tool_call_context.update("checking seats")
       "booked"
     end
-    dispatch.host(agent)
+    dispatch.host(client)
 
     run_until_closed do |peer|
       peer.send_frame(type: "ready", worker_id: "w1")
@@ -297,8 +294,6 @@ class TestDispatch < LocalRouterTest
 
       peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", turn_id: "turn_3", name: "book_flight",
                       arguments: "{}", user: { id: "sam" })
-      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "checking seats", "verbatim" => false },
-                   peer.receive_type("tool_update"))
       assert_equal "booked", peer.receive_type("tool_result")["output"]
     end
     tool_call_context = seen.pop(timeout: 1)
@@ -308,14 +303,13 @@ class TestDispatch < LocalRouterTest
   def test_a_hosted_call_the_router_cancels_is_not_answered
     release = Thread::Queue.new
     stopped = Thread::Queue.new
-    agent = client.agent("support")
-    agent.tools.register("investigate", description: "Investigate for a while") do |tool_call_context, _args|
+    client.tools.register("investigate", description: "Investigate for a while") do |tool_call_context, _args|
       release.pop(timeout: 5)
       stopped << tool_call_context.cancelled?
       "found it"
     end
-    agent.tools.register("ping", description: "Answer at once") { "pong" }
-    dispatch.host(agent)
+    client.tools.register("ping", description: "Answer at once") { "pong" }
+    dispatch.host(client)
 
     run_until_closed do |peer|
       peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", name: "investigate", arguments: "{}")
@@ -330,22 +324,36 @@ class TestDispatch < LocalRouterTest
   end
 
   def test_a_worker_whose_tools_are_refused_stops_with_the_reason
-    agent = client.agent("my-agent")
-    agent.tools.register("weather_lookup", description: "Weather for a place") { "sunny" }
-    dispatch.host(agent)
+    client.tools.register("weather_lookup", description: "Weather for a place") { "sunny" }
+    dispatch.host(client)
     runner = Thread.new { dispatch.run }
     runner.report_on_exception = false
     peer = @router.peer
     peer.send_frame(type: "ready", worker_id: "w1")
     assert_equal 0, peer.receive_type("host_tools")["timeout_ms"]
-    peer.send_frame(type: "hosting_refused", agent_id: "my-agent", reason: "another customer's agent")
+    peer.send_frame(type: "hosting_refused", reason: "hosting no tools is not hosting")
 
     refused = assert_raises(VA::Error) { runner.join(5) }
-    assert_equal "the router refused to host tools for agent my-agent: another customer's agent", refused.message
+    assert_equal "the router refused to host tools: hosting no tools is not hosting", refused.message
+  end
+
+  def test_run_dispatch_runs_the_clients_tools_for_every_agent
+    client.tools.register("weather_lookup", description: "Weather for a place") { "sunny" }
+    runner = Thread.new { client.run_dispatch }
+    peer = @router.peer
+    assert_equal "", peer.request.query["handles"]
+    peer.send_frame(type: "ready", worker_id: "w1")
+    declared = peer.receive_type("host_tools")
+    assert_equal [true, %w[weather_lookup]], [declared["every_agent"], declared["tools"].map { |tool| tool["name"] }]
+    peer.send_frame(type: "tool_call", id: "t1", session_id: "s1", name: "weather_lookup", arguments: "{}")
+    assert_equal "sunny", peer.receive_type("tool_result")["output"]
+  ensure
+    peer&.close
+    runner&.join(5)
   end
 
   def test_a_handler_or_hosted_tools_are_needed_before_running
     assert_raises(VA::ConfigurationError) { dispatch.run }
-    assert_raises(VA::ConfigurationError) { dispatch.host(client.agent("my-agent")) }
+    assert_raises(VA::ConfigurationError) { dispatch.host(client) }
   end
 end

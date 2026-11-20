@@ -3016,7 +3016,9 @@ func taskIDs(page ScheduledTaskPage) []string {
 }
 
 func (s *ScheduledTasksSuite) TestACallersOwnScheduleTaskKeepsTheName() {
-	config := s.agentWithScheduling(nil)
+	config := s.agentWithScheduling(func(request *AgentConfigRequest) {
+		request.Tools = &[]ToolGroup{{Name: "mine", Tools: []string{"schedule_task"}}}
+	})
 	user := s.data.createUser()
 	s.schedulingScript.plan(llm.ToolCall{ID: store.NewID(), Name: "schedule_task",
 		Arguments: `{"title":"Stretch","instructions":"Remind them to stretch.","in":"PT2H","timezone":"Europe/Amsterdam"}`})
