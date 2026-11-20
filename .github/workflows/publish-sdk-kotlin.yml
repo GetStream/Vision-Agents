@@ -132,7 +132,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
         with:
-          # A job that holds the signing key reads the cache but never writes it.
+          # Only reads the Gradle cache; the cache is written elsewhere, not by this job.
           cache-read-only: true
 
       # The runner carries an Android SDK, but not necessarily compileSdk 37.
