@@ -527,11 +527,8 @@ func (s *ChannelsSuite) TestAReplyOfASuspendedOrganizationIsNotWrittenBackAndWar
 	model.holds()
 	defer model.answers()
 	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "and tomorrow?"))
-	s.Require().Eventually(func() bool {
-		model.mu.Lock()
-		defer model.mu.Unlock()
-		return model.turns >= 2
-	}, settleFor, 10*time.Millisecond, "the second turn never began")
+	s.Require().Eventually(func() bool { return len(model.replies()) >= 2 },
+		settleFor, 10*time.Millisecond, "the second turn never began")
 	s.suspend(writer)
 
 	model.answers()

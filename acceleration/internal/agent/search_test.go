@@ -81,31 +81,33 @@ func (s *AgentSuite) searchRouter() *searchrouter.Router {
 }
 
 func (s *AgentSuite) TestASearchAnswersWhatIsTrueNow() {
-	// The one thing neither the model nor the handbook can answer. Without this the agent
-	// says it cannot check and the caller is sent to a website.
-	s.searches(search.Result{
-		Answer: "I-70 is clear through the Eisenhower Tunnel.",
-		Documents: []search.Document{
-			{Title: "COtrip", URL: "https://cotrip.org", Text: "No closures reported."},
-		},
+	s.onFakeClock(func() {
+		// The one thing neither the model nor the handbook can answer. Without this the agent
+		// says it cannot check and the caller is sent to a website.
+		s.searches(search.Result{
+			Answer: "I-70 is clear through the Eisenhower Tunnel.",
+			Documents: []search.Document{
+				{Title: "COtrip", URL: "https://cotrip.org", Text: "No closures reported."},
+			},
+		})
+		s.join(false)
+		s.model.reply = []string{"Let me check that."}
+		s.asksFor("search", `{"query":"traffic on I-70 in Colorado"}`)
+		participant := stt.Participant{ID: "alice"}
+		s.speak(participant)
+
+		s.says(participant, "how is traffic on I-70")
+
+		ran := s.awaitToolRan()
+		s.Equal("search", ran.Tool)
+		s.NoError(ran.Err)
+		s.Contains(ran.Result, "I-70 is clear through the Eisenhower Tunnel.")
+		s.Contains(ran.Result, "COtrip")
+
+		asked := s.finds.queries()
+		s.Require().Len(asked, 1)
+		s.Equal("traffic on I-70 in Colorado", asked[0].Text)
 	})
-	s.join(false)
-	s.model.reply = []string{"Let me check that."}
-	s.asksFor("search", `{"query":"traffic on I-70 in Colorado"}`)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-
-	s.says(participant, "how is traffic on I-70")
-
-	ran := s.awaitToolRan()
-	s.Equal("search", ran.Tool)
-	s.NoError(ran.Err)
-	s.Contains(ran.Result, "I-70 is clear through the Eisenhower Tunnel.")
-	s.Contains(ran.Result, "COtrip")
-
-	asked := s.finds.queries()
-	s.Require().Len(asked, 1)
-	s.Equal("traffic on I-70 in Colorado", asked[0].Text)
 }
 
 func (s *AgentSuite) TestAQuestionTheWebDoesNotAnswerIsSaidInWords() {

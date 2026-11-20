@@ -11,87 +11,99 @@ import (
 )
 
 func (s *AgentSuite) TestAToolsStatusIsSaidInTheAgentsOwnWordsWhileItRuns() {
-	s.runningAHeldTool()
-	s.model.composes = []string{"Still checking three airlines for you."}
+	s.onFakeClock(func() {
+		s.runningAHeldTool()
+		s.model.composes = []string{"Still checking three airlines for you."}
 
-	s.agent.ToolUpdate("call-1", "searching 3 airlines", false)
+		s.agent.ToolUpdate("call-1", "searching 3 airlines", false)
 
-	s.eventually(func() bool { return s.spokenText("Still checking three airlines for you.") }, "the status was never said")
-	composed := s.model.composeRequests()
-	s.Require().NotEmpty(composed)
-	asked := composed[len(composed)-1].Input
-	s.Equal(fmt.Sprintf(composeNote, fmt.Sprintf(statusPurpose, "searching 3 airlines")), asked[len(asked)-1].Content)
-	updated, found := firstOf[ToolUpdated](s.reported())
-	s.Require().True(found)
-	s.Equal(ToolUpdated{ID: "call-1", TurnID: updated.TurnID, Tool: "lookup_order", Text: "searching 3 airlines"}, updated)
+		s.eventually(func() bool { return s.spokenText("Still checking three airlines for you.") }, "the status was never said")
+		composed := s.model.composeRequests()
+		s.Require().NotEmpty(composed)
+		asked := composed[len(composed)-1].Input
+		s.Equal(fmt.Sprintf(composeNote, fmt.Sprintf(statusPurpose, "searching 3 airlines")), asked[len(asked)-1].Content)
+		updated, found := firstOf[ToolUpdated](s.reported())
+		s.Require().True(found)
+		s.Equal(ToolUpdated{ID: "call-1", TurnID: updated.TurnID, Tool: "lookup_order", Text: "searching 3 airlines"}, updated)
+	})
 }
 
 func (s *AgentSuite) TestWordsAToolAsksToSayAreSaidAsWritten() {
-	s.runningAHeldTool()
-	composedBefore := len(s.model.composeRequests())
+	s.onFakeClock(func() {
+		s.runningAHeldTool()
+		composedBefore := len(s.model.composeRequests())
 
-	s.agent.ToolUpdate("call-1", "Got a seat, moving your booking now.", true)
+		s.agent.ToolUpdate("call-1", "Got a seat, moving your booking now.", true)
 
-	s.eventually(func() bool { return s.spokenText("Got a seat, moving your booking now.") }, "the words were never said")
-	s.Len(s.model.composeRequests(), composedBefore, "words to say as written are not rewritten")
+		s.eventually(func() bool { return s.spokenText("Got a seat, moving your booking now.") }, "the words were never said")
+		s.Len(s.model.composeRequests(), composedBefore, "words to say as written are not rewritten")
+	})
 }
 
 func (s *AgentSuite) TestANewerUpdateForTheSameCallReplacesTheOneWaiting() {
-	s.runningAHeldTool()
-	s.holdTheLine()
+	s.onFakeClock(func() {
+		s.runningAHeldTool()
+		s.holdTheLine()
 
-	s.agent.ToolUpdate("call-1", "First words.", true)
-	s.agent.ToolUpdate("call-1", "Second words.", true)
-	s.releaseTheLine()
+		s.agent.ToolUpdate("call-1", "First words.", true)
+		s.agent.ToolUpdate("call-1", "Second words.", true)
+		s.releaseTheLine()
 
-	s.eventually(func() bool { return s.spokenText("Second words.") }, "the newer update was never said")
-	s.False(s.spokenText("First words."), "an update that was replaced was still said")
+		s.eventually(func() bool { return s.spokenText("Second words.") }, "the newer update was never said")
+		s.False(s.spokenText("First words."), "an update that was replaced was still said")
+	})
 }
 
 func (s *AgentSuite) TestAnUpdateTheResultBeatIsNeverSaid() {
-	runner := s.runningAHeldTool()
-	s.holdTheLine()
+	s.onFakeClock(func() {
+		runner := s.runningAHeldTool()
+		s.holdTheLine()
 
-	s.agent.ToolUpdate("call-1", "Almost there.", true)
-	runner.finish()
-	s.eventually(func() bool { return countOf[ToolRan](s.reported()) == 1 }, "the tool never finished")
-	s.releaseTheLine()
+		s.agent.ToolUpdate("call-1", "Almost there.", true)
+		runner.finish()
+		s.eventually(func() bool { return countOf[ToolRan](s.reported()) == 1 }, "the tool never finished")
+		s.releaseTheLine()
 
-	s.never(func() bool { return s.spokenText("Almost there.") }, "an update was said after the result it was about")
+		s.never(func() bool { return s.spokenText("Almost there.") }, "an update was said after the result it was about")
+	})
 }
 
 func (s *AgentSuite) TestAnUpdateWaitsForTheCallerToStopTalking() {
-	s.runningAHeldTool()
-	participant := stt.Participant{ID: "alice"}
-	talking := make(chan struct{})
-	var done sync.WaitGroup
-	done.Go(func() {
-		words := "actually"
-		for {
-			select {
-			case <-talking:
-				return
-			case <-time.After(20 * time.Millisecond):
-				words += " and"
-				s.mutters(participant, words)
+	s.onFakeClock(func() {
+		s.runningAHeldTool()
+		participant := stt.Participant{ID: "alice"}
+		talking := make(chan struct{})
+		var done sync.WaitGroup
+		done.Go(func() {
+			words := "actually"
+			for {
+				select {
+				case <-talking:
+					return
+				case <-time.After(20 * time.Millisecond):
+					words += " and"
+					s.mutters(participant, words)
+				}
 			}
-		}
+		})
+		s.eventually(func() bool { return s.agent.converse.Listening() }, "the caller was never heard talking")
+
+		s.agent.ToolUpdate("call-1", "Still on it.", true)
+
+		s.never(func() bool { return s.spokenText("Still on it.") }, "an update was said over the caller")
+		close(talking)
+		done.Wait()
 	})
-	s.eventually(func() bool { return s.agent.converse.Listening() }, "the caller was never heard talking")
-
-	s.agent.ToolUpdate("call-1", "Still on it.", true)
-
-	s.never(func() bool { return s.spokenText("Still on it.") }, "an update was said over the caller")
-	close(talking)
-	done.Wait()
 }
 
 func (s *AgentSuite) TestAnUpdateForACallThatIsNotRunningIsDropped() {
-	s.join(true)
+	s.onFakeClock(func() {
+		s.join(true)
 
-	s.agent.ToolUpdate("call-nobody-made", "Still on it.", true)
+		s.agent.ToolUpdate("call-nobody-made", "Still on it.", true)
 
-	s.never(func() bool { return countOf[ToolUpdated](s.reported()) > 0 }, "an update for no call was reported")
+		s.never(func() bool { return countOf[ToolUpdated](s.reported()) > 0 }, "an update for no call was reported")
+	})
 }
 
 func (s *AgentSuite) TestAStatusInWritingIsReportedAndNotPosted() {

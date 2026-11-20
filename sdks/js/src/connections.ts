@@ -1,3 +1,4 @@
+import { speakingFor } from "./backend.js";
 import { Client, type Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 
@@ -142,9 +143,9 @@ export class Connections {
           "a user's connections are reached from a server holding the API secret, not from a device or page",
         );
       }
-      return new Client(backend.speakingFor(userId));
+      return new Client(speakingFor(backend, userId));
     }
-    return backend.actsFor ? new Client(backend.speakingFor("")) : this.client;
+    return backend.actsFor ? new Client(speakingFor(backend, "")) : this.client;
   }
 }
 
