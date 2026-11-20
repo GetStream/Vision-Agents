@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"io"
@@ -419,6 +420,148 @@ func (s *EgressSuite) TestCloseIdleConnectionsClosesThemThroughAWrapper() {
 	client.CloseIdleConnections()
 
 	s.Eventually(func() bool { return closed.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// An HTTP/1.1 origin may close a connection it kept alive just as the client sends its next request on it. Go
+// sends a GET again on a new connection, but not a POST, whose body it cannot send twice; so a POST never rides a
+// connection that has carried a request before.
+func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
+	origin := s.startOrigin(closeAtReuse, 0)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	s.send(client, http.MethodGet, nil)
+
+	status, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, status)
+	s.Equal(int32(2), origin.read.Load())
+}
+
+// Go itself sends a GET again when the connection it reused turns out closed, so GETs keep sharing connections.
+func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
+	origin := s.startOrigin(closeAtReuse, 0)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	s.send(client, http.MethodGet, nil)
+
+	status, err := s.send(client, http.MethodGet, nil)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, status)
+	s.Equal(int32(2), origin.read.Load())
+	s.Equal(int32(2), origin.conns.Load())
+}
+
+// A POST the origin read and then dropped without an answer may have been applied, so it is never sent again.
+func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
+	origin := s.startOrigin(0, dropAfterRead)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+	s.send(client, http.MethodGet, nil)
+
+	_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+
+	s.Require().Error(err)
+	s.Equal(int32(2), origin.read.Load())
+}
+
+// GETs to an HTTP/1.1 origin share one connection.
+func (s *EgressSuite) TestGetsShareOneConnection() {
+	origin := s.startOrigin(0, 0)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+
+	for range 3 {
+		_, err := s.send(client, http.MethodGet, nil)
+		s.Require().NoError(err)
+	}
+
+	s.Equal(int32(1), origin.conns.Load())
+}
+
+const (
+	// closeAtReuse is an origin that closes a kept-alive connection as the next request on it arrives, unread: its
+	// keep-alive timer fired as the client reused the connection.
+	closeAtReuse = iota + 1
+	// dropAfterRead is an origin that reads the second request in full and closes the connection without an answer.
+	dropAfterRead
+)
+
+// origin is an HTTP/1.1 origin that answers "ok". read counts the requests it read in full and conns its
+// connections.
+type origin struct {
+	server      *httptest.Server
+	read, conns atomic.Int32
+	mu          sync.Mutex
+	held        []net.Conn
+}
+
+// startOrigin starts an origin. With reuse set, the first connection answers its first request and then does what
+// reuse names with the next request on it. With second set, the second request the origin gets is read in full and
+// the connection closed without an answer.
+func (s *EgressSuite) startOrigin(reuse, second int) *origin {
+	o := &origin{}
+	var first atomic.Bool
+	o.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		n := o.read.Add(1)
+		switch {
+		case reuse == closeAtReuse && first.CompareAndSwap(false, true):
+			conn, buffered := o.hijack(w)
+			_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+			// The next request's first bytes are on the connection: the client is reusing it.
+			_, _ = buffered.Peek(1)
+			_ = conn.Close()
+		case second == dropAfterRead && n == 2:
+			conn, _ := o.hijack(w)
+			_ = conn.Close()
+		default:
+			_, _ = io.WriteString(w, "ok")
+		}
+	}))
+	o.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			o.conns.Add(1)
+		}
+	}
+	o.server.StartTLS()
+	return o
+}
+
+func (o *origin) hijack(w http.ResponseWriter) (net.Conn, *bufio.Reader) {
+	conn, buffered, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	o.mu.Lock()
+	o.held = append(o.held, conn)
+	o.mu.Unlock()
+	return conn, buffered.Reader
+}
+
+// close stops the origin and the connections it took over, which the server no longer tracks.
+func (o *origin) close() {
+	o.server.Close()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, conn := range o.held {
+		_ = conn.Close()
+	}
+}
+
+// send sends one request to the origin and reads its answer to the end, which returns an HTTP/1.1 connection to
+// the pool.
+func (s *EgressSuite) send(client *http.Client, method string, body io.Reader) (int, error) {
+	request, err := http.NewRequest(method, "https://api.example.com/mcp", body)
+	s.Require().NoError(err)
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	_, err = io.Copy(io.Discard, response.Body)
+	return response.StatusCode, err
 }
 
 // A generic or empty User-Agent is what hosts such as Wikimedia refuse; theirs asks for a
