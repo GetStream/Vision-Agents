@@ -271,7 +271,7 @@ func (s *Store) HasUserPolicies(ctx context.Context, appID string) (bool, error)
 // likePrefix is a LIKE pattern matching what starts with prefix, its own % and _ taken as
 // themselves.
 func likePrefix(prefix string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix) + "%"
+	return likeEscaper.Replace(prefix) + "%"
 }
 
 // AppInOrganization reports whether an app is the organization's: registered under it, or

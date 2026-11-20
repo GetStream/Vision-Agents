@@ -1914,7 +1914,7 @@ func (s *AgentSuite) TestEverySpeculativeReplyIsAskedForUnderItsOwnGeneration() 
 	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
 	var generations []uint64
 	for range 2 {
-		s.agent.speculate(s.agent.harness, ready, false, false)
+		s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
 		s.agent.mu.Lock()
 		generations = append(generations, s.agent.speculations[ready.ID].turn.Generation)
 		s.agent.mu.Unlock()
@@ -1931,7 +1931,7 @@ func (s *AgentSuite) TestADroppedSpeculationForgottenAfterTheAnswerWasAskedLeave
 	finish := make(chan struct{})
 	s.model.holdCompletion = finish
 	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
-	s.agent.speculate(s.agent.harness, ready, false, false)
+	s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the speculation was never asked for")
 
 	// The speculation is dropped, but reading it out to its end waits for the model, so
@@ -3740,6 +3740,8 @@ func (s *AgentSuite) TestAStopOverAnAnswerIsNotFollowedByTheAnswerAgain() {
 		answer := s.answerPlaying(participant)
 
 		s.stopsOver(participant, answer, "Stop.")
+		// The reply model is asked whether the stop's words ask anything else, and says not.
+		s.model.reply, s.model.then = []string{"[ignore]"}, []string{"[ignore]"}
 		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2,
 			Text: "Stop.", Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
 		s.eventually(func() bool {
@@ -3750,7 +3752,7 @@ func (s *AgentSuite) TestAStopOverAnAnswerIsNotFollowedByTheAnswerAgain() {
 		}, "the stop's words were not set aside")
 
 		model := s.model
-		s.never(func() bool { return len(model.requests()) > 2 }, "the answer the caller stopped was said again")
+		s.never(func() bool { return len(model.requests()) > 3 }, "the answer the caller stopped was said again")
 		s.False(s.agent.harness.Pending(), "what it passed on goes with whatever the caller says next")
 	})
 }
@@ -4225,27 +4227,35 @@ func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSai
 	s.Empty(s.model.requests(), "asking for a line is not a turn")
 }
 
+// stoppedOver has the agent stopped mid-story by a check over it that ruled a stop on words,
+// with the reply model set to open with reply when it is asked about them, and then sends
+// final, the utterance's words as the transcriber settled them.
+func (s *AgentSuite) stoppedOver(participant stt.Participant, words, final, reply string) {
+	s.join(true)
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "tell me a long story")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: words, Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
+	pauseAsker{s.agent}.Overheard(participant, stop)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+	s.model.reply, s.model.then = []string{reply}, []string{reply}
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: final,
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+}
+
 // A stop a check over the agent ruled while the caller talked on is no turn: the utterance's
-// final, if it is the words the stop was ruled on and no more, is heard and not answered. What the caller says after, the next utterance, is answered. Answered, the stop's
-// words had the agent talk again after every "stop".
+// final, if it is the words the stop was ruled on and no more, is put to the reply model,
+// which says a bare "Stop." asks nothing: it is heard and not answered. What the caller says
+// after, the next utterance, is answered. Answered, the stop's words had the agent talk again
+// after every "stop".
 func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.onFakeClock(func() {
-		s.join(true)
 		participant := stt.Participant{ID: "alice"}
-		s.model.reply = nil
-		s.speak(participant)
-		s.says(participant, "tell me a long story")
-		s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
-		s.heardSomeOf(s.model.requests()[0].ID)
-		s.replyWentOut()
-		asker := pauseAsker{s.agent}
-		stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
-			Words: "Stop.", Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
-		asker.Overheard(participant, stop)
-		s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
-
-		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "Stop.",
-			Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+		s.stoppedOver(participant, "Stop.", "Stop.", "[ignore]")
 		s.eventually(func() bool {
 			return slices.ContainsFunc(s.reported(), func(event Event) bool {
 				d, ok := event.(Decided)
@@ -4254,11 +4264,36 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 		}, "the stop's words were not set aside")
 		s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the stop's words were not heard")
 		time.Sleep(3 * defaultCadenceGap)
-		s.Len(s.model.requests(), 1, "the stop's words were answered")
+		s.Len(s.model.requests(), 2, "the reply model is asked about the stop's words once, and they are not answered")
+		s.Len(harness.WithoutNotes(s.agent.History()), 1, "the stop's words are no turn in the history")
 
 		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 3, Text: "What about Porto?",
 			Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
-		s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
+		s.eventually(func() bool { return len(s.model.requests()) == 3 }, "what the caller said after the stop was not answered")
+	})
+}
+
+// Session test-c9dbce25: the stop was ruled late, on the caller's whole request ("Okay. So
+// can you tell me a story about Amsterdam?"), which was then set aside as the stop's words,
+// and nobody answered it. The reply model reads them, and its [respond] is the answer.
+func (s *AgentSuite) TestARequestAStopWasRuledOnIsAnswered() {
+	s.onFakeClock(func() {
+		participant := stt.Participant{ID: "alice"}
+		s.stoppedOver(participant, "Okay. So, can you tell me a story about AI?",
+			"Okay. So can you tell me a story about Amsterdam?", "[respond] Amsterdam it is.")
+
+		s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the request was never put to the reply model")
+		told := slices.ContainsFunc(s.model.requests()[1].Input, func(message llm.Message) bool {
+			return strings.Contains(message.Content, harness.StoppedNote)
+		})
+		s.True(told, "the reply model was not told the agent had stopped for the words")
+		s.eventually(func() bool {
+			history := harness.WithoutNotes(s.agent.History())
+			return len(history) > 0 && history[len(history)-1].Content == "Amsterdam it is."
+		}, "the request the stop was ruled on was never answered")
+		history := harness.WithoutNotes(s.agent.History())
+		s.Equal("Okay. So can you tell me a story about Amsterdam?", history[len(history)-2].Content)
+		s.Len(s.model.requests(), 2, "the reply that ruled is the reply spoken")
 	})
 }
 

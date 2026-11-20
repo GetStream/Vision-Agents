@@ -97,8 +97,7 @@ func (s *Store) CreateEventDestination(ctx context.Context, destination *EventDe
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	destination.CreatedAt, destination.UpdatedAt = now, now
 	return stack.Wrap(s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, ?))",
-			destination.CustomerID+"/"+destination.ConnectorID, eventDestinationLockSeed); err != nil {
+		if err := lockUntilCommit(ctx, tx, destination.CustomerID+"/"+destination.ConnectorID, eventDestinationLockSeed); err != nil {
 			return err
 		}
 		held, err := tx.NewSelect().Model((*EventDestination)(nil)).
