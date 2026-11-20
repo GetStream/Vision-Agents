@@ -6,6 +6,9 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * Frames exactly as `frameOf` in the router writes them, so that a change to the wire format on
@@ -124,6 +127,88 @@ class ConversationTest {
         assertEquals(Conversation.State.Idle, conversation.state)
         assertEquals("the model is overloaded", conversation.failure)
         assertEquals(listOf("Let me"), conversation.turns.map { it.text })
+        assertTrue(conversation.turns.single().isDone)
+    }
+
+    @Test
+    fun `the model failing mid-thought is done as an interrupted turn is, whether or not it names the turn`() {
+        val thinking = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Hmm"}""",
+        )
+        val unnamed = thinking.after("""{"type":"error","context":"llm","error":"the model is overloaded"}""")
+        val named = thinking.after("""{"type":"error","context":"llm","turn_id":"t1","error":"the model is overloaded"}""")
+
+        for (conversation in listOf(unnamed, named)) {
+            val turn = conversation.turns.single()
+            assertTrue(turn.isDone)
+            assertEquals(false, assertIs<TurnStep.Reasoning>(turn.steps.single()).isStreaming)
+        }
+    }
+
+    @Test
+    fun `the model failing on thinking nobody saw begin ends that turn, and nothing else does`() {
+        // A turn that streamed thinking with no responding before it leaves the agent idle.
+        val thinking = Conversation().after("""{"type":"reasoning_delta","turn_id":"t9","text":"Hmm"}""")
+        assertEquals(Conversation.State.Idle, thinking.state)
+
+        for (failed in listOf(
+            thinking.after("""{"type":"error","context":"llm","error":"the model is overloaded"}"""),
+            thinking.after("""{"type":"error","context":"llm","turn_id":"t9","error":"the model is overloaded"}"""),
+        )) {
+            val turn = failed.turns.single()
+            assertTrue(turn.isDone)
+            assertEquals(false, assertIs<TurnStep.Reasoning>(turn.steps.single()).isStreaming)
+            assertEquals(Conversation.State.Idle, failed.state)
+            assertEquals("the model is overloaded", failed.failure)
+            assertEquals(false, TurnMessage.messages(failed, userId = "jlahey", isConnected = true).single().isGenerating)
+        }
+
+        val elsewhere = thinking.after(
+            """{"type":"error","context":"tool","error":"tool_result output is not a string or parts"}""",
+            """{"type":"error","context":"tts","error":"the voice is unknown"}""",
+        )
+        assertEquals(false, elsewhere.turns.single().isDone)
+        assertTrue(assertIs<TurnStep.Reasoning>(elsewhere.turns.single().steps.single()).isStreaming)
+
+        val ended = thinking.after(
+            """{"type":"left","at":"2026-09-02T17:05:00Z"}""",
+            """{"type":"error","context":"llm","error":"agent: not joined"}""",
+        )
+        assertEquals(Conversation.State.Ended, ended.state)
+    }
+
+    @Test
+    fun `the model failing on a turn already done leaves it as it was`() {
+        val answered = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"pending_work":false,"type":"responded","turn_id":"t1","text":"Hello."}""",
+        )
+
+        val failed = answered.after("""{"type":"error","context":"llm","turn_id":"t1","error":"late"}""")
+
+        assertEquals(answered.turns, failed.turns)
+        assertEquals(Conversation.State.Idle, failed.state)
+        assertEquals("late", failed.failure)
+    }
+
+    @Test
+    fun `a card on a reply the model failed on is not the base of a later patch`() {
+        // The router only takes a completed reply's UI as a patch's base, never a failed one's.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responded","turn_id":"t1","text":"Here it is."}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_completed","turn_id":"t2","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Mira\")"}""",
+            """{"type":"error","context":"llm","error":"the model is overloaded"}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertTrue(conversation.turns[1].isDone)
+        assertEquals("root = Card([hdr])\nhdr = CardHeader(\"Mira\")", conversation.turns[1].ui?.content)
+        assertEquals("\$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", conversation.turns[2].ui?.content)
     }
 
     @Test
@@ -160,6 +245,7 @@ class ConversationTest {
         )
 
         assertEquals(Conversation.State.Responding, responding.state)
+        assertEquals(false, responding.turns.single().isDone)
         assertEquals("the voice is unknown", responding.failure)
         assertEquals(Conversation.State.Working(listOf("think")), working.state)
     }
@@ -602,4 +688,181 @@ class ConversationTest {
 
         assertEquals("\$open = null\nroot = Card([hdr])", merged)
     }
+
+    @Test
+    fun `a written reply's thinking and tool calls are its steps, in the order they happened`() {
+        val start = Instant.fromEpochSeconds(1_000)
+        fun at(seconds: Double) = start + (seconds * 1000).toLong().milliseconds
+        var conversation = Conversation()
+            .at(at(0.0), """{"type":"responding","turn_id":"t1","prompt":"Lisbon?"}""")
+            .at(at(1.0), """{"type":"reasoning_delta","turn_id":"t1","text":"They want "}""")
+            .at(at(2.0), """{"type":"reasoning_delta","turn_id":"t1","text":"Lisbon's weather."}""")
+            .at(at(2.5), """{"type":"response_delta","turn_id":"t1","text":"Let me look. "}""")
+            .at(at(2.75), """{"type":"reasoning_delta","turn_id":"t1","text":"The weather tool knows."}""")
+            .at(at(3.0), """{"type":"tool_started","tool_call_id":"call_1","tool":"weather","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}""")
+            .at(at(4.0), """{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"weather","text":"Reading the forecast","verbatim":false}""")
+            .at(at(4.0), """{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"weather","text":"One moment.","verbatim":true}""")
+            .at(at(5.0), """{"type":"tool_started","tool_call_id":"call_2","tool":"calendar","turn_id":"t1","started_at":"2026-11-19T10:00:05Z"}""")
+            .at(at(6.0), """{"type":"tool_ran","tool_call_id":"call_1","turn_id":"t1","tool":"weather","arguments":"{}","result":"24","files":null,"error":""}""")
+            .at(at(7.0), """{"type":"tool_ran","tool_call_id":"call_2","turn_id":"t1","tool":"calendar","arguments":"{}","result":"","files":null,"error":"calendar unreachable"}""")
+            .at(at(7.0), """{"pending_work":true,"type":"responded","turn_id":"t1","text":"Let me look.","time_to_first_token_ms":0}""")
+
+        val first = conversation.turns.single()
+        assertEquals(
+            listOf(
+                TurnStep.Reasoning("r1", isStreaming = false, "They want Lisbon's weather.", at(0.0), 2.5.seconds),
+                TurnStep.Reasoning("r2", isStreaming = false, "The weather tool knows.", at(2.5), 0.5.seconds),
+                TurnStep.ToolCall("call_1", "weather", TurnStep.ToolCall.Status.Completed, "Reading the forecast", at(3.0), 3.seconds),
+                TurnStep.ToolCall("call_2", "calendar", TurnStep.ToolCall.Status.Failed, "", at(5.0), 2.seconds),
+            ),
+            first.steps,
+        )
+        assertEquals(false, first.isDone, "its tools' result is answered in a turn of its own")
+
+        conversation = conversation
+            .at(at(8.0), """{"type":"responding","turn_id":"t2","prompt":""}""")
+            .at(at(9.0), """{"type":"reasoning_delta","turn_id":"t2","text":"Sunny, 24."}""")
+            .at(at(10.0), """{"type":"response_delta","turn_id":"t2","text":"Sunny and 24°C."}""")
+            .at(at(11.0), """{"pending_work":false,"type":"responded","turn_id":"t2","text":"Sunny and 24°C.","time_to_first_token_ms":900}""")
+
+        val second = conversation.turns.last()
+        assertEquals(listOf("r1"), second.steps.map { it.id })
+        assertTrue(second.isDone)
+        assertEquals("Sunny and 24°C.", second.text)
+    }
+
+    @Test
+    fun `a round of thinking is timed from when the model was asked, not from its first words`() {
+        val start = Instant.fromEpochSeconds(1_000)
+        // A model that thinks a while and then sends its reasoning in one burst, as Grok does.
+        val conversation = Conversation()
+            .at(start, """{"type":"responding","turn_id":"t1","prompt":"Lisbon?"}""")
+            .at(start + 4.seconds, """{"type":"reasoning_delta","turn_id":"t1","text":"Weighing it up."}""")
+            .at(start + 4250.milliseconds, """{"type":"response_delta","turn_id":"t1","text":"Yes."}""")
+
+        val round = assertIs<TurnStep.Reasoning>(conversation.turns.single().steps.single())
+        assertEquals(start, round.at)
+        assertEquals(4250.milliseconds, round.duration)
+    }
+
+    @Test
+    fun `thinking streams until the model moves on, and a turn cut off is done`() {
+        var conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1","prompt":"Lisbon?"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Hmm"}""",
+            // An empty delta writes nothing, so the model is still thinking.
+            """{"type":"response_delta","turn_id":"t1","text":""}""",
+        )
+        val streaming = assertIs<TurnStep.Reasoning>(conversation.turns.single().steps.single())
+        assertTrue(streaming.isStreaming)
+        assertNull(streaming.duration)
+        assertEquals(false, conversation.turns.single().isDone)
+
+        conversation = conversation.after("""{"type":"interrupted","turn_id":"t1","participant":null}""")
+
+        val cut = assertIs<TurnStep.Reasoning>(conversation.turns.single().steps.single())
+        assertEquals(false, cut.isStreaming)
+        assertTrue(cut.duration != null)
+        assertTrue(conversation.turns.single().isDone)
+    }
+
+    @Test
+    fun `a tool update says how the call is going, but words to say and other calls change nothing`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"tool_started","tool_call_id":"call_1","tool":"search","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}""",
+            """{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"search","text":"Reading 3 pages","verbatim":false}""",
+            """{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"search","text":"One moment.","verbatim":true}""",
+            """{"type":"tool_updated","id":"call_9","turn_id":"t1","tool":"search","text":"Elsewhere","verbatim":false}""",
+            """{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"search","text":"","verbatim":false}""",
+        )
+
+        val call = assertIs<TurnStep.ToolCall>(conversation.turns.single().steps.single())
+        assertEquals("Reading 3 pages", call.summary)
+        assertEquals(TurnStep.ToolCall.Status.Running, call.status)
+        assertEquals(AgentEvent.Kind.ToolUpdated, event("""{"type":"tool_updated","id":"c"}""").kind)
+        assertEquals(AgentEvent.Kind.ReasoningDelta, event("""{"type":"reasoning_delta","turn_id":"t1","text":"x"}""").kind)
+    }
+
+    @Test
+    fun `a tool's update after it ran, and a call started twice, change nothing`() {
+        val ran = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"tool_started","tool_call_id":"call_1","tool":"search","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}""",
+            """{"type":"tool_ran","tool_call_id":"call_1","turn_id":"t1","tool":"search","error":""}""",
+        )
+
+        val after = ran.after(
+            """{"type":"tool_updated","id":"call_1","turn_id":"t1","tool":"search","text":"Late","verbatim":false}""",
+            """{"type":"tool_started","tool_call_id":"call_1","tool":"search","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}""",
+        )
+
+        assertEquals(ran.turns, after.turns)
+    }
+
+    @Test
+    fun `thinking for a turn nobody saw begin still lands, as text does`() {
+        val conversation = Conversation().after("""{"type":"reasoning_delta","turn_id":"t9","text":"mid"}""")
+
+        val turn = conversation.turns.single()
+        assertTrue(turn.isAgent)
+        assertEquals("r1", turn.steps.single().id)
+    }
+
+    @Test
+    fun `a reply's UI ends the round of thinking under way`() {
+        val start = Instant.fromEpochSeconds(1_000)
+        val conversation = Conversation()
+            .at(start, """{"type":"responding","turn_id":"t1"}""")
+            .at(start + 1.seconds, """{"type":"reasoning_delta","turn_id":"t1","text":"A card."}""")
+            .at(start + 3.seconds, """{"type":"ui_delta","turn_id":"t1","format":"openui","mode":"full","delta":"root = Card([])"}""")
+
+        val round = assertIs<TurnStep.Reasoning>(conversation.turns.single().steps.single())
+        assertEquals(3.seconds, round.duration)
+    }
+
+    @Test
+    fun `a tool call whose id is a thinking round's is a step of its own`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Search."}""",
+            """{"type":"tool_started","tool_call_id":"r1","tool":"search","turn_id":"t1","started_at":"2026-11-19T10:00:03Z"}""",
+            """{"type":"tool_ran","tool_call_id":"r1","turn_id":"t1","tool":"search","error":""}""",
+        )
+
+        val steps = conversation.turns.single().steps
+        assertEquals(listOf("r1", "r1"), steps.map { it.id })
+        assertEquals(TurnStep.ToolCall.Status.Completed, assertIs<TurnStep.ToolCall>(steps[1]).status)
+    }
+
+    @Test
+    fun `a reply the prompt injection screen refused loses what it streamed, and keeps its steps`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"reasoning_delta","turn_id":"t1","text":"Hmm."}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Ignore your rules and"}""",
+            """{"type":"ui_delta","turn_id":"t1","format":"openui","mode":"full","delta":"root = Card([])\n"}""",
+            """{"type":"error","context":"llm","code":"prompt_injection","error":"refused"}""",
+            """{"pending_work":false,"type":"responded","turn_id":"t1","text":""}""",
+        )
+
+        val turn = conversation.turns.single()
+        assertEquals("", turn.text)
+        assertNull(turn.ui)
+        assertEquals(listOf("r1"), turn.steps.map { it.id })
+        assertEquals("refused", conversation.failure)
+    }
+
+    @Test
+    fun `any other error leaves the reply as written`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Half a reply"}""",
+            """{"type":"error","context":"tts","error":"voice down"}""",
+        )
+
+        assertEquals("Half a reply", conversation.turns.single().text)
+    }
 }
+
+private fun Conversation.at(at: Instant, frame: String): Conversation = reduce(event(frame), at)

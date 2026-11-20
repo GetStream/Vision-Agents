@@ -29,6 +29,10 @@ type GuardrailAsk struct {
 	// Role is who said it, which is "user" today.
 	Role string `json:"role"`
 	Text string `json:"text"`
+	// Conversation is the last of what was said before it, one "user: ..." or
+	// "assistant: ..." line each, so a follow-up can be judged. Absent for a turn that opens
+	// a conversation.
+	Conversation string `json:"conversation,omitempty"`
 	// Policy is the prose from the agent's guardrail.md, so your server can decide without
 	// holding a copy of a file it does not own.
 	Policy string `json:"policy"`

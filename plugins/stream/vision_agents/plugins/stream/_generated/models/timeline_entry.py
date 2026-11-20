@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.floor_check import FloorCheck
+    from ..models.guardrail_check import GuardrailCheck
     from ..models.model_call_timing import ModelCallTiming
 
 
@@ -55,6 +56,7 @@ class TimelineEntry:
             asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A
             check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent
             without chorus-asr floor control.
+        guardrail (GuardrailCheck | Unset):
     """
 
     started_at: datetime.datetime
@@ -78,6 +80,7 @@ class TimelineEntry:
     tts_to_audio_ms: float | Unset = UNSET
     tts_ttfb_ms: float | None | Unset = UNSET
     floor_checks: list[FloorCheck] | Unset = UNSET
+    guardrail: GuardrailCheck | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,6 +164,10 @@ class TimelineEntry:
                 floor_checks_item = floor_checks_item_data.to_dict()
                 floor_checks.append(floor_checks_item)
 
+        guardrail: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.guardrail, Unset):
+            guardrail = self.guardrail.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -207,12 +214,15 @@ class TimelineEntry:
             field_dict["tts_ttfb_ms"] = tts_ttfb_ms
         if floor_checks is not UNSET:
             field_dict["floor_checks"] = floor_checks
+        if guardrail is not UNSET:
+            field_dict["guardrail"] = guardrail
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.floor_check import FloorCheck
+        from ..models.guardrail_check import GuardrailCheck
         from ..models.model_call_timing import ModelCallTiming
 
         d = dict(src_dict)
@@ -329,6 +339,13 @@ class TimelineEntry:
 
                 floor_checks.append(floor_checks_item)
 
+        _guardrail = d.pop("guardrail", UNSET)
+        guardrail: GuardrailCheck | Unset
+        if isinstance(_guardrail, Unset):
+            guardrail = UNSET
+        else:
+            guardrail = GuardrailCheck.from_dict(_guardrail)
+
         timeline_entry = cls(
             started_at=started_at,
             turn_id=turn_id,
@@ -351,6 +368,7 @@ class TimelineEntry:
             tts_to_audio_ms=tts_to_audio_ms,
             tts_ttfb_ms=tts_ttfb_ms,
             floor_checks=floor_checks,
+            guardrail=guardrail,
         )
 
         timeline_entry.additional_properties = d

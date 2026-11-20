@@ -77,6 +77,18 @@ frames with no network; most new event handling belongs there.
   changed), and read each message's custom data from `overlay(messages)`, by message id, into
   `AIUIDocument.from`. A call screen shows no channel; show the newest `Turn.ui` there through
   its `customData`, with an `AIUIHost` of its own.
+- A written reply's thinking and tool calls reach the socket as `reasoning_delta`,
+  `tool_started`, `tool_updated` (not `verbatim`) and `tool_ran`, which `Conversation` folds into
+  `Turn.steps` in order: a round of thinking `r1`, `r2`... opens on a delta after anything else
+  and completes when the turn writes text or UI, calls a tool, answers or is cut off, and is timed
+  from when the turn was asked or went on (a private `resumedAt`, counted in equality as
+  `uiWritten` is); a call runs until `tool_ran`, failed when it carries an `error`. A turn is
+  `isDone` on `responded` with no `pending_work`, or `interrupted`. An incognito session has no
+  channel, so `chat()` throws: `AgentSession.turnMessages` (`TurnMessage.messages`) is the
+  conversation in the channel's shape, one reply per question, steps as `type to fields` for
+  `AIMessagePart.parts`, rounds numbered across the reply, a call in `approvals` as
+  `awaiting_approval` for the user `setUser` named. `android_assistant`'s `AgentTransport` shows
+  one from it.
 
 ## The generated models
 

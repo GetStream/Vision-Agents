@@ -1,4 +1,4 @@
-import { API_KEY_ENV, API_SECRET_ENV, env, signToken } from "./backend.js";
+import { API_KEY_ENV, API_SECRET_ENV, REDACTED, env, signToken } from "./backend.js";
 import { ConfigurationError, errorOf } from "./errors.js";
 
 /** Where Stream's API is. The video paths are served from the same host as chat's. */
@@ -62,6 +62,16 @@ export class Edge {
         `${API_KEY_ENV} and ${API_SECRET_ENV} are required to create a call`,
       );
     }
+  }
+
+  /** What this shows when logged or serialised: never the secret. See `Backend.toJSON`. */
+  toJSON(): Record<string, unknown> {
+    return { apiKey: this.apiKey, apiSecret: REDACTED, monitorURL: this.monitorURL };
+  }
+
+  /** What Node's `console.log` and `util.inspect` show: the same as `toJSON`. */
+  [Symbol.for("nodejs.util.inspect.custom")](): Record<string, unknown> {
+    return this.toJSON();
   }
 
   /**

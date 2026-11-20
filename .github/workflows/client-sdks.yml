@@ -18,6 +18,9 @@ on:
       - '.github/workflows/client-sdks.yml'
   pull_request:
     branches: [ "**" ]
+    # A draft runs nothing: CI starts when the pull request is marked ready (ready_for_review)
+    # and runs on every push after that. The default types leave out ready_for_review.
+    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'sdks/kotlin/**'
       - 'sdks/swift/**'
@@ -41,6 +44,7 @@ jobs:
   # A pull request builds only the SDKs it touches, so a Dart change does not wait on the
   # macOS runner. A push to main builds them all.
   changes:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     outputs:
       kotlin: ${{ steps.filter.outputs.kotlin }}

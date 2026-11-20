@@ -1419,6 +1419,160 @@ describe("guest users", () => {
   it("keeps the guest under one key, so two tabs are one visitor", () => {
     assert.equal(GUEST_STORAGE_KEY, "stream-vision-agents-guest");
   });
+
+  describe("in a browser", () => {
+    const global = globalThis as Record<string, unknown>;
+    const names = ["document", "localStorage", "location"] as const;
+    let saved: Map<string, PropertyDescriptor | undefined>;
+
+    beforeEach(() => {
+      saved = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(global, name)]));
+    });
+
+    afterEach(() => {
+      for (const [name, descriptor] of saved) {
+        if (descriptor) {
+          Object.defineProperty(global, name, descriptor);
+        } else {
+          delete global[name];
+        }
+      }
+    });
+
+    /** A page's globals: a cookie jar, and localStorage unless `storage` is false or throws. */
+    function page(options: { storage?: boolean | "blocked" | "full"; https?: boolean; cookie?: string } = {}) {
+      const written: string[] = [];
+      let jar = options.cookie ?? "";
+      const document = {
+        get cookie() {
+          return jar;
+        },
+        set cookie(line: string) {
+          written.push(line);
+          const [pair] = line.split(";");
+          const [name] = (pair ?? "").split("=");
+          const others = jar.split(";").map((one) => one.trim()).filter((one) => one && !one.startsWith(`${name}=`));
+          jar = [...others, ...(line.includes("max-age=0") ? [] : [pair ?? ""])].join("; ");
+        },
+      };
+      const items = new Map<string, string>();
+      const storage = {
+        getItem: (key: string) => items.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          if (options.storage === "full") {
+            throw new Error("QuotaExceededError");
+          }
+          items.set(key, value);
+        },
+        removeItem: (key: string) => void items.delete(key),
+      };
+      Object.defineProperty(global, "document", { value: document, configurable: true, writable: true });
+      Object.defineProperty(global, "location", {
+        value: { protocol: options.https ? "https:" : "http:" },
+        configurable: true,
+        writable: true,
+      });
+      if (options.storage === "blocked") {
+        Object.defineProperty(global, "localStorage", {
+          get() {
+            throw new Error("SecurityError");
+          },
+          configurable: true,
+        });
+      } else if (options.storage === false) {
+        Object.defineProperty(global, "localStorage", { value: undefined, configurable: true, writable: true });
+      } else {
+        Object.defineProperty(global, "localStorage", { value: storage, configurable: true, writable: true });
+      }
+      return { items, written, jar: () => jar };
+    }
+
+    const minted = { id: "guest-1", token: "guest-token", refresh_secret: "renew-once" };
+
+    it("remembers the guest in localStorage, never in a cookie sent with every request", async () => {
+      const { items, written } = page({ https: true });
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: minted });
+
+      await api.guestUser();
+
+      assert.deepEqual(JSON.parse(items.get(GUEST_STORAGE_KEY) ?? "{}"), minted);
+      assert.deepEqual(written, []);
+    });
+
+    it("moves a guest an earlier version kept in a cookie into localStorage, and clears the cookie", async () => {
+      const cookie = `${GUEST_STORAGE_KEY}=${encodeURIComponent(JSON.stringify(minted))}`;
+      const { items, jar } = page({ https: true, cookie });
+
+      const guest = await api.guestUser();
+
+      assert.equal(guest.id, "guest-1", "the same guest, with the same history");
+      assert.equal(router.received.length, 0);
+      assert.ok(items.get(GUEST_STORAGE_KEY));
+      assert.equal(jar(), "");
+    });
+
+    it("clears another visitor's guest from an old cookie when minting a fresh one", async () => {
+      const previous = { id: "guest-0", token: "their-token", refresh_secret: "their-secret" };
+      const { items, jar } = page({ https: true, cookie: `${GUEST_STORAGE_KEY}=${encodeURIComponent(JSON.stringify(previous))}` });
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: minted });
+
+      const guest = await api.guestUser({ fresh: true });
+
+      assert.equal(guest.id, "guest-1");
+      assert.equal(jar(), "", "the previous visitor's token no longer goes out with requests");
+      items.clear();
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: { id: "guest-2", token: "t2" } });
+      assert.notEqual((await api.guestUser()).id, "guest-0", "and cannot come back once localStorage is cleared");
+    });
+
+    it("keeps a refreshed guest in a cookie when a full localStorage refuses it", async () => {
+      const expired = { ...minted, expires_at: "2000-01-01T00:00:00Z" };
+      const { items, jar } = page({ https: true, storage: "full" });
+      items.set(GUEST_STORAGE_KEY, JSON.stringify(expired));
+      const renewed = { id: "guest-1", token: "fresh-token", refresh_secret: "renew-twice" };
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: renewed });
+
+      const guest = await api.guestUser();
+
+      assert.deepEqual(guest, renewed, "handed back although localStorage would not keep it");
+      assert.equal(items.get(GUEST_STORAGE_KEY), undefined, "the spent secret is not read again");
+      assert.match(jar(), /fresh-token/);
+      assert.deepEqual(await api.guestUser(), renewed, "read back from the cookie, not minted again");
+      assert.equal(router.received.length, 1);
+    });
+
+    it("falls back to a Secure cookie on an https page whose localStorage is blocked", async () => {
+      const { written } = page({ https: true, storage: "blocked" });
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: minted });
+
+      await api.guestUser();
+
+      assert.equal(written.length, 1);
+      assert.match(written[0] ?? "", /; Secure$/);
+    });
+
+    it("leaves Secure off a cookie on an http page, which could not set one", async () => {
+      const { written } = page({ storage: false });
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: minted });
+
+      await api.guestUser();
+
+      assert.equal(written.length, 1, "the guest was remembered in the cookie");
+      assert.match(written[0] ?? "", new RegExp(`^${GUEST_STORAGE_KEY}=[^;]*guest-token`));
+      assert.doesNotMatch(written[0] ?? "", /Secure/);
+    });
+
+    it("clears a malformed guest cookie on sign-out, and takes it for no guest", async () => {
+      const { jar } = page({ https: true, cookie: `${GUEST_STORAGE_KEY}=%E0%A4%A` });
+
+      api.forgetGuest();
+      assert.equal(jar(), "", "forgetGuest finished, and the cookie is gone");
+
+      page({ https: true, cookie: `${GUEST_STORAGE_KEY}=%` });
+      router.serve("POST", "/v1/agents/guests", { status: 201, body: minted });
+      assert.equal((await api.guestUser()).id, "guest-1", "a fresh guest rather than a thrown URIError");
+    });
+  });
 });
 
 describe("scheduled tasks", () => {

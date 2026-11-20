@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { inspect } from "node:util";
 
 import {
   Agent,
@@ -1087,6 +1088,14 @@ describe("Edge", () => {
     assert.equal(made.headers.get("stream-auth-type"), "jwt");
     assert.ok(made.headers.get("authorization"));
     assert.deepEqual(made.body, { data: { created_by_id: "john" } });
+  });
+
+  it("never prints the secret it signs with", () => {
+    const edge = new Edge({ apiKey: "key", apiSecret: "shh-edge-secret" });
+
+    for (const shown of [inspect(edge), JSON.stringify(edge)]) {
+      assert.ok(!shown.includes("shh-edge-secret"), shown);
+    }
   });
 
   it("builds a link a person can open to hear the agent", async () => {

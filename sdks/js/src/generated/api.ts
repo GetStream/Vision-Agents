@@ -4934,7 +4934,7 @@ export type components = {
             readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description Replaces the greeting whole. An empty text removes it. */
             readonly greeting?: components["schemas"]["Greeting"];
-            /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
+            /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. An empty string removes the guardrail. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
             /** @description An empty string removes it, and the agent stops being offered generate_image. */
@@ -5015,7 +5015,7 @@ export type components = {
             /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
-            /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
+            /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. Empty means every turn is answered. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
             /** @description What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default. */
@@ -7569,6 +7569,44 @@ export type components = {
          * @enum {string}
          */
         readonly GreetingMode: "exact" | "variation";
+        readonly GuardrailCheck: {
+            /** @description Whether the turn was answered. True for a check that failed, whose turn is answered anyway. */
+            readonly allowed: boolean;
+            /** @description True when the check could not be made (the model or the webhook failed or took too long) and the turn was answered anyway. Such a check has no probability. Absent for a check that answered. */
+            readonly failed?: boolean;
+            /**
+             * Format: double
+             * @description How long a reply the model had begun waited on the verdict, which is what a parallel check costs the caller. Absent when it did not wait, and in blocking mode, where the model is asked only after the verdict.
+             */
+            readonly held_ms?: number;
+            /**
+             * @description How the turn was checked: the guardrail.md's type.
+             * @enum {string}
+             */
+            readonly kind: "decision_model" | "llm" | "webhook";
+            /**
+             * Format: double
+             * @description How long the check took, from asking to the verdict or the failure.
+             */
+            readonly latency_ms: number;
+            /**
+             * @description When the check ran: parallel, beside the model, or blocking, before the model was asked.
+             * @enum {string}
+             */
+            readonly mode: "parallel" | "blocking";
+            /** @description The provider and model that answered, as provider/model. Absent for a webhook, and for a check that failed. */
+            readonly model?: string;
+            /**
+             * Format: double
+             * @description The probability the model put on the turn going against the policy. Absent for a webhook, which answers yes or no, and for a check that failed.
+             */
+            readonly probability?: number;
+            /**
+             * Format: double
+             * @description The guardrail.md's threshold: a probability at or above it refuses the turn. Absent for a webhook.
+             */
+            readonly threshold?: number;
+        };
         readonly GuestUser: {
             readonly custom?: {
                 readonly [key: string]: unknown;
@@ -10843,6 +10881,8 @@ export type components = {
             readonly first_frame_queued_ms?: number | null;
             /** @description The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest first. A check names its turn: the reply the agent was saying when it was asked while the agent talked, whatever turn comes next, and otherwise the caller's turn its words were put as. A check with the floor free whose turn has no entry joins the first turn that began after it. Absent for an agent without chorus-asr floor control. */
             readonly floor_checks?: readonly components["schemas"]["FloorCheck"][];
+            /** @description The guardrail's check of this turn, allowed or refused. Absent when no check ran: an agent with no guardrail, or a reply that carries no new words of the caller's. A written aside is no turn, so its check is not recorded. */
+            readonly guardrail?: components["schemas"]["GuardrailCheck"];
             /** @description What the caller said, when it can be matched to this exchange. */
             readonly heard?: string;
             /** @description Whether the caller talked over the answer. */

@@ -26,7 +26,7 @@ final readonly class AgentConfigPatch
         public ?FloorControl $floorControl = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
-        // A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string remove...
+        // A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. A decision_model guard...
         public ?string $guardrail = null,
         public Harness|string|null $harness = null,
         public ?string $instructions = null,
