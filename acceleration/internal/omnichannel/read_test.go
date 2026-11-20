@@ -70,8 +70,6 @@ func (s *ReadSuite) TestCardsAreHandedOldestFirstBehindANoteThatTheyAreNotAuthor
 	s.Contains(cardsAttribution, "not for authentication or permissions")
 }
 
-// A newer card with nothing to say, such as a call whose lines could not be handed over,
-// leaves the older ones to be read.
 // The cards are the router's words (a summary written from earlier episodes, tool output
 // included), so a guardrail's conversation leaves them out as it does a compaction summary.
 func (s *ReadSuite) TestTheCardsAreNotSaidByThePerson() {
@@ -83,6 +81,8 @@ func (s *ReadSuite) TestTheCardsAreNotSaidByThePerson() {
 	s.True(handed[1].Router, "the cards reach a guardrail's conversation as the person's words")
 }
 
+// A newer card with nothing to say, such as a call whose lines could not be handed over,
+// leaves the older ones to be read.
 func (s *ReadSuite) TestANewerCardWithNothingToSayKeepsTheOlderOnes() {
 	sms := told{Source: "sms", Status: "in_progress", StartedAt: s.start,
 		Lines: []line{{From: fromPerson, Text: "is the clinic open on Sunday?"}}}
