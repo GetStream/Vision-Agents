@@ -59,3 +59,5 @@ runs:
         uv sync ${{ inputs.sync-flags }} $(printf -- '--no-install-package %s ' $skip)
         uv pip install --no-deps --index-url https://download.pytorch.org/whl/cpu \
           $(grep -E '^(torch|torchvision|torchaudio)==' <<< "$locked" | cut -d' ' -f1 | sed 's/$/+cpu/')
+        # A uv run that syncs, dev.py's own included, would put the CUDA build back.
+        echo "UV_NO_SYNC=1" >> "$GITHUB_ENV"

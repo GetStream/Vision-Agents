@@ -46,12 +46,12 @@ jobs:
           cpu-torch: "true"
       # Run ruff
       - name: Run Ruff linter
-        run: uv run --no-sync ruff check .
+        run: uv run ruff check .
       - name: Run Ruff formatter
-        run: uv run --no-sync ruff format --check .
+        run: uv run ruff format --check .
       # Validate extras are defined in pyproject.toml
       - name: Validate extra dependencies in "sdks/python/pyproject.toml"
-        run: uv run --no-sync dev.py validate-extras
+        run: uv run dev.py validate-extras
       # The generated client is committed; a spec change without a regen fails here. Status, not
       # `git diff`, so a new generated file that is untracked fails too.
       - name: Check the stream plugin's generated client is in step with the spec
