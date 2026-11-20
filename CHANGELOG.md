@@ -812,6 +812,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The JavaScript SDK's channel stops the agent's reply from the default stop button
+
+The default stop button of stream-chat-react's composer, `StopAIGenerationButton`, calls the channel's `stopAIResponse()`, as React Native's composer does, which only sent `ai_indicator.stop`, an event the agent does not act on, so the reply went on and apps replaced the button with one calling `session.interrupt()`. On the channel `session.chat()` opens, `stopAIResponse()` now interrupts the session's reply first and still sends the event, so the default button works and the override can go. The channel gets Stream Chat's own back when the session is closed.
+
 ### An agent acting on chorus-asr never answers what chorus-asr ruled ignored
 
 With `unified_replies` on, chorus-asr's ruling on a turn was thrown away and the reply model decided from the transcript alone, so turns chorus-asr ignored (background speech, a TV, noise) were still answered. When an agent acts on chorus-asr, its ruling now decides every turn, and `unified_replies` applies only to agents without it.

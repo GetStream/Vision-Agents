@@ -26,6 +26,9 @@ export const CID = "agent:support-1";
 /** Where Chat answers the channel's query, which `watch` and a re-read also send. */
 export const QUERY_PATH = chat10 ? "/api/v2/chat/channels/agent/support-1/query" : "/channels/agent/support-1/query";
 
+/** Where Chat takes the channel's events, such as the `ai_indicator.stop` of a stop button. */
+export const EVENT_PATH = chat10 ? "/api/v2/chat/channels/agent/support-1/event" : "/channels/agent/support-1/event";
+
 /** As much of a client as the tests touch. */
 export interface TestChat {
   channel(type: string, id: string): unknown;
