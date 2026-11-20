@@ -420,6 +420,26 @@ func (s *AgentSuite) TestACheckThatCouldNotBeMadeIsReportedAsFailedAndNotAsHarml
 	s.Require().NotNil(turn.Guardrail.Threshold)
 }
 
+func (s *AgentSuite) TestATurnTheModelFailedStillReportsItsCheck() {
+	// The check answered beside a model that never did: the turn ends failed, and what the
+	// guardrail made of it is still on it.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+	s.model.mu.Lock()
+	s.model.refuses = errors.New("invalid api key")
+	s.model.mu.Unlock()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the failed turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the failed turn lost its check")
+	s.True(turn.Guardrail.Allowed)
+	s.Require().NotNil(turn.Guardrail.Probability)
+	s.InDelta(0.07, *turn.Guardrail.Probability, 0.001)
+	s.Zero(turn.Guardrail.HeldMs, "no reply was held: the model wrote none")
+}
+
 func (s *AgentSuite) TestATurnNothingScreenedReportsNoCheck() {
 	s.joinText()
 

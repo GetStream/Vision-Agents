@@ -132,8 +132,11 @@ func Conversation(history []llm.Message) string {
 	room := conversationChars
 	for at := len(history) - 1; at >= 0 && len(lines) < conversationLines && room > 0; at-- {
 		message := history[at]
+		if message.Role != llm.User && message.Role != llm.Assistant {
+			continue
+		}
 		said := []rune(strings.Join(strings.Fields(message.Content), " "))
-		if len(said) == 0 || (message.Role != llm.User && message.Role != llm.Assistant) {
+		if len(said) == 0 {
 			continue
 		}
 		if len(said) > room {

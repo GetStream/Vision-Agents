@@ -1255,7 +1255,7 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 	a.mu.Unlock()
 
 	turnID := writtenPrefix + turnStamp()
-	screening := a.screening(ctx, turnID, asked, conversationBefore(history))
+	screening := a.screening(ctx, turnID, asked, history)
 	if screening != nil && screening.blocking {
 		decided, _ := screening.wait()
 		if !decided.verdict.Allowed {
@@ -3033,7 +3033,7 @@ func (a *Agent) startReply(
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
 
-	screening := a.screening(ctx, turn.ID, screen, conversationBefore(turn.History))
+	screening := a.screening(ctx, turn.ID, screen, turn.History)
 
 	// In blocking mode the model is not asked at all until the verdict is in, so a refused
 	// turn spends nothing on a reply nobody hears - and every caller waits for the check,
@@ -3053,6 +3053,12 @@ func (a *Agent) startReply(
 	if err != nil {
 		if ctx.Err() != nil {
 			return
+		}
+		// The check ran beside a model that never answered, so the turn still says what
+		// the guardrail made of it. No reply was held, and a refusal has nothing to stop.
+		if screening != nil {
+			decided, _ := screening.wait()
+			a.turns.screened(turn.ID, decided.check)
 		}
 		// Ended the way a reply failing mid-stream ends, so the turn is over: left
 		// generating, the agent never looks idle and a model switch waits on it forever.
@@ -3143,11 +3149,13 @@ func conversationBefore(history []llm.Message) string {
 }
 
 // screening starts the check for a turn, or returns nil where there is nothing to screen:
-// no policy, or a turn that carries no new words of the caller's.
-func (a *Agent) screening(ctx context.Context, turnID, text, conversation string) *screening {
+// no policy, or a turn that carries no new words of the caller's. history is what the
+// model is sent for the turn, which the check reads what came before it from.
+func (a *Agent) screening(ctx context.Context, turnID, text string, history []llm.Message) *screening {
 	if a.options.Guardrail == nil || strings.TrimSpace(text) == "" {
 		return nil
 	}
+	conversation := conversationBefore(history)
 
 	policy := a.options.Guardrail.Policy()
 	started := &screening{
