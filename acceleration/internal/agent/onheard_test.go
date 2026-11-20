@@ -39,23 +39,27 @@ func (s *AgentSuite) toldBeforeReported(told <-chan Heard, release func(), text 
 }
 
 func (s *AgentSuite) TestTheOwnerIsToldOfACallersWordsBeforeTheyAreReportedHeard() {
-	told, release := s.holdsHeard()
-	s.join(false)
-	alice := stt.Participant{ID: "alice"}
-	s.speak(alice)
+	s.onFakeClock(func() {
+		told, release := s.holdsHeard()
+		s.join(false)
+		alice := stt.Participant{ID: "alice"}
+		s.speak(alice)
 
-	s.says(alice, "who is this?")
+		s.says(alice, "who is this?")
 
-	s.toldBeforeReported(told, release, "who is this?")
+		s.toldBeforeReported(told, release, "who is this?")
+	})
 }
 
 func (s *AgentSuite) TestTheOwnerIsToldOfWordsTypedIntoACallBeforeTheyAreReportedHeard() {
-	told, release := s.holdsHeard()
-	s.join(false)
+	s.onFakeClock(func() {
+		told, release := s.holdsHeard()
+		s.join(false)
 
-	go func() { _, _ = s.agent.RespondTo(s.ctx, "my order number is 12", nil, options.LLM{}) }()
+		go func() { _, _ = s.agent.RespondTo(s.ctx, "my order number is 12", nil, options.LLM{}) }()
 
-	s.toldBeforeReported(told, release, "my order number is 12")
+		s.toldBeforeReported(told, release, "my order number is 12")
+	})
 }
 
 func (s *AgentSuite) TestTheOwnerIsToldOfWhatANativeModelHeardBeforeItIsReportedHeard() {
