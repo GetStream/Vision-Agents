@@ -46,6 +46,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -175,24 +176,11 @@ func gmailSend(w http.ResponseWriter, r *http.Request) {
 
 // gmailConnections are the user's Gmail connections, newest first.
 func gmailConnections(ctx context.Context, user string) ([]acceleration.Connection, error) {
-	client, err := stream.Backend{ActingFor: user}.Client()
+	api, err := client.New(stream.Backend{})
 	if err != nil {
 		return nil, err
 	}
-	owner, connector := acceleration.ConnectionOwnerTypeUser, gmail
-	listed, err := client.ListConnectionsWithResponse(ctx, &acceleration.ListConnectionsParams{
-		OwnerType: &owner, ConnectorId: &connector,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if listed.JSON200 == nil {
-		return nil, errors.New(refused("listing Gmail connections", listed.StatusCode(), listed.Body))
-	}
-	if listed.JSON200.Items == nil {
-		return nil, nil
-	}
-	return *listed.JSON200.Items, nil
+	return api.Connections().List(ctx, client.ConnectionFilter{UserID: user, Connector: gmail})
 }
 
 // connectedOne is the first of connections that is connected, or nil.
@@ -207,7 +195,7 @@ func connectedOne(connections []acceleration.Connection) *acceleration.Connectio
 
 // proxy posts body to path under the connection's api_base, as the user's backend.
 func proxy(ctx context.Context, user, connection, path string, body any) ([]byte, error) {
-	resolved, err := stream.Backend{ActingFor: user}.Resolve()
+	resolved, err := stream.Backend{}.Resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -215,6 +203,7 @@ func proxy(ctx context.Context, user, connection, path string, body any) ([]byte
 	if err != nil {
 		return nil, err
 	}
+	credentials.Set(stream.UserHeader, user)
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

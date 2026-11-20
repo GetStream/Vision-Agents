@@ -240,7 +240,7 @@ func (d *Dispatch) Answer(ctx context.Context, message InboundMessage) error {
 		return errors.New("agents: no session is holding this message; open one with Conversation")
 	}
 	backend := d.backend
-	backend.ActingFor = message.UserID
+	backend.ActingFor = message.UserID //nolint:staticcheck // SA1019: the one way to answer as the writer on a client.Agent call, which takes no per-call user yet
 	api, err := client.New(backend)
 	if err != nil {
 		return err
