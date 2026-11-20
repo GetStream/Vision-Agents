@@ -411,47 +411,66 @@ func (s *AlertsSuite) clocked(now *time.Time, conditions ...Condition) *Loop {
 	}, conditions...)
 }
 
-// gauge reads the holds gauge of an alert at a level. Each test names its alerts afresh: the
-// gauge is the process's, which every test's loop sets.
-func gauge(name string, level Level) float64 {
+// count reads the holds counter of an alert at a level. Each test names its alerts afresh:
+// the counter is the process's, which every test's loop adds to.
+func count(name string, level Level) float64 {
 	return testutil.ToFloat64(holds.WithLabelValues(name, string(level)))
 }
 
-func (s *AlertsSuite) TestTheGaugeIsWhatTheConditionHoldsAtEveryCheckWhateverTheLimitSends() {
+func (s *AlertsSuite) TestTheCounterAddsOneAtEveryCheckTheConditionHoldsWhateverTheLimitSends() {
 	name := "held_" + rand.Text()
 	var held atomic.Bool
 	start := time.Now()
 	now := start
 	loop := s.clocked(&now, Condition{Name: name, Level: Page, Check: func(time.Time) (bool, map[string]any) { return held.Load(), nil }})
 
-	held.Store(true)
 	s.ticks(loop, &now, start, 0)
-	s.Equal(1.0, gauge(name, Page))
-	s.ticks(loop, &now, start, 15*time.Second)
-	s.Equal(1.0, gauge(name, Page), "still held, though the limit sends nothing")
-	held.Store(false)
-	s.ticks(loop, &now, start, 30*time.Second)
-	s.Equal(0.0, gauge(name, Page), "no longer held")
+	s.Equal(0.0, count(name, Page), "not held: the series is there, at 0")
 	held.Store(true)
+	s.ticks(loop, &now, start, 15*time.Second)
+	s.Equal(1.0, count(name, Page))
+	s.ticks(loop, &now, start, 30*time.Second)
+	s.Equal(2.0, count(name, Page), "held again, though the limit sends nothing")
+	held.Store(false)
 	s.ticks(loop, &now, start, 45*time.Second)
-	s.Equal(1.0, gauge(name, Page), "held again within the limit")
+	s.Equal(2.0, count(name, Page), "no longer held: the counter stays")
+	held.Store(true)
+	s.ticks(loop, &now, start, 60*time.Second)
+	s.Equal(3.0, count(name, Page))
 
 	s.Len(s.sent(), 1, "the limit let one event out")
-	s.Equal(0.0, gauge(name, Warn), "the series is the condition's level alone")
+	s.Equal(0.0, count(name, Warn), "the series is the condition's level alone")
 }
 
-func (s *AlertsSuite) TestAWarningSetsTheGaugeOfItsLevel() {
+func (s *AlertsSuite) TestAConditionThatHoldsForOneCheckOnlyIsAnIncrease() {
+	name := "pulse_" + rand.Text()
+	var held atomic.Bool
+	start := time.Now()
+	now := start
+	loop := s.clocked(&now, Condition{Name: name, Level: Page, Check: func(time.Time) (bool, map[string]any) { return held.Load(), nil }})
+
+	s.ticks(loop, &now, start, 0)
+	before := count(name, Page)
+	held.Store(true)
+	s.ticks(loop, &now, start, 15*time.Second)
+	held.Store(false)
+	s.ticks(loop, &now, start, 30*time.Second, 45*time.Second)
+
+	s.Equal(1.0, count(name, Page)-before, "a scrape after the pulse sees it")
+}
+
+func (s *AlertsSuite) TestAWarningCountsAtItsLevel() {
 	name := "warned_" + rand.Text()
 	now := time.Now()
 	loop := s.clocked(&now, Condition{Name: name, Level: Warn, Check: func(time.Time) (bool, map[string]any) { return true, nil }})
 
 	loop.check()
 
-	s.Equal(1.0, gauge(name, Warn))
-	s.Equal(0.0, gauge(name, Page))
+	s.Equal(1.0, count(name, Warn))
+	s.Equal(0.0, count(name, Page))
 }
 
-func (s *AlertsSuite) TestTheGaugeOfAnItemConditionIsTheNumberOfItemsItHoldsFor() {
+func (s *AlertsSuite) TestTheCounterOfAnItemConditionAddsTheNumberOfItemsItHoldsFor() {
 	name := "items_" + rand.Text()
 	held := map[string]map[string]any{"a": nil, "b": nil, "c": nil}
 	start := time.Now()
@@ -459,13 +478,13 @@ func (s *AlertsSuite) TestTheGaugeOfAnItemConditionIsTheNumberOfItemsItHoldsFor(
 	loop := s.clocked(&now, Condition{Name: name, Level: Page, Items: func(time.Time) map[string]map[string]any { return held }})
 
 	s.ticks(loop, &now, start, 0)
-	s.Equal(3.0, gauge(name, Page))
+	s.Equal(3.0, count(name, Page))
 	delete(held, "c")
 	s.ticks(loop, &now, start, 15*time.Second)
-	s.Equal(2.0, gauge(name, Page), "the items still held, though the limit sends none of them")
+	s.Equal(5.0, count(name, Page), "two items more, though the limit sends none of them")
 	held = nil
 	s.ticks(loop, &now, start, 30*time.Second)
-	s.Equal(0.0, gauge(name, Page), "no item held")
+	s.Equal(5.0, count(name, Page), "no item held: nothing added")
 
 	s.Len(s.sent(), 3, "the limit let each item out once")
 }

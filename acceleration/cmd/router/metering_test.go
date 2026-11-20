@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"sync"
 	"testing"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // RefusalAlertsSuite runs the router's metering alerts as its start does, against the
@@ -55,16 +53,6 @@ func (s *RefusalAlertsSuite) fingerprints() []string {
 		fingerprints = append(fingerprints, event.Fingerprint...)
 	}
 	return fingerprints
-}
-
-// Both loops of a router set one gauge by the alert's name, so a name in both would make its
-// series flip between the two loops' answers.
-func (s *RefusalAlertsSuite) TestTheUsageAndMeteringLoopsShareNoAlertName() {
-	seen := map[string]bool{}
-	for _, condition := range slices.Concat(routing.Alerts(usageAlertLimit), meteringConditions()) {
-		s.False(seen[condition.Name], condition.Name)
-		seen[condition.Name] = true
-	}
 }
 
 func (s *RefusalAlertsSuite) TestAMem0RefusalAndARefusedKeyAlert() {

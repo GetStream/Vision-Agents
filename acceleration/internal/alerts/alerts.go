@@ -1,9 +1,9 @@
 // Package alerts checks named conditions in the process that can see them, and sends one
 // Sentry event per condition that holds at most once per interval, which Sentry's alert rules
 // route by the usage_alert tag. Without a Sentry DSN an alert is only logged, at ERROR, which
-// it always is too. Every check also sets the gauge router_alert_holds{alert,level} to what
-// the condition holds at that check, whatever the limit sends, so a monitor outside Sentry
-// can page on the level page ones.
+// it always is too. Every check also adds to the counter router_alert_holds_total{alert,level}
+// what the condition holds at that check (1, or the number of items), whatever the limit
+// sends, so a monitor outside Sentry can page on an increase of the level page ones.
 package alerts
 
 import (
@@ -20,14 +20,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// holds is what each condition held at its last check: 1 or 0 for a Check, the number of
-// items for Items. It is one gauge per process, which each loop sets for its own conditions,
-// so the router's two loops must not share a name. An item (an app, a model) is no label: it
-// would add a series per customer.
-var holds = promauto.NewGaugeVec(prometheus.GaugeOpts{
-	Name: "router_alert_holds",
-	Help: "What each usage alert held at its last check: 1 or 0, or the number of items it holds for, " +
-		"whether or not the limit let its Sentry event out, by alert and level (page or warn).",
+// holds counts what each condition held, at every check: 1 for a Check that holds, the number
+// of items for Items. A counter, not a gauge: a condition that holds on a rise holds for one
+// check, and a scrape between two checks would never see it, while a counter's increase does.
+// It is one counter per process, which each loop adds to for its own conditions. An item (an
+// app, a model) is no label: it would add a series per customer. A condition's series exists
+// at 0 from its first check, so the first time it holds is an increase.
+var holds = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "router_alert_holds_total",
+	Help: "How many times each usage alert held, summed over its checks: 1 per check for a condition, " +
+		"one per item for a condition of items, whether or not the limit let its Sentry event out, " +
+		"by alert and level (page or warn).",
 }, []string{"alert", "level"})
 
 // Level is how loud an alert is.
@@ -140,7 +143,7 @@ func (l *Loop) Run(ctx context.Context) {
 	}
 }
 
-// check sets each condition's gauge and sends each condition that holds and was not sent
+// check counts what each condition holds and sends each condition that holds and was not sent
 // within the limit.
 func (l *Loop) check() {
 	now := l.options.Now()
@@ -150,14 +153,11 @@ func (l *Loop) check() {
 			continue
 		}
 		held, extra := condition.Check(now)
-		value := 0.0
-		if held {
-			value = 1
-		}
-		holds.WithLabelValues(condition.Name, string(condition.Level)).Set(value)
+		counter := holds.WithLabelValues(condition.Name, string(condition.Level))
 		if !held {
 			continue
 		}
+		counter.Inc()
 		if last, ok := l.sent[condition.Name]; ok && now.Sub(last) < l.options.Limit {
 			continue
 		}
@@ -166,12 +166,12 @@ func (l *Loop) check() {
 	}
 }
 
-// checkItems sets the condition's gauge to the number of items it holds for, and sends each
+// checkItems adds the number of items the condition holds for to its counter, and sends each
 // item that was not sent within the limit, in order so the events of one check go out the
 // same way every time.
 func (l *Loop) checkItems(now time.Time, condition Condition) {
 	held := condition.Items(now)
-	holds.WithLabelValues(condition.Name, string(condition.Level)).Set(float64(len(held)))
+	holds.WithLabelValues(condition.Name, string(condition.Level)).Add(float64(len(held)))
 	for _, item := range slices.Sorted(maps.Keys(held)) {
 		key := condition.Name + ":" + item
 		if last, ok := l.sent[key]; ok && now.Sub(last) < l.options.Limit {

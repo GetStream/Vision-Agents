@@ -2280,13 +2280,15 @@ a batch sent without the ingest token (`batch_unauthorized`, a 401): a misconfig
 producer, or no producer at all. `usage_batches_refused_total{status}` counts both kinds of
 refusal.
 
-Each alerts loop, the router's two and the service's, sets the gauge
-`router_alert_holds{alert,level}` on its process's `/metrics` at every check (every 15 s), so a
-monitor outside Sentry can page on `level="page"`. It is 1 while a condition holds and 0 once it
-stops, or, for a condition of items (`missing`, `unpriced`, `key_refused`), the number of items it
-holds for. It reads what the condition holds, whether or not the Sentry limit sends it, and names
-no item. A condition that holds on a rise (`lost`, `rejected`, `service_rejected`,
-`batch_refused`) holds at one check per rise.
+Each alerts loop, the router's two and the service's, adds to the counter
+`router_alert_holds_total{alert,level}` on its process's `/metrics` at every check (every 15 s),
+so a monitor outside Sentry can page on `level="page"`. A condition that holds adds 1 at a
+check; a condition of items (`missing`, `unpriced`, `key_refused`) adds the number of items it
+holds for; one that does not hold adds nothing, and the counter is never reset. It counts
+whether or not the Sentry limit sends the event, and names no item. A counter, not a gauge,
+because a condition that holds on a rise (`lost`, `rejected`, `service_rejected`,
+`batch_refused`) holds at one check only, which a scrape between two checks would miss. Page on
+`increase(router_alert_holds_total{level="page"}[5m]) > 0`.
 
 ## Prices
 
