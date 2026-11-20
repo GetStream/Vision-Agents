@@ -2226,9 +2226,10 @@ nothing and only deletes. A step or a "first day" is therefore the first one in 
 that comes back after 400 days without a request shows as new.
 
 To see why an organization's requests are refused, list its refusals by code from the access
-log. The router writes one `served a request` line per request, with `customer` (the app) and,
-from status 400, `error_code`. ClickHouse holds these lines in `logs.agent_access_logs`, with
-`customer` as `app_id` and the status as `response`, for 14 days. Each cluster has its own
+log. The router writes one `served a request` line per request, with `customer` (the app) and
+`error_code` on every refused request. That includes a call hook or a socket that is refused with
+status 200 or 101, so the query keeps those lines too. ClickHouse holds these lines in
+`logs.agent_access_logs`, with `customer` as `app_id` and the status as `response`, for 14 days. Each cluster has its own
 ClickHouse: staging is `us-east1-acceleration`, and prod has three clusters, so run the query on
 each. Find the organization's apps in Postgres first
 (`SELECT app_id FROM app_organizations WHERE organization_id = '<org>'`), then:
@@ -2238,7 +2239,7 @@ SELECT error_code, operation_type, response AS status, count() AS refused, max(t
 FROM logs.agent_access_logs
 WHERE k8s_namespace = 'accelerate-prod'  -- accelerate-staging on staging
   AND app_id IN (<app ids>)
-  AND response >= 400
+  AND (response >= 400 OR error_code != '')
   AND timestamp > now() - INTERVAL 7 DAY
 GROUP BY error_code, operation_type, status
 ORDER BY refused DESC
