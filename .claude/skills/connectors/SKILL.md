@@ -195,11 +195,14 @@ For a session your backend creates, pass the end user's connection in
 `connector_bindings: [{"name": "linear", "connection_id": "…"}]`. Leave it out and the
 router uses the user's only connected connection to that connector, if there is exactly one.
 
-`agent.yaml`: the sync API accepts `connectors`, and the Go SDK folder reader reads the block
-(`sdks/go/agents/config.go`, `connectorBindings`). An entry whose `connection:` the app does not have
-is left out with a warning, and the rest of the agent syncs; `required: true` makes it an error. `sandbox: true` lets code in the session's sandbox call the connector's API with the binding's connection.
-The left-out entries go to the router as `left_out_connectors` and are served on the agent config.
-Other SDKs: unverified, check `git grep connectors sdks/js/src plugins/stream` before relying on it.
+`agent.yaml`: a sync that sends the directory's files (Go and JavaScript do) has its `connectors`
+block read by the router (`acceleration/internal/api/directory.go`, `bindDirectoryConnectors`),
+which finds a `connection:` among the app's own by id or by label. An entry whose connection the
+app does not have is left out with a warning, stored as `left_out_connectors` and served on the
+agent config, and the rest of the agent syncs; `required: true` makes it an error. `sandbox: true`
+lets code in the session's sandbox call the connector's API with the binding's connection.
+An SDK that still reads the folder itself sends `connectors` and `left_out_connectors` as fields:
+check `git grep connectors plugins/stream` before relying on one.
 
 ### Sandbox access
 

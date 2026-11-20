@@ -24,9 +24,13 @@ model tokens
 
 ## The agent.yaml `ui:` key
 
-`ui:` tells the model what it may draw. The SDK that loads the folder compiles it into a
-`## Interactive UI Generation` section and syncs it as the config's `ui_instructions`, apart from
-`instructions.md`, so the router sees only text. The output is deterministic, so the prompt
+`ui:` tells the model what it may draw. It is compiled into a `## Interactive UI Generation`
+section stored as the config's `ui_instructions`, apart from `instructions.md`. For a sync of the
+directory's files (`POST /v1/agents/sync/files`, which Go and JavaScript send) the router compiles
+it (`acceleration/internal/agentdir/ui.go`) and keeps the key and the two files beside it
+(`agent_configs.ui_source`), which `GET /v1/agents/configs/{id}/directory` writes back until
+somebody writes other `ui_instructions`. An SDK that still syncs the fields it read compiles it
+and sends the text. The output is deterministic, so the prompt
 prefix stays cacheable across turns. The prompt is mixed mode: the model answers in prose and
 adds a card only when it helps.
 
@@ -68,17 +72,19 @@ ui:
 Paths are relative to the agent directory and may not leave it (symlinks included); each file is
 capped at 512 KiB.
 
-Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`, into `Folder.UIInstructions`) and JavaScript (`sdks/js/src/ui-catalog.ts`,
-from `loadFolder` in `folder.ts`). Python, .NET, Ruby, Rust and PHP don't read `ui:` yet (see the
-note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an unknown key
-(`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
-folder: `sdks/testdata/ui/concierge/` is compiled by a Go test and a JavaScript test, both held to
-`sdks/testdata/ui/concierge.instructions.txt`, which Go writes: what the model is told, the
-instructions and the UI joined by a blank line, as the router joins them. An SDK that adds `ui:` checks itself
-against the same pair. `a2ui` is compiled by Go (`sdks/go/agents/ui_a2ui.go`) and JavaScript
-(`sdks/js/src/ui-a2ui.ts`), both held to `sdks/testdata/ui/concierge-a2ui/` and
-`concierge-a2ui.instructions.txt`. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
-escapes inside quoted strings (`'it''s'`), empty list items, and `ui:` written as a flow mapping.
+Compiled by: the router (`acceleration/internal/agentdir/ui.go` and `ui_a2ui.go`) for a sync of
+files, which is what Go and JavaScript send. Both SDKs still compile it too, for the program
+holding the folder (`Folder.UIInstructions` from `sdks/go/agents/ui.go`, `Folder.uiInstructions`
+from `sdks/js/src/ui-catalog.ts`), until their parsers go (AI-3441). Python, .NET, Ruby, Rust and
+PHP don't read `ui:` yet (see the note at the end of the `sdk` skill), and the `getstream` CLI
+refuses it as an unknown key (`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream
+agents sync` fails on it. Every compiler must produce the same bytes for the same folder:
+`sdks/testdata/ui/concierge/` and `concierge-a2ui/` are compiled by the router's test, a Go SDK
+test and a JavaScript test, all held to `concierge.instructions.txt` and
+`concierge-a2ui.instructions.txt`: what the model is told, the instructions and the UI joined by
+a blank line, as the router joins them. JavaScript parses this YAML by hand; it still differs from
+yaml.v3 on escapes inside quoted strings (`'it''s'`), empty list items, and `ui:` written as a flow
+mapping.
 
 ## How the model writes UI
 
@@ -90,7 +96,8 @@ own components, then `updateComponents`, `root` first. The prompt is the one str
 renderer writes for itself (`A2UIInstructions`): its protocol and guidelines, then the catalog as
 JSON Schema, the basic catalog's components and functions that `keep` names beside the app's own,
 each app component as the renderer has it (`PortableComponent`: its parameters as properties, its
-events joining its description). `sdks/go/agents/a2ui/` holds the basic catalog and the protocol as
+events joining its description). `sdks/go/agents/a2ui/` and its copy `acceleration/internal/agentdir/a2ui/`, which a router test
+holds to it, hold the basic catalog and the protocol as
 the renderer has them, which `a2ui/generate.sh` writes again from a stream-chat-swift checkout; a Go
 test holds the catalog to the one in `swift_assistant/a2ui/instructions.md`, which the renderer
 wrote, so regenerate both together. JavaScript carries the same three files as a module,
