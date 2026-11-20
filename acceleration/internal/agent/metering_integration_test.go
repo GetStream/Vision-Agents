@@ -25,7 +25,9 @@ import (
 // AgentMeteringSuite runs agents whose knowledge and memory record into Postgres, priced by
 // the vendor list, and reads back the rows a conversation left.
 type AgentMeteringSuite struct {
-	AgentSuite
+	suite.Suite
+	// agents is the agent fixture, not embedded so its own tests are not run again here.
+	agents  *AgentSuite
 	pgStore *store.Store
 	list    *pricing.List
 	// since is when the test started: the suite's database is its own and its tests run one
@@ -52,19 +54,21 @@ func (s *AgentMeteringSuite) SetupSuite() {
 }
 
 func (s *AgentMeteringSuite) SetupTest() {
-	s.AgentSuite.SetupTest()
+	s.agents = new(AgentSuite)
+	s.agents.SetT(s.T())
+	s.agents.SetupTest()
 	s.since = time.Now().UTC()
-	s.metering = routing.NewRecorder(routing.Knowledge, s.pgStore, nil, s.list, slog.New(slog.DiscardHandler))
+	s.agents.metering = routing.NewRecorder(routing.Knowledge, s.pgStore, nil, s.list, slog.New(slog.DiscardHandler))
 }
 
 func (s *AgentMeteringSuite) TearDownTest() {
-	s.metering.Close()
+	s.agents.metering.Close()
 }
 
 // rows drains what the agent's knowledge and memory recorded and returns the test's rows of
 // the modality.
 func (s *AgentMeteringSuite) rows(modality routing.Modality) []store.Request {
-	s.metering.Close()
+	s.agents.metering.Close()
 	var rows []store.Request
 	s.Require().NoError(s.pgStore.DB().NewSelect().Model(&rows).
 		Where("started_at >= ? AND modality = ?", s.since, string(modality)).Scan(context.Background()))
@@ -72,14 +76,15 @@ func (s *AgentMeteringSuite) rows(modality routing.Modality) []store.Request {
 }
 
 func (s *AgentMeteringSuite) TestALookupRecordsItsBytes() {
-	s.reads(knowledge.Document{Text: "Delivery is free over $50.", Source: "shipping.md"})
-	s.join(false)
-	s.model.reply = []string{"Let me check that."}
-	s.asksFor("lookup", `{"query":"what does delivery cost"}`)
+	agents := s.agents
+	agents.reads(knowledge.Document{Text: "Delivery is free over $50.", Source: "shipping.md"})
+	agents.join(false)
+	agents.model.reply = []string{"Let me check that."}
+	agents.asksFor("lookup", `{"query":"what does delivery cost"}`)
 	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.says(participant, "how much is delivery")
-	s.Require().NoError(s.awaitToolRan().Err)
+	agents.speak(participant)
+	agents.says(participant, "how much is delivery")
+	s.Require().NoError(agents.awaitToolRan().Err)
 
 	rows := s.rows(routing.Knowledge)
 	s.Require().Len(rows, 1, "one lookup, one row")
@@ -95,9 +100,10 @@ func (s *AgentMeteringSuite) TestALookupRecordsItsBytes() {
 }
 
 func (s *AgentMeteringSuite) TestAMemorySearchIsOneRequest() {
-	s.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
-	s.join(false)
-	s.eventually(func() bool { return s.remembers.scopedTo().UserID != "" }, "the agent never recalled anything")
+	agents := s.agents
+	agents.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
+	agents.join(false)
+	agents.eventually(func() bool { return agents.remembers.scopedTo().UserID != "" }, "the agent never recalled anything")
 
 	rows := s.rows(routing.Memory)
 	s.Require().Len(rows, 1)
