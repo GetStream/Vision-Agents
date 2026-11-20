@@ -219,6 +219,26 @@ final class ClientTest extends TestCase
         self::assertSame('ada', $behalf->headers['x-stream-user-id']);
     }
 
+    // Catches onBehalfOf routed through the helper that drops the backend's own user: base kept it
+    // when the one given was empty.
+    public function testOnBehalfOfAnEmptyUserKeepsTheUserTheBackendWasBuiltWith(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+
+        (new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', userId: 'bob')->onBehalfOf('')))->get('/v1/agents/configs');
+
+        self::assertSame('bob', $this->router->received()[0]->headers['x-stream-user-id']);
+    }
+
+    // Catches a device backend's onBehalfOf building a server-side backend instead of refusing.
+    public function testADeviceBackendCannotActOnBehalfOfAUser(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('server-side');
+
+        new Backend(url: $this->router->url, apiKey: 'key', token: 'tok', userId: 'anya')->onBehalfOf('ada');
+    }
+
     public function testOnBehalfOfKeepsTheCustomerHeader(): void
     {
         $this->router->answer('GET', '/v1/agents/configs', 200, []);

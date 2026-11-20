@@ -213,6 +213,18 @@ final class WorkerTest extends TestCase
         self::assertStringStartsWith('Bearer ', $sent->headers['authorization']);
     }
 
+    public function testAnswerForAWriterWithoutAnIdKeepsTheUserTheBackendWasBuiltWith(): void
+    {
+        $this->router = new LocalRouter();
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1', 'running'));
+        $dispatch = new Dispatch(client: new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', userId: 'bob')));
+
+        $dispatch->answer(new InboundMessage(channelId: '', text: 'hi', sessionId: 'ses_1'));
+
+        $sent = $this->router->to('POST', '/v1/agents/sessions/ses_1/responses')[0];
+        self::assertSame('bob', $sent->headers['x-stream-user-id']);
+    }
+
     public function testAnswerBehindTheProxySendsTheServerTokenNotTheWritersOwn(): void
     {
         $this->router = new LocalRouter();
