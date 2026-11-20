@@ -1,5 +1,5 @@
 import type { Schemas } from "./client.js";
-import { number, text, type Frame } from "./socket.js";
+import { nested, number, text, type Frame } from "./socket.js";
 
 /** One tool call as the session last reported it, whichever process runs it. */
 export type ToolCallState = Schemas["ToolCallState"];
@@ -22,10 +22,24 @@ const frameTypes: ReadonlySet<string> = new Set(["tool_call.started", "tool_call
  */
 export class ToolCalls {
   private snapshot: ReadonlyMap<string, ToolCallState> = new Map();
+  private readonly byTurn = new Map<string, readonly ToolCallState[]>();
   private readonly listeners = new Set<() => void>();
 
   /** Every call so far. */
   readonly get = (): ReadonlyMap<string, ToolCallState> => this.snapshot;
+
+  /**
+   * The calls one agent turn made, in the order they started: the ones to show under that
+   * turn's message. The same array until one of them changes.
+   */
+  readonly forTurn = (turnId: string): readonly ToolCallState[] => {
+    let calls = this.byTurn.get(turnId);
+    if (calls === undefined) {
+      calls = Object.freeze([...this.snapshot.values()].filter((call) => call.turn_id === turnId));
+      this.byTurn.set(turnId, calls);
+    }
+    return calls;
+  };
 
   /** Calls `listener` whenever a call changes. It returns what stops it. */
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -44,6 +58,7 @@ export class ToolCalls {
     const next = new Map(this.snapshot);
     next.set(state.tool_call_id, state);
     this.snapshot = next;
+    this.byTurn.delete(state.turn_id);
     for (const listener of [...this.listeners]) {
       try {
         listener();
@@ -65,8 +80,9 @@ export function toolCallStateOf(frame: Frame): ToolCallState | undefined {
   if (!frameTypes.has(type) || id === "") {
     return undefined;
   }
-  const optional = (key: "progress" | "approved_at" | "rejected_at" | "error") =>
+  const optional = (key: "display_title" | "progress" | "approved_at" | "rejected_at" | "error") =>
     text(frame, key) === "" ? {} : { [key]: text(frame, key) };
+  const custom = nested(frame, "custom");
   return Object.freeze({
     type: type as ToolCallState["type"],
     tool_call_id: id,
@@ -75,9 +91,22 @@ export function toolCallStateOf(frame: Frame): ToolCallState | undefined {
     status: text(frame, "status") as ToolCallStatus,
     started_at: text(frame, "started_at"),
     duration_ms: number(frame, "duration_ms"),
+    ...optional("display_title"),
     ...optional("progress"),
     ...optional("approved_at"),
     ...optional("rejected_at"),
     ...optional("error"),
+    ...(custom ? { custom } : {}),
   });
+}
+
+/**
+ * What to call a tool call in the conversation. While it runs or waits, the last thing said
+ * about it, such as "Comparing 40 flights" or the question it waits on; otherwise its tool's
+ * display title, such as "Checking the weather", or the tool's name for a tool declared
+ * without one.
+ */
+export function toolCallTitle(call: ToolCallState): string {
+  const running = call.status === "in_progress" || call.status === "waiting";
+  return (running && call.progress) || call.display_title || call.tool;
 }

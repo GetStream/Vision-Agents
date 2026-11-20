@@ -87,6 +87,42 @@ impl ToolCallContext {
             _ => Err(Error::NotHeld(self.id.clone())),
         }
     }
+
+    /// Sets the call's title while it runs, such as "Comparing 40 flights".
+    pub async fn update(&self, title: impl Into<String>) -> Result<()> {
+        self.send_update(ToolCallUpdate {
+            title: Some(title.into()),
+            ..Default::default()
+        })
+        .await
+    }
+
+    /// Tells the people in the conversation how the call is going: a new title, data for
+    /// their app to show, or both.
+    pub async fn send_update(&self, update: ToolCallUpdate) -> Result<()> {
+        let Some(line) = &self.line else {
+            return Ok(());
+        };
+        let mut frame = json!({"type": "tool_update", "tool_call_id": self.id});
+        if let Some(title) = update.title.filter(|title| !title.is_empty()) {
+            frame["text"] = title.into();
+        }
+        if let Some(custom) = update.custom {
+            frame["custom"] = custom.into();
+        }
+        line.sender.send(&frame).await
+    }
+}
+
+/// What a running call tells the people in the conversation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ToolCallUpdate {
+    /// Replaces the call's display title while it runs, and on a voice call the agent tells
+    /// the caller about it in its own words. `None` leaves the title as it was.
+    pub title: Option<String>,
+    /// Replaces the call's data whole, for their app to show, such as a card under the
+    /// message. It is kept once the call finishes. `None` leaves it as it was.
+    pub custom: Option<Map<String, Value>>,
 }
 
 /// A call's way back over the socket that delivered it.

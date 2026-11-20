@@ -86,6 +86,25 @@ func (s *ToolCallStateSuite) TestAnUpdateWhileTheCallRunsIsItsProgress() {
 	s.False(again, "the same update changes nothing")
 }
 
+func (s *ToolCallStateSuite) TestAnUpdatesDataReplacesTheCallsAndOutlivesIt() {
+	s.start("call-1", "search_flights")
+	s.apply(agent.ToolUpdated{ID: "call-1", Tool: "search_flights", Text: "Comparing 40 flights",
+		Custom: map[string]any{"cheapest": 129, "airline": "TAP"}})
+
+	dataOnly, ok := s.apply(agent.ToolUpdated{ID: "call-1", Tool: "search_flights", Custom: map[string]any{"cheapest": 99}})
+	s.Require().True(ok)
+	s.Equal("Comparing 40 flights", dataOnly.State.Progress, "an update with only data keeps the title")
+	s.Equal(map[string]any{"cheapest": 99}, dataOnly.State.Custom, "the data is replaced whole, not merged")
+
+	textOnly, ok := s.apply(agent.ToolUpdated{ID: "call-1", Tool: "search_flights", Text: "Booking the cheapest"})
+	s.Require().True(ok)
+	s.Equal(map[string]any{"cheapest": 99}, textOnly.State.Custom, "an update without data keeps the data")
+
+	finished, ok := s.apply(agent.ToolRan{ID: "call-1", Tool: "search_flights", Result: "booked"})
+	s.Require().True(ok)
+	s.Equal(map[string]any{"cheapest": 99}, finished.State.Custom)
+}
+
 func (s *ToolCallStateSuite) TestACallStoppedByItsContextFinishesCancelled() {
 	s.start("call-1", "search_flights")
 

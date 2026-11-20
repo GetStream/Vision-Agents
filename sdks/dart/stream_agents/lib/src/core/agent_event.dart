@@ -166,6 +166,11 @@ final class AgentEvent {
       approvedAt: parseRouterDate(_text(fields['approved_at'])),
       rejectedAt: parseRouterDate(_text(fields['rejected_at'])),
       error: _text(fields['error']),
+      displayTitle: _text(fields['display_title']),
+      custom: switch (fields['custom']) {
+        final Map<String, Object?> custom => custom,
+        _ => const {},
+      },
     ),
     _ => null,
   };
@@ -296,6 +301,8 @@ final class ToolCallState {
     this.approvedAt,
     this.rejectedAt,
     this.error = '',
+    this.displayTitle = '',
+    this.custom = const {},
   });
 
   /// The call's `tool_call_id`.
@@ -321,6 +328,22 @@ final class ToolCallState {
   /// Why a failed call failed, or what a declined one shows.
   final String error;
 
+  /// What the call is doing, such as "Checking the weather", as its tool was declared with, or
+  /// empty for none.
+  final String displayTitle;
+
+  /// What the tool last sent for the app to show, such as a card under the message. Kept once the
+  /// call finishes.
+  final Map<String, Object?> custom;
+
+  /// What to call the call in the conversation: [progress] while it runs or waits, otherwise
+  /// [displayTitle], or [tool] for a tool declared without one.
+  String get title {
+    final running = status == ToolCallStatus.inProgress || status == ToolCallStatus.waiting;
+    if (running && progress.isNotEmpty) return progress;
+    return displayTitle.isEmpty ? tool : displayTitle;
+  }
+
   @override
   bool operator ==(Object other) =>
       other is ToolCallState &&
@@ -333,7 +356,9 @@ final class ToolCallState {
       other.duration == duration &&
       other.approvedAt == approvedAt &&
       other.rejectedAt == rejectedAt &&
-      other.error == error;
+      other.error == error &&
+      other.displayTitle == displayTitle &&
+      jsonEncode(other.custom) == jsonEncode(custom);
 
   @override
   int get hashCode => Object.hash(
@@ -347,6 +372,8 @@ final class ToolCallState {
     approvedAt,
     rejectedAt,
     error,
+    displayTitle,
+    jsonEncode(custom),
   );
 }
 

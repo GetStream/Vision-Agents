@@ -20,6 +20,7 @@ type conversationHearing struct {
 	mu      sync.Mutex
 	held    []string
 	updates []string
+	customs []map[string]any
 }
 
 func (c *conversationHearing) HoldTool(id string) bool {
@@ -29,19 +30,26 @@ func (c *conversationHearing) HoldTool(id string) bool {
 	return c.holds
 }
 
-func (c *conversationHearing) ToolUpdate(id, text string, verbatim bool) {
+func (c *conversationHearing) ToolUpdate(id, text string, verbatim bool, custom map[string]any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if verbatim {
 		text = "said: " + text
 	}
 	c.updates = append(c.updates, id+" "+text)
+	c.customs = append(c.customs, custom)
 }
 
 func (c *conversationHearing) heard() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.updates...)
+}
+
+func (c *conversationHearing) heardCustom() []map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]map[string]any(nil), c.customs...)
 }
 
 // runsOnTheWorker hosts investigate_sdk on the suite's worker and makes one call to it from
@@ -66,9 +74,12 @@ func (s *DispatchSuite) TestAWorkerTellsTheConversationHowAHostedCallIsGoing() {
 		"type": "tool_update", "tool_call_id": "call-1", "text": "reading the gradle files"}))
 	s.Require().NoError(worker.WriteJSON(frame{
 		"type": "tool_update", "tool_call_id": "call-1", "text": "One moment.", "verbatim": true}))
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "tool_update", "tool_call_id": "call-1", "custom": map[string]any{"files": 12}}))
 
-	s.Eventually(func() bool { return len(conversation.heard()) == 2 }, settleFor, 10*time.Millisecond)
-	s.Equal([]string{"call-1 reading the gradle files", "call-1 said: One moment."}, conversation.heard())
+	s.Eventually(func() bool { return len(conversation.heard()) == 3 }, settleFor, 10*time.Millisecond)
+	s.Equal([]string{"call-1 reading the gradle files", "call-1 said: One moment.", "call-1 "}, conversation.heard())
+	s.Equal([]map[string]any{nil, nil, {"files": float64(12)}}, conversation.heardCustom())
 }
 
 func (s *DispatchSuite) TestAWorkerHoldsAHostedCallTheCallerMayTalkOver() {
@@ -116,11 +127,13 @@ func (s *ForwardedDispatchSuite) TestAWorkerOnAnotherNodeTellsTheConversationHow
 	worker := s.runsOnTheOtherNode(conversation)
 
 	s.Require().NoError(worker.WriteJSON(frame{
-		"type": "tool_update", "tool_call_id": "call-1", "text": "reading the gradle files"}))
+		"type": "tool_update", "tool_call_id": "call-1", "text": "reading the gradle files",
+		"custom": map[string]any{"files": 12}}))
 
 	s.Eventually(func() bool { return len(conversation.heard()) == 1 }, settleFor, 10*time.Millisecond,
 		"the update never came back from the other node")
 	s.Equal([]string{"call-1 reading the gradle files"}, conversation.heard())
+	s.Equal([]map[string]any{{"files": float64(12)}}, conversation.heardCustom(), "the data was lost on the way back")
 }
 
 func (s *ForwardedDispatchSuite) TestAWorkerOnAnotherNodeHoldsItsCallThroughTheConversation() {

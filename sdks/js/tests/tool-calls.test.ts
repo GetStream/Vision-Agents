@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 
-import { Client, Session, ToolCalls, type SessionEvent } from "../src/index.js";
-import { useToolCall, useToolCalls } from "../src/react.js";
+import { Client, Session, ToolCalls, toolCallTitle, type SessionEvent } from "../src/index.js";
+import { useToolCall, useToolCalls, useTurnToolCalls } from "../src/react.js";
 import { TestRouter, type Connection } from "./router.js";
 
 const started = {
@@ -13,6 +13,7 @@ const started = {
   tool_call_id: "call-1",
   tool: "book_flight",
   turn_id: "turn-1",
+  display_title: "Booking your flight",
   status: "waiting",
   started_at: "2026-11-18T12:00:00Z",
   duration_ms: 0,
@@ -38,12 +39,73 @@ describe("ToolCalls", () => {
       tool_call_id: "call-1",
       tool: "book_flight",
       turn_id: "turn-1",
+      display_title: "Booking your flight",
       status: "success",
       started_at: "2026-11-18T12:00:00Z",
       duration_ms: 1200,
       approved_at: "2026-11-18T12:00:00.400Z",
     });
     assert.equal(calls.get().get("call-2")?.status, "in_progress");
+  });
+
+  it("gives one turn's calls in the order they started, the same array until one of them changes", () => {
+    const calls = new ToolCalls();
+    calls.observe({ ...started, tool_call_id: "a" });
+    calls.observe({ ...started, tool_call_id: "other", turn_id: "turn-2" });
+    calls.observe({ ...started, tool_call_id: "b" });
+
+    const first = calls.forTurn("turn-1");
+    assert.deepEqual(
+      first.map((call) => call.tool_call_id),
+      ["a", "b"],
+    );
+    assert.deepEqual(calls.forTurn("turn-3"), []);
+
+    calls.observe({ ...started, tool_call_id: "other", turn_id: "turn-2", status: "success" });
+    assert.equal(calls.forTurn("turn-1"), first, "another turn's call changed, so the same array");
+
+    calls.observe({ ...started, tool_call_id: "a", status: "success" });
+    const changed = calls.forTurn("turn-1");
+    assert.notEqual(changed, first);
+    assert.deepEqual(
+      changed.map((call) => [call.tool_call_id, call.status]),
+      [
+        ["a", "success"],
+        ["b", "waiting"],
+      ],
+    );
+  });
+
+  it("titles a call by its tool's display title, or its name without one", () => {
+    const calls = new ToolCalls();
+    calls.observe(started);
+    calls.observe({ ...started, tool_call_id: "call-2", tool: "list_issues", display_title: "" });
+
+    assert.equal(toolCallTitle(calls.get().get("call-1")!), "Booking your flight");
+    assert.equal(toolCallTitle(calls.get().get("call-2")!), "list_issues");
+  });
+
+  it("titles a running or waiting call by its last update, and a finished one by its display title", () => {
+    const titled = (frame: Record<string, unknown>) => {
+      const calls = new ToolCalls();
+      calls.observe({ ...started, ...frame });
+      return toolCallTitle(calls.get().get("call-1")!);
+    };
+    const update = { type: "tool_call.progress", status: "in_progress", progress: "Comparing 40 flights" };
+
+    assert.equal(titled(update), "Comparing 40 flights");
+    assert.equal(titled({ progress: "Book the 9:40 to Lisbon?" }), "Book the 9:40 to Lisbon?");
+    assert.equal(titled({ ...update, type: "tool_call.finished", status: "success" }), "Booking your flight");
+    assert.equal(titled({ ...update, progress: "" }), "Booking your flight");
+  });
+
+  it("keeps a call's custom data, and none for a frame without it", () => {
+    const calls = new ToolCalls();
+    calls.observe({ ...started, status: "success", type: "tool_call.finished", custom: { cheapest: 129 } });
+    calls.observe({ ...started, tool_call_id: "call-2", custom: ["not", "an", "object"] });
+
+    assert.deepEqual(calls.get().get("call-1")?.custom, { cheapest: 129 });
+    assert.equal(calls.get().get("call-2")?.custom, undefined);
   });
 
   it("leaves the map alone for frames about no call's state", () => {
@@ -127,13 +189,21 @@ describe("session.toolCalls and session.on", () => {
     connection.send({ ...started, type: "tool_call.progress", status: "in_progress", progress: "Booking" });
     await until(session, "tool_call.progress");
 
+    connection.send({ ...started, tool_call_id: "call-2", turn_id: "turn-2", status: "in_progress" });
+    await until(session, "tool_call.started");
+
     function Calls() {
       const calls = useToolCalls(session);
       const call = useToolCall(session, "call-1");
-      return createElement("p", null, `${calls.size} ${call?.status} ${call?.progress}`);
+      const turn = useTurnToolCalls(session, "turn-1");
+      return createElement(
+        "p",
+        null,
+        `${calls.size} ${call?.status} ${call?.progress} ${turn.map(toolCallTitle).join(",")}`,
+      );
     }
 
-    assert.equal(renderToString(createElement(Calls)), "<p>1 in_progress Booking</p>");
+    assert.equal(renderToString(createElement(Calls)), "<p>2 in_progress Booking Booking</p>");
     await session.close();
   });
 });

@@ -274,8 +274,9 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			Error      string          `json:"error"`
 			// Text and Verbatim say how a running hosted call is going, as a session's
 			// tool_update does.
-			Text     string `json:"text"`
-			Verbatim bool   `json:"verbatim"`
+			Text     string         `json:"text"`
+			Verbatim bool           `json:"verbatim"`
+			Custom   map[string]any `json:"custom"`
 		}
 		_, payload, err := connection.ReadMessage()
 		if err != nil {
@@ -333,7 +334,7 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker,
 			}
 
 		case "tool_update":
-			worker.Update(report.ToolCallID, report.Text, report.Verbatim)
+			worker.Update(report.ToolCallID, report.Text, report.Verbatim, report.Custom)
 
 		case "tool_hold":
 			// The conversation may be on another node, so the answer is a round trip that

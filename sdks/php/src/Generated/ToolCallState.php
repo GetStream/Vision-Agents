@@ -36,6 +36,9 @@ final readonly class ToolCallState
         public ?\DateTimeImmutable $rejectedAt = null,
         // What the call is doing, in words for the people in the conversation, such as "Checking the weather": the di...
         public ?string $displayTitle = null,
+        // The data whoever runs the call last sent with a tool_update, such as what a card under the message shows. E...
+        /** @var array<string, mixed>|null */
+        public ?array $custom = null,
     ) {
     }
 
@@ -57,6 +60,7 @@ final readonly class ToolCallState
             progress: array_key_exists('progress', $data) && $data['progress'] !== null ? Json::string($data, 'progress') : null,
             rejectedAt: array_key_exists('rejected_at', $data) && $data['rejected_at'] !== null ? Json::date($data, 'rejected_at') : null,
             displayTitle: array_key_exists('display_title', $data) && $data['display_title'] !== null ? Json::string($data, 'display_title') : null,
+            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
         );
     }
 
@@ -89,6 +93,9 @@ final readonly class ToolCallState
         }
         if ($this->displayTitle !== null) {
             $out['display_title'] = $this->displayTitle;
+        }
+        if ($this->custom !== null) {
+            $out['custom'] = Json::objectValue($this->custom);
         }
         return $out;
     }

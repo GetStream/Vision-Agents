@@ -29,10 +29,13 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 private const val SESSION = """{"id":"s1","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"live","modality":"text","created_at":"2026-09-24T04:03:19Z","text":true}"""
 @Serializable
@@ -327,20 +330,31 @@ class AgentSessionTest {
             first.cancel()
         }
         chat.on(AgentEvent.Kind.ToolCallFinished) { finished += it.string("tool_call_id") }
-        val call = """"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","started_at":"2026-11-18T12:00:00Z""""
+        val call = """"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","display_title":"Searching flights","started_at":"2026-11-18T12:00:00Z""""
 
         router.script.send(Script.Send("""{"type":"tool_call.started",$call,"status":"waiting","duration_ms":0}"""))
         router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":100,"progress":"Searching for flights","approved_at":"2026-11-18T12:00:00.1Z"}"""))
-        router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,"progress":"Comparing prices","approved_at":"2026-11-18T12:00:00.1Z"}"""))
-        router.script.send(Script.Send("""{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,"approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,"progress":"Comparing prices","custom":{"cheapest":129},"approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,"custom":{"cheapest":129},"approved_at":"2026-11-18T12:00:00.1Z"}"""))
         until { chat.toolCalls.value["c1"]?.status?.isFinished == true }
 
         val last = chat.toolCalls.value.getValue("c1")
         assertEquals(AgentEvent.ToolCallState.Status.Success, last.status)
         assertEquals(300, last.durationMs)
+        assertEquals("Searching flights", last.displayTitle)
+        assertEquals("t1", last.turnId)
         assertEquals("", last.progress, "the finished frame carries the whole state")
         assertEquals(Instant.parse("2026-11-18T12:00:00.1Z"), last.approvedAt)
+        assertEquals(buildJsonObject { put("cheapest", 129) }, last.custom)
         assertEquals(last, chat.toolCall("c1").first())
+
+        router.script.send(Script.Send("""{"type":"tool_call.started","tool_call_id":"c2","tool":"list_issues","turn_id":"t2","status":"in_progress","started_at":"2026-11-18T12:00:01Z","duration_ms":0}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.progress","tool_call_id":"c3","tool":"read_issues","turn_id":"t2","display_title":"Reading issues","status":"in_progress","progress":"Reading 12 issues","started_at":"2026-11-18T12:00:02Z","duration_ms":0}"""))
+        until { chat.toolCalls.value.containsKey("c3") }
+        assertEquals(listOf("Searching flights"), chat.toolCallsForTurn("t1").first().map { it.title })
+        assertEquals(listOf("list_issues", "Reading 12 issues"), chat.toolCallsForTurn("t2").first().map { it.title })
+        assertEquals(emptyList<AgentEvent.ToolCallState>(), chat.toolCallsForTurn("t3").first())
+        assertEquals(JsonObject(emptyMap()), chat.toolCalls.value.getValue("c3").custom)
         until { finished.isNotEmpty() }
         assertEquals(listOf("Searching for flights"), progress.toList())
         assertEquals(listOf("c1"), finished.toList())

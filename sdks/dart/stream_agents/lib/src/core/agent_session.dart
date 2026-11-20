@@ -152,6 +152,13 @@ final class AgentSession {
   /// person's approval, or how it ended, whichever process runs it. Finished calls stay.
   LiveValue<Map<String, ToolCallState>> get toolCalls => _toolCalls;
 
+  /// The calls one agent turn made, in the order they started: the ones to show under that
+  /// turn's message. Build it from [toolCalls]' stream to redraw as they change.
+  List<ToolCallState> toolCallsForTurn(String turnId) => [
+    for (final call in _toolCalls.value.values)
+      if (call.turnId == turnId) call,
+  ];
+
   List<Turn> get turns => _conversation.value.turns;
   ConversationState get state => _conversation.value.state;
   bool get isConnected => _connection.value is Connected;

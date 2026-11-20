@@ -454,6 +454,45 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	}
 }
 
+// A greeting is its text alone, said as a variation, or a mapping that names its mode.
+func TestAGreetingIsItsTextOrAMappingThatNamesItsMode(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *GreetingSettings
+	}{
+		{"greeting: Thanks for calling Acme. How can I help?\n", &GreetingSettings{Text: "Thanks for calling Acme. How can I help?", Mode: "variation"}},
+		{"greeting:\n  text: Hey, it's Juno.\n  mode: exact\n", &GreetingSettings{Text: "Hey, it's Juno.", Mode: "exact"}},
+		{"greeting:\n  text: Hello.\n", &GreetingSettings{Text: "Hello.", Mode: "variation"}},
+		{"greeting: \"\"\n", &GreetingSettings{Mode: "variation"}},
+		{"greeting:\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		folder, err := Load(root)
+		if err != nil {
+			t.Errorf("%q: %v", c.declared, err)
+			continue
+		}
+		if !reflect.DeepEqual(folder.Settings.Greeting, c.want) {
+			t.Errorf("%q: greeting read as %+v, not %+v", c.declared, folder.Settings.Greeting, c.want)
+		}
+	}
+
+	for _, c := range []struct{ declared, says string }{
+		{"greeting: {text: Hello., voice: warm}\n", `"voice" is not a greeting setting`},
+		{"greeting: [Hello.]\n", "greeting is its text, or a mapping of text and mode"},
+		{"greeting: {text: [Hello.]}\n", "greeting.text must be a string"},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%q: refused with %v", c.declared, err)
+		}
+	}
+}
+
 // floor_control is read as written, an empty mapping included; which models there are, and
 // whether a wait needs one, is the router's to say.
 func TestTheFloorControlIsReadAsWritten(t *testing.T) {

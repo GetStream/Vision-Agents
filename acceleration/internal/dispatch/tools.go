@@ -74,8 +74,9 @@ type Progress interface {
 	// HoldTool keeps the call running when the caller talks over the agent, reporting
 	// whether it still was.
 	HoldTool(id string) bool
-	// ToolUpdate says how the call is going, or with verbatim, words to say as written.
-	ToolUpdate(id, text string, verbatim bool)
+	// ToolUpdate says how the call is going, or with verbatim, words to say as written, and
+	// with custom, replaces the call's data.
+	ToolUpdate(id, text string, verbatim bool, custom map[string]any)
 }
 
 // User is who a hosted call was made for.
@@ -156,9 +157,9 @@ func (w *Worker) Hold(id string) (string, bool) {
 
 // Update tells the conversation a hosted call was made in how it is going. An update for
 // a call nobody is waiting on is dropped.
-func (w *Worker) Update(id, text string, verbatim bool) {
+func (w *Worker) Update(id, text string, verbatim bool, custom map[string]any) {
 	if call := w.progressOf(id); call.progress != nil {
-		call.progress.ToolUpdate(id, text, verbatim)
+		call.progress.ToolUpdate(id, text, verbatim, custom)
 	}
 }
 

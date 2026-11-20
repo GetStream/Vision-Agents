@@ -13,7 +13,7 @@ import Testing
       modality: .text, state: .live, text: true, userId: "test"))
 
   private static func state(_ type: String, _ status: String, _ extra: String = "") -> String {
-    #"{"type":"\#(type)","tool_call_id":"call-1","tool":"search_flights","turn_id":"t1","status":"\#(status)","started_at":"2026-11-18T12:00:00Z","duration_ms":300\#(extra)}"#
+    #"{"type":"\#(type)","tool_call_id":"call-1","tool":"search_flights","turn_id":"t1","display_title":"Searching flights","status":"\#(status)","started_at":"2026-11-18T12:00:00Z","duration_ms":300\#(extra)}"#
   }
 
   /// What a handler heard, kept off the stack because a main-actor closure may not mutate a
@@ -28,8 +28,10 @@ import Testing
     let server = try FrameServer(frames: [
       Self.state("tool_call.started", "in_progress"),
       Self.state("tool_call.progress", "in_progress", #","progress":"Searching for flights""#),
-      Self.state("tool_call.progress", "in_progress", #","progress":"Comparing prices""#),
-      Self.state("tool_call.finished", "failed", #","error":"the airline is down""#),
+      Self.state("tool_call.progress", "in_progress", #","progress":"Comparing prices","custom":{"cheapest":129}"#),
+      #"{"type":"tool_call.started","tool_call_id":"call-2","tool":"list_issues","turn_id":"t2","status":"in_progress","started_at":"2026-11-18T12:00:01Z","duration_ms":0}"#,
+      #"{"type":"tool_call.progress","tool_call_id":"call-3","tool":"read_issues","turn_id":"t2","display_title":"Reading issues","status":"in_progress","progress":"Reading 12 issues","started_at":"2026-11-18T12:00:02Z","duration_ms":0}"#,
+      Self.state("tool_call.finished", "failed", #","error":"the airline is down","custom":{"cheapest":129}"#),
     ])
     defer { server.listener.cancel() }
     let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
@@ -53,6 +55,13 @@ import Testing
     #expect(call.error == "the airline is down")
     #expect(call.progress == "", "the finished frame carries the whole state")
     #expect(call.durationMS == 300)
+    #expect(call.displayTitle == "Searching flights")
+    #expect(call.turnID == "t1")
+    #expect(call.custom == ["cheapest": .number(129)])
+    #expect(session.toolCalls["call-3"]?.custom == [:])
+    #expect(session.toolCalls(forTurn: "t1").map(\.title) == ["Searching flights"])
+    #expect(session.toolCalls(forTurn: "t2").map(\.title) == ["list_issues", "Reading 12 issues"])
+    #expect(session.toolCalls(forTurn: "t3").isEmpty)
     #expect(heard.progress == ["Searching for flights"])
     #expect(heard.finished == 1)
     finished.cancel()

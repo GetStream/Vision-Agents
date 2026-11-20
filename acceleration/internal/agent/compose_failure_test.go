@@ -44,7 +44,7 @@ func (s *AgentSuite) TestAToolStatusTheModelCannotWriteIsLoggedWithItsProviderAn
 		s.runningAHeldTool()
 		s.model.composeFails = errors.New("502 Bad Gateway: failed to connect to local service")
 
-		s.agent.ToolUpdate("call-1", "searching 3 airlines", false)
+		s.agent.ToolUpdate("call-1", "searching 3 airlines", false, nil)
 
 		s.requireLoggedWithReplyModel("could not write a tool's status to say")
 	})

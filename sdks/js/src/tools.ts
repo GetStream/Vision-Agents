@@ -130,6 +130,22 @@ export interface ToolCallFields {
 export interface ToolLine {
   /** Asks for the call to keep going when the caller talks over the agent; resolves with whether it was still running to be held. */
   hold(id: string, signal?: AbortSignal): Promise<boolean>;
+  /** Tells the session how the call is going. */
+  update(id: string, update: ToolCallUpdate): void;
+}
+
+/** What a running call tells the people in the conversation. */
+export interface ToolCallUpdate {
+  /**
+   * Replaces the call's display title while it runs, such as "Comparing 40 flights", and on a
+   * voice call the agent tells the caller about it in its own words. Left out, the title stays.
+   */
+  title?: string;
+  /**
+   * Replaces the call's data whole, for their app to show, such as a card under the message.
+   * It is kept once the call finishes. Left out, the data stays.
+   */
+  custom?: Record<string, unknown>;
 }
 
 /** What `disallowInterruptions` rejects with when the call had already been stopped. */
@@ -183,6 +199,16 @@ export class ToolCallContext implements ToolCallFields {
     const held = await this.line.hold(this.id, this.lasting);
     if (!held || this.lasting.aborted) {
       throw new CallNotHeldError(this.id);
+    }
+  }
+
+  /**
+   * Tells the people in the conversation how the call is going. A string is a new title, such
+   * as "Comparing 40 flights"; an object can also carry `custom` data for their app to show.
+   */
+  update(update: string | ToolCallUpdate): void {
+    if (this.line && this.id) {
+      this.line.update(this.id, typeof update === "string" ? { title: update } : update);
     }
   }
 
