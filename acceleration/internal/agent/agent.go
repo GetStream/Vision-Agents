@@ -3166,16 +3166,32 @@ func unauthored(content string) string {
 			ID   string `json:"user_id"`
 			Name string `json:"display_name"`
 		} `json:"author"`
-		Text string `json:"text"`
+		SentAt *time.Time `json:"sent_at"`
+		Text   string     `json:"text"`
 	}
 	if json.Unmarshal([]byte(content), &envelope) != nil ||
-		Authored(envelope.Author.ID, envelope.Author.Name, envelope.Text) != content {
+		Authored(envelope.Author.ID, envelope.Author.Name, envelope.Text) != content &&
+			Quoted(envelope.Author.Name, envelope.SentAt, envelope.Text) != content {
 		return content
 	}
 	if envelope.Author.Name == "" {
 		return envelope.Text
 	}
 	return envelope.Author.Name + ": " + envelope.Text
+}
+
+// Quoted is a line of a conversation the caller kept itself (conversation.Supplied) as an
+// envelope: who said it, where the caller named them, when, and the text.
+func Quoted(name string, sentAt *time.Time, text string) string {
+	type author struct {
+		Name string `json:"display_name,omitempty"`
+	}
+	envelope, _ := json.Marshal(struct {
+		Author author     `json:"author"`
+		SentAt *time.Time `json:"sent_at,omitempty"`
+		Text   string     `json:"text"`
+	}{author{name}, sentAt, text})
+	return string(envelope)
 }
 
 // screening starts the check for a turn, or returns nil where there is nothing to screen:

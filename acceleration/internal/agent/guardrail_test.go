@@ -579,7 +579,8 @@ func (s *AgentSuite) TestAWriterInAChannelTypeIsScreenedByNameAndNotByUserID() {
 
 func (s *AgentSuite) TestOnlyAnEnvelopeAsAuthoredWritesItIsReadAsAName() {
 	// What a person typed that looks like an envelope keeps every word of it, and a speaker's
-	// label on a call is left as it is.
+	// label on a call is left as it is. A line the caller kept itself (Quoted) is read the same.
+	kept := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
 	for _, row := range []struct {
 		name, said, line string
 	}{
@@ -592,6 +593,12 @@ func (s *AgentSuite) TestOnlyAnEnvelopeAsAuthoredWritesItIsReadAsAName() {
 		{"a field of its own", `{"author":{"user_id":"anya-1","display_name":"Anya"},"text":"hi","to":"Ben"}`,
 			`user: {"author":{"user_id":"anya-1","display_name":"Anya"},"text":"hi","to":"Ben"}`},
 		{"an author that is a string", `{"author":"Anya","text":"hi"}`, `user: {"author":"Anya","text":"hi"}`},
+		{"a kept line with a name and a time", Quoted("Anya", &kept, "hi"), "user: Anya: hi"},
+		{"a kept line with a time only", Quoted("", &kept, "hi"), "user: hi"},
+		{"a kept line with a field of its own", `{"author":{"display_name":"Anya"},"text":"hi","to":"Ben"}`,
+			`user: {"author":{"display_name":"Anya"},"text":"hi","to":"Ben"}`},
+		{"a kept line with a time written another way", `{"author":{"display_name":"Anya"},"sent_at":"2026-11-19T10:00:00+00:00","text":"hi"}`,
+			`user: {"author":{"display_name":"Anya"},"sent_at":"2026-11-19T10:00:00+00:00","text":"hi"}`},
 		{"an empty object", `{}`, `user: {}`},
 		{"null", `null`, `user: null`},
 	} {

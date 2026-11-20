@@ -1489,19 +1489,11 @@ func Supplied(lines []HistoryLine) []llm.Message {
 		}
 		content := line.Text
 		if quoted {
-			type author struct {
-				Name string `json:"display_name,omitempty"`
-			}
 			var sentAt *time.Time
 			if !line.At.IsZero() {
 				sentAt = &line.At
 			}
-			envelope, _ := json.Marshal(struct {
-				Author author     `json:"author"`
-				SentAt *time.Time `json:"sent_at,omitempty"`
-				Text   string     `json:"text"`
-			}{author{line.Name}, sentAt, line.Text})
-			content = string(envelope)
+			content = agent.Quoted(line.Name, sentAt, line.Text)
 		}
 		out = append(out, llm.Message{Role: llm.User, Content: content})
 	}
