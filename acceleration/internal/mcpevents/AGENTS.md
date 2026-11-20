@@ -83,7 +83,7 @@ consent finished, connected again                   api.completeConsent
 - **Subscribing on a config save.** A config that adds an event subscribes at the next validate of the connection, not at the save.
 - **`terminated` and `gap` envelopes** are acknowledged and logged; a `terminated` subscription is asked for again only at its next refresh.
 - **The conversation an event opens lives in memory.** The delivery is acknowledged once its event id is stored; a router that stops before the conversation ends loses it. The draft: «The endpoint SHOULD NOT return 2xx until the event has been durably persisted or forwarded».
-- **`connection_event_deliveries` is never pruned**, as `agent_plugin_event_deliveries` is not. It goes with its subscription.
+- **`connection_event_deliveries` is never pruned.** It goes with its subscription.
 
 ## Tests
 

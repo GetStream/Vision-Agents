@@ -3,13 +3,10 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // retiredKeys are the keys a save no longer reads, each with an entry a save before the switch
@@ -127,28 +124,6 @@ func (s *ConfigsSuite) TestARetiredKeyThatNamesNothingSavesAsOnBase() {
 			s.Equal(http.StatusOK, status)
 			s.Equal(slices.Concat(rendered[:7], []string{"sync_hash"}, rendered[7:]), synced.keys)
 		})
-	}
-}
-
-// TestAPatchAndASyncOfARowStillNamingThemSaveAndShowNone: what the row names from before the
-// refusal neither refuses a patch or a sync that leaves the keys out nor shows in a read.
-func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndShowNone() {
-	patched := s.storedWithPlugins()
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+patched.ID,
-		map[string]any{"instructions": "Be briefer."}, nil))
-	synced := s.storedWithPlugins()
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": synced.Name, "hash": "v1", "mode": "text", "instructions": "Be briefer."}, nil))
-
-	for _, config := range []store.AgentConfig{patched, synced} {
-		stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
-		s.Require().NoError(err)
-		s.Equal("Be briefer.", stored.Instructions)
-		status, read := s.fields(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, "")
-		s.Equal(http.StatusOK, status)
-		for _, retired := range retiredKeys {
-			s.NotContains(read.keys, retired.key)
-		}
 	}
 }
 

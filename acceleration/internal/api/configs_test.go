@@ -16,7 +16,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
-	"github.com/stretchr/testify/require"
 )
 
 type ConfigsSuite struct {
@@ -736,57 +735,6 @@ func (s *ConfigsSuite) TestAPublicGuardrailWebhookIsKeptAsWritten() {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
 		map[string]any{"guardrail": webhookGuardrail("https://[2001:4860:4860::8888]/check")}, &patched))
 	s.Equal(webhookGuardrail("https://[2001:4860:4860::8888]/check"), value(patched.Guardrail))
-}
-
-// TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutThem: a row written before they were
-// refused still reads, in the config and in the list, and shows none of them, so a client that
-// saves what it read back is not refused for what it never set.
-func (s *ConfigsSuite) TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutThem() {
-	config := s.storedWithPlugins()
-
-	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+config.ID, nil)
-	s.Require().Equal(http.StatusOK, status)
-	var read map[string]any
-	s.Require().NoError(json.Unmarshal(raw, &read))
-	s.Equal("Be brief.", read["instructions"])
-	for _, key := range []string{"plugins", "plugin_events", "mcp_servers"} {
-		s.NotContains(read, key)
-	}
-	status, raw = s.serverClient.call(http.MethodGet, "/v1/agents/configs", nil)
-	s.Require().Equal(http.StatusOK, status)
-	s.Contains(string(raw), config.ID)
-	for _, key := range []string{`"plugins"`, `"plugin_events"`, `"mcp_servers"`} {
-		s.NotContains(string(raw), key)
-	}
-
-	for _, key := range []string{"id", "created_at", "updated_at", "sync_hash", "duration"} {
-		delete(read, key)
-	}
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config.ID, read, nil))
-}
-
-// storedWithPlugins is a config whose row names a plugin, a plugin event and an MCP server, as
-// one saved before they were refused does: written into the columns, as no request can now.
-func (s *ConfigsSuite) storedWithPlugins() store.AgentConfig {
-	config := store.AgentConfig{CustomerID: s.customerID(), Name: "legacy-" + s.utils.uuid(), Mode: "text",
-		Instructions: "Be brief."}
-	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
-	nameRetired(s.T(), s.store, config.ID)
-	return config
-}
-
-// nameRetired writes a plugin, a plugin event and an MCP server into the columns of config's
-// row, which the model no longer has, as a save before they were refused left them.
-func nameRetired(t *testing.T, stored *store.Store, config string) {
-	t.Helper()
-	result, err := stored.DB().ExecContext(context.Background(), `UPDATE agent_configs
-		SET plugins = '["linear"]', plugin_events = '[{"plugin":"linear","event":"issue.created"}]',
-		    mcp_servers = '[{"name":"wwsd","url":"https://mcp.wwsd.invalid/mcp"}]'
-		WHERE id = ?`, config)
-	require.NoError(t, err)
-	written, err := result.RowsAffected()
-	require.NoError(t, err)
-	require.EqualValues(t, 1, written)
 }
 
 func (s *ConfigsSuite) TestAVoiceConfigPinnedToABatchTranscriberIsRefused() {

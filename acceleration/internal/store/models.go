@@ -605,10 +605,6 @@ type AgentConfig struct {
 	// Connectors, because the app has no connection by the id or label they name. Only a
 	// sync writes them, as the SDK sent them; nothing reads them but the API.
 	LeftOutConnectors []LeftOutConnector `bun:"left_out_connectors,type:jsonb"`
-	// The row's plugins, plugin_events and mcp_servers columns, from before connectors, are
-	// not modelled: no code reads them, a save leaves them as they are and an insert gives them
-	// their default [].
-
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`

@@ -97,8 +97,6 @@ func (t dataTable) rollup() bool {
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
-	{name: "agent_plugin_connections", customer: "customer_id"},
-	{name: "agent_plugin_clients", customer: "customer_id"},
 	// Only the customer's own definitions: the built-ins are under no customer, and every
 	// deployment seeds its own. They come before the connections that pin them.
 	{name: "connector_definitions", customer: "customer_id"},
@@ -166,7 +164,7 @@ var dataTables = []dataTable{
 // authorized again rather than arriving broken.
 // A guest's refresh secret hash is the same kind of thing: a moved guest is handed a new
 // one by its own token or by the app's backend, or comes back as a new guest.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed", "refresh_secret_hash"}
+var secretColumns = []string{"secret_sealed", "credentials_sealed", "password_sealed", "bridge_password_sealed", "refresh_secret_hash"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
