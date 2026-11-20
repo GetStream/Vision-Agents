@@ -600,6 +600,7 @@ from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
 from .tool_call_frame_type import ToolCallFrameType
 from .tool_call_state import ToolCallState
+from .tool_call_state_custom import ToolCallStateCustom
 from .tool_call_status import ToolCallStatus
 from .tool_group import ToolGroup
 from .tool_loading import ToolLoading
@@ -1261,6 +1262,7 @@ __all__ = (
     "ToolApprovalCommandType",
     "ToolCallFrameType",
     "ToolCallState",
+    "ToolCallStateCustom",
     "ToolCallStatus",
     "ToolGroup",
     "ToolLoading",

@@ -431,6 +431,7 @@ class LLM(Component):
         interruptible: bool = False,
         timeout: float = 0.0,
         needs_approval: str = "",
+        display_title: str = "",
     ) -> Callable:
         """
         Decorator to register a function with the LLM's function registry.
@@ -447,6 +448,8 @@ class LLM(Component):
                 Applies where Stream runs the agent.
             needs_approval: A question a person answers before each call runs, with
                 {name} for an argument. Applies where Stream runs the agent.
+            display_title: What a call is doing, such as "Checking the weather".
+                Applies where Stream runs the agent.
 
         Returns:
             Decorator function.
@@ -457,6 +460,7 @@ class LLM(Component):
             interruptible=interruptible,
             timeout=timeout,
             needs_approval=needs_approval,
+            display_title=display_title,
         )
 
     def get_available_functions(self) -> List[ToolSchema]:

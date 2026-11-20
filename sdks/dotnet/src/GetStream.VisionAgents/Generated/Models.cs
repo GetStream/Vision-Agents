@@ -16300,6 +16300,12 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? ApprovedAt { get; set; } = default!;
 
         /// <summary>
+        /// The data whoever runs the call last sent with a tool_update, such as what a card under the message shows. Each update with custom replaces it whole, and it is kept once the call finishes.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("custom")]
+        public System.Collections.Generic.Dictionary<string, object>? Custom { get; set; } = default!;
+
+        /// <summary>
         /// What the call is doing, in words for the people in the conversation, such as "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's own search. Absent when the tool declared none.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("display_title")]

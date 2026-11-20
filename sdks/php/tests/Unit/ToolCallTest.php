@@ -302,6 +302,33 @@ final class ToolCallTest extends TestCase
         self::assertSame([['type' => 'tool_result', 'tool_call_id' => 'c1', 'id' => 'c1', 'output' => 'paid for s1']], $server->sent('tool_result'));
     }
 
+    public function testAHostedCallsUpdatesReachTheRouterBeforeItsResult(): void
+    {
+        $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
+            LocalSocketServer::send($socket, ['type' => 'ready', 'worker_id' => 'w-1']);
+            self::until($socket, $server, 'host_tools');
+            LocalSocketServer::send($socket, ['type' => 'tool_call', 'id' => 'c1', 'session_id' => 's1', 'name' => 'search_flights', 'arguments' => '{}']);
+            self::until($socket, $server, 'tool_result');
+            $socket->close();
+        });
+        $client = $server->client();
+        $client->tools->register('search_flights', 'Searches', [], static function (ToolCallContext $toolCallContext, array $args): string {
+            $toolCallContext->update('Comparing 40 flights');
+            $toolCallContext->update('Booking the cheapest', custom: ['cheapest' => 129]);
+            $toolCallContext->update(custom: ['seat' => '12A']);
+            return 'found 3';
+        });
+
+        (new Dispatch(client: $client))->host($client)->run();
+
+        self::assertSame([
+            ['type' => 'tool_update', 'tool_call_id' => 'c1', 'text' => 'Comparing 40 flights'],
+            ['type' => 'tool_update', 'tool_call_id' => 'c1', 'text' => 'Booking the cheapest', 'custom' => ['cheapest' => 129]],
+            ['type' => 'tool_update', 'tool_call_id' => 'c1', 'custom' => ['seat' => '12A']],
+        ], $server->sent('tool_update'));
+        self::assertSame([['type' => 'tool_result', 'tool_call_id' => 'c1', 'id' => 'c1', 'output' => 'found 3']], $server->sent('tool_result'));
+    }
+
     public function testAToolAddedWhileTheSessionIsWatchedIsRunHere(): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {

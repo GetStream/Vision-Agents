@@ -74,6 +74,19 @@ func TestAFinishedToolCallCarriesItsWholeState(t *testing.T) {
 		"approved_at":"2026-10-07T12:00:01Z"}`, string(raw))
 }
 
+func TestAToolCallsDataIsInItsStateAndAnUpdateWithOnlyDataSaysNothing(t *testing.T) {
+	sent, ok := frameOf(session.ToolCallChanged{Phase: session.ToolCallProgress, State: session.ToolCallState{
+		ID: "call-1", Tool: "search_flights", Status: session.ToolCallInProgress, Custom: map[string]any{"cheapest": 129},
+	}})
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"cheapest":129}`, string(mustField(t, raw, "custom")))
+
+	_, said := frameOf(agent.ToolUpdated{ID: "call-1", Tool: "search_flights", Custom: map[string]any{"cheapest": 129}})
+	require.False(t, said, "an update with only data was sent as something said")
+}
+
 func TestAToolStartedCarriesItsBindingsPreSpeech(t *testing.T) {
 	at := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 

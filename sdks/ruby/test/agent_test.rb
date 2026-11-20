@@ -246,6 +246,32 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  def test_a_tools_updates_reach_the_router_before_its_result
+    frames = Thread::Queue.new
+    serve_session do |peer|
+      peer.send_frame(type: "tool_call", id: "t1", name: "search_flights", arguments: "{}")
+      3.times { frames << peer.receive_type("tool_update") }
+      frames << peer.receive_type("tool_result")
+      peer.receive_type("close", timeout: 10)
+    end
+    tools = VA::Tools.new.register("search_flights", description: "Search flights") do |tool_call_context, _args|
+      tool_call_context.update("Comparing 40 flights")
+      tool_call_context.update("Booking the cheapest", custom: { cheapest: 129 })
+      tool_call_context.update(custom: { seat: "12A" })
+      "found 3"
+    end
+
+    agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "Comparing 40 flights" },
+                   frames.pop(timeout: 5))
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "text" => "Booking the cheapest",
+                     "custom" => { "cheapest" => 129 } }, frames.pop(timeout: 5))
+      assert_equal({ "type" => "tool_update", "tool_call_id" => "t1", "custom" => { "seat" => "12A" } },
+                   frames.pop(timeout: 5))
+      assert_equal "found 3", frames.pop(timeout: 5)["output"]
+    end
+  end
+
   def test_a_tool_stopped_before_it_was_held_never_writes
     wrote = Thread::Queue.new
     serve_session do |peer|

@@ -419,6 +419,8 @@ type ToolUpdated struct {
 	Tool     string
 	Text     string
 	Verbatim bool
+	// Custom replaces the call's data when set.
+	Custom map[string]any
 }
 
 func (ToolUpdated) isAgentEvent() {}
