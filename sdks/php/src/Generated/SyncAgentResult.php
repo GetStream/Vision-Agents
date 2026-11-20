@@ -17,6 +17,9 @@ final readonly class SyncAgentResult
         // What was stored but will not work yet, such as a channel line the app has not connected.
         /** @var list<string>|null */
         public ?array $warnings = null,
+        // What the sync did, or with dry_run would do, to what the agent holds beside its config: each skill, knowled...
+        /** @var list<SyncChange>|null */
+        public ?array $changes = null,
     ) {
     }
 
@@ -29,6 +32,7 @@ final readonly class SyncAgentResult
             config: AgentConfig::fromArray(Json::object($data, 'config')),
             unchanged: Json::bool($data, 'unchanged'),
             warnings: array_key_exists('warnings', $data) && $data['warnings'] !== null ? Json::strings($data, 'warnings') : null,
+            changes: array_key_exists('changes', $data) && $data['changes'] !== null ? array_map(SyncChange::fromArray(...), Json::objects($data, 'changes')) : null,
         );
     }
 
@@ -44,6 +48,9 @@ final readonly class SyncAgentResult
         $out['unchanged'] = $this->unchanged;
         if ($this->warnings !== null) {
             $out['warnings'] = $this->warnings;
+        }
+        if ($this->changes !== null) {
+            $out['changes'] = array_map(static fn (SyncChange $each): array => $each->toArray(), $this->changes);
         }
         return $out;
     }

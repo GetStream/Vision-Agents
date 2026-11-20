@@ -20,6 +20,16 @@ final readonly class ErrorDetail
         public ErrorType|string $type,
         // Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or...
         public ?string $limit = null,
+        // What is wrong with an agent directory, each problem at its file, line and column, present with invalid_agen...
+        /** @var list<DirectoryProblem>|null */
+        public ?array $problems = null,
+        // What a sync would write over that somebody changed since the last sync, as the message names them, present...
+        /** @var list<SyncConflict>|null */
+        public ?array $conflicts = null,
+        // The newest change the sync was refused for, present with unsynced_changes only: send it as base_change on a...
+        public ?string $lastChange = null,
+        // How many more problems an agent directory has than problems names, present only when there are more than it...
+        public ?int $problemsOmitted = null,
     ) {
     }
 
@@ -34,6 +44,10 @@ final readonly class ErrorDetail
             message: Json::string($data, 'message'),
             type: Json::enum($data, 'type', ErrorType::class),
             limit: array_key_exists('limit', $data) && $data['limit'] !== null ? Json::string($data, 'limit') : null,
+            problems: array_key_exists('problems', $data) && $data['problems'] !== null ? array_map(DirectoryProblem::fromArray(...), Json::objects($data, 'problems')) : null,
+            conflicts: array_key_exists('conflicts', $data) && $data['conflicts'] !== null ? array_map(SyncConflict::fromArray(...), Json::objects($data, 'conflicts')) : null,
+            lastChange: array_key_exists('last_change', $data) && $data['last_change'] !== null ? Json::string($data, 'last_change') : null,
+            problemsOmitted: array_key_exists('problems_omitted', $data) && $data['problems_omitted'] !== null ? Json::int($data, 'problems_omitted') : null,
         );
     }
 
@@ -51,6 +65,18 @@ final readonly class ErrorDetail
         $out['type'] = Json::enumValue($this->type);
         if ($this->limit !== null) {
             $out['limit'] = $this->limit;
+        }
+        if ($this->problems !== null) {
+            $out['problems'] = array_map(static fn (DirectoryProblem $each): array => $each->toArray(), $this->problems);
+        }
+        if ($this->conflicts !== null) {
+            $out['conflicts'] = array_map(static fn (SyncConflict $each): array => $each->toArray(), $this->conflicts);
+        }
+        if ($this->lastChange !== null) {
+            $out['last_change'] = $this->lastChange;
+        }
+        if ($this->problemsOmitted !== null) {
+            $out['problems_omitted'] = $this->problemsOmitted;
         }
         return $out;
     }

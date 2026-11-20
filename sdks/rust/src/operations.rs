@@ -605,6 +605,19 @@ impl Client {
         )
         .await
     }
+    /// An agent config as the files of its directory
+    ///
+    /// `GET /v1/agents/configs/{id}/directory` (`getAgentDirectory`).
+    pub async fn get_agent_directory(&self, id: &str) -> Result<types::AgentDirectory> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/configs/{id}/directory", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getAgentDirectory",
+        )
+        .await
+    }
     /// List connections
     ///
     /// `GET /v1/agents/connections` (`listConnections`).
@@ -2390,6 +2403,22 @@ impl Client {
             None::<&()>,
             Some(body),
             "syncAgent",
+        )
+        .await
+    }
+    /// Store an agent directory sent as its files
+    ///
+    /// `POST /v1/agents/sync/files` (`syncAgentFiles`).
+    pub async fn sync_agent_files(
+        &self,
+        body: &types::SyncAgentFilesRequest,
+    ) -> Result<types::SyncAgentResult> {
+        self.send(
+            Method::POST,
+            "/v1/agents/sync/files",
+            None::<&()>,
+            Some(body),
+            "syncAgentFiles",
         )
         .await
     }

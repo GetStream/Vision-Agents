@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -9,6 +9,11 @@ from typing_extensions import Self
 
 from ..models.error_type import ErrorType
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.directory_problem import DirectoryProblem
+    from ..models.sync_conflict import SyncConflict
+
 
 T = TypeVar("T", bound="ErrorDetail")
 
@@ -22,30 +27,31 @@ class ErrorDetail:
             payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure
             has when nothing names it better. The others are validation_failed, missing_customer, missing_organization,
             server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed,
-            unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent
-            config, router config or voice, or another skill of the same agent config, already has the name, so another name
-            will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and
-            one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409:
-            the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer,
-            failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the
-            call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client
-            for the connector, and the message names each way the connector lets the app give it one), invalid_config (a
-            400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent
-            config was declared or given a function that none of the config's tool groups names, and the message names it),
-            insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until
-            credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's
-            spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval,
-            the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent,
-            on the organization, an app, a key, a usage category or a team, and the message says which and when it resets,
-            so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the
-            request is for is spent, which stops that user and no one else, and Retry-After says when its window ends),
-            spend_check_unavailable (a 503: the router could not share what the organization is spending with the other
-            routers for a while, so work that costs money is refused until it can; a model that costs nothing is still
-            served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which
-            spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same
-            interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at
-            that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset
-            or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team),
+            unsynced_changes (a sync asked to check would write over somebody's edits), invalid_agent_directory (a 400: the
+            files of an agent directory do not read, and problems says where in which file), name_taken (a 409: another
+            agent config, router config or voice, or another skill of the same agent config, already has the name, so
+            another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection
+            as fixed, and one agent answers a channel connection's messages, so the message names that config),
+            call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names
+            how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the
+            agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent
+            found no OAuth client for the connector, and the message names each way the connector lets the app give it one),
+            invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a
+            session under an agent config was declared or given a function that none of the config's tool groups names, and
+            the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money
+            is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the
+            organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names
+            the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend
+            limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and
+            when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one
+            end user the request is for is spent, which stops that user and no one else, and Retry-After says when its
+            window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with
+            the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is
+            still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget,
+            which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the
+            same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit
+            at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to
+            reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team),
             invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away),
             too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the
             organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country
@@ -97,6 +103,15 @@ class ErrorDetail:
         limit (str | Unset): Which limit refused the work, present with tier_limit_reached only: country, per_day,
             recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or
             sandbox_disk_gb for an agent config's sandbox. More may be added.
+        problems (list[DirectoryProblem] | Unset): What is wrong with an agent directory, each problem at its file, line
+            and column, present with invalid_agent_directory only. At most 100 are named, and problems_omitted counts the
+            rest.
+        conflicts (list[SyncConflict] | Unset): What a sync would write over that somebody changed since the last sync,
+            as the message names them, present with unsynced_changes only.
+        last_change (str | Unset): The newest change the sync was refused for, present with unsynced_changes only: send
+            it as base_change on a sync to say these have been seen.
+        problems_omitted (int | Unset): How many more problems an agent directory has than problems names, present only
+            when there are more than it lists: they are named once these are fixed.
     """
 
     code: str
@@ -104,6 +119,10 @@ class ErrorDetail:
     message: str
     type_: ErrorType
     limit: str | Unset = UNSET
+    problems: list[DirectoryProblem] | Unset = UNSET
+    conflicts: list[SyncConflict] | Unset = UNSET
+    last_change: str | Unset = UNSET
+    problems_omitted: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,6 +136,24 @@ class ErrorDetail:
 
         limit = self.limit
 
+        problems: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.problems, Unset):
+            problems = []
+            for problems_item_data in self.problems:
+                problems_item = problems_item_data.to_dict()
+                problems.append(problems_item)
+
+        conflicts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.conflicts, Unset):
+            conflicts = []
+            for conflicts_item_data in self.conflicts:
+                conflicts_item = conflicts_item_data.to_dict()
+                conflicts.append(conflicts_item)
+
+        last_change = self.last_change
+
+        problems_omitted = self.problems_omitted
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -129,11 +166,22 @@ class ErrorDetail:
         )
         if limit is not UNSET:
             field_dict["limit"] = limit
+        if problems is not UNSET:
+            field_dict["problems"] = problems
+        if conflicts is not UNSET:
+            field_dict["conflicts"] = conflicts
+        if last_change is not UNSET:
+            field_dict["last_change"] = last_change
+        if problems_omitted is not UNSET:
+            field_dict["problems_omitted"] = problems_omitted
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.directory_problem import DirectoryProblem
+        from ..models.sync_conflict import SyncConflict
+
         d = dict(src_dict)
         code = d.pop("code")
 
@@ -145,12 +193,38 @@ class ErrorDetail:
 
         limit = d.pop("limit", UNSET)
 
+        _problems = d.pop("problems", UNSET)
+        problems: list[DirectoryProblem] | Unset = UNSET
+        if _problems is not UNSET:
+            problems = []
+            for problems_item_data in _problems:
+                problems_item = DirectoryProblem.from_dict(problems_item_data)
+
+                problems.append(problems_item)
+
+        _conflicts = d.pop("conflicts", UNSET)
+        conflicts: list[SyncConflict] | Unset = UNSET
+        if _conflicts is not UNSET:
+            conflicts = []
+            for conflicts_item_data in _conflicts:
+                conflicts_item = SyncConflict.from_dict(conflicts_item_data)
+
+                conflicts.append(conflicts_item)
+
+        last_change = d.pop("last_change", UNSET)
+
+        problems_omitted = d.pop("problems_omitted", UNSET)
+
         error_detail = cls(
             code=code,
             doc_url=doc_url,
             message=message,
             type_=type_,
             limit=limit,
+            problems=problems,
+            conflicts=conflicts,
+            last_change=last_change,
+            problems_omitted=problems_omitted,
         )
 
         error_detail.additional_properties = d

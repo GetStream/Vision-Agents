@@ -500,6 +500,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getAgentDirectory" => {
+          method: :get, path: "/v1/agents/configs/{id}/directory",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getAgentLog" => {
           method: :get, path: "/v1/agents/logs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1664,6 +1670,12 @@ module GetStream
           body: "SyncAgentRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "syncAgentFiles" => {
+          method: :post, path: "/v1/agents/sync/files",
+          path_params: [].freeze, query: [].freeze,
+          body: "SyncAgentFilesRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "transcribeRecording" => {
           method: :post, path: "/v1/stt/recordings",
           path_params: [].freeze, query: [].freeze,
@@ -1904,6 +1916,10 @@ module GetStream
         "AgentConnectorSelection" => {
           properties: %w[connection_id type].freeze,
           required: %w[type].freeze, open: false
+        }.freeze,
+        "AgentDirectory" => {
+          properties: %w[files name not_exported].freeze,
+          required: %w[name files not_exported].freeze, open: false
         }.freeze,
         "AgentDispatch" => {
           properties: %w[incoming_call text].freeze,
@@ -2449,6 +2465,14 @@ module GetStream
           properties: %w[cost_micros detections error error_code id model provider status].freeze,
           required: %w[cost_micros detections id status].freeze, open: false
         }.freeze,
+        "DirectoryFile" => {
+          properties: %w[content path].freeze,
+          required: %w[path content].freeze, open: false
+        }.freeze,
+        "DirectoryProblem" => {
+          properties: %w[column file line message].freeze,
+          required: %w[file message].freeze, open: false
+        }.freeze,
         "DuplicateCampaignRequest" => {
           properties: %w[contacts].freeze,
           required: %w[contacts].freeze, open: false
@@ -2462,7 +2486,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
-          properties: %w[code doc_url limit message type].freeze,
+          properties: %w[code conflicts doc_url last_change limit message problems problems_omitted type].freeze,
           required: %w[message type code doc_url].freeze, open: false
         }.freeze,
         "ErrorResponse" => {
@@ -3173,13 +3197,25 @@ module GetStream
           properties: %w[reason suspended_by].freeze,
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
+        "SyncAgentFilesRequest" => {
+          properties: %w[base_change check_changes dry_run files greeting guardrail harness instructions llm name sandbox skills sts stt subagent tags tts video voice].freeze,
+          required: %w[files].freeze, open: false
+        }.freeze,
         "SyncAgentRequest" => {
           properties: %w[agents base_change calls channels chat_channels check_changes connectors dispatch floor_control greeting guardrail harness hash image instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts ui_instructions video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
-          properties: %w[config unchanged warnings].freeze,
+          properties: %w[changes config unchanged warnings].freeze,
           required: %w[unchanged config].freeze, open: false
+        }.freeze,
+        "SyncChange" => {
+          properties: %w[action name resource_type].freeze,
+          required: %w[resource_type name action].freeze, open: false
+        }.freeze,
+        "SyncConflict" => {
+          properties: %w[name removed resource_type].freeze,
+          required: %w[resource_type name].freeze, open: false
         }.freeze,
         "TagKeySummary" => {
           properties: %w[cost_micros_total coverage key request_count top_values value_count].freeze,

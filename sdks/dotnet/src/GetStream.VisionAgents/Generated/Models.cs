@@ -1473,6 +1473,42 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// An agent config as the directory it is synced from: agent.yaml, instructions.md, guardrail.md, its skills, its knowledge, its simulations and its UI files.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentDirectory
+    {
+
+        /// <summary>
+        /// The directory's files, in path order. Sent back to POST /v1/agents/sync/files, they store the agent as it is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("files")]
+        public System.Collections.Generic.List<DirectoryFile> Files { get; set; } = new System.Collections.Generic.List<DirectoryFile>();
+
+        /// <summary>
+        /// What the agent is called, as agent.yaml names it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// What this agent holds that its directory cannot say and a sync of these files would change, each in a sentence: a connector binding's events, policy or timeout, a connector that grants no tools, a knowledge document that is not a text file, UI instructions no directory's files were compiled into. Empty when a sync of these files leaves the agent as it is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("not_exported")]
+        public System.Collections.Generic.List<string> NotExported { get; set; } = new System.Collections.Generic.List<string>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -7386,6 +7422,75 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// One file of an agent directory, as a sync takes it and an export writes it.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DirectoryFile
+    {
+
+        /// <summary>
+        /// The file, whole, as text.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("content")]
+        public string Content { get; set; } = default!;
+
+        /// <summary>
+        /// Where the file is in the directory, with forward slashes: agent.yaml, instructions.md, guardrail.md, skills/&lt;name&gt;.md or skills/&lt;name&gt;/SKILL.md with the files beside it, knowledge/&lt;file&gt;, knowledge/urls.yaml, simulations/&lt;file&gt;.yaml, ui/components.json, ui/blueprints.yaml.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("path")]
+        public string Path { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One thing wrong with an agent directory, at its place in a file, so an editor can point at it.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DirectoryProblem
+    {
+
+        /// <summary>
+        /// The column, counted from 1. Left out with line.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("column")]
+        public long? Column { get; set; } = default!;
+
+        /// <summary>
+        /// The file's path in the directory.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("file")]
+        public string File { get; set; } = default!;
+
+        /// <summary>
+        /// The line, counted from 1. Left out when the problem is the file as a whole.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("line")]
+        public long? Line { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("message")]
+        public string Message { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class DuplicateCampaignRequest
     {
@@ -7507,16 +7612,28 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), invalid_agent_directory (a 400: the files of an agent directory do not read, and problems says where in which file), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
+
+        /// <summary>
+        /// What a sync would write over that somebody changed since the last sync, as the message names them, present with unsynced_changes only.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("conflicts")]
+        public System.Collections.Generic.List<SyncConflict>? Conflicts { get; set; } = default!;
 
         /// <summary>
         /// Where the code is explained.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("doc_url")]
         public System.Uri DocUrl { get; set; } = default!;
+
+        /// <summary>
+        /// The newest change the sync was refused for, present with unsynced_changes only: send it as base_change on a sync to say these have been seen.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("last_change")]
+        public string? LastChange { get; set; } = default!;
 
         /// <summary>
         /// Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or sandbox_disk_gb for an agent config's sandbox. More may be added.
@@ -7529,6 +7646,18 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("message")]
         public string Message { get; set; } = default!;
+
+        /// <summary>
+        /// What is wrong with an agent directory, each problem at its file, line and column, present with invalid_agent_directory only. At most 100 are named, and problems_omitted counts the rest.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("problems")]
+        public System.Collections.Generic.List<DirectoryProblem>? Problems { get; set; } = default!;
+
+        /// <summary>
+        /// How many more problems an agent directory has than problems names, present only when there are more than it lists: they are named once these are fixed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("problems_omitted")]
+        public long? ProblemsOmitted { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("type")]
         public string Type { get; set; } = default!;
@@ -15567,6 +15696,144 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// An agent directory as its files, which the router reads, so every client's directory means the same thing. The fields from instructions down are what a program sets in code beside the directory: each wins over what the files say, and is part of the hash.
+    /// <br/>
+    /// <br/>A request sends at most 1024 files, and the directory among them holds at most 1048576 bytes a file and 8388608 bytes in all.
+    /// <br/>
+    /// <br/>The hash of a sync is the router's own, answered as the config's sync_hash: the SHA-256, in hex, of a run of parts, each written as its length in bytes in decimal, a colon and the part. The parts are, for every file of the directory in path order by byte, its path and its content; then, for each field from instructions down that is sent, its name and its value, in this order: instructions, guardrail, harness, subagent, sandbox, llm, stt, tts, sts and voice as sent; greeting.text and greeting.mode; video.source and video.max_frames in decimal; tags.&lt;key&gt; for each tag in key order; skills with the number of skills in decimal, then for each skill in name order skills.&lt;name&gt;.description, .instructions, .deadline_ms in decimal, .capture_video as true or false, and .files.&lt;path&gt; for each file in path order; then, for a directory whose agent.yaml has a ui key, ui and the version of the router's UI compiler, so a router that compiles ui differently syncs the directory again. A file sent that is no part of the directory is no part of the hash, so every client's sync of one folder has one hash. While a connector is left out sync_hash is another hash, so the sync that finds its connection is not taken for the one that left it out.
+    /// <br/>
+    /// <br/>What a sync does with a setting agent.yaml leaves out depends on the setting. A model, the voice, the mode, the region, a greeting, the sandbox, connectors, tools, channels, chat_channels, scheduling, floor_control, agents, video and dispatch are left as stored. calls is always written whole: a call tool the file does not name goes back to its default. keyterms and tags are left as stored when the file has none, an empty list or mapping included, so a file cannot clear them. instructions, guardrail, the skills the config names, its UI instructions and its knowledge base are the directory's: a file taken out is taken out of the agent. simulations are left alone without a simulations file, and are exactly what the files declare with one.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SyncAgentFilesRequest
+    {
+
+        /// <summary>
+        /// As base_change of POST /v1/agents/sync: the newest change the caller has already seen.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("base_change")]
+        public string? BaseChange { get; set; } = default!;
+
+        /// <summary>
+        /// As check_changes of POST /v1/agents/sync: refuse the sync, with unsynced_changes, when it would write over a setting somebody changed since the last one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("check_changes")]
+        public bool? CheckChanges { get; set; } = default!;
+
+        /// <summary>
+        /// Work out what the sync would store and write nothing. The answer is the config as it would be stored, one a dry run would create having no id, with the warnings a sync would give, and the request is refused as the sync would be: for what the files say, for what the router cannot run, and with check_changes for what it would write over, the money for writing its knowledge included. What only the writes can tell is not told: whether the knowledge provider takes the passages, and whether a page of knowledge/urls.yaml can be read. unchanged is true when the hash matches and a sync would do nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("dry_run")]
+        public bool? DryRun { get; set; } = default!;
+
+        /// <summary>
+        /// The files of the agent's folder, as they are on disk. A client sends what it finds and the router decides what is the directory: agent.yaml, instructions.md, guardrail.md, what is under skills/, knowledge/ and simulations/, and the UI files agent.yaml names. A file or folder whose name starts with a dot, and anything under __pycache__ or node_modules, is skipped. Any other file is left out with a warning, and is no part of the limits or the hash.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("files")]
+        public System.Collections.Generic.List<DirectoryFile> Files { get; set; } = new System.Collections.Generic.List<DirectoryFile>();
+
+        /// <summary>
+        /// In place of agent.yaml's greeting.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("greeting")]
+        public Greeting? Greeting { get; set; } = default!;
+
+        /// <summary>
+        /// The guardrail a program gives in code, in place of guardrail.md.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("guardrail")]
+        public string? Guardrail { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's harness.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("harness")]
+        public string? Harness { get; set; } = default!;
+
+        /// <summary>
+        /// The system prompt a program gives in code, in place of instructions.md.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
+        public string? Instructions { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's llm.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("llm")]
+        public string? Llm { get; set; } = default!;
+
+        /// <summary>
+        /// What the config is called. It wins over agent.yaml's name, and may be left out when agent.yaml names the agent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string? Name { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's sandbox.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sandbox")]
+        public string? Sandbox { get; set; } = default!;
+
+        /// <summary>
+        /// The skills a program writes in code, in place of every skill under skills/. An empty list names none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("skills")]
+        public System.Collections.Generic.List<SkillRequest>? Skills { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's sts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sts")]
+        public string? Sts { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's stt.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("stt")]
+        public string? Stt { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's subagent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("subagent")]
+        public string? Subagent { get; set; } = default!;
+
+        /// <summary>
+        /// Labels added to agent.yaml's tags, winning where both name a key: what an SDK's cost tracking writes.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's tts.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tts")]
+        public string? Tts { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's video.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("video")]
+        public SessionVideo? Video { get; set; } = default!;
+
+        /// <summary>
+        /// In place of agent.yaml's voice.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voice")]
+        public string? Voice { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -15798,6 +16065,12 @@ namespace GetStream.VisionAgents.Models
     public partial class SyncAgentResult
     {
 
+        /// <summary>
+        /// What the sync did, or with dry_run would do, to what the agent holds beside its config: each skill, knowledge document, knowledge url and simulation it created, updated or deleted. One it leaves as it is is not listed, and nothing is for a sync that found the hash unchanged.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("changes")]
+        public System.Collections.Generic.List<SyncChange>? Changes { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("config")]
         public AgentConfig Config { get; set; } = new AgentConfig();
 
@@ -15812,6 +16085,80 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("warnings")]
         public System.Collections.Generic.List<string>? Warnings { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One skill, knowledge document, knowledge url or simulation a sync creates, updates or deletes.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SyncChange
+    {
+
+        /// <summary>
+        /// One of `created`, `updated`, `deleted`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("action")]
+        public string Action { get; set; } = default!;
+
+        /// <summary>
+        /// Which one: a skill's name, a knowledge document's source, a knowledge url's url, a simulation's name.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// What it is, named as GET /v1/agents/configs/{id}/changes names a skill, a knowledge document and a knowledge url, and simulation, which that record does not keep.
+        /// <br/>
+        /// <br/>One of `skill`, `knowledge`, `knowledge_url`, `simulation`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resource_type")]
+        public string ResourceType { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// One thing a sync would write over that somebody changed since the last sync.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SyncConflict
+    {
+
+        /// <summary>
+        /// Which one: the field of an agent_config, such as llm or instructions; a skill's name; a knowledge document's source; a knowledge url's url.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        /// <summary>
+        /// True for a knowledge document the directory no longer has, which the sync would delete.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("removed")]
+        public bool? Removed { get; set; } = default!;
+
+        /// <summary>
+        /// What was changed, as GET /v1/agents/configs/{id}/changes names it: agent_config, skill, knowledge or knowledge_url.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("resource_type")]
+        public string ResourceType { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

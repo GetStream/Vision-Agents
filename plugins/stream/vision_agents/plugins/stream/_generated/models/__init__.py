@@ -38,6 +38,7 @@ from .agent_config_tags import AgentConfigTags
 from .agent_connector_binding import AgentConnectorBinding
 from .agent_connector_selection import AgentConnectorSelection
 from .agent_connector_selection_type import AgentConnectorSelectionType
+from .agent_directory import AgentDirectory
 from .agent_dispatch import AgentDispatch
 from .agent_log import AgentLog
 from .agent_log_details import AgentLogDetails
@@ -257,6 +258,8 @@ from .detection_request import DetectionRequest
 from .detection_request_tags import DetectionRequestTags
 from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
+from .directory_file import DirectoryFile
+from .directory_problem import DirectoryProblem
 from .dispatch_setting import DispatchSetting
 from .duplicate_campaign_request import DuplicateCampaignRequest
 from .duplicate_campaign_request_contacts import DuplicateCampaignRequestContacts
@@ -578,12 +581,18 @@ from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
 from .subject_usage import SubjectUsage
 from .suspend_telephony_request import SuspendTelephonyRequest
+from .sync_agent_files_request import SyncAgentFilesRequest
+from .sync_agent_files_request_tags import SyncAgentFilesRequestTags
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_request_mcp_servers_item import SyncAgentRequestMcpServersItem
 from .sync_agent_request_plugin_events_item import SyncAgentRequestPluginEventsItem
 from .sync_agent_request_plugins_item_type_1 import SyncAgentRequestPluginsItemType1
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
+from .sync_change import SyncChange
+from .sync_change_action import SyncChangeAction
+from .sync_change_resource_type import SyncChangeResourceType
+from .sync_conflict import SyncConflict
 from .tag_key_summary import TagKeySummary
 from .tag_stats_bucket import TagStatsBucket
 from .tag_value_summary import TagValueSummary
@@ -705,6 +714,7 @@ __all__ = (
     "AgentConnectorBinding",
     "AgentConnectorSelection",
     "AgentConnectorSelectionType",
+    "AgentDirectory",
     "AgentDispatch",
     "AgentLog",
     "AgentLogDetails",
@@ -920,6 +930,8 @@ __all__ = (
     "DetectionRequestTags",
     "DetectionResult",
     "DetectionStatus",
+    "DirectoryFile",
+    "DirectoryProblem",
     "DispatchSetting",
     "DuplicateCampaignRequest",
     "DuplicateCampaignRequestContacts",
@@ -1239,12 +1251,18 @@ __all__ = (
     "SttOptionsOverwrites",
     "SubjectUsage",
     "SuspendTelephonyRequest",
+    "SyncAgentFilesRequest",
+    "SyncAgentFilesRequestTags",
     "SyncAgentRequest",
     "SyncAgentRequestMcpServersItem",
     "SyncAgentRequestPluginEventsItem",
     "SyncAgentRequestPluginsItemType1",
     "SyncAgentRequestTags",
     "SyncAgentResult",
+    "SyncChange",
+    "SyncChangeAction",
+    "SyncChangeResourceType",
+    "SyncConflict",
     "TagKeySummary",
     "TagStatsBucket",
     "TagValueSummary",

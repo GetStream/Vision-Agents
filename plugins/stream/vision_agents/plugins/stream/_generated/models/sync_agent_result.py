@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.agent_config import AgentConfig
+    from ..models.sync_change import SyncChange
 
 
 T = TypeVar("T", bound="SyncAgentResult")
@@ -24,11 +25,15 @@ class SyncAgentResult:
         unchanged (bool): True when the hash matched and nothing was written.
         warnings (list[str] | None | Unset): What was stored but will not work yet, such as a channel line the app has
             not connected.
+        changes (list[SyncChange] | Unset): What the sync did, or with dry_run would do, to what the agent holds beside
+            its config: each skill, knowledge document, knowledge url and simulation it created, updated or deleted. One it
+            leaves as it is is not listed, and nothing is for a sync that found the hash unchanged.
     """
 
     config: AgentConfig
     unchanged: bool
     warnings: list[str] | None | Unset = UNSET
+    changes: list[SyncChange] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +50,13 @@ class SyncAgentResult:
         else:
             warnings = self.warnings
 
+        changes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.changes, Unset):
+            changes = []
+            for changes_item_data in self.changes:
+                changes_item = changes_item_data.to_dict()
+                changes.append(changes_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -55,12 +67,15 @@ class SyncAgentResult:
         )
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
+        if changes is not UNSET:
+            field_dict["changes"] = changes
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_config import AgentConfig
+        from ..models.sync_change import SyncChange
 
         d = dict(src_dict)
         config = AgentConfig.from_dict(d.pop("config"))
@@ -84,10 +99,20 @@ class SyncAgentResult:
 
         warnings = _parse_warnings(d.pop("warnings", UNSET))
 
+        _changes = d.pop("changes", UNSET)
+        changes: list[SyncChange] | Unset = UNSET
+        if _changes is not UNSET:
+            changes = []
+            for changes_item_data in _changes:
+                changes_item = SyncChange.from_dict(changes_item_data)
+
+                changes.append(changes_item)
+
         sync_agent_result = cls(
             config=config,
             unchanged=unchanged,
             warnings=warnings,
+            changes=changes,
         )
 
         sync_agent_result.additional_properties = d
