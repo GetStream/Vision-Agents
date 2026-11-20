@@ -72,16 +72,7 @@ func (c *classifier) Check(ctx context.Context, turnID, text, conversation strin
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
-	answered, err := c.session.Classify(ctx, decisionmodel.Request{
-		State: map[string]string{"policy": c.policy.Text, "conversation": conversation, "message": text},
-		Questions: map[string]decisionmodel.Question{
-			violates: decisionmodel.Noul(
-				cmp.Or(c.policy.Question, DefaultQuestion),
-				"It asks for something outside what the policy permits.",
-				"It is a request the policy permits.",
-			),
-		},
-	})
+	answered, err := c.session.Classify(ctx, classifyRequest(c.policy, text, conversation))
 	if err != nil {
 		return Verdict{}, err
 	}
@@ -104,4 +95,18 @@ func (c *classifier) Check(ctx context.Context, turnID, text, conversation strin
 		Probability: probability,
 		Model:       model,
 	}, nil
+}
+
+// classifyRequest is the one question a decision model is asked about a turn.
+func classifyRequest(policy Policy, text, conversation string) decisionmodel.Request {
+	return decisionmodel.Request{
+		State: map[string]string{"policy": policy.Text, "conversation": conversation, "message": text},
+		Questions: map[string]decisionmodel.Question{
+			violates: decisionmodel.Noul(
+				cmp.Or(policy.Question, DefaultQuestion),
+				"It asks for something outside what the policy permits.",
+				"It is a request the policy permits.",
+			),
+		},
+	}
 }
