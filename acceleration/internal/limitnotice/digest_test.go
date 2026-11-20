@@ -518,6 +518,7 @@ func (s *DigestSuite) TestOnlyTheRouterHoldingTheLockDeletesTheActivity() {
 	held, err := elsewhere.Hold(s.ctx)
 	s.Require().NoError(err)
 	s.Require().True(held)
+	s.T().Cleanup(elsewhere.Release)
 
 	s.router().Start()
 	s.checked(0)
