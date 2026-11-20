@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
@@ -617,5 +619,88 @@ func TestACustomerIDClientStillNamesAUser(t *testing.T) {
 	defer backend.mu.Unlock()
 	if heard := backend.heard[0]; heard.Get(stream.CustomerHeader) != "acme" || heard.Get(stream.AuthorizationHeader) != "" {
 		t.Errorf("the customer id client sent %v", heard)
+	}
+}
+
+// claimsHeard are the claims of the token each request the router heard carried, signed with
+// secret, without the times they were minted at.
+func claimsHeard(t *testing.T, backend *router, secret string) []jwt.MapClaims {
+	t.Helper()
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	var heard []jwt.MapClaims
+	for _, header := range backend.heard {
+		claims := jwt.MapClaims{}
+		if _, err := jwt.ParseWithClaims(header.Get(stream.AuthorizationHeader), claims,
+			func(*jwt.Token) (any, error) { return []byte(secret), nil }); err != nil {
+			t.Fatal(err)
+		}
+		delete(claims, "iat")
+		delete(claims, "exp")
+		heard = append(heard, claims)
+	}
+	return heard
+}
+
+// Catches a backend built for one user that names another on a connections call and signs that
+// call a token of its own user, which the proxy refuses with 403: it holds the secret, so the call
+// is the app's acting for the named user, as Python's acting_for (_backend.py, user_id="") sends.
+func TestABackendBuiltForAUserActsForTheUserACallNames(t *testing.T) {
+	backend := newRouter(t)
+	app, err := New(stream.Backend{URL: backend.URL, APIKey: "key", APISecret: "secret", UserID: "ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connections := app.Connections()
+
+	created := connectFor(t, connections, "linear", "alice")
+	if _, err := connections.Authorize(t.Context(), *created.Id, AuthorizeOptions{UserID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connections.Get(t.Context(), *created.Id, ConnectionOptions{UserID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if listed, err := connections.List(t.Context(), ConnectionFilter{UserID: "alice"}); err != nil || len(listed) != 1 {
+		t.Fatalf("the list answered %v, %v", listed, err)
+	}
+	if err := connections.Delete(t.Context(), *created.Id, ConnectionOptions{UserID: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for at, claims := range claimsHeard(t, backend, "secret") {
+		if !reflect.DeepEqual(claims, jwt.MapClaims{"server": true}) {
+			t.Errorf("request %d carried %v", at, claims)
+		}
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.heard) != 5 {
+		t.Fatalf("the router heard %v", backend.asked)
+	}
+	for at, heard := range backend.heard {
+		if heard.Get(stream.UserHeader) != "alice" || heard.Get(stream.AuthTypeHeader) != stream.AuthTypeJWT {
+			t.Errorf("request %d sent %v", at, heard)
+		}
+	}
+}
+
+// Catches the app's token reaching a call that names no user from a backend built for one user:
+// that call sent its own user's token and no acting user before, and still does.
+func TestABackendBuiltForAUserNamingNoUserSendsWhatItAlwaysDid(t *testing.T) {
+	backend := newRouter(t)
+	app, err := New(stream.Backend{URL: backend.URL, APIKey: "key", APISecret: "secret", UserID: "ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.Connections().List(t.Context(), ConnectionFilter{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if claims := claimsHeard(t, backend, "secret"); !reflect.DeepEqual(claims, []jwt.MapClaims{{"user_id": "ada"}}) {
+		t.Errorf("the list carried %v", claims)
+	}
+	if acting := backend.actingFor("GET", "/v1/agents/connections"); !slices.Equal(acting, []string{""}) {
+		t.Errorf("the list acted for %q", acting)
 	}
 }

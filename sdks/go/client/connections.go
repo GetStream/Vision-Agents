@@ -187,11 +187,16 @@ func (c *Connections) reach(id, userID string) (*acceleration.ClientWithResponse
 // client acts for otherwise.
 func (c *Connections) api(userID string) (*acceleration.ClientWithResponses, error) {
 	backend := c.client.backend
-	// A device holds its user's token, which the router answers with 403 on any connection call.
 	// The customer id path sends no token and is left as it was.
 	if userID != "" && backend.Authenticate && backend.UserID != "" {
-		return nil, errors.New("client: a user's connections keep the app's credential, which only a backend " +
-			"holds; a device holds its user's token (SetUser) and acts only as that user, so leave the user off")
+		// A device holds its user's token, which the router answers with 403 on any connection call.
+		if backend.Token != "" {
+			return nil, errors.New("client: a user's connections keep the app's credential, which only a backend " +
+				"holds; a device holds its user's token (SetUser) and acts only as that user, so leave the user off")
+		}
+		// A backend built for one user still holds the secret: this call is the app's, acting for
+		// the user it names, as in every other SDK. A token signed for its own user would be refused.
+		backend.UserID = ""
 	}
 	backend.ActingFor = userID //nolint:staticcheck // SA1019: a call names its user here, replacing the one the client acts for
 	return backend.Client()
