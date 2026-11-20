@@ -3145,9 +3145,7 @@ func conversationBefore(history []llm.Message) string {
 		if message.Router {
 			continue
 		}
-		if message.Role == llm.User {
-			message.Content = unauthored(message.Content)
-		}
+		message.Content = unauthored(message.Content)
 		said = append(said, message)
 	}
 	for at := len(said) - 1; at >= 0; at-- {

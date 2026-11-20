@@ -1434,8 +1434,9 @@ func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 	last := harness.WithoutNotes(asked[2].Input)
 	s.Equal(llm.ToolResult, last[len(last)-2].Role)
 	s.Equal("call-2", last[len(last)-2].ToolCallID)
-	// Typed: no caller said it (llm.Message.Typed), which no provider reads.
-	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true},
+	// Typed and Router: no caller said it (llm.Message.Typed, Router), which no provider reads.
+	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true,
+		Router: true},
 		last[len(last)-1])
 }
 
