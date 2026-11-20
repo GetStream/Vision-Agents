@@ -36,7 +36,8 @@ pub struct ConnectionFilter {
 }
 
 /// The accounts the app and its users hold at connectors, such as a user's Linear: what an
-/// agent's tools reach that account through. Server side only.
+/// agent's tools reach that account through. Server side only: a client holding a user's token
+/// is refused naming a user, before anything is sent.
 ///
 /// Every call names its user once, as `user_id`. A user goes to the router as the owner and as
 /// `X-Stream-User-Id` alike, so the two never differ. A user's connection is reached only
@@ -90,7 +91,7 @@ impl Connections {
                 user_id: None,
             },
         };
-        self.acting(user_id)
+        self.acting(user_id)?
             .create_connection(&types::ConnectionRequest {
                 auth_scheme: None,
                 connector_id: new.connector.clone(),
@@ -131,7 +132,7 @@ impl Connections {
     /// A user's list holds only that user's connections, not the app's.
     pub async fn list(&self, filter: &ConnectionFilter) -> Result<Vec<types::Connection>> {
         let user_id = named(filter.user_id.as_deref());
-        let client = self.acting(user_id);
+        let client = self.acting(user_id)?;
         let mut query = ListConnectionsQuery {
             owner_type: Some(if user_id.is_some() { "user" } else { "app" }.into()),
             connector_id: filter.connector.clone(),
@@ -163,15 +164,21 @@ impl Connections {
         if id.is_empty() {
             return Err(Error::configuration("a connection needs its id"));
         }
-        Ok(self.acting(named(user_id)))
+        self.acting(named(user_id))
     }
 
     /// This client acting for `user_id`; with none, as it was built, acting for whoever
-    /// `ClientOptions::user_id` names, if anyone.
-    fn acting(&self, user_id: Option<&str>) -> Client {
+    /// `ClientOptions::user_id` names, if anyone. A device holds its own user's token, which the
+    /// router refuses here, so naming a user from one is refused before anything is sent.
+    fn acting(&self, user_id: Option<&str>) -> Result<Client> {
         match user_id {
-            Some(user_id) => self.client.acting_for(user_id),
-            None => self.client.clone(),
+            Some(_) if !self.client.server_side() => Err(Error::configuration(
+                "a user's connections keep the app's credential, which only a backend holds; a \
+                 device holds its user's token (as_user) and acts only as that user, so leave \
+                 user_id off",
+            )),
+            Some(user_id) => Ok(self.client.acting_for(user_id)),
+            None => Ok(self.client.clone()),
         }
     }
 }
