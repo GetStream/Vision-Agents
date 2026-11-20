@@ -1,18 +1,17 @@
 package agents
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -32,18 +31,16 @@ type backend struct {
 	mu      sync.Mutex
 	configs []acceleration.AgentConfig
 	skills  []acceleration.Skill
-	syncs   []acceleration.SyncAgentRequest
+	syncs   []acceleration.SyncAgentFilesRequest
 	syncRaw [][]byte
 	updates []string
 	// refuseSkills, when set, is the reason POST /v1/agents/skills answers 400.
 	refuseSkills string
 	// refuseSkillEdits, when set, is the reason PUT /v1/agents/skills/{id} answers 400.
 	refuseSkillEdits string
-	// ignoresUI stores a sync without its ui_instructions, as a router older than them does.
-	ignoresUI bool
-	// connections answers GET /v1/agents/connections. Nil answers an empty page.
-	connections       func(*http.Request) acceleration.ConnectionPage
-	connectionQueries []string
+	// leavesOut, when set, is a connector every sync leaves out, as the router does for one
+	// whose connection the app does not have.
+	leavesOut *acceleration.LeftOutConnector
 }
 
 func newBackend(t *testing.T) *backend {
@@ -172,51 +169,33 @@ func newBackend(t *testing.T) *backend {
 		reply(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such skill"}})
 	})
 
-	mux.HandleFunc("GET /v1/agents/connections", func(w http.ResponseWriter, r *http.Request) {
-		router.mu.Lock()
-		router.connectionQueries = append(router.connectionQueries, r.URL.RawQuery)
-		answer := router.connections
-		router.mu.Unlock()
-		if answer == nil {
-			reply(w, http.StatusOK, acceleration.ConnectionPage{})
-			return
-		}
-		reply(w, http.StatusOK, answer(r))
-	})
-
-	mux.HandleFunc("POST /v1/agents/sync", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/agents/sync/files", func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		var request acceleration.SyncAgentRequest
+		var request acceleration.SyncAgentFilesRequest
 		_ = json.Unmarshal(raw, &request)
 
 		router.mu.Lock()
 		defer router.mu.Unlock()
 		router.syncRaw = append(router.syncRaw, raw)
 		router.syncs = append(router.syncs, request)
-		stored := acceleration.AgentConfig{
-			Id: "config-" + request.Name, Name: request.Name, Instructions: request.Instructions,
-			Subagent: request.Subagent, Llm: request.Llm, Tags: request.Tags,
-			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		// Whatever the router makes of the request: the same one hashes the same.
+		hashed := sha256.Sum256(raw)
+		hash := hex.EncodeToString(hashed[:])
+		result := acceleration.SyncAgentResult{}
+		name := deref(request.Name)
+		result.Config = acceleration.AgentConfig{
+			Id: "config-" + name, Name: name, SyncHash: &hash, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		}
-		if !router.ignoresUI {
-			stored.UiInstructions = request.UiInstructions
+		if router.leavesOut != nil {
+			result.Config.LeftOutConnectors = &[]acceleration.LeftOutConnector{*router.leavesOut}
+			result.Warnings = &[]string{"connector " + router.leavesOut.Name + " was left out"}
 		}
-		if request.Knowledge != nil || request.KnowledgeUrls != nil {
-			stored.KnowledgeNamespace = &request.Name
-		}
-		if request.Skills != nil {
-			named := []string{}
-			for _, skill := range *request.Skills {
-				named = append(named, skill.Name)
-			}
-			stored.Skills = &named
-		}
-		router.configs = append(router.configs[:0:0], stored)
-		reply(w, http.StatusOK, acceleration.SyncAgentResult{Config: stored})
+		router.configs = append(router.configs[:0:0], result.Config)
+		reply(w, http.StatusOK, result)
 	})
 
 	router.Server = httptest.NewServer(mux)
@@ -273,12 +252,6 @@ func scripts(paths []string) []string {
 		}
 	}
 	return run
-}
-
-func (b *backend) answerConnections(answer func(*http.Request) acceleration.ConnectionPage) {
-	b.mu.Lock()
-	b.connections = answer
-	b.mu.Unlock()
 }
 
 func reply(w http.ResponseWriter, status int, body any) {
@@ -784,567 +757,6 @@ func TestASyncTheRouterRefusesCarriesWhatItSaid(t *testing.T) {
 	}
 }
 
-func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "llm: openai/gpt-5.6\ntags:\n  team: support\n")
-	write(t, root, "instructions.md", "You are Jean.\n")
-	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
-	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
-	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n")
-
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	stored, err := agent.Sync(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-
-	if len(router.syncs) != 1 {
-		t.Fatalf("the directory was synced in %d requests", len(router.syncs))
-	}
-	synced := router.syncs[0]
-	if synced.Hash != agent.Folder().Hash() {
-		t.Errorf("the directory was sent as %q, but hashes to %q", synced.Hash, agent.Folder().Hash())
-	}
-	if synced.Skills == nil || (*synced.Skills)[0].Name != "think" {
-		t.Errorf("the skills sent are %+v", synced.Skills)
-	}
-	if synced.Knowledge == nil || (*synced.Knowledge)[0].Source != "pricing.md" {
-		t.Errorf("the knowledge sent is %+v", synced.Knowledge)
-	}
-	if synced.KnowledgeUrls == nil || (*synced.KnowledgeUrls)[0].Url != "https://example.com/plans" ||
-		*(*synced.KnowledgeUrls)[0].Title != "Plans" || (*synced.KnowledgeUrls)[0].Description != nil ||
-		*(*synced.KnowledgeUrls)[0].RefreshHours != 24 {
-		t.Errorf("the pages sent are %+v", synced.KnowledgeUrls)
-	}
-	if synced.Llm == nil || *synced.Llm != "openai/gpt-5.6" || (*synced.Tags)["team"] != "support" {
-		t.Errorf("what agent.yaml declares did not go with it: %+v", synced)
-	}
-	if synced.Stt != nil || synced.Mode != nil {
-		t.Errorf("settings the declaration never named were sent: %+v", synced)
-	}
-	if stored.KnowledgeNamespace == nil || *stored.KnowledgeNamespace != "jean" {
-		t.Errorf("the config does not point at the knowledge: %+v", stored)
-	}
-	if ReadStamp(root) != synced.Hash {
-		t.Errorf("%s records %q", AgentStamp, ReadStamp(root))
-	}
-}
-
-func TestSyncSendsHowTheSandboxIsBuilt(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "artist")
-	write(t, root, "agent.yaml", `sandbox: daytona
-sandbox_options:
-  setup: [pip install bpy==5.2.2]
-  timeout: 5m
-  memory_gb: 4
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	options := router.syncs[0].SandboxOptions
-	if options == nil || (*options.Setup)[0] != "pip install bpy==5.2.2" || *options.TimeoutMs != 300000 || *options.MemoryGb != 4 {
-		t.Errorf("how the sandbox is built went as %+v", options)
-	}
-}
-
-func TestSyncSendsWhatTheSandboxMayReach(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "researcher")
-	write(t, root, "agent.yaml", `sandbox: daytona
-sandbox_options:
-  network: true
-  allowed_domains: [api.example.com]
-  network_allow_list: [10.0.0.0/8]
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	options := router.syncs[0].SandboxOptions
-	if options == nil || !*options.Network || (*options.AllowedDomains)[0] != "api.example.com" ||
-		(*options.NetworkAllowList)[0] != "10.0.0.0/8" {
-		t.Errorf("what the sandbox may reach went as %+v", options)
-	}
-}
-
-func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `channels:
-  whatsapp:
-    number: "+15556325550"
-  sms:
-    number: "+12187021098"
-  identity: link
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	named := router.syncs[0].Channels
-	if named == nil || named.Whatsapp == nil || named.Whatsapp.Number != "+15556325550" ||
-		named.Sms == nil || named.Sms.Number != "+12187021098" || named.Imessage != nil ||
-		named.Identity == nil || *named.Identity != acceleration.ChannelIdentityLink {
-		t.Errorf("the channels went as %+v", named)
-	}
-}
-
-// chat_channels go as the file lists them: nil when it names none, which leaves the stored
-// list, and an empty list when it lists none, which removes it.
-func TestSyncSendsTheChatChannelsTheAgentAnswersIn(t *testing.T) {
-	for _, c := range []struct {
-		declared string
-		want     *[]acceleration.AgentChatChannel
-	}{
-		{"chat_channels:\n  - type: callouts\n  - type: shifts\n", &[]acceleration.AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}},
-		{"chat_channels:\n  - type: callouts\n    answer: mentioned\n  - type: shifts\n    answer: always\n",
-			&[]acceleration.AgentChatChannel{{Type: "callouts", Answer: pointer(acceleration.Mentioned)}, {Type: "shifts", Answer: pointer(acceleration.Always)}}},
-		{"chat_channels: []\n", &[]acceleration.AgentChatChannel{}},
-		{"chat_channels: ~\n", nil},
-		{"llm: llm-fast\n", nil},
-	} {
-		root := filepath.Join(t.TempDir(), "rota")
-		write(t, root, "agent.yaml", c.declared)
-		router := newBackend(t)
-		agent := agentOn(t, router, Options{Dir: root})
-
-		if _, err := agent.Sync(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-
-		router.mu.Lock()
-		sent := router.syncs[0].ChatChannels
-		router.mu.Unlock()
-		if !reflect.DeepEqual(sent, c.want) {
-			t.Errorf("%q: chat_channels went as %+v, not %+v", c.declared, sent, c.want)
-		}
-	}
-}
-
-// A chat channel entry with a key nobody knows is refused, as any declaration key is.
-func TestAChatChannelKeyNobodyKnowsIsRefused(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "rota")
-	write(t, root, "agent.yaml", "chat_channels:\n  - type: callouts\n    mention: true\n")
-
-	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "mention") {
-		t.Errorf("loaded with an unknown chat channel key: %v", err)
-	}
-}
-
-func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `scheduling:
-  enabled: true
-  max_tasks_per_user: 10
-  default_timezone: America/New_York
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	declared := router.syncs[0].Scheduling
-	if declared == nil || declared.Enabled == nil || !*declared.Enabled ||
-		declared.MaxTasksPerUser == nil || *declared.MaxTasksPerUser != 10 ||
-		declared.DefaultTimezone == nil || *declared.DefaultTimezone != "America/New_York" {
-		t.Errorf("the scheduling went as %+v", declared)
-	}
-}
-
-// agent.yaml's floor_control goes as written, a model the router does not know and an empty
-// mapping included, and a file that names none, or null, sends none, so the stored choice stays.
-func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
-	for _, c := range []struct {
-		declared string
-		want     *acceleration.FloorControl
-	}{
-		{"floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
-			&acceleration.FloorControl{Model: pointer("stream/chorus-asr"), MaxWaitMs: pointer(int64(800))}},
-		{"floor_control:\n  model: stream/chorus-asr\n", &acceleration.FloorControl{Model: pointer("stream/chorus-asr")}},
-		{"floor_control: {model: other}\n", &acceleration.FloorControl{Model: pointer("other")}},
-		{"floor_control: {}\n", &acceleration.FloorControl{}},
-		{"floor_control:\n", nil},
-		{"floor_control: ~\n", nil},
-		{"llm: openai/gpt-5.6\n", nil},
-	} {
-		root := filepath.Join(t.TempDir(), "concierge")
-		write(t, root, "agent.yaml", c.declared)
-		router := newBackend(t)
-		agent := agentOn(t, router, Options{Dir: root})
-
-		if _, err := agent.Sync(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-
-		router.mu.Lock()
-		got := router.syncs[0].FloorControl
-		router.mu.Unlock()
-		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%q: floor_control went as %s, not %s", c.declared, describe(got), describe(c.want))
-		}
-	}
-}
-
-// agent.yaml's agents go as written, and an empty list goes as one so it removes the stored
-// list, while a file that names none, or null, sends none, so the stored list stays.
-func TestSyncSendsTheAgentsTheAgentDeclared(t *testing.T) {
-	for _, c := range []struct {
-		declared string
-		want     *[]acceleration.ChildAgent
-	}{
-		{"mode: text\nagents:\n  - config: security-lens\n    tool: security\n    description: Reviews for security bugs.\n    timeout_ms: 90000\n    max_tool_rounds: -1\n  - {config: ranker, tool: rank}\n",
-			&[]acceleration.ChildAgent{
-				{Config: "security-lens", Tool: "security", Description: pointer("Reviews for security bugs."), TimeoutMs: pointer(int64(90000)), MaxToolRounds: pointer(int64(-1))},
-				{Config: "ranker", Tool: "rank"},
-			}},
-		{"agents: []\n", &[]acceleration.ChildAgent{}},
-		{"agents:\n", nil},
-		{"llm: openai/gpt-5.6\n", nil},
-	} {
-		root := filepath.Join(t.TempDir(), "lead")
-		write(t, root, "agent.yaml", c.declared)
-		router := newBackend(t)
-		agent := agentOn(t, router, Options{Dir: root})
-
-		if _, err := agent.Sync(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-
-		router.mu.Lock()
-		got := router.syncs[0].Agents
-		router.mu.Unlock()
-		if !reflect.DeepEqual(got, c.want) {
-			sent, _ := json.Marshal(got)
-			wanted, _ := json.Marshal(c.want)
-			t.Errorf("%q: agents went as %s, not %s", c.declared, sent, wanted)
-		}
-	}
-}
-
-// agent.yaml's image goes as written, and a file that names none sends none, so the stored one
-// stays and an agent that never asked for drawing is not offered it.
-func TestSyncSendsTheImageTargetTheAgentDeclared(t *testing.T) {
-	for _, c := range []struct {
-		declared string
-		want     *string
-	}{
-		{"mode: text\nimage: image-fast\n", pointer("image-fast")},
-		{"mode: text\nimage: \"\"\n", pointer("")},
-		{"mode: text\nimage:\n", nil},
-		{"mode: text\nllm: openai/gpt-5.6\n", nil},
-	} {
-		root := filepath.Join(t.TempDir(), "illustrator")
-		write(t, root, "agent.yaml", c.declared)
-		router := newBackend(t)
-		agent := agentOn(t, router, Options{Dir: root})
-
-		if _, err := agent.Sync(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-
-		router.mu.Lock()
-		got := router.syncs[0].Image
-		router.mu.Unlock()
-		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%q: image went as %v, not %v", c.declared, got, c.want)
-		}
-	}
-}
-
-func describe(floorControl *acceleration.FloorControl) string {
-	raw, _ := json.Marshal(floorControl)
-	return string(raw)
-}
-
-func TestAFolderDeclaresCalls(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `calls:
-  end_call:
-    enabled: true
-    when: The caller said goodbye, or their question is answered and they need nothing else.
-  press:
-    enabled: false
-  transfer:
-    enabled: true
-    destinations:
-      - name: Sales
-        number: "+15550001111"
-        when: The caller wants to buy, upgrade or ask about pricing.
-        warm: true
-      - name: Billing
-        number: "+15550002222"
-        when: A charge they don't recognise.
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	calls := router.syncs[0].Calls
-	if calls == nil || calls.EndCall == nil || calls.Press == nil || calls.Transfer == nil {
-		t.Fatalf("the calls went as %+v", calls)
-	}
-	if !*calls.EndCall.Enabled || *calls.EndCall.When != "The caller said goodbye, or their question is answered and they need nothing else." {
-		t.Errorf("end_call went as %+v", calls.EndCall)
-	}
-	if *calls.Press.Enabled {
-		t.Errorf("press went as %+v", calls.Press)
-	}
-	if !*calls.Transfer.Enabled || calls.Transfer.Destinations == nil || len(*calls.Transfer.Destinations) != 2 {
-		t.Fatalf("transfer went as %+v", calls.Transfer)
-	}
-	sales, billing := (*calls.Transfer.Destinations)[0], (*calls.Transfer.Destinations)[1]
-	if sales.Name != "Sales" || sales.Number != "+15550001111" || *sales.When != "The caller wants to buy, upgrade or ask about pricing." ||
-		sales.Warm == nil || !*sales.Warm {
-		t.Errorf("Sales went as %+v", sales)
-	}
-	if billing.Name != "Billing" || billing.Number != "+15550002222" || *billing.When != "A charge they don't recognise." ||
-		(billing.Warm != nil && *billing.Warm) {
-		t.Errorf("Billing went as %+v", billing)
-	}
-}
-
-// A sync replaces what the dashboard changed, so a file with no calls sends the defaults.
-func TestAFolderWithoutCallsSendsTheDefaults(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "llm: llm-fast\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	calls := router.syncs[0].Calls
-	if calls == nil || calls.EndCall == nil || calls.Press == nil || calls.Transfer == nil {
-		t.Fatalf("the calls went as %+v", calls)
-	}
-	if *calls.EndCall.Enabled || !*calls.Press.Enabled || !*calls.Transfer.Enabled {
-		t.Errorf("defaults went as end_call %v, press %v, transfer %v", *calls.EndCall.Enabled, *calls.Press.Enabled, *calls.Transfer.Enabled)
-	}
-	if calls.Transfer.Destinations != nil && len(*calls.Transfer.Destinations) != 0 {
-		t.Errorf("destinations went as %+v", *calls.Transfer.Destinations)
-	}
-}
-
-// A tool block without enabled takes that tool's default.
-func TestACallsToolWithoutEnabledTakesItsDefault(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `calls:
-  end_call:
-    when: They are done.
-  transfer:
-    destinations:
-      - name: Sales
-        number: "+15550001111"
-`)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	calls := router.syncs[0].Calls
-	if *calls.EndCall.Enabled || *calls.EndCall.When != "They are done." || !*calls.Press.Enabled ||
-		!*calls.Transfer.Enabled || len(*calls.Transfer.Destinations) != 1 {
-		t.Errorf("the calls went as %+v", calls)
-	}
-}
-
-// A file saying nothing about scheduling leaves the stored setting alone.
-func TestSyncSendsNoSchedulingWhenTheFileNamesNone(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "llm: llm-fast\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if router.syncs[0].Scheduling != nil {
-		t.Errorf("the scheduling went as %+v", router.syncs[0].Scheduling)
-	}
-}
-
-// A file saying nothing about channels leaves the agent reachable in Stream Chat alone.
-func TestSyncSendsNoChannelsWhenTheFileNamesNone(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "llm: llm-fast\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if router.syncs[0].Channels != nil {
-		t.Errorf("the channels went as %+v", router.syncs[0].Channels)
-	}
-}
-
-func TestSyncSendsTheToolGroups(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "tools:\n"+
-		"  - name: booking\n    tools: [lookup_booking]\n"+
-		"  - name: refunds\n    loading: deferred\n    output_retention: 30d\n    tools: [refund_booking, void_ticket]\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Tools
-	if sent == nil || len(*sent) != 2 {
-		t.Fatalf("tools went as %+v", sent)
-	}
-	booking, refunds := (*sent)[0], (*sent)[1]
-	if booking.Name != "booking" || booking.Loading != nil || booking.OutputRetention != nil {
-		t.Errorf("a group that says nothing more went as %+v", booking)
-	}
-	if refunds.Loading == nil || *refunds.Loading != acceleration.ToolLoadingDeferred ||
-		refunds.OutputRetention == nil || *refunds.OutputRetention != "30d" ||
-		!slices.Equal(refunds.Tools, []string{"refund_booking", "void_ticket"}) {
-		t.Errorf("refunds went as %+v", refunds)
-	}
-}
-
-func TestSyncSendsHowAConnectorsToolsAreOffered(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "connectors:\n  - name: linear\n    loading: summary\n    output_retention: none\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	bindings := router.syncs[0].Connectors
-	if bindings == nil || len(*bindings) != 1 {
-		t.Fatalf("connectors went as %+v", bindings)
-	}
-	binding := (*bindings)[0]
-	if binding.Loading == nil || *binding.Loading != acceleration.ToolLoadingSummary ||
-		binding.OutputRetention == nil || *binding.OutputRetention != "none" {
-		t.Errorf("linear went as %+v", binding)
-	}
-}
-
-func TestAnAgentWhoseFolderNamesPluginsIsNotMade(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "triage")
-	write(t, root, "agent.yaml", "plugins: [sentry]\n")
-
-	if _, err := New(Options{Dir: root}); err == nil || !strings.Contains(err.Error(), "plugins is no longer read") {
-		t.Errorf("an agent naming plugins was made: %v", err)
-	}
-}
-
-// emptyPluginsYAML names plugins and plugin_events with nothing in them. Its sync body was
-// probed on 259da758b, while the SDK still read both keys.
-// The body now also carries calls, which a sync always sends; an older router ignores it
-// (Huma's AllowAdditionalPropertiesByDefault).
-const emptyPluginsYAML = "name: concierge\nplugins: []\nplugin_events: []\nconnectors:\n  - linear\n"
-
-func TestSyncOfEmptyPluginKeysSendsTheBodyItSentBefore(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", emptyPluginsYAML)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"5d7a06efa5f0e215c95f81ffe13b0585","name":"concierge"}`
-	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
-		t.Errorf("body = %s", router.syncRaw)
-	}
-}
-
-// An empty or null mcp_servers sent no MCP servers. Its sync bodies were probed on
-// 1af941985, while the SDK still read the key.
-func TestSyncOfAnEmptyMCPServerListSendsTheBodyItSentBefore(t *testing.T) {
-	for declared, probed := range map[string]string{
-		"name: concierge\nmcp_servers: []\nconnectors:\n  - linear\n": `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"39719d1b342a09b5e9d4a6fb77832132","name":"concierge"}`,
-		"name: concierge\nmcp_servers:\nconnectors:\n  - linear\n":    `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"51634dd05c567ccc87600dbd3bd2ac5b","name":"concierge"}`,
-	} {
-		root := filepath.Join(t.TempDir(), "concierge")
-		write(t, root, "agent.yaml", declared)
-		router := newBackend(t)
-		agent := agentOn(t, router, Options{Dir: root})
-
-		if _, err := agent.Sync(t.Context()); err != nil {
-			t.Fatalf("%q: %v", declared, err)
-		}
-
-		router.mu.Lock()
-		if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
-			t.Errorf("%q: body = %s", declared, router.syncRaw)
-		}
-		router.mu.Unlock()
-	}
-}
-
-func TestSyncSaysNothingOfTheSandboxWhenTheDeclarationDoesNot(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "analyst")
-	write(t, root, "agent.yaml", "sandbox: daytona\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if router.syncs[0].SandboxOptions != nil {
-		t.Errorf("options nobody declared were sent: %+v", router.syncs[0].SandboxOptions)
-	}
-}
-
 func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\n")
@@ -1372,34 +784,63 @@ func TestAnUnchangedDirectoryIsNotSyncedAgain(t *testing.T) {
 	}
 }
 
-func TestSyncSendsTheUIApartFromTheInstructions(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
-	write(t, root, "instructions.md", "You are Juno.\n")
-	router := newBackend(t)
+func TestSyncSendsADirectorysFilesAsTheyAre(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	held := map[string]string{
+		"agent.yaml":             "llm: openai/gpt-5.6\ntags:\n  team: support\n",
+		"instructions.md":        "You are Jean.\n",
+		"guardrail.md":           "---\ntype: llm\n---\nNo medical advice.\n",
+		"skills/think.md":        "---\ndescription: Work it out\n---\nReason it through.\n",
+		"skills/pdf/SKILL.md":    "---\ndescription: Fill a form\n---\nRun the script.\n",
+		"skills/pdf/fill.py":     "print('filled')\n",
+		"knowledge/pricing.md":   "# Pricing\n\nA call costs a penny.\n",
+		"knowledge/urls.yaml":    "- url: https://example.com/plans\n  title: Plans\n",
+		"simulations/lunch.yaml": "- name: lunch\n  scenario: Order.\n  assertion: Ordered.\n",
+		"ui/components.json":     "[]\n",
+	}
+	for path, content := range held {
+		write(t, root, path, content)
+	}
 
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+	router := newBackend(t)
+	agent := agentOn(t, router, Options{Dir: root})
+
+	stored, err := agent.Sync(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
 	if len(router.syncs) != 1 {
-		t.Fatalf("the sync sent %d requests", len(router.syncs))
+		t.Fatalf("the directory was synced in %d requests", len(router.syncs))
 	}
-	sent := router.syncs[0]
-	if got := deref(sent.Instructions); got != "You are Juno." {
-		t.Errorf("the instructions went as %q", got)
+	synced := router.syncs[0]
+	if deref(synced.Name) != "jean" {
+		t.Errorf("the directory was synced as %q, not after its folder", deref(synced.Name))
 	}
-	if ui := deref(sent.UiInstructions); !strings.HasPrefix(ui, "## Interactive UI Generation") || !strings.Contains(ui, "CardHeader(") {
-		t.Errorf("the UI went as %q", ui)
+	sent := map[string]string{}
+	for _, file := range synced.Files {
+		sent[file.Path] = file.Content
+	}
+	if !maps.Equal(sent, held) {
+		t.Errorf("the files sent are %+v", sent)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(router.syncRaw[0], &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != 2 {
+		t.Errorf("the request says more than the name and the files, which is the router's to read: %s", router.syncRaw[0])
+	}
+	if stamp := readStamp(root); stamp.SyncHash != deref(stored.SyncHash) || stamp.Hash == "" {
+		t.Errorf("%s records %+v, and the router answered %q", AgentStamp, stamp, deref(stored.SyncHash))
 	}
 }
 
-func TestAChangedUIBlueprintIsSyncedAgain(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
-	write(t, root, "ui/blueprints.yaml", "- name: booking\n  when: booking a table\n  order: [CardHeader]\n")
+func TestAStampedDirectoryIsSyncedAgainOnceTheStoredConfigIsNoLongerWhatWasSynced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
 	router := newBackend(t)
 
 	for range 2 {
@@ -1407,51 +848,23 @@ func TestAChangedUIBlueprintIsSyncedAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(t, root, "ui/blueprints.yaml", "- name: booking\n  when: booking a table for tonight\n  order: [CardHeader]\n")
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
+	// Somebody imports another directory in the dashboard, or edits the config, which clears it.
 	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.syncs) != 2 {
-		t.Fatalf("three syncs, one of them after the blueprint changed, sent %d requests", len(router.syncs))
-	}
-	if ui := deref(router.syncs[1].UiInstructions); !strings.Contains(ui, "booking a table for tonight") {
-		t.Errorf("the second sync sent the UI %q", ui)
-	}
-}
-
-// A router older than ui_instructions takes the sync and drops them, so the stamp that sync
-// left must not keep the UI from the router once it stores them.
-func TestAStampCoveringUITheStoredConfigLacksIsSyncedAgain(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nui:\n  keep: [CardHeader]\n")
-	router := newBackend(t)
-	router.ignoresUI = true
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	router.ignoresUI = false
+	edited := "imported"
+	router.configs[0].SyncHash = &edited
 	router.mu.Unlock()
-	stored, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context())
-	if err != nil {
+	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
 	if len(router.syncs) != 2 {
-		t.Fatalf("the unchanged directory was sent %d times, not again once the router kept no UI", len(router.syncs))
-	}
-	if ui := deref(stored.UiInstructions); !strings.Contains(ui, "CardHeader(") {
-		t.Errorf("the config came back with the UI %q", ui)
+		t.Errorf("the directory was sent %d times: once, not again while the config was as synced, and again once it was not", len(router.syncs))
 	}
 }
 
-func TestWhatTheCodeSetsIsPartOfWhatIsSynced(t *testing.T) {
+func TestWhatTheCodeSetsBesideADirectoryGoesWithItsFilesAndWinsOverThem(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\n")
 	write(t, root, "instructions.md", "You are Jean.\n")
@@ -1460,49 +873,74 @@ func TestWhatTheCodeSetsIsPartOfWhatIsSynced(t *testing.T) {
 	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	written := Options{Dir: root, Instructions: "You are somebody else."}
-	if _, err := agentOn(t, router, written).Sync(t.Context()); err != nil {
-		t.Fatal(err)
+	written := Options{
+		Dir: root, Instructions: "You are somebody else.", Guardrail: "Refuse medical advice.",
+		CostTracking: map[string]string{"team": "support", "customer": "123"},
+		Harness: &Harness{
+			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"}, Sandbox: Daytona(),
+			Skills: []Skill{
+				{Name: "think", Description: "Work it out", Instructions: "Reason.", Deadline: 30 * time.Second},
+				{Name: "fill", Description: "Fill a form", Instructions: "Run it.", Files: map[string]string{"fill.py": "print()\n"}},
+			},
+		},
+	}
+	for range 2 {
+		if _, err := agentOn(t, router, written).Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	if len(router.syncs) != 2 || *router.syncs[1].Instructions != "You are somebody else." {
-		t.Errorf("instructions written in code were not synced: %+v", router.syncs)
+	if len(router.syncs) != 2 {
+		t.Fatalf("what the code set was synced %d times, not once after the directory's own", len(router.syncs)-1)
+	}
+	plain, synced := router.syncs[0], router.syncs[1]
+	if plain.Instructions != nil || plain.Guardrail != nil || plain.Tags != nil || plain.Skills != nil || plain.Subagent != nil {
+		t.Errorf("a directory with nothing set in code was sent with %+v", plain)
+	}
+	if deref(synced.Instructions) != "You are somebody else." || deref(synced.Guardrail) != "Refuse medical advice." {
+		t.Errorf("the instructions and guardrail written in code went as %v and %v", synced.Instructions, synced.Guardrail)
+	}
+	if deref(synced.Subagent) != "openai/gpt-5.6-sol" || deref(synced.Sandbox) != "daytona" || synced.Harness != nil {
+		t.Errorf("the harness went as %v, %v and %v", synced.Harness, synced.Subagent, synced.Sandbox)
+	}
+	if !maps.Equal(deref(synced.Tags), written.CostTracking) {
+		t.Errorf("the cost labels went as %v", synced.Tags)
+	}
+	if skills := deref(synced.Skills); len(skills) != 2 || skills[1].Name != "fill" || deref(skills[1].Files)["fill.py"] != "print()\n" ||
+		skills[0].Name != "think" || deref(skills[0].DeadlineMs) != 30000 {
+		t.Errorf("the skills written in code went as %+v", synced.Skills)
+	}
+	if len(synced.Files) != 2 || synced.Files[1].Content != "You are Jean.\n" {
+		t.Errorf("the directory's own files went as %+v", synced.Files)
 	}
 }
 
-func TestADirectorysSkillsAreWhatTheAgentJoinsWith(t *testing.T) {
+func TestADirectoryThatLeftAConnectorOutIsSentAgainUntilItsConnectionIsFound(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "name: jean\n")
-	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
-
+	write(t, root, "agent.yaml", "name: jean\nconnectors:\n  - {name: linear, connection: company}\n")
 	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
+	router.leavesOut = &acceleration.LeftOutConnector{Name: "linear", ConnectorId: "linear", Connection: "company"}
 
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	router.mu.Lock()
+	router.leavesOut = nil
+	router.mu.Unlock()
+	for range 2 {
+		if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	router.mu.Lock()
 	defer router.mu.Unlock()
-	skills := router.syncs[0].Skills
-	if skills == nil || len(*skills) != 1 || (*skills)[0].Name != "think" {
-		t.Errorf("the config would be stored with %+v", skills)
-	}
-}
-
-func TestADirectoryDoesNotWriteThroughToAHarnessSharedWithAnotherAgent(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "name: jean\n")
-	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
-
-	router := newBackend(t)
-	shared := DefaultHarness()
-	agentOn(t, router, Options{Dir: root, Harness: shared})
-
-	if len(shared.Skills) != 0 {
-		t.Errorf("the caller's harness now holds %+v", shared.Skills)
+	if len(router.syncs) != 3 {
+		t.Errorf("the directory was sent %d times: twice while a connector was left out, once to bind it, and not again", len(router.syncs))
 	}
 }
 
@@ -1520,99 +958,6 @@ func TestAMemoryFilterSaysWhoTheMemoriesAreAboutAndWhatNarrowsThem(t *testing.T)
 	}
 	if memoryOf(nil) != nil {
 		t.Error("without a filter nothing is recalled and nothing is sent")
-	}
-}
-
-func TestAgentYAMLNamesTheHarnessAndSandboxTheConfigIsStoredWith(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "name: jean\nharness: default\nsandbox: daytona\n")
-
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root, Harness: &Harness{
-		Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
-	}})
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	synced := router.syncs[0]
-	if synced.Harness == nil || *synced.Harness != acceleration.Default {
-		t.Errorf("the harness was stored as %v", synced.Harness)
-	}
-	if synced.Sandbox == nil || *synced.Sandbox != "daytona" {
-		t.Errorf("the sandbox was stored as %v", synced.Sandbox)
-	}
-	if synced.Subagent == nil || *synced.Subagent != "openai/gpt-5.6-sol" {
-		t.Errorf("the subagent was stored as %v", synced.Subagent)
-	}
-}
-
-func TestAgentYAMLNamesTheRoleTheConfigIsStoredWith(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "nora")
-	write(t, root, "agent.yaml", "name: nora\nrole: agent_moderator\n")
-
-	router := newBackend(t)
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if role := router.syncs[0].Role; role == nil || *role != acceleration.AgentModerator {
-		t.Errorf("the role was stored as %v", role)
-	}
-}
-
-func TestAgentYAMLNamesTheRegionTheAgentsWorkIsDoneIn(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "name: jean\nregion: eu\n")
-
-	router := newBackend(t)
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if region := router.syncs[0].Region; region == nil || *region != "eu" {
-		t.Errorf("the region was sent as %v", region)
-	}
-}
-
-// A declaration that says nothing about the region sends none, which leaves the stored one, and
-// a new agent is in us.
-func TestAgentYAMLWithoutARegionSendsNone(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "name: jean\n")
-
-	router := newBackend(t)
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if region := router.syncs[0].Region; region != nil {
-		t.Errorf("a declaration without a region sent %v", *region)
-	}
-}
-
-// A declaration that says nothing about the role sends none, which leaves the stored one.
-func TestAgentYAMLWithoutARoleSendsNone(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "jean")
-	write(t, root, "agent.yaml", "name: jean\n")
-
-	router := newBackend(t)
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if role := router.syncs[0].Role; role != nil {
-		t.Errorf("a declaration without a role sent %v", *role)
 	}
 }
 
@@ -1648,682 +993,5 @@ func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
 // The body now also carries calls, which a sync always sends; an older router ignores it
 // (Huma's AllowAdditionalPropertiesByDefault).
 const controlYAML = "name: concierge\nllm: openai/gpt-5.6\n"
-
-func TestSyncWithoutConnectorsSendsTheBodyItSentBefore(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", controlYAML)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"hash":"aa0b594ad264ea72935f1c74441f8155","llm":"openai/gpt-5.6","name":"concierge"}`
-	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
-		t.Errorf("body = %s", router.syncRaw)
-	}
-	if len(router.connectionQueries) != 0 {
-		t.Errorf("connections were listed: %v", router.connectionQueries)
-	}
-}
-
-func TestSyncSendsAConnectorNamedAloneAsASessionBinding(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 {
-		t.Fatalf("connectors went as %+v", sent)
-	}
-	linear := (*sent)[0]
-	if linear.Name != "linear" || linear.ConnectorId != "linear" ||
-		linear.Connection.Type != acceleration.AgentConnectorSelectionTypeSession || linear.Connection.ConnectionId != nil ||
-		linear.ToolPatterns == nil || strings.Join(*linear.ToolPatterns, ",") != "*" || len(linear.Tools) != 0 || linear.Required != nil {
-		t.Errorf("linear went as %+v", linear)
-	}
-	if strings.Contains(string(router.syncRaw[0]), `"tools":null`) {
-		t.Errorf("body = %s", router.syncRaw[0])
-	}
-	if len(router.connectionQueries) != 0 {
-		t.Errorf("a session binding listed connections: %v", router.connectionQueries)
-	}
-}
-
-func TestSyncSendsConnectorToolsAsPatterns(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: [list_*, get_issue]\n    required: true\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 {
-		t.Fatalf("connectors went as %+v", sent)
-	}
-	github := (*sent)[0]
-	if github.Name != "github" || github.ConnectorId != "github" ||
-		github.Connection.Type != acceleration.AgentConnectorSelectionTypeSession ||
-		github.ToolPatterns == nil || strings.Join(*github.ToolPatterns, ",") != "list_*,get_issue" ||
-		github.Required == nil || !*github.Required || len(github.Tools) != 0 {
-		t.Errorf("github went as %+v", github)
-	}
-}
-
-func TestSyncSendsEveryToolWhenToolsAreNull(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: null\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].ToolPatterns == nil || strings.Join(*(*sent)[0].ToolPatterns, ",") != "*" {
-		t.Errorf("null tools went as %+v", sent)
-	}
-}
-
-func TestSyncSendsRequiredFalse(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    required: false\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Required == nil || *(*sent)[0].Required ||
-		(*sent)[0].ToolPatterns == nil || strings.Join(*(*sent)[0].ToolPatterns, ",") != "*" {
-		t.Errorf("required went as %+v", sent)
-	}
-	if !strings.Contains(string(router.syncRaw[0]), `"required":false`) {
-		t.Errorf("body = %s", router.syncRaw[0])
-	}
-}
-
-func TestSyncSendsSandboxOnEachBindingThatSetsIt(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: true\n"+
-		"  - name: code\n    connector: github\n    connection: company\n    sandbox: true\n  - linear\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("conn-1", "company"))
-	})
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 3 {
-		t.Fatalf("connectors went as %+v", sent)
-	}
-	github, code, linear := (*sent)[0], (*sent)[1], (*sent)[2]
-	if github.Sandbox == nil || !*github.Sandbox || github.Connection.Type != acceleration.AgentConnectorSelectionTypeSession {
-		t.Errorf("github went as %+v", github)
-	}
-	if code.Sandbox == nil || !*code.Sandbox || code.Connection.ConnectionId == nil || *code.Connection.ConnectionId != "conn-1" {
-		t.Errorf("code went as %+v", code)
-	}
-	if linear.Sandbox != nil {
-		t.Errorf("linear went with sandbox %v", *linear.Sandbox)
-	}
-	if strings.Count(string(router.syncRaw[0]), `"sandbox":true`) != 2 {
-		t.Errorf("body = %s", router.syncRaw[0])
-	}
-}
-
-func TestSyncSendsRequireApprovalOnEachBindingThatSetsIt(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    require_approval: [create_*, merge_pull_request]\n"+
-		"  - linear\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 2 {
-		t.Fatalf("connectors went as %+v", sent)
-	}
-	github, linear := (*sent)[0], (*sent)[1]
-	if github.RequireApproval == nil || strings.Join(*github.RequireApproval, ",") != "create_*,merge_pull_request" {
-		t.Errorf("github went as %+v", github)
-	}
-	if linear.RequireApproval != nil {
-		t.Errorf("linear went with require_approval %v", *linear.RequireApproval)
-	}
-	if strings.Count(string(router.syncRaw[0]), `"require_approval"`) != 1 {
-		t.Errorf("body = %s", router.syncRaw[0])
-	}
-}
-
-// sandboxlessYAML is a connector entry with no sandbox key. Its sync body was probed on
-// e5d6d8057, before agent.yaml read sandbox on a connector.
-// The body now also carries calls, which a sync always sends; an older router ignores it
-// (Huma's AllowAdditionalPropertiesByDefault).
-const sandboxlessYAML = "name: concierge\nconnectors:\n  - name: github\n    required: true\n"
-
-func TestSyncOfAConnectorWithoutSandboxSendsTheBodyItSentBefore(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", sandboxlessYAML)
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"github","name":"github","required":true,"tool_patterns":["*"],"tools":[]}],"hash":"aeda4c2bbe3be818d7c79f48ee9ab0b8","name":"concierge"}`
-	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
-		t.Errorf("body = %s", router.syncRaw)
-	}
-}
-
-func TestSyncSendsNoSandboxKeyForSandboxFalse(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: false\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.syncRaw) != 1 || strings.Contains(string(router.syncRaw[0]), `"sandbox"`) {
-		t.Errorf("body = %s", router.syncRaw)
-	}
-}
-
-func TestSyncOfAnEmptyConnectorListClearsThem(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors: []\n")
-	router := newBackend(t)
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if router.syncs[0].Connectors == nil || len(*router.syncs[0].Connectors) != 0 {
-		t.Errorf("connectors went as %+v", router.syncs[0].Connectors)
-	}
-	if !strings.Contains(string(router.syncRaw[0]), `"connectors":[]`) {
-		t.Errorf("body = %s", router.syncRaw[0])
-	}
-}
-
-func TestSyncResolvesAConnectionIdBeforeItsLabel(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: acct\n")
-	router := newBackend(t)
-	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
-		query := r.URL.Query()
-		if query.Get("owner_type") != "app" || query.Get("connector_id") != "linear" {
-			t.Errorf("listed %s", r.URL.RawQuery)
-		}
-		if query.Get("cursor") == "" {
-			return connectionPage("2", listedConnection("wrong", "acct"))
-		}
-		return connectionPage("", listedConnection("acct", "other"))
-	})
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.connectionQueries) != 2 {
-		t.Fatalf("queries = %v", router.connectionQueries)
-	}
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 {
-		t.Fatalf("connectors went as %+v", sent)
-	}
-	got := (*sent)[0]
-	if got.Name != "issues" || got.ConnectorId != "linear" ||
-		got.Connection.Type != acceleration.AgentConnectorSelectionTypeFixed ||
-		got.Connection.ConnectionId == nil || *got.Connection.ConnectionId != "acct" {
-		t.Errorf("issues went as %+v", got)
-	}
-}
-
-func TestSyncResolvesTheOneConnectionWithThatLabel(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: work\n")
-	router := newBackend(t)
-	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
-		if r.URL.Query().Get("connector_id") != "linear" {
-			t.Errorf("listed connector %s", r.URL.Query().Get("connector_id"))
-		}
-		if r.URL.Query().Get("cursor") == "" {
-			return connectionPage("2", listedConnection("other", "nope"))
-		}
-		return connectionPage("", listedConnection("the-one", "work"))
-	})
-	agent := agentOn(t, router, Options{Dir: root})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Connection.ConnectionId == nil || *(*sent)[0].Connection.ConnectionId != "the-one" {
-		t.Errorf("issues went as %+v, queries %v", sent, router.connectionQueries)
-	}
-	if len(router.connectionQueries) != 2 {
-		t.Errorf("queries = %v", router.connectionQueries)
-	}
-}
-
-// resolvingYAML names a session binding and a connection the app has. Its sync body was
-// probed on a5721c90, before a missing connection was left out.
-// The body now also carries calls, which a sync always sends; an older router ignores it
-// (Huma's AllowAdditionalPropertiesByDefault).
-const resolvingYAML = "name: concierge\nconnectors:\n  - linear\n  - name: code\n    connector: github\n    connection: company\n"
-
-func TestSyncOfConnectionsThatAllResolveSendsTheBodyItSentBefore(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", resolvingYAML)
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("conn-1", "company"))
-	})
-	var logged bytes.Buffer
-	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	const probed = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]},{"connection":{"connection_id":"conn-1","type":"fixed"},"connector_id":"github","name":"code","tool_patterns":["*"],"tools":[]}],"hash":"84cee98b6c473b082438ee7b52cea7c6","name":"concierge"}`
-	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != probed {
-		t.Errorf("body = %s", router.syncRaw)
-	}
-	if stamp := ReadStamp(root); stamp != router.syncs[0].Hash {
-		t.Errorf("stamped %q after sending %q", stamp, router.syncs[0].Hash)
-	}
-	if strings.Contains(logged.String(), "left out") {
-		t.Errorf("warned of a connection the app has: %q", logged.String())
-	}
-}
-
-func TestSyncLeavesOutAConnectorWhoseConnectionIsMissing(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: missing\n    required: false\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-	var logged bytes.Buffer
-	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
-
-	stored, err := agent.Sync(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if stored == nil || stored.Name != "concierge" {
-		t.Errorf("the sync answered %+v", stored)
-	}
-	if !strings.Contains(logged.String(), `level=WARN msg="agent.yaml connector left out: the app has no such connection" agent=concierge connector=issues connection=missing`) {
-		t.Errorf("no warning in %q", logged.String())
-	}
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.syncs) != 1 {
-		t.Fatalf("%d syncs were sent", len(router.syncs))
-	}
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "linear" {
-		t.Errorf("connectors went as %+v", sent)
-	}
-}
-
-// The router is told what was left out, so it can show it. The hash is not the one 7f4c3e16
-// sent for this directory (87c8a2808cd085a316aa2942c6b827a8), before the list was sent: the
-// router stored that one without the list, and would answer unchanged to it.
-func TestSyncSendsTheConnectorsItLeftOut(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: company\n  - name: code\n    connector: github\n    connection: team\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	const want = `{"calls":{"end_call":{"enabled":false},"press":{"enabled":true},"transfer":{"destinations":[],"enabled":true}},"connectors":[{"connection":{"type":"session"},"connector_id":"linear","name":"linear","tool_patterns":["*"],"tools":[]}],"hash":"370694e1e9f5b6495455c9b89fce3218",` +
-		`"left_out_connectors":[{"connection":"company","connector_id":"issues","name":"issues"},{"connection":"team","connector_id":"github","name":"code"}],"name":"concierge"}`
-	if len(router.syncRaw) != 1 || string(router.syncRaw[0]) != want {
-		t.Errorf("body = %s", router.syncRaw)
-	}
-}
-
-// An entry over the router's caps is warned about but not sent in the list, so the router
-// does not refuse the whole sync over it. The hash still covers it.
-func TestSyncLeavesAnOverLongLeftOutEntryOutOfTheList(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	label := strings.Repeat("c", 121)
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: issues\n    connection: "+label+
-		"\n  - name: "+strings.Repeat("a", 64)+"\n    connection: team\n  - name: tracker\n    connector: "+strings.Repeat("b", 65)+"\n    connection: team\n  - name: code\n    connector: github\n    connection: team\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-	var logged bytes.Buffer
-	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.Contains(logged.String(), "connector=issues connection="+label) {
-		t.Errorf("no warning for the long label in %q", logged.String())
-	}
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].LeftOutConnectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "code" {
-		t.Errorf("left_out_connectors went as %+v", sent)
-	}
-}
-
-// The caps are the router's: an entry exactly at them is sent. The label is multibyte, over
-// the cap in bytes and at it in runes, which is what the router counts.
-func TestSyncSendsALeftOutEntryExactlyAtTheCaps(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	alias, connector, label := strings.Repeat("a", 63), strings.Repeat("b", 64), strings.Repeat("é", 120)
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: "+alias+"\n    connector: "+connector+"\n    connection: "+label+"\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	want := []acceleration.LeftOutConnector{{Name: alias, ConnectorId: connector, Connection: label}}
-	if got := router.syncs[0].LeftOutConnectors; got == nil || !reflect.DeepEqual(*got, want) {
-		t.Errorf("left_out_connectors went as %+v", got)
-	}
-}
-
-// The same holds for a multibyte alias and connector id, whose bytes are over the caps and
-// whose runes are at them.
-func TestSyncCountsRunesNotBytesInTheNameAndConnectorOfALeftOutEntry(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	alias, connector := strings.Repeat("é", 63), strings.Repeat("é", 64)
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n  - name: "+alias+"\n    connector: "+connector+"\n    connection: team\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if got := router.syncs[0].LeftOutConnectors; got == nil || len(*got) != 1 {
-		t.Errorf("left_out_connectors went as %+v", got)
-	}
-}
-
-// The router takes at most 64 entries. More are left out of the list, so the sync is not
-// refused where it synced before, and each is still warned about.
-func TestSyncSendsAtMost64LeftOutEntries(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	yaml := "name: concierge\nconnectors:\n"
-	for i := range 65 {
-		yaml += fmt.Sprintf("  - name: c%d\n    connector: github\n    connection: team\n", i)
-	}
-	write(t, root, "agent.yaml", yaml)
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-	var logged bytes.Buffer
-	agent := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
-
-	if _, err := agent.Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	sent := router.syncs[0].LeftOutConnectors
-	if sent == nil || len(*sent) != 64 || (*sent)[63].Name != "c63" {
-		t.Errorf("left_out_connectors went as %+v", sent)
-	}
-	if !strings.Contains(logged.String(), "connector=c64 ") {
-		t.Errorf("no warning for the 65th in %q", logged.String())
-	}
-}
-
-// Two entries left out: each is warned about, and the hash covers both, so finding one of the
-// connections later still changes it.
-func TestSyncOfTwoMissingConnectionsWarnsOfBothAndAddsOneOnceItExists(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: company\n  - name: chat\n    connection: team\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-	var logged bytes.Buffer
-	if _, err := agentOn(t, router, Options{Dir: root, Logger: slog.New(slog.NewTextHandler(&logged, nil))}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"connector=issues connection=company", "connector=chat connection=team"} {
-		if !strings.Contains(logged.String(), want) {
-			t.Errorf("no warning with %q in %q", want, logged.String())
-		}
-	}
-
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("conn-1", "company"))
-	})
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.syncs) != 2 {
-		t.Fatalf("%d syncs were sent", len(router.syncs))
-	}
-	if router.syncs[0].Hash == router.syncs[1].Hash {
-		t.Errorf("both syncs sent hash %q, so the router keeps the first", router.syncs[0].Hash)
-	}
-	sent := router.syncs[1].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Name != "issues" {
-		t.Errorf("connectors went as %+v", sent)
-	}
-}
-
-func TestSyncRefusesARequiredConnectorWhoseConnectionIsMissing(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: missing\n    required: true\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-	agent := agentOn(t, router, Options{Dir: root})
-
-	_, err := agent.Sync(t.Context())
-	if err == nil || !strings.Contains(err.Error(), `connector "issues"`) || !strings.Contains(err.Error(), `"missing"`) ||
-		!strings.Contains(err.Error(), "add the connection, or drop required") {
-		t.Fatalf("sync error = %v", err)
-	}
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.syncRaw) != 0 {
-		t.Errorf("a sync was sent: %s", router.syncRaw[0])
-	}
-}
-
-func TestSyncFailsWhenConnectionsCannotBeListed(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: work\n")
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
-	agent, err := New(Options{Dir: root, LLM: stream.Accelerated(stream.Config{
-		Backend: stream.Backend{URL: closed.URL, CustomerID: "acme"},
-	})})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := agent.Sync(t.Context()); err == nil || !strings.Contains(err.Error(), "listing connections") {
-		t.Fatalf("sync error = %v", err)
-	}
-}
-
-// The router does nothing for a hash it already stored (acceleration/internal/api/sync.go:180),
-// so the sync that finds the connection has to send another one.
-func TestASyncThatLeftAConnectorOutAddsItOnceTheConnectionExists(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: company\n")
-	router := newBackend(t)
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("other", "work"))
-	})
-	if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	router.answerConnections(func(*http.Request) acceleration.ConnectionPage {
-		return connectionPage("", listedConnection("conn-1", "company"))
-	})
-	for range 2 {
-		if _, err := agentOn(t, router, Options{Dir: root}).Sync(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.syncs) != 2 {
-		t.Fatalf("three syncs, the last of an unchanged directory, sent %d requests", len(router.syncs))
-	}
-	if router.syncs[0].Hash == router.syncs[1].Hash {
-		t.Errorf("both syncs sent hash %q, so the router keeps the first", router.syncs[0].Hash)
-	}
-	sent := router.syncs[1].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Connection.ConnectionId == nil || *(*sent)[0].Connection.ConnectionId != "conn-1" {
-		t.Errorf("connectors went as %+v", sent)
-	}
-}
-
-func TestSyncStopsWhenAConnectionPageRepeatsItsCursor(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    connection: work\n")
-	router := newBackend(t)
-	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
-		if r.URL.Query().Get("cursor") == "" {
-			return connectionPage("again", listedConnection("other", "nope"))
-		}
-		return connectionPage("again", listedConnection("the-one", "work"))
-	})
-	agent := agentOn(t, router, Options{Dir: root})
-
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	if _, err := agent.Sync(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	router.mu.Lock()
-	defer router.mu.Unlock()
-	if len(router.connectionQueries) != 2 {
-		t.Fatalf("queries = %v", router.connectionQueries)
-	}
-	sent := router.syncs[0].Connectors
-	if sent == nil || len(*sent) != 1 || (*sent)[0].Connection.ConnectionId == nil || *(*sent)[0].Connection.ConnectionId != "the-one" {
-		t.Errorf("issues went as %+v", sent)
-	}
-}
-
-func TestSyncRefusesALabelSharedByTwoConnections(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connection: work\n")
-	router := newBackend(t)
-	router.answerConnections(func(r *http.Request) acceleration.ConnectionPage {
-		if r.URL.Query().Get("cursor") == "" {
-			return connectionPage("2", listedConnection("a", "work"))
-		}
-		return connectionPage("", listedConnection("b", "work"))
-	})
-	agent := agentOn(t, router, Options{Dir: root})
-
-	_, err := agent.Sync(t.Context())
-	if err == nil || !strings.Contains(err.Error(), `connector "issues"`) || !strings.Contains(err.Error(), "matches 2") {
-		t.Fatalf("sync error = %v", err)
-	}
-}
-
-func listedConnection(id, label string) acceleration.Connection {
-	return acceleration.Connection{Id: &id, Label: &label}
-}
-
-func connectionPage(next string, items ...acceleration.Connection) acceleration.ConnectionPage {
-	copied := append([]acceleration.Connection(nil), items...)
-	page := acceleration.ConnectionPage{Items: &copied}
-	if next != "" {
-		page.NextCursor = &next
-	}
-	return page
-}
 
 func pointer[T any](value T) *T { return &value }

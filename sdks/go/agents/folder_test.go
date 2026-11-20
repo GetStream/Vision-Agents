@@ -1,12 +1,17 @@
 package agents
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
 
 // write puts a file in a directory under the test's own temporary one.
@@ -1055,5 +1060,128 @@ func TestASkillsFilesChangeTheHashOnlyWhenThereAreSome(t *testing.T) {
 	}
 	if withFile.Hash() == asFile.Hash() {
 		t.Error("a file added to a skill left the hash as it was")
+	}
+}
+
+// sent are the paths of the files a sync of a directory would send.
+func sent(t *testing.T, root string) []string {
+	t.Helper()
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := folder.files()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return paths
+}
+
+func TestASyncSendsTheFilesTheFormatNamesAndNothingElseOfTheFolder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nui:\n  blueprints: design/recipes.yaml\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "design/recipes.yaml", "- name: booking\n  when: booking a table\n  order: [CardHeader]\n")
+	write(t, root, "design/other.yaml", "not named by agent.yaml\n")
+	write(t, root, "ui/components.json", "[]\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill a form\n---\nRun it.\n")
+	write(t, root, "skills/pdf/fill.py", "print()\n")
+	write(t, root, "knowledge/pricing.md", "Pro.\n")
+	write(t, root, "knowledge/data.csv", "a,b\n")
+	write(t, root, "simulations/lunch.yaml", "- name: lunch\n  scenario: Ask.\n  assertion: Answered.\n")
+	write(t, root, "simulations/notes.md", "not a simulations file\n")
+	// What a project keeps beside its agent, none of which is the agent.
+	write(t, root, "main.go", "package main\n")
+	write(t, root, ".env", "SECRET=1\n")
+	write(t, root, "go.sum", "example.com/x v1.0.0 h1:abc\n")
+	write(t, root, "internal/keys/prod.pem", "-----BEGIN PRIVATE KEY-----\n")
+	write(t, root, "skills/pdf/.DS_Store", "\x00")
+	write(t, root, "skills/pdf/__pycache__/fill.cpython-312.pyc", "\x00\xff")
+	write(t, root, "knowledge/node_modules/left-pad/index.js", "module.exports = 1\n")
+	write(t, root, "knowledge/diagram.png", "\x89PNG\xff\xfe")
+
+	want := []string{
+		"agent.yaml", "design/recipes.yaml", "instructions.md", "knowledge/data.csv", "knowledge/pricing.md",
+		"simulations/lunch.yaml", "skills/pdf/SKILL.md", "skills/pdf/fill.py", "ui/components.json",
+	}
+	if got := sent(t, root); !slices.Equal(got, want) {
+		t.Errorf("the sync would send %v", got)
+	}
+}
+
+func TestASyncRefusesALinkOutOfTheDirectoryAndReadsOneWithinIt(t *testing.T) {
+	outside := t.TempDir()
+	write(t, outside, "secret.md", "the keys\n")
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "knowledge/pricing.md", "Pro.\n")
+	if err := os.Symlink(filepath.Join(root, "knowledge", "pricing.md"), filepath.Join(root, "knowledge", "plans.md")); err != nil {
+		t.Skip("this file system has no symbolic links: ", err)
+	}
+	if err := os.Symlink(root, filepath.Join(root, "knowledge", "loop")); err != nil {
+		t.Fatal(err)
+	}
+	if got := sent(t, root); !slices.Equal(got, []string{"agent.yaml", "knowledge/plans.md", "knowledge/pricing.md"}) {
+		t.Errorf("the sync would send %v, a link back up the tree followed or a link within it left out", got)
+	}
+
+	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(root, "knowledge", "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+	folder, err := Load(root)
+	if err != nil {
+		t.Skip("Load itself refused the link: ", err)
+	}
+	if _, err := folder.files(); err == nil || !strings.Contains(err.Error(), "leak.md links outside the agent directory") {
+		t.Errorf("a link out of the directory was read with %v", err)
+	}
+}
+
+func TestASyncSkipsWhatIsNotARegularFileRatherThanWaitOnIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "ui/components.json", "[]\n")
+	if err := syscall.Mkfifo(filepath.Join(root, "ui", "pipe"), 0o644); err != nil {
+		t.Skip("this system makes no named pipes: ", err)
+	}
+
+	if got := sent(t, root); !slices.Equal(got, []string{"agent.yaml", "ui/components.json"}) {
+		t.Errorf("the sync would send %v", got)
+	}
+}
+
+func TestADirectoryOverWhatASyncSendsIsRefusedHereByName(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	for index := range 9 {
+		write(t, root, fmt.Sprintf("knowledge/%d.md", index), strings.Repeat("a", 1<<20))
+	}
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := folder.files(); err == nil || !strings.Contains(err.Error(), "holds more than the 8388608 bytes a sync sends") {
+		t.Errorf("a directory over the limit was read with %v", err)
+	}
+}
+
+func TestTheFingerprintOfARequestIsTheOneTheJavaScriptSDKTakes(t *testing.T) {
+	name := "jean"
+	hash, err := sentHash(acceleration.SyncAgentFilesRequest{
+		Name: &name, Tags: &map[string]string{"b": "<2>", "a": "1"},
+		Files: []acceleration.DirectoryFile{{Path: "agent.yaml", Content: "name: jean\n"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// sha256 of {"files":[{"content":"name: jean\n","path":"agent.yaml"}],"name":"jean","tags":{"a":"1","b":"<2>"}},
+	// which sdks/js/tests/agent.test.ts holds the JavaScript SDK to as well.
+	if hash != "8e57238c214f215939fb6a466b9791aae8abbfd7df14e752f9d0d767aaed3ad9" {
+		t.Errorf("the request fingerprints as %s", hash)
 	}
 }

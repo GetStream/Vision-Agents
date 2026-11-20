@@ -81,7 +81,10 @@ type Agent struct {
 
 	options Options
 	folder  *Folder
-	logger  *slog.Logger
+	// skillsInCode is whether the harness's skills were written in code rather than folded
+	// in from the directory, which sends them itself.
+	skillsInCode bool
+	logger       *slog.Logger
 }
 
 // New validates an agent's configuration and reads its directory, if it has one.
@@ -92,6 +95,7 @@ func New(options Options) (*Agent, error) {
 	}
 
 	agent := &Agent{options: options, logger: logger}
+	agent.skillsInCode = options.Harness != nil && len(options.Harness.Skills) > 0
 	agent.Sessions = &Sessions{agent: agent}
 	dir := options.Dir
 	if dir == "" && options.Name != "" {

@@ -608,14 +608,15 @@ agent, _ := agents.New(agents.Options{Dir: "agents/jean", LLM: llm})
 agent.Sync(ctx)
 ```
 
-`Sync` sends the whole directory in one request: the skills, the files and pages for a
-knowledge base named after the agent, the simulations, and what `agent.yaml` declares. A key
-`agent.yaml` or a simulation file does not know is refused. The simulations in `simulations/`
+`Sync` sends the directory's files in one request, as they are and no other file of the folder, and the router reads them: the
+skills, the files and pages for a knowledge base named after the agent, the simulations, the UI
+files and what `agent.yaml` declares. The router decides what a file means and refuses what it
+cannot read, with the file, line and column of every problem. `agents.New` reads the directory
+too, for your program (`agent.Folder()`), and refuses a key it does not know. The simulations in `simulations/`
 are the whole of the agent's: one taken out is deleted on the next sync, and a directory
-without `simulations/` leaves the stored ones alone. The request carries a hash of the
-directory, the same one the Python SDK takes for a directory without simulations, and
-`.agent_sync` records it, so running `Sync` again on an unchanged
-directory only reads the config back. What is written in code wins over what the directory
+without `simulations/` leaves the stored ones alone. `.agent_sync` records what was sent and the
+hash the router stored it under, so running `Sync` again on an unchanged directory, whose
+stored config nobody has changed since, only reads the config back. What is written in code wins over what the directory
 says, so a directory is a starting point rather than an override.
 
 `region: eu` (or `us`) in `agent.yaml` is where the agent's work is done: every model it runs,

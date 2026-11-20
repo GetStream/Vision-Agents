@@ -58,8 +58,32 @@ Known gaps, generated only (docs on getstream.io call some of them raw today): s
 their runs, voices, knowledge documents and URLs beyond ingest and add, scheduled tasks,
 campaigns, channels, connectors, a connection's credentials and tools, SIP trunks, 10DLC and opt-outs, phone
 transfer, digits and release, account, credits, spend limits, usage events, teams, prices,
-stats, policies, provider keys, runs, OCR and classify. Folder sync does not read
-`resume_history:` from agent.yaml yet, so one that names it is refused.
+stats, policies, provider keys, runs, OCR and classify.
+
+## Folder sync
+
+`Agent.Sync` sends an agent directory's files to `POST /v1/agents/sync/files`, and the router
+(`acceleration/internal/agentdir`) reads, validates and stores them: it is what decides what
+agent.yaml means, finds the connections and compiles `ui:`.
+
+- `agents.Load` still parses the directory, as it did, to fill `Folder.Settings`, `Skills`,
+  `Knowledge` and the rest for the program holding it, and refuses a file it cannot read. It
+  decides nothing about what is stored. Removing that parser is AI-3441; until then a key added
+  to agent.yaml is added to the router first, and here only so `Load` does not refuse it.
+- `Folder.files` reads what is sent, at sync time: the files the format names and no others
+  (`agent.yaml`, `instructions.md`, `guardrail.md`, `skills/`, `knowledge/`, `ui/`, the YAML
+  files of `simulations/`, and the two files `ui:` may name elsewhere), so a directory kept
+  beside a program's source sends none of it. It skips what the router skips, anything that is
+  not a regular file of text, and refuses a link out of the directory and a directory over
+  `maxSyncBytes`.
+- What `Options` sets beside a `Dir` goes in the same request and wins over the files:
+  instructions, guardrail, the harness's name, subagent, sandbox and skills written in code,
+  and the cost tracking labels as tags.
+- `.agent_sync` holds `hash`, the `sentHash` of the request, and `sync_hash`, what the router
+  stored it under: one format and one fingerprint with the JavaScript SDK. A sync is skipped
+  only while both still hold: the request is the same, and the stored config has that
+  `sync_hash` and left no connector out.
+- The router does not read `resume_history:` from agent.yaml yet, so one that names it is refused.
 
 ## Errors, retries and idempotency
 

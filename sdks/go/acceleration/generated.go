@@ -282,22 +282,22 @@ func (e AgentRole) Valid() bool {
 
 // Defines values for AuditAction.
 const (
-	Created AuditAction = "created"
-	Deleted AuditAction = "deleted"
-	Synced  AuditAction = "synced"
-	Updated AuditAction = "updated"
+	AuditActionCreated AuditAction = "created"
+	AuditActionDeleted AuditAction = "deleted"
+	AuditActionSynced  AuditAction = "synced"
+	AuditActionUpdated AuditAction = "updated"
 )
 
 // Valid indicates whether the value is a known member of the AuditAction enum.
 func (e AuditAction) Valid() bool {
 	switch e {
-	case Created:
+	case AuditActionCreated:
 		return true
-	case Deleted:
+	case AuditActionDeleted:
 		return true
-	case Synced:
+	case AuditActionSynced:
 		return true
-	case Updated:
+	case AuditActionUpdated:
 		return true
 	default:
 		return false
@@ -3031,6 +3031,51 @@ func (e StsOptionsTurnDetection) Valid() bool {
 	}
 }
 
+// Defines values for SyncChangeAction.
+const (
+	SyncChangeActionCreated SyncChangeAction = "created"
+	SyncChangeActionDeleted SyncChangeAction = "deleted"
+	SyncChangeActionUpdated SyncChangeAction = "updated"
+)
+
+// Valid indicates whether the value is a known member of the SyncChangeAction enum.
+func (e SyncChangeAction) Valid() bool {
+	switch e {
+	case SyncChangeActionCreated:
+		return true
+	case SyncChangeActionDeleted:
+		return true
+	case SyncChangeActionUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SyncChangeResourceType.
+const (
+	SyncChangeResourceTypeKnowledge    SyncChangeResourceType = "knowledge"
+	SyncChangeResourceTypeKnowledgeUrl SyncChangeResourceType = "knowledge_url"
+	SyncChangeResourceTypeSimulation   SyncChangeResourceType = "simulation"
+	SyncChangeResourceTypeSkill        SyncChangeResourceType = "skill"
+)
+
+// Valid indicates whether the value is a known member of the SyncChangeResourceType enum.
+func (e SyncChangeResourceType) Valid() bool {
+	switch e {
+	case SyncChangeResourceTypeKnowledge:
+		return true
+	case SyncChangeResourceTypeKnowledgeUrl:
+		return true
+	case SyncChangeResourceTypeSimulation:
+		return true
+	case SyncChangeResourceTypeSkill:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TextContentPartType.
 const (
 	TextContentPartTypeText TextContentPartType = "text"
@@ -4142,6 +4187,18 @@ type AgentConnectorSelection struct {
 
 // AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 type AgentConnectorSelectionType string
+
+// AgentDirectory An agent config as the directory it is synced from: agent.yaml, instructions.md, guardrail.md, its skills, its knowledge, its simulations and its UI files.
+type AgentDirectory struct {
+	// Files The directory's files, in path order. Sent back to POST /v1/agents/sync/files, they store the agent as it is.
+	Files []DirectoryFile `json:"files"`
+
+	// Name What the agent is called, as agent.yaml names it.
+	Name string `json:"name"`
+
+	// NotExported What this agent holds that its directory cannot say and a sync of these files would change, each in a sentence: a connector binding's events, policy or timeout, a connector that grants no tools, a knowledge document that is not a text file, UI instructions no directory's files were compiled into. Empty when a sync of these files leaves the agent as it is.
+	NotExported []string `json:"not_exported"`
+}
 
 // AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 type AgentDispatch struct {
@@ -6630,6 +6687,36 @@ type DetectionResult struct {
 // DetectionStatus Whether the image was looked at. A failed detection says why in error_code and error.
 type DetectionStatus string
 
+// DirectoryFile One file of an agent directory, as a sync takes it and an export writes it.
+type DirectoryFile struct {
+	// Content The file, whole, as text.
+	Content string `json:"content"`
+
+	// Path Where the file is in the directory, with forward slashes: agent.yaml, instructions.md, guardrail.md, skills/<name>.md or skills/<name>/SKILL.md with the files beside it, knowledge/<file>, knowledge/urls.yaml, simulations/<file>.yaml, ui/components.json, ui/blueprints.yaml.
+	//
+	// Example: skills/refunds/SKILL.md
+	Path string `json:"path"`
+}
+
+// DirectoryProblem One thing wrong with an agent directory, at its place in a file, so an editor can point at it.
+type DirectoryProblem struct {
+	// Column The column, counted from 1. Left out with line.
+	//
+	// Example: 3
+	Column *int64 `json:"column,omitempty"`
+
+	// File The file's path in the directory.
+	//
+	// Example: agent.yaml
+	File string `json:"file"`
+
+	// Line The line, counted from 1. Left out when the problem is the file as a whole.
+	//
+	// Example: 12
+	Line    *int64 `json:"line,omitempty"`
+	Message string `json:"message"`
+}
+
 // DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
 type DispatchSetting string
 
@@ -6701,17 +6788,29 @@ type EqualsOrIn1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), invalid_agent_directory (a 400: the files of an agent directory do not read, and problems says where in which file), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), tool_not_configured (a 400: a session under an agent config was declared or given a function that none of the config's tool groups names, and the message names it), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
+
+	// Conflicts What a sync would write over that somebody changed since the last sync, as the message names them, present with unsynced_changes only.
+	Conflicts *[]SyncConflict `json:"conflicts,omitempty"`
 
 	// DocUrl Where the code is explained.
 	DocUrl string `json:"doc_url"`
+
+	// LastChange The newest change the sync was refused for, present with unsynced_changes only: send it as base_change on a sync to say these have been seen.
+	LastChange *string `json:"last_change,omitempty"`
 
 	// Limit Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or sandbox_disk_gb for an agent config's sandbox. More may be added.
 	Limit *string `json:"limit,omitempty"`
 
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
+
+	// Problems What is wrong with an agent directory, each problem at its file, line and column, present with invalid_agent_directory only. At most 100 are named, and problems_omitted counts the rest.
+	Problems *[]DirectoryProblem `json:"problems,omitempty"`
+
+	// ProblemsOmitted How many more problems an agent directory has than problems names, present only when there are more than it lists: they are named once these are fixed.
+	ProblemsOmitted *int64 `json:"problems_omitted,omitempty"`
 
 	// Type The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 	Type ErrorType `json:"type"`
@@ -10286,6 +10385,70 @@ type SuspendTelephonyRequest struct {
 	SuspendedBy string `json:"suspended_by"`
 }
 
+// SyncAgentFilesRequest An agent directory as its files, which the router reads, so every client's directory means the same thing. The fields from instructions down are what a program sets in code beside the directory: each wins over what the files say, and is part of the hash.
+//
+// A request sends at most 1024 files, and the directory among them holds at most 1048576 bytes a file and 8388608 bytes in all.
+//
+// The hash of a sync is the router's own, answered as the config's sync_hash: the SHA-256, in hex, of a run of parts, each written as its length in bytes in decimal, a colon and the part. The parts are, for every file of the directory in path order by byte, its path and its content; then, for each field from instructions down that is sent, its name and its value, in this order: instructions, guardrail, harness, subagent, sandbox, llm, stt, tts, sts and voice as sent; greeting.text and greeting.mode; video.source and video.max_frames in decimal; tags.<key> for each tag in key order; skills with the number of skills in decimal, then for each skill in name order skills.<name>.description, .instructions, .deadline_ms in decimal, .capture_video as true or false, and .files.<path> for each file in path order; then, for a directory whose agent.yaml has a ui key, ui and the version of the router's UI compiler, so a router that compiles ui differently syncs the directory again. A file sent that is no part of the directory is no part of the hash, so every client's sync of one folder has one hash. While a connector is left out sync_hash is another hash, so the sync that finds its connection is not taken for the one that left it out.
+//
+// What a sync does with a setting agent.yaml leaves out depends on the setting. A model, the voice, the mode, the region, a greeting, the sandbox, connectors, tools, channels, chat_channels, scheduling, floor_control, agents, video and dispatch are left as stored. calls is always written whole: a call tool the file does not name goes back to its default. keyterms and tags are left as stored when the file has none, an empty list or mapping included, so a file cannot clear them. instructions, guardrail, the skills the config names, its UI instructions and its knowledge base are the directory's: a file taken out is taken out of the agent. simulations are left alone without a simulations file, and are exactly what the files declare with one.
+type SyncAgentFilesRequest struct {
+	// BaseChange As base_change of POST /v1/agents/sync: the newest change the caller has already seen.
+	BaseChange *string `json:"base_change,omitempty"`
+
+	// CheckChanges As check_changes of POST /v1/agents/sync: refuse the sync, with unsynced_changes, when it would write over a setting somebody changed since the last one.
+	CheckChanges *bool `json:"check_changes,omitempty"`
+
+	// DryRun Work out what the sync would store and write nothing. The answer is the config as it would be stored, one a dry run would create having no id, with the warnings a sync would give, and the request is refused as the sync would be: for what the files say, for what the router cannot run, and with check_changes for what it would write over, the money for writing its knowledge included. What only the writes can tell is not told: whether the knowledge provider takes the passages, and whether a page of knowledge/urls.yaml can be read. unchanged is true when the hash matches and a sync would do nothing.
+	DryRun *bool `json:"dry_run,omitempty"`
+
+	// Files The files of the agent's folder, as they are on disk. A client sends what it finds and the router decides what is the directory: agent.yaml, instructions.md, guardrail.md, what is under skills/, knowledge/ and simulations/, and the UI files agent.yaml names. A file or folder whose name starts with a dot, and anything under __pycache__ or node_modules, is skipped. Any other file is left out with a warning, and is no part of the limits or the hash.
+	Files []DirectoryFile `json:"files"`
+
+	// Greeting What the agent says as it joins, before anyone speaks.
+	Greeting *Greeting `json:"greeting,omitempty"`
+
+	// Guardrail The guardrail a program gives in code, in place of guardrail.md.
+	Guardrail *string `json:"guardrail,omitempty"`
+
+	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
+	Harness *Harness `json:"harness,omitempty"`
+
+	// Instructions The system prompt a program gives in code, in place of instructions.md.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Llm In place of agent.yaml's llm.
+	Llm *string `json:"llm,omitempty"`
+
+	// Name What the config is called. It wins over agent.yaml's name, and may be left out when agent.yaml names the agent.
+	Name *string `json:"name,omitempty"`
+
+	// Sandbox Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// Skills The skills a program writes in code, in place of every skill under skills/. An empty list names none.
+	Skills *[]SkillRequest `json:"skills,omitempty"`
+
+	// Sts In place of agent.yaml's sts.
+	Sts *string `json:"sts,omitempty"`
+
+	// Stt In place of agent.yaml's stt.
+	Stt *string `json:"stt,omitempty"`
+
+	// Subagent In place of agent.yaml's subagent.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// Tags Labels added to agent.yaml's tags, winning where both name a key: what an SDK's cost tracking writes.
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// Tts In place of agent.yaml's tts.
+	Tts   *string       `json:"tts,omitempty"`
+	Video *SessionVideo `json:"video,omitempty"`
+
+	// Voice In place of agent.yaml's voice.
+	Voice *string `json:"voice,omitempty"`
+}
+
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
 	// Agents agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
@@ -10416,13 +10579,44 @@ type SyncAgentRequest_Plugins_Item struct {
 
 // SyncAgentResult defines model for SyncAgentResult.
 type SyncAgentResult struct {
-	Config AgentConfig `json:"config"`
+	// Changes What the sync did, or with dry_run would do, to what the agent holds beside its config: each skill, knowledge document, knowledge url and simulation it created, updated or deleted. One it leaves as it is is not listed, and nothing is for a sync that found the hash unchanged.
+	Changes *[]SyncChange `json:"changes,omitempty"`
+	Config  AgentConfig   `json:"config"`
 
 	// Unchanged True when the hash matched and nothing was written.
 	Unchanged bool `json:"unchanged"`
 
 	// Warnings What was stored but will not work yet, such as a channel line the app has not connected.
 	Warnings *[]string `json:"warnings,omitempty"`
+}
+
+// SyncChange One skill, knowledge document, knowledge url or simulation a sync creates, updates or deletes.
+type SyncChange struct {
+	Action SyncChangeAction `json:"action"`
+
+	// Name Which one: a skill's name, a knowledge document's source, a knowledge url's url, a simulation's name.
+	Name string `json:"name"`
+
+	// ResourceType What it is, named as GET /v1/agents/configs/{id}/changes names a skill, a knowledge document and a knowledge url, and simulation, which that record does not keep.
+	ResourceType SyncChangeResourceType `json:"resource_type"`
+}
+
+// SyncChangeAction defines model for SyncChange.Action.
+type SyncChangeAction string
+
+// SyncChangeResourceType What it is, named as GET /v1/agents/configs/{id}/changes names a skill, a knowledge document and a knowledge url, and simulation, which that record does not keep.
+type SyncChangeResourceType string
+
+// SyncConflict One thing a sync would write over that somebody changed since the last sync.
+type SyncConflict struct {
+	// Name Which one: the field of an agent_config, such as llm or instructions; a skill's name; a knowledge document's source; a knowledge url's url.
+	Name string `json:"name"`
+
+	// Removed True for a knowledge document the directory no longer has, which the sync would delete.
+	Removed *bool `json:"removed,omitempty"`
+
+	// ResourceType What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
+	ResourceType AuditResourceType `json:"resource_type"`
 }
 
 // TagKeySummary defines model for TagKeySummary.
@@ -12398,6 +12592,9 @@ type UpdateSkillJSONRequestBody = SkillRequest
 // SyncAgentJSONRequestBody defines body for SyncAgent for application/json ContentType.
 type SyncAgentJSONRequestBody = SyncAgentRequest
 
+// SyncAgentFilesJSONRequestBody defines body for SyncAgentFiles for application/json ContentType.
+type SyncAgentFilesJSONRequestBody = SyncAgentFilesRequest
+
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = AgentUserRequest
 
@@ -13636,6 +13833,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
 	GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgentDirectory An agent config as the files of its directory
+	//
+	// The reverse of a sync: the agent as the directory it would be synced from. The files are agent.yaml, instructions.md, guardrail.md, each skill as skills/<name>/SKILL.md with the files beside it, the agent's knowledge base as knowledge/<source> with the pages it is kept filled from in knowledge/urls.yaml, its simulations in simulations/simulations.yaml, and ui/components.json and ui/blueprints.yaml when a directory's files gave the agent its UI. agent.yaml is canonical: its keys in a fixed order, what a sync fills in on its own left out (region us, the default harness, a call tool at its default, a connector's tools when it grants every one), and a connector that says only its name written as the name alone.
+	//
+	// Sent to POST /v1/agents/sync/files, the files store the agent as it is, apart from what `not_exported` lists. What a directory never says is not in the files and a sync leaves it alone: llm_fallbacks, review, resume_history, visible_tools and episode_cards. A fixed connector is written with its connection's id, whatever label agent.yaml first named it by, and a skill the config no longer names is left out.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/configs/{id}/directory (the `GetAgentDirectory` operationId).
+	GetAgentDirectory(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListConnections List connections
 	//
@@ -15153,6 +15361,36 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SyncAgentFilesWithBody Store an agent directory sent as its files
+	//
+	// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+	//
+	// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+	//
+	// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+	SyncAgentFilesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SyncAgentFiles Store an agent directory sent as its files
+	//
+	// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+	//
+	// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+	//
+	// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+	SyncAgentFiles(ctx context.Context, body SyncAgentFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetUser Get a user's phone link
 	//
@@ -17504,6 +17742,27 @@ func (c *Client) UpdateAgentConfig(ctx context.Context, id string, body UpdateAg
 // Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
 func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAgentChangesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAgentDirectory An agent config as the files of its directory
+//
+// The reverse of a sync: the agent as the directory it would be synced from. The files are agent.yaml, instructions.md, guardrail.md, each skill as skills/<name>/SKILL.md with the files beside it, the agent's knowledge base as knowledge/<source> with the pages it is kept filled from in knowledge/urls.yaml, its simulations in simulations/simulations.yaml, and ui/components.json and ui/blueprints.yaml when a directory's files gave the agent its UI. agent.yaml is canonical: its keys in a fixed order, what a sync fills in on its own left out (region us, the default harness, a call tool at its default, a connector's tools when it grants every one), and a connector that says only its name written as the name alone.
+//
+// Sent to POST /v1/agents/sync/files, the files store the agent as it is, apart from what `not_exported` lists. What a directory never says is not in the files and a sync leaves it alone: llm_fallbacks, review, resume_history, visible_tools and episode_cards. A fixed connector is written with its connection's id, whatever label agent.yaml first named it by, and a skill the config no longer names is left out.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/configs/{id}/directory (the `GetAgentDirectory` operationId).
+func (c *Client) GetAgentDirectory(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentDirectoryRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -20551,6 +20810,56 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncAgentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SyncAgentFilesWithBody Store an agent directory sent as its files
+//
+// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+//
+// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+//
+// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+func (c *Client) SyncAgentFilesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncAgentFilesRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SyncAgentFiles Store an agent directory sent as its files
+//
+// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+//
+// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+//
+// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+func (c *Client) SyncAgentFiles(ctx context.Context, body SyncAgentFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncAgentFilesRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -25216,6 +25525,40 @@ func NewGetAgentChangesRequest(server string, id string) (*http.Request, error) 
 	}
 
 	operationPath := fmt.Sprintf("/v1/agents/configs/%s/changes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAgentDirectoryRequest constructs an http.Request for the GetAgentDirectory method
+func NewGetAgentDirectoryRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/configs/%s/directory", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -30823,6 +31166,46 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	}
 
 	operationPath := fmt.Sprintf("/v1/agents/sync")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSyncAgentFilesRequest calls the generic SyncAgentFiles builder with application/json body
+func NewSyncAgentFilesRequest(server string, body SyncAgentFilesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSyncAgentFilesRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSyncAgentFilesRequestWithBody constructs an http.Request for the SyncAgentFiles method, with any body, and a specified content type
+func NewSyncAgentFilesRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sync/files")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -36705,6 +37088,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
 	GetAgentChangesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentChangesResponse, error)
 
+	// GetAgentDirectoryWithResponse An agent config as the files of its directory
+	//
+	// The reverse of a sync: the agent as the directory it would be synced from. The files are agent.yaml, instructions.md, guardrail.md, each skill as skills/<name>/SKILL.md with the files beside it, the agent's knowledge base as knowledge/<source> with the pages it is kept filled from in knowledge/urls.yaml, its simulations in simulations/simulations.yaml, and ui/components.json and ui/blueprints.yaml when a directory's files gave the agent its UI. agent.yaml is canonical: its keys in a fixed order, what a sync fills in on its own left out (region us, the default harness, a call tool at its default, a connector's tools when it grants every one), and a connector that says only its name written as the name alone.
+	//
+	// Sent to POST /v1/agents/sync/files, the files store the agent as it is, apart from what `not_exported` lists. What a directory never says is not in the files and a sync leaves it alone: llm_fallbacks, review, resume_history, visible_tools and episode_cards. A fixed connector is written with its connection's id, whatever label agent.yaml first named it by, and a skill the config no longer names is left out.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/configs/{id}/directory (the `GetAgentDirectory` operationId).
+	GetAgentDirectoryWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentDirectoryResponse, error)
+
 	// ListConnectionsWithResponse List connections
 	//
 	// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
@@ -38371,6 +38767,36 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
+
+	// SyncAgentFilesWithBodyWithResponse Store an agent directory sent as its files
+	//
+	// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+	//
+	// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+	//
+	// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+	SyncAgentFilesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SyncAgentFilesResponse, error)
+
+	// SyncAgentFilesWithResponse Store an agent directory sent as its files
+	//
+	// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+	//
+	// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+	//
+	// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+	SyncAgentFilesWithResponse(ctx context.Context, body SyncAgentFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentFilesResponse, error)
 
 	// GetUserWithResponse Get a user's phone link
 	//
@@ -44140,6 +44566,114 @@ func (r GetAgentChangesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAgentChangesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAgentDirectoryResponse200Headers the declared response headers of an HTTP 200 response for GetAgentDirectory
+type GetAgentDirectoryResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetAgentDirectoryResponse402Headers the declared response headers of an HTTP 402 response for GetAgentDirectory
+type GetAgentDirectoryResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetAgentDirectoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentDirectory
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetAgentDirectoryResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetAgentDirectoryResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON200() *AgentDirectory {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAgentDirectoryResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentDirectoryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentDirectoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentDirectoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentDirectoryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -56395,6 +56929,121 @@ func (r SyncAgentResponse) ContentType() string {
 	return ""
 }
 
+// SyncAgentFilesResponse200Headers the declared response headers of an HTTP 200 response for SyncAgentFiles
+type SyncAgentFilesResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// SyncAgentFilesResponse402Headers the declared response headers of an HTTP 402 response for SyncAgentFiles
+type SyncAgentFilesResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type SyncAgentFilesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SyncAgentResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SyncAgentFilesResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *SyncAgentFilesResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON200() *SyncAgentResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON413() *ErrorResponse {
+	return r.JSON413
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r SyncAgentFilesResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SyncAgentFilesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SyncAgentFilesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SyncAgentFilesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SyncAgentFilesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetUserResponse200Headers the declared response headers of an HTTP 200 response for GetUser
 type GetUserResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -68050,6 +68699,25 @@ func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, i
 	return ParseGetAgentChangesResponse(rsp)
 }
 
+// GetAgentDirectoryWithResponse An agent config as the files of its directory
+//
+// The reverse of a sync: the agent as the directory it would be synced from. The files are agent.yaml, instructions.md, guardrail.md, each skill as skills/<name>/SKILL.md with the files beside it, the agent's knowledge base as knowledge/<source> with the pages it is kept filled from in knowledge/urls.yaml, its simulations in simulations/simulations.yaml, and ui/components.json and ui/blueprints.yaml when a directory's files gave the agent its UI. agent.yaml is canonical: its keys in a fixed order, what a sync fills in on its own left out (region us, the default harness, a call tool at its default, a connector's tools when it grants every one), and a connector that says only its name written as the name alone.
+//
+// Sent to POST /v1/agents/sync/files, the files store the agent as it is, apart from what `not_exported` lists. What a directory never says is not in the files and a sync leaves it alone: llm_fallbacks, review, resume_history, visible_tools and episode_cards. A fixed connector is written with its connection's id, whatever label agent.yaml first named it by, and a skill the config no longer names is left out.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/configs/{id}/directory (the `GetAgentDirectory` operationId).
+func (c *ClientWithResponses) GetAgentDirectoryWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentDirectoryResponse, error) {
+	rsp, err := c.GetAgentDirectory(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentDirectoryResponse(rsp)
+}
+
 // ListConnectionsWithResponse List connections
 //
 // Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
@@ -70633,6 +71301,48 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 		return nil, err
 	}
 	return ParseSyncAgentResponse(rsp)
+}
+
+// SyncAgentFilesWithBodyWithResponse Store an agent directory sent as its files
+//
+// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+//
+// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+//
+// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+func (c *ClientWithResponses) SyncAgentFilesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SyncAgentFilesResponse, error) {
+	rsp, err := c.SyncAgentFilesWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncAgentFilesResponse(rsp)
+}
+
+// SyncAgentFilesWithResponse Store an agent directory sent as its files
+//
+// POST /v1/agents/sync for a client that sends the directory's files as they are and leaves reading them to the router, so a CLI, an SDK and the dashboard all mean the same thing by one directory. It stores what that sync stores, with the same answer.
+//
+// A key agent.yaml does not have, a retired one or a value of the wrong type is refused (400 `invalid_agent_directory`) with every problem at its file, line and column in the error's `problems`. A connector's connection is found among the app's own by id or by label; one the app does not have is left out of the agent, stored in `left_out_connectors` and named in a warning, unless the connector is required, which is refused. agent.yaml's `ui` is compiled into `ui_instructions` here.
+//
+// `dry_run` answers with what the sync would store and writes nothing, which is how to show what an upload would change before applying it. `GET /v1/agents/configs/{id}/directory` is the reverse: the stored agent as files.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sync/files (the `SyncAgentFiles` operationId).
+func (c *ClientWithResponses) SyncAgentFilesWithResponse(ctx context.Context, body SyncAgentFilesJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentFilesResponse, error) {
+	rsp, err := c.SyncAgentFiles(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncAgentFilesResponse(rsp)
 }
 
 // GetUserWithResponse Get a user's phone link
@@ -77927,6 +78637,132 @@ func ParseGetAgentChangesResponse(rsp *http.Response) (*GetAgentChangesResponse,
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetAgentChangesResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentDirectoryResponse parses an HTTP response from a GetAgentDirectoryWithResponse call
+func ParseGetAgentDirectoryResponse(rsp *http.Response) (*GetAgentDirectoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentDirectoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentDirectory
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetAgentDirectoryResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetAgentDirectoryResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -92306,6 +93142,139 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers SyncAgentResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSyncAgentFilesResponse parses an HTTP response from a SyncAgentFilesWithResponse call
+func ParseSyncAgentFilesResponse(rsp *http.Response) (*SyncAgentFilesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SyncAgentFilesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SyncAgentResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SyncAgentFilesResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers SyncAgentFilesResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

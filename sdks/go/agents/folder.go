@@ -20,6 +20,8 @@ import (
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
 
 // AgentFile is what makes a directory an agent: it names it and says what it runs on.
@@ -701,6 +703,94 @@ func Load(path string) (*Folder, error) {
 	return folder, nil
 }
 
+// maxSyncBytes is how much a sync of a directory may send: what the router takes (MaxBytes in
+// acceleration/internal/agentdir), checked here so a directory over it is told so by name
+// rather than by a refused request.
+const maxSyncBytes = 8 << 20
+
+// files reads the directory's files as a sync sends them to the router, which reads them: by
+// slash path, in path order. They are the files the format names and no others, so a
+// directory kept beside a program's source sends none of it: agent.yaml, instructions.md,
+// guardrail.md, what is under skills/, knowledge/ and ui/, the .yaml and .yml files of
+// simulations/, and the two files agent.yaml's ui may name elsewhere.
+//
+// Hidden files, __pycache__ and node_modules are left behind, as the router skips them, and
+// so is anything that is not a regular file of text. A link is read only to a file inside
+// the directory: one that leads out of it is refused, so a link left pointing at a
+// credentials file is never synced, and one to a folder is not followed.
+func (f *Folder) files() ([]acceleration.DirectoryFile, error) {
+	root, err := filepath.EvalSymlinks(f.Path)
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", f.Path, err)
+	}
+	var files []acceleration.DirectoryFile
+	held := 0
+	read := func(file string) error {
+		target, err := filepath.EvalSymlinks(file)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("agents: reading %s: %w", file, err)
+		}
+		if inside, err := filepath.Rel(root, target); err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("agents: %s links outside the agent directory", file)
+		}
+		info, err := os.Stat(target)
+		if err != nil || !info.Mode().IsRegular() {
+			return err
+		}
+		content, err := os.ReadFile(target)
+		if err != nil || !utf8.Valid(content) {
+			return err
+		}
+		relative, err := filepath.Rel(f.Path, file)
+		if err != nil {
+			return err
+		}
+		if held += len(content); held > maxSyncBytes {
+			return fmt.Errorf("agents: %s holds more than the %d bytes a sync sends: take files out of it, knowledge first", f.Path, maxSyncBytes)
+		}
+		files = append(files, acceleration.DirectoryFile{Path: filepath.ToSlash(relative), Content: string(content)})
+		return nil
+	}
+
+	named := []string{AgentFile, InstructionsFile, GuardrailFile}
+	if ui := f.Settings.UI; ui != nil {
+		named = append(named, ui.Components, ui.Blueprints)
+	}
+	for _, name := range named {
+		if name != "" {
+			if err := read(filepath.Join(f.Path, filepath.FromSlash(name))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, dir := range []string{SkillsDir, KnowledgeDir, SimulationsDir, "ui"} {
+		top := filepath.Join(f.Path, dir)
+		err := filepath.WalkDir(top, func(file string, entry fs.DirEntry, err error) error {
+			switch {
+			case errors.Is(err, fs.ErrNotExist) && file == top:
+				return filepath.SkipAll
+			case err != nil:
+				return err
+			case file != top && skipped(entry.Name()) && entry.IsDir():
+				return filepath.SkipDir
+			case entry.IsDir() || skipped(entry.Name()):
+				return nil
+			case dir == SimulationsDir && !slices.Contains([]string{".yaml", ".yml"}, strings.ToLower(filepath.Ext(file))):
+				return nil
+			}
+			return read(file)
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	slices.SortFunc(files, func(a, b acceleration.DirectoryFile) int { return strings.Compare(a.Path, b.Path) })
+	return slices.CompactFunc(files, func(a, b acceleration.DirectoryFile) bool { return a.Path == b.Path }), nil
+}
+
 // fill puts what the directory says into whatever the options left empty. What is written
 // in code wins, so a directory is a starting point rather than an override.
 func (f *Folder) fill(options *Options) {
@@ -816,32 +906,27 @@ func fingerprint(
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-// syncStamp is what .agent_sync holds.
+// syncStamp is what .agent_sync holds: the fingerprint of what was sent, the sync_hash the
+// router stored it under, and when.
 type syncStamp struct {
 	Hash     string `json:"hash"`
+	SyncHash string `json:"sync_hash,omitempty"`
 	SyncedAt string `json:"synced_at"`
 }
 
-// ReadStamp is the fingerprint a directory was last synced under, or empty when it never
-// was or the stamp cannot be read.
-func ReadStamp(path string) string {
-	raw, err := os.ReadFile(filepath.Join(path, AgentStamp))
-	if err != nil {
-		return ""
-	}
+// readStamp is what a directory was last synced as, or the zero stamp when it never was or
+// the stamp cannot be read.
+func readStamp(path string) syncStamp {
 	var recorded syncStamp
-	if json.Unmarshal(raw, &recorded) != nil {
-		return ""
+	if raw, err := os.ReadFile(filepath.Join(path, AgentStamp)); err == nil {
+		_ = json.Unmarshal(raw, &recorded)
 	}
-	return recorded.Hash
+	return recorded
 }
 
-// WriteStamp records what was synced and when, so a second sync can do nothing.
-func WriteStamp(path, hash string) error {
-	recorded, err := json.Marshal(syncStamp{
-		Hash:     hash,
-		SyncedAt: time.Now().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05+00:00"),
-	})
+func writeStamp(path string, stamp syncStamp) error {
+	stamp.SyncedAt = time.Now().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05+00:00")
+	recorded, err := json.Marshal(stamp)
 	if err != nil {
 		return err
 	}
@@ -849,6 +934,17 @@ func WriteStamp(path, hash string) error {
 		return fmt.Errorf("agents: writing %s: %w", AgentStamp, err)
 	}
 	return nil
+}
+
+// ReadStamp is the fingerprint a directory was last synced under, or empty when it never
+// was or the stamp cannot be read.
+func ReadStamp(path string) string {
+	return readStamp(path).Hash
+}
+
+// WriteStamp records what was synced and when, so a second sync can do nothing.
+func WriteStamp(path, hash string) error {
+	return writeStamp(path, syncStamp{Hash: hash})
 }
 
 // AgentSettings is one of agent.yaml's agents: another of the app's text agents, offered to
@@ -1019,10 +1115,11 @@ func loadSkillFiles(dir string) (map[string]string, error) {
 	return files, nil
 }
 
-// skipped says whether a file or folder in a skill folder is left behind: hidden ones such
-// as .DS_Store, and the __pycache__ that running a skill's Python scripts locally leaves.
+// skipped says whether a file or folder is left behind wherever it is: hidden ones such as
+// .DS_Store, the __pycache__ that running a skill's Python scripts locally leaves, and
+// node_modules. It is what the router skips (hidden in acceleration/internal/agentdir).
 func skipped(name string) bool {
-	return strings.HasPrefix(name, ".") || name == "__pycache__"
+	return strings.HasPrefix(name, ".") || name == "__pycache__" || name == "node_modules"
 }
 
 // parseSkill reads a skill file: frontmatter between --- lines, then the instructions.
