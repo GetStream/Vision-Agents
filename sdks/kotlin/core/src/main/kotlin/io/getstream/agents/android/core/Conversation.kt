@@ -371,19 +371,16 @@ public class Conversation private constructor(
             AgentEvent.Kind.Interrupted -> ended(event.turnId, at).cutOff(event.turnId).copy(state = State.Idle)
 
             // The model writing the reply failing is the end of that reply, which may never be
-            // reported as responded, so it is done as an interrupted one is. Its error may not say
-            // which turn it ended, which is then the agent's latest one still going. Anything else
-            // that fails, a tool, the voice or the transcriber, leaves the reply going, and the
-            // agent doing what it was doing.
+            // reported as responded, so it is done as an interrupted one is, and the router no
+            // more takes its UI as the base of a patch than an interrupted one's. Its error may
+            // not say which turn it ended, which is then the agent's latest one still going.
+            // Anything else that fails, a tool, the voice or the transcriber, leaves the reply
+            // going, and the agent doing what it was doing.
             AgentEvent.Kind.Error -> {
-                val ends = endsTurn(event)
+                val turnId = event.turnId.ifEmpty { turns.lastOrNull { it.isAgent && !it.isDone }?.id.orEmpty() }
+                val ends = endsTurn(event, turnId)
                 (if (event.string("code") == PROMPT_INJECTION) refused() else this)
-                    .let { conversation ->
-                        val turnId = event.turnId.ifEmpty {
-                            conversation.turns.lastOrNull { it.isAgent && !it.isDone }?.id.orEmpty()
-                        }
-                        if (ends && turnId.isNotEmpty()) conversation.ended(turnId, at) else conversation
-                    }
+                    .let { if (ends && turnId.isNotEmpty()) it.ended(turnId, at).cutOff(turnId) else it }
                     .copy(failure = event.errorText, state = if (ends) State.Idle else state)
             }
 
@@ -404,9 +401,16 @@ public class Conversation private constructor(
     private val working: List<String>
         get() = (state as? State.Working)?.skills.orEmpty()
 
-    /** Whether an error ends the agent's turn in flight: it is the reply model's, and there is one. */
-    private fun endsTurn(event: AgentEvent): Boolean =
-        (state == State.Responding || state is State.Working) && event.string("context") in replyModels
+    /**
+     * Whether an error ends the agent's turn in flight: it is the reply model's, and there is one,
+     * either because the agent is answering or because agent turn [turnId] is still going, as one
+     * that streamed thinking with no `responding` before it is. Nothing ends once the conversation
+     * is over.
+     */
+    private fun endsTurn(event: AgentEvent, turnId: String): Boolean =
+        event.string("context") in replyModels &&
+            state != State.Ended &&
+            (state == State.Responding || state is State.Working || turns.any { it.id == turnId && it.isAgent && !it.isDone })
 
     private companion object {
         /** The `context` of an error from the model writing the reply, as text or as speech. */

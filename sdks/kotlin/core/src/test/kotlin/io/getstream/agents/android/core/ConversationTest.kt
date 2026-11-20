@@ -147,6 +147,71 @@ class ConversationTest {
     }
 
     @Test
+    fun `the model failing on thinking nobody saw begin ends that turn, and nothing else does`() {
+        // A turn that streamed thinking with no responding before it leaves the agent idle.
+        val thinking = Conversation().after("""{"type":"reasoning_delta","turn_id":"t9","text":"Hmm"}""")
+        assertEquals(Conversation.State.Idle, thinking.state)
+
+        for (failed in listOf(
+            thinking.after("""{"type":"error","context":"llm","error":"the model is overloaded"}"""),
+            thinking.after("""{"type":"error","context":"llm","turn_id":"t9","error":"the model is overloaded"}"""),
+        )) {
+            val turn = failed.turns.single()
+            assertTrue(turn.isDone)
+            assertEquals(false, assertIs<TurnStep.Reasoning>(turn.steps.single()).isStreaming)
+            assertEquals(Conversation.State.Idle, failed.state)
+            assertEquals("the model is overloaded", failed.failure)
+            assertEquals(false, TurnMessage.messages(failed, userId = "jlahey", isConnected = true).single().isGenerating)
+        }
+
+        val elsewhere = thinking.after(
+            """{"type":"error","context":"tool","error":"tool_result output is not a string or parts"}""",
+            """{"type":"error","context":"tts","error":"the voice is unknown"}""",
+        )
+        assertEquals(false, elsewhere.turns.single().isDone)
+        assertTrue(assertIs<TurnStep.Reasoning>(elsewhere.turns.single().steps.single()).isStreaming)
+
+        val ended = thinking.after(
+            """{"type":"left","at":"2026-09-02T17:05:00Z"}""",
+            """{"type":"error","context":"llm","error":"agent: not joined"}""",
+        )
+        assertEquals(Conversation.State.Ended, ended.state)
+    }
+
+    @Test
+    fun `the model failing on a turn already done leaves it as it was`() {
+        val answered = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"pending_work":false,"type":"responded","turn_id":"t1","text":"Hello."}""",
+        )
+
+        val failed = answered.after("""{"type":"error","context":"llm","turn_id":"t1","error":"late"}""")
+
+        assertEquals(answered.turns, failed.turns)
+        assertEquals(Conversation.State.Idle, failed.state)
+        assertEquals("late", failed.failure)
+    }
+
+    @Test
+    fun `a card on a reply the model failed on is not the base of a later patch`() {
+        // The router only takes a completed reply's UI as a patch's base, never a failed one's.
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"ui_completed","turn_id":"t1","format":"openui","content":"${"$"}party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}""",
+            """{"type":"responded","turn_id":"t1","text":"Here it is."}""",
+            """{"type":"responding","turn_id":"t2"}""",
+            """{"type":"ui_completed","turn_id":"t2","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Mira\")"}""",
+            """{"type":"error","context":"llm","error":"the model is overloaded"}""",
+            """{"type":"responding","turn_id":"t3"}""",
+            """{"type":"ui_completed","turn_id":"t3","format":"openui","mode":"patch","content":"${"$"}party = 4"}""",
+        )
+
+        assertTrue(conversation.turns[1].isDone)
+        assertEquals("root = Card([hdr])\nhdr = CardHeader(\"Mira\")", conversation.turns[1].ui?.content)
+        assertEquals("\$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", conversation.turns[2].ui?.content)
+    }
+
+    @Test
     fun `the speech model failing ends the turn too`() {
         val conversation = Conversation().after(
             """{"type":"responding","turn_id":"t1"}""",
