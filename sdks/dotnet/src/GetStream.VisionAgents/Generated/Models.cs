@@ -979,7 +979,7 @@ namespace GetStream.VisionAgents.Models
         public Greeting? Greeting { get; set; } = default!;
 
         /// <summary>
-        /// A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail.
+        /// A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. An empty string removes the guardrail.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("guardrail")]
         public string? Guardrail { get; set; } = default!;
@@ -1171,7 +1171,7 @@ namespace GetStream.VisionAgents.Models
         public Greeting? Greeting { get; set; } = default!;
 
         /// <summary>
-        /// A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+        /// A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. A decision_model guardrail may set question in its frontmatter: one line that replaces what the decision model is asked about a turn. The model is sent the policy as policy, the turn as message and the last of the conversation before it as conversation, and by default is asked whether message, read in light of conversation, is a request the assistant is not permitted to answer under policy. A webhook or llm guardrail that sets question is refused. Empty means every turn is answered.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("guardrail")]
         public string? Guardrail { get; set; } = default!;
@@ -7852,6 +7852,79 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class GuardrailCheck
+    {
+
+        /// <summary>
+        /// Whether the turn was answered. True for a check that failed, whose turn is answered anyway.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("allowed")]
+        public bool Allowed { get; set; } = default!;
+
+        /// <summary>
+        /// True when the check could not be made (the model or the webhook failed or took too long) and the turn was answered anyway. Such a check has no probability. Absent for a check that answered.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("failed")]
+        public bool? Failed { get; set; } = default!;
+
+        /// <summary>
+        /// How long a reply the model had begun waited on the verdict, which is what a parallel check costs the caller. Absent when it did not wait, and in blocking mode, where the model is asked only after the verdict.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("held_ms")]
+        public double? HeldMs { get; set; } = default!;
+
+        /// <summary>
+        /// How the turn was checked: the guardrail.md's type.
+        /// <br/>
+        /// <br/>One of `decision_model`, `llm`, `webhook`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("kind")]
+        public string Kind { get; set; } = default!;
+
+        /// <summary>
+        /// How long the check took, from asking to the verdict or the failure.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("latency_ms")]
+        public double LatencyMs { get; set; } = default!;
+
+        /// <summary>
+        /// When the check ran: parallel, beside the model, or blocking, before the model was asked.
+        /// <br/>
+        /// <br/>One of `parallel`, `blocking`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("mode")]
+        public string Mode { get; set; } = default!;
+
+        /// <summary>
+        /// The provider and model that answered, as provider/model. Absent for a webhook, and for a check that failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// The probability the model put on the turn going against the policy. Absent for a webhook, which answers yes or no, and for a check that failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("probability")]
+        public double? Probability { get; set; } = default!;
+
+        /// <summary>
+        /// The guardrail.md's threshold: a probability at or above it refuses the turn. Absent for a webhook.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("threshold")]
+        public double? Threshold { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -16033,6 +16106,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_checks")]
         public System.Collections.Generic.List<FloorCheck>? FloorChecks { get; set; } = default!;
+
+        /// <summary>
+        /// The guardrail's check of this turn, allowed or refused. Absent when no check ran: an agent with no guardrail, or a reply that carries no new words of the caller's. A written aside is no turn, so its check is not recorded.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("guardrail")]
+        public GuardrailCheck? Guardrail { get; set; } = default!;
 
         /// <summary>
         /// What the caller said, when it can be matched to this exchange.
