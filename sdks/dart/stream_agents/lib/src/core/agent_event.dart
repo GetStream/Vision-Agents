@@ -48,8 +48,13 @@ enum AgentEventKind {
   taskCancelled('task_cancelled'),
   toolCall('tool_call'),
   toolCancel('tool_cancel'),
+  toolHeld('tool_held'),
   toolStarted('tool_started'),
+  toolUpdated('tool_updated'),
   toolRan('tool_ran'),
+  toolCallStarted('tool_call.started'),
+  toolCallProgress('tool_call.progress'),
+  toolCallFinished('tool_call.finished'),
   transferred('transferred'),
   pressed('pressed'),
   lookedUp('looked_up'),
@@ -136,8 +141,34 @@ final class AgentEvent {
           arguments: _text(fields['arguments']),
           requestId: _text(fields['request_id']),
           turnId: turnId,
+          approved: fields['approved'] == true,
         )
       : null;
+
+  /// The call's whole state on a `tool_call.started`, `tool_call.progress` or
+  /// `tool_call.finished`, or null for any other event.
+  ToolCallState? get toolCallState => switch (kind) {
+    AgentEventKind.toolCallStarted ||
+    AgentEventKind.toolCallProgress ||
+    AgentEventKind.toolCallFinished when _text(fields['tool_call_id']).isNotEmpty => ToolCallState(
+      id: _text(fields['tool_call_id']),
+      tool: _text(fields['tool']),
+      turnId: turnId,
+      status: ToolCallStatus._byWire[_text(fields['status'])] ?? ToolCallStatus.unknown,
+      progress: _text(fields['progress']),
+      startedAt: parseRouterDate(_text(fields['started_at'])),
+      duration: Duration(
+        milliseconds: switch (fields['duration_ms']) {
+          final num ms => ms.toInt(),
+          _ => 0,
+        },
+      ),
+      approvedAt: parseRouterDate(_text(fields['approved_at'])),
+      rejectedAt: parseRouterDate(_text(fields['rejected_at'])),
+      error: _text(fields['error']),
+    ),
+    _ => null,
+  };
 
   /// A connector tool call the provider refused because the person's own connection lacks
   /// access it asked for, and the step-up consent the router began for it, or null when this
@@ -200,10 +231,14 @@ final class ToolCall {
     required this.arguments,
     this.requestId = '',
     this.turnId = '',
+    this.approved = false,
   });
 
   final String id;
   final String name;
+
+  /// Whether the person already said yes to it, on a voice call, so nobody asks again.
+  final bool approved;
 
   /// The arguments as the model wrote them, which is a JSON object encoded as a string.
   final String arguments;
@@ -222,6 +257,97 @@ final class ToolCall {
       return const {};
     }
   }
+}
+
+/// Where a tool call stands. [unknown] is a status the router added after this SDK shipped.
+enum ToolCallStatus {
+  inProgress('in_progress'),
+
+  /// Held for a person's approval.
+  waiting('waiting'),
+  success('success'),
+  failed('failed'),
+  cancelled('cancelled'),
+  unknown('');
+
+  const ToolCallStatus(this.wire);
+
+  /// The router's name for it.
+  final String wire;
+
+  /// Whether the call is over.
+  bool get isFinished => this == success || this == failed || this == cancelled;
+
+  static final Map<String, ToolCallStatus> _byWire = {
+    for (final status in values) status.wire: status,
+  };
+}
+
+/// One tool call as the session last reported it, whichever process runs it.
+final class ToolCallState {
+  const ToolCallState({
+    required this.id,
+    required this.tool,
+    required this.status,
+    this.turnId = '',
+    this.progress = '',
+    this.startedAt,
+    this.duration = Duration.zero,
+    this.approvedAt,
+    this.rejectedAt,
+    this.error = '',
+  });
+
+  /// The call's `tool_call_id`.
+  final String id;
+  final String tool;
+  final String turnId;
+  final ToolCallStatus status;
+
+  /// The last thing said about the call while it runs, such as "Searching for flights", or the
+  /// question it waits on.
+  final String progress;
+  final DateTime? startedAt;
+
+  /// From [startedAt] to this report; once finished, how long the call took.
+  final Duration duration;
+
+  /// When a person allowed the call.
+  final DateTime? approvedAt;
+
+  /// When a person declined the call, or its wait for them passed.
+  final DateTime? rejectedAt;
+
+  /// Why a failed call failed, or what a declined one shows.
+  final String error;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ToolCallState &&
+      other.id == id &&
+      other.tool == tool &&
+      other.turnId == turnId &&
+      other.status == status &&
+      other.progress == progress &&
+      other.startedAt == startedAt &&
+      other.duration == duration &&
+      other.approvedAt == approvedAt &&
+      other.rejectedAt == rejectedAt &&
+      other.error == error;
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    tool,
+    turnId,
+    status,
+    progress,
+    startedAt,
+    duration,
+    approvedAt,
+    rejectedAt,
+    error,
+  );
 }
 
 String _text(Object? value) => value is String ? value : '';

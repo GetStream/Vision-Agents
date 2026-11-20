@@ -1,4 +1,5 @@
 import Foundation
+import StreamCore
 
 /// The socket carrying one conversation.
 ///
@@ -18,6 +19,8 @@ public actor SessionSocket {
     private let urlSession: URLSession
     private var task: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
+    /// Whether the router took the last `open`'s upgrade, so the conversation's frames reach it.
+    private(set) var isOpen = false
 
     public init(url: URL, headers: [String: String], urlSession: URLSession = .shared) {
         self.url = url
@@ -25,13 +28,14 @@ public actor SessionSocket {
         self.urlSession = urlSession
     }
 
-    /// Opens the socket and starts reading.
+    /// Opens the socket and starts reading, returning once the upgrade is answered, either way.
     ///
     /// The stream is returned rather than exposed as a property so that it cannot be attached
     /// to twice, and so there is no window between opening and attaching in which an event
     /// could be dropped: reading does not begin until the stream exists. `headers` are added
-    /// to the ones this socket was made with, for credentials only known once it opens.
-    public func open(headers extra: [String: String] = [:]) -> AsyncThrowingStream<AgentEvent, any Error> {
+    /// to the ones this socket was made with, for credentials only known once it opens. A
+    /// refused upgrade ends the stream with what the router answered.
+    public func open(headers extra: [String: String] = [:]) async -> AsyncThrowingStream<AgentEvent, any Error> {
         var request = URLRequest(url: url)
         for (name, value) in headers.merging(extra, uniquingKeysWith: { _, new in new }) {
             request.setValue(value, forHTTPHeaderField: name)
@@ -41,7 +45,10 @@ public actor SessionSocket {
         // A conversation's frames are a few kilobytes at most. Without a ceiling, a socket
         // that has gone wrong at the other end can make this process buffer without bound.
         task.maximumMessageSize = maximumFrameSize
+        let upgrade = Upgrade()
+        task.delegate = upgrade
         self.task = task
+        isOpen = false
         task.resume()
 
         // Unbounded because dropping an event would lose a tool call or the end of a reply.
@@ -54,6 +61,10 @@ public actor SessionSocket {
             await self?.read(task: task, into: continuation)
         }
 
+        let opened = await upgrade.answered()
+        if self.task === task {
+            isOpen = opened
+        }
         return stream
     }
 
@@ -76,6 +87,7 @@ public actor SessionSocket {
         reader = nil
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+        isOpen = false
     }
 
     private func read(
@@ -126,5 +138,47 @@ public actor SessionSocket {
             }
         }
         continuation.finish()
+    }
+}
+
+/// Tells whoever opened a socket when its upgrade was answered: taken, or the task ended first.
+/// The task's own delegate, so it works whatever session the app hands over.
+private final class Upgrade: NSObject, URLSessionWebSocketDelegate, Sendable {
+    private struct State {
+        var opened: Bool?
+        var waiting: CheckedContinuation<Bool, Never>?
+    }
+
+    private let state = AllocatedUnfairLock(State())
+
+    /// Whether the upgrade was taken, once it was answered.
+    func answered() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let opened = state.withLock { state -> Bool? in
+                if state.opened == nil { state.waiting = continuation }
+                return state.opened
+            }
+            if let opened { continuation.resume(returning: opened) }
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?
+    ) {
+        answer(true)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        answer(false)
+    }
+
+    private func answer(_ opened: Bool) {
+        let waiting = state.withLock { state -> CheckedContinuation<Bool, Never>? in
+            guard state.opened == nil else { return nil }
+            state.opened = opened
+            defer { state.waiting = nil }
+            return state.waiting
+        }
+        waiting?.resume(returning: opened)
     }
 }

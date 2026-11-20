@@ -155,11 +155,15 @@ export {
 } from "./ui-catalog.js";
 
 export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
+export { ToolCalls, type ToolCallState, type ToolCallStatus } from "./tool-calls.js";
 export {
   Conversation,
   mergeOpenUIStatements,
   type ConversationRecord,
+  type ReasoningStep,
+  type ToolStep,
   type Turn,
+  type TurnStep,
   type TurnUI,
 } from "./conversation.js";
 

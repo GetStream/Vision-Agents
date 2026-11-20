@@ -769,6 +769,10 @@ UPDATE agent_response_items AS t SET
         'call_id', t.payload->'call_id',
         'product', t.payload->'product',
         'sdk', t.payload->'sdk',
+        'loading', t.payload->'loading',
+        'definition_tokens', t.payload->'definition_tokens',
+        'summary_tokens', t.payload->'summary_tokens',
+        'tokens', t.payload->'tokens',
         'error', CASE WHEN t.payload->'error' IS NOT NULL THEN to_jsonb('redacted'::text) END,
         'redacted', true)),
     redact_at = NULL

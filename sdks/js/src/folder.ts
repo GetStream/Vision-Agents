@@ -88,13 +88,9 @@ export async function loadFolder(path: string): Promise<Folder> {
   }
   const settings = parseDeclaration(declaration, join(path, AGENT_FILE));
   const simulations = await loadSimulations(join(path, SIMULATIONS_DIR));
-  const baseInstructions = (await maybeRead(join(path, INSTRUCTIONS_FILE))).trim();
-  const uiPrompt = settings.ui ? await loadUIPrompt(path, settings.ui) : "";
-  const instructions = uiPrompt
-    ? baseInstructions
-      ? `${baseInstructions}\n\n${uiPrompt}`
-      : uiPrompt
-    : baseInstructions;
+  const instructions = (await maybeRead(join(path, INSTRUCTIONS_FILE))).trim();
+  // Kept apart from instructions.md, so a session opened with `ui: false` is not told it.
+  const uiInstructions = settings.ui ? await loadUIPrompt(path, settings.ui) : "";
 
   return {
     path,
@@ -102,6 +98,7 @@ export async function loadFolder(path: string): Promise<Folder> {
     settings,
     stamp: stampAt(join(path, AGENT_STAMP)),
     instructions,
+    ...(uiInstructions ? { uiInstructions } : {}),
     guardrail: (await maybeRead(join(path, GUARDRAIL_FILE))).trim(),
     skills: await loadSkills(join(path, SKILLS_DIR)),
     knowledge: await loadKnowledge(join(path, KNOWLEDGE_DIR)),

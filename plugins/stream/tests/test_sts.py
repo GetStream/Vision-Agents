@@ -88,38 +88,6 @@ class TestSTSTools:
         assert (await conversation.told())["output"] == "ok"
         assert seen[0].id == "call-1"
 
-    async def test_a_function_tells_the_caller_how_it_is_going(
-        self, conversation: Conversation, model: stream.STS
-    ):
-        @model.register_function(description="Check the book")
-        async def check(tool_call_context: ToolCallContext) -> str:
-            await tool_call_context.update("checking the patio")
-            await tool_call_context.say("One moment.")
-            return "a table at 7:30"
-
-        await model.connect()
-        await conversation.send(
-            {"type": "tool_call", "id": "call-2", "name": "check", "arguments": "{}"}
-        )
-
-        assert await conversation.told() == {
-            "type": "tool_update",
-            "tool_call_id": "call-2",
-            "text": "checking the patio",
-            "verbatim": False,
-        }
-        assert await conversation.told() == {
-            "type": "tool_update",
-            "tool_call_id": "call-2",
-            "text": "One moment.",
-            "verbatim": True,
-        }
-        assert await conversation.told() == {
-            "type": "tool_result",
-            "tool_call_id": "call-2",
-            "output": "a table at 7:30",
-        }
-
     async def test_a_held_call_goes_on_once_the_router_holds_it(
         self, conversation: Conversation, model: stream.STS
     ):

@@ -75,6 +75,8 @@ type pendingTool struct {
 	ctx      context.Context
 	answer   chan toolResult
 	resolved bool
+	// decided is set once the person answered the call's question (decide).
+	decided bool
 }
 
 // toolResult is what the caller said happened.
@@ -215,6 +217,24 @@ func (b *bridge) turnOf(id string) (string, bool) {
 	defer b.mu.Unlock()
 	pending, waiting := b.pending[id]
 	return pending.turnID, waiting
+}
+
+// decide records that the person answered the question of the call id, waiting on the turn.
+func (b *bridge) decide(id, turnID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if pending, waiting := b.pending[id]; waiting && pending.turnID == turnID {
+		pending.decided = true
+		b.pending[id] = pending
+	}
+}
+
+// asking reports whether the call id still waits for the person's answer to its question.
+func (b *bridge) asking(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pending, waiting := b.pending[id]
+	return waiting && !b.closed && !pending.resolved && !pending.decided && pending.ctx.Err() == nil
 }
 
 // Waiting reports whether the call is still waiting for its result.

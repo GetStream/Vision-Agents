@@ -126,19 +126,20 @@ def search() -> None:
 
 def llm() -> None:
     print(
-        "# llm: model, slug, intelligence index, output tokens per second on the creator's API"
+        "# llm: model (with effort), release slug, intelligence index, output tokens per second on the creator's API"
     )
     seen = set()
     for value in flight("leaderboards/models"):
         for d in dicts(value):
             index = d.get("intelligenceIndex")
-            if not isinstance(index, float) or d["slug"] in seen:
+            if not isinstance(index, float) or d["id"] in seen:
                 continue
-            seen.add(d["slug"])
-            speed = d.get("medianOutputTokensPerSecond")
+            seen.add(d["id"])
+            release = d.get("release")
+            speed = d.get("outputSpeed")
             print(
                 d["name"],
-                d["slug"],
+                release["slug"] if isinstance(release, dict) else "",
                 round(index),
                 round(speed) if isinstance(speed, float) else "",
                 sep="\t",
@@ -146,29 +147,31 @@ def llm() -> None:
 
 
 def llm_hosts(slug: str) -> None:
-    print(f"# llm hosts of {slug}: host, output tokens per second")
+    print(f"# llm hosts of {slug}: host, endpoint, output tokens per second")
     seen = set()
     for value in flight(f"models/{slug}/providers"):
         for d in dicts(value):
-            host, model, performance = (
+            host, model, headline = (
                 d.get("host"),
                 d.get("model"),
-                d.get("performance"),
+                d.get("headline"),
             )
             if not (
                 isinstance(host, dict)
                 and isinstance(model, dict)
-                and isinstance(performance, dict)
+                and isinstance(headline, dict)
                 and model.get("slug") == slug
-                and isinstance(performance.get("outputSpeed"), dict)
             ):
                 continue
-            if host["name"] in seen:
+            if d["slug"] in seen:
                 continue
-            seen.add(host["name"])
-            speed = performance["outputSpeed"].get("median")
+            seen.add(d["slug"])
+            speed = headline.get("outputSpeed")
             print(
-                host["name"], round(speed) if isinstance(speed, float) else "", sep="\t"
+                host["name"],
+                d["slug"],
+                round(speed) if isinstance(speed, float) else "",
+                sep="\t",
             )
 
 

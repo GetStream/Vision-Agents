@@ -22,6 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -48,6 +51,10 @@ private const val EVENT_BUFFER = 256
  *
  * The session owns a scope, and [close] ends it. It is not tied to a screen: an `AndroidX`
  * `ViewModel` that holds one and closes it in `onCleared` is the usual home.
+ *
+ * One opened with [SessionOptions.watch] false has no socket: its turns go in through
+ * [responses] and come back out of [Responses.items], and what needs the socket throws
+ * [AgentsException.Configuration].
  */
 public class AgentSession internal constructor(
     /** Where this conversation is held, and who is holding it. */
@@ -55,9 +62,10 @@ public class AgentSession internal constructor(
     session: Session,
     tools: List<AgentTool>,
     context: CoroutineContext = Dispatchers.Default,
+    watched: Boolean = true,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + context)
-    private val socket = SessionSocket(
+    private val socket = if (!watched) null else SessionSocket(
         backend,
         session.id,
         // Decisions arrive several times a second and are for somebody watching a call, not
@@ -87,6 +95,7 @@ public class AgentSession internal constructor(
     private val connected = MutableStateFlow(false)
     private val stoppedBy = MutableStateFlow<AgentsException?>(null)
     private val held = MutableStateFlow<List<ToolApprovalRequest>>(emptyList())
+    private val calls = MutableStateFlow<Map<String, AgentEvent.ToolCallState>>(emptyMap())
     private val broadcast = MutableSharedFlow<AgentEvent>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -115,6 +124,25 @@ public class AgentSession internal constructor(
     public val approvals: StateFlow<List<ToolApprovalRequest>> = held.asStateFlow()
 
     /**
+     * Every tool call of the session by its id, as it was last reported: running, waiting for a
+     * person's approval, or how it ended, whichever process runs it. Finished calls stay.
+     */
+    public val toolCalls: StateFlow<Map<String, AgentEvent.ToolCallState>> = calls.asStateFlow()
+
+    /** One tool call as it was last reported, or null before the session said anything of it. */
+    public fun toolCall(id: String): Flow<AgentEvent.ToolCallState?> = calls.map { it[id] }.distinctUntilChanged()
+
+    /**
+     * Calls [handler] with every event of [kind], such as [AgentEvent.Kind.ToolCallFinished], on
+     * the session's scope until the returned job is cancelled or the session closes. It is
+     * subscribed before this returns, so it misses nothing sent after.
+     */
+    public fun on(kind: AgentEvent.Kind, handler: suspend (AgentEvent) -> Unit): Job =
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            broadcast.filter { it.kind == kind }.collect { handler(it) }
+        }
+
+    /**
      * The session's turns: asking, reading back and rewinding. What is asked here shows in
      * [conversation] at once, and the reply streams into it.
      */
@@ -137,9 +165,10 @@ public class AgentSession internal constructor(
     /**
      * Opens the socket and starts following the conversation. Doing this twice does nothing.
      *
-     * The shorthands that return an [AgentSession] have already called it.
+     * The calls that return an [AgentSession] have already called it.
      */
     public suspend fun start() {
+        val socket = held()
         if (!started.compareAndSet(false, true)) return
         val events = try {
             socket.open()
@@ -163,13 +192,14 @@ public class AgentSession internal constructor(
      * first, rather than waiting for it to finish.
      */
     public suspend fun say(text: String, interrupt: Boolean = false) {
+        val socket = held()
         if (interrupt) socket.send(Command.Interrupt())
         socket.send(Command.Say(text))
     }
 
     /** Abandons the reply in flight, or stops the request named. */
     public suspend fun interrupt(requestId: String = "") {
-        socket.send(Command.Interrupt(requestId))
+        held().send(Command.Interrupt(requestId))
     }
 
     /**
@@ -182,6 +212,8 @@ public class AgentSession internal constructor(
      * cannot be sent, the call waits again, unless the router cancelled it meanwhile.
      */
     public suspend fun decide(toolCallId: String, allowed: Boolean, summary: String = "") {
+        // A conversation nothing is watching has nowhere to send the answer.
+        held()
         if (toolCallId in cancelled || held.value.none { it.id == toolCallId } || !answered.add(toolCallId)) return
         decideHeld(toolCallId, allowed, summary)
     }
@@ -192,6 +224,7 @@ public class AgentSession internal constructor(
      * router cancelled it meanwhile.
      */
     private suspend fun decideHeld(toolCallId: String, allowed: Boolean, summary: String): Boolean {
+        val socket = held()
         var index = -1
         var request: ToolApprovalRequest? = null
         held.update { waiting ->
@@ -238,6 +271,7 @@ public class AgentSession internal constructor(
      * cannot be sent, it can be answered again.
      */
     public suspend fun decide(call: ShownToolCall, allowed: Boolean, summary: String = "") {
+        val socket = held()
         if (call.id in cancelled || !answered.add(call.id)) return
         if (decideHeld(call.id, allowed, summary) || call.id in cancelled) return
         try {
@@ -272,7 +306,7 @@ public class AgentSession internal constructor(
      * is left alone.
      */
     public suspend fun declineLogin(toolCallId: String) {
-        socket.send(Command.ToolApproval(toolCallId, allowed = false))
+        held().send(Command.ToolApproval(toolCallId, allowed = false))
     }
 
     /** Puts the agent on the session's call, `agent:<session id>`. See [Sessions.startVoice]. */
@@ -321,6 +355,8 @@ public class AgentSession internal constructor(
      * their calls are still answered here until adding or removing the name again settles it.
      */
     public suspend fun addTools(tools: List<AgentTool>) {
+        // A conversation nothing is watching has nowhere to be asked for a call.
+        held()
         if (tools.isEmpty()) return
         changing.withLock {
             // A name left unsettled may or may not be the router's: it is withdrawn first, so
@@ -369,6 +405,7 @@ public class AgentSession internal constructor(
      * the name again settles it.
      */
     public suspend fun removeTool(name: String) {
+        held()
         changing.withLock { withdraw(name) }
     }
 
@@ -377,10 +414,19 @@ public class AgentSession internal constructor(
      * remembered is kept; [delete] takes it away.
      */
     public suspend fun close() {
-        try {
-            socket.send(Command.Close)
-        } catch (_: AgentsException) {
-            // Already gone, which is what closing wanted.
+        if (socket == null) {
+            try {
+                Sessions(backend).close(session.id)
+            } catch (e: AgentsException.Http) {
+                // Already gone, which is what closing wanted.
+                if (e.status != 404) throw e
+            }
+        } else {
+            try {
+                socket.send(Command.Close)
+            } catch (_: AgentsException) {
+                // Already gone, which is what closing wanted.
+            }
         }
         end()
     }
@@ -413,8 +459,18 @@ public class AgentSession internal constructor(
         unsettled.remove(name)
     }
 
+    /**
+     * The socket, or what to do instead of it: a conversation opened with
+     * [SessionOptions.watch] false has none, and nothing is watching it to send to.
+     */
+    private fun held(): SessionSocket = socket ?: throw AgentsException.Configuration(
+        "this conversation is not being watched, so there is nothing to send to: open it " +
+            "without watch = false, or use responses.create() and read the turn back through " +
+            "responses.items()",
+    )
+
     private suspend fun end() {
-        socket.close()
+        socket?.close()
         scope.cancel()
         connected.value = false
         held.value = emptyList()
@@ -423,6 +479,7 @@ public class AgentSession internal constructor(
 
     private fun apply(event: AgentEvent) {
         state.update { it.reduce(event) }
+        event.toolCallState?.let { call -> calls.update { it + (call.id to call) } }
         when (event.kind) {
             AgentEvent.Kind.ToolCall -> event.toolCall?.let(::answer)
             AgentEvent.Kind.ToolCancel -> {
@@ -450,12 +507,13 @@ public class AgentSession internal constructor(
         // tool this device never declared would resolve it before its owner could. The request
         // for frames is this device's only while its camera is on; otherwise a video worker in
         // the backend may own it.
+        if (!call.run) return
         if (call.name == CameraFrames.TOOL_NAME) {
             cameraFrames?.let { return show(it, call) }
         }
         val tool = tools[call.name] ?: return
         val approval = tool.approval
-        if (approval != null) {
+        if (approval != null && !call.approved) {
             held.update { it + ToolApprovalRequest(call, approval, tool) }
         } else {
             run(call, tool)
@@ -500,7 +558,7 @@ public class AgentSession internal constructor(
                 Command.ToolResult(call.id, output = e.message.orEmpty(), requestId = call.requestId, turnId = call.turnId)
             }
             try {
-                socket.send(answer)
+                socket?.send(answer)
             } catch (_: AgentsException) {
                 // The socket went; there is nobody left to show.
             }
@@ -532,7 +590,7 @@ public class AgentSession internal constructor(
                 Command.ToolResult(call.id, error = e.message ?: e.toString(), requestId = call.requestId, turnId = call.turnId)
             }
             try {
-                socket.send(result)
+                socket?.send(result)
             } catch (_: AgentsException) {
                 // The socket went while the tool ran; there is nobody left to tell.
             }

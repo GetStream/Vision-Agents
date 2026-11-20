@@ -90,6 +90,11 @@ npm run build     # types, then the bundle
   can copy, share and rate it; ratings stay in the page, as the router takes none yet. The
   composer floats over the bottom of the conversation, which fades away under it, and its
   options offer Think harder, which asks with a higher `reasoning_effort`.
+- **Incognito chat** is the dashed bubble at the top right of a new chat. Its session is created
+  with `incognito: true`, so it has no channel, isn't listed or put in the URL, and Juno learns
+  nothing from it; `AgentChat` shows it from the session's socket, reasoning and tool calls
+  included. Leaving it, or picking another conversation, ends it for good. It needs
+  `@stream-io/stream-agents` 0.5.0 or later.
 - **Interactive replies**: the gear in the top bar picks how Juno answers, as the iOS app's
   settings do: in text, or with interactive UI written in [A2UI](https://a2ui.org) or
   [OpenUI](https://openui.com). It is the
@@ -106,7 +111,7 @@ npm run build     # types, then the bundle
   with what they did as its `uiAction`, so the agent answers with a new plan. One done while
   Juno is still answering isn't sent, and the line over the composer says so.
 - **A card brings its own tool.** Ask "Where should we eat in Ohrid tonight?" for restaurant
-  cards and a seat selector of a venue's tables (`bookingComponents.json`). The agent cannot book
+  cards and a seat selector of a venue's tables (swift_assistant's `UIComponents.json`). The agent cannot book
   a table until a seat selector is on the screen: the card defines `reserve_table`
   (`reserveTable.ts`) and gives it to the conversation's session the first time it shows, with
   `Session.addTools`. Tapping a free table then has the agent call it, which asks first

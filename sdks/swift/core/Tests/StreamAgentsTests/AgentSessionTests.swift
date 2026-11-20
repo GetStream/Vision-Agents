@@ -264,6 +264,46 @@ import os
     }
   }
 
+  private struct Booking: Decodable {
+    let location: String
+    let guests: Int
+  }
+
+  /// A typed tool runs with the model's arguments decoded, and arguments missing a field reach
+  /// the model as the tool failing, naming the field, rather than running it with a blank.
+  @Test(arguments: [
+    (#"{"location":"Boulder","guests":4}"#, "Booked Boulder for 4", ""),
+    (#"{"guests":4}"#, nil, #""location""#),
+    (#"{"location":"Boulder","guests":"four"}"#, nil, #""guests""#),
+  ])
+  func aTypedToolGetsItsArgumentsDecoded(arguments: String, output: String?, error: String) async throws {
+    let server = try ToolEventServer(remoteTool: "server_lookup", arguments: arguments)
+    defer { server.listener.cancel() }
+    let url = try #require(try await server.addresses.first(where: { @Sendable _ in true }))
+    let tool = AgentTool(name: "local_lookup", description: "Book a table") { (booking: Booking) in
+      "Booked \(booking.location) for \(booking.guests)"
+    }
+    let session = AgentSession(
+      backend: Backend(url: url, customerID: "test"), session: Self.session, tools: [tool])
+    await session.start()
+    do {
+      let data = try #require(try await server.commands.first(where: { @Sendable _ in true }))
+      let command = try JSONDecoder().decode([String: RawJSON].self, from: data)
+      #expect(command["type"]?.stringValue == "tool_result")
+      if let output {
+        #expect(command["output"]?.stringValue == output)
+        #expect(command["error"]?.stringValue == "")
+      } else {
+        #expect(command["output"]?.stringValue == "")
+        #expect(command["error"]?.stringValue?.contains(error) == true, "\(command["error"] ?? .nil)")
+      }
+      await session.close()
+    } catch {
+      await session.close()
+      throw error
+    }
+  }
+
   @Test(arguments: [true, false])
   func aCameraOnACallAnswersTheRequestToLook(recent: Bool) async throws {
     let server = try ToolEventServer(remoteTool: "get_video_frames")
@@ -474,7 +514,8 @@ private struct ToolEventServer {
   let addresses: AsyncThrowingStream<URL, any Error>
   let commands: AsyncThrowingStream<Data, any Error>
 
-  init(remoteTool: String) throws {
+  init(remoteTool: String, arguments: String = "{}") throws {
+    let quoted = String(decoding: try JSONEncoder().encode(arguments), as: UTF8.self)
     let queue = DispatchQueue(label: "tool-event-server")
     let webSocket = NWProtocolWebSocket.Options()
     webSocket.autoReplyPing = true
@@ -507,7 +548,7 @@ private struct ToolEventServer {
       connection.stateUpdateHandler = { state in
         guard case .ready = state else { return }
         for (id, name) in [("remote", remoteTool), ("local", "local_lookup")] {
-          let frame = #"{"type":"tool_call","id":"\#(id)","name":"\#(name)","arguments":"{}"}"#
+          let frame = #"{"type":"tool_call","id":"\#(id)","name":"\#(name)","arguments":\#(quoted)}"#
           let context = NWConnection.ContentContext(
             identifier: id,
             metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])

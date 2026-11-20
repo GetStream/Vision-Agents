@@ -11,8 +11,8 @@ use RuntimeException;
  */
 final class HostingRefusedException extends RuntimeException implements VisionAgentsException
 {
-    public function __construct(public readonly string $agentId, public readonly string $reason)
+    public function __construct(public readonly string $reason)
     {
-        parent::__construct("the router refused to host tools for agent {$agentId}: {$reason}");
+        parent::__construct("the router refused to host tools: {$reason}");
     }
 }

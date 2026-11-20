@@ -168,15 +168,27 @@ class ConnectorSettings:
     require_approval: list[str] | None = None
     """Names or patterns of the tools whose every call waits for the session's user to
     allow it. None sends no require_approval key."""
+    loading: str = ""
+    """How the connector's tools are offered, as a tool group's. Empty is full."""
+    output_retention: str = ""
+    """How long sessions keep what the connector's tools were given and gave back: none, or
+    a duration such as 30d. Empty is as long as the session."""
+
+
+TOOL_LOADINGS = ("full", "summary", "deferred")
 
 
 @dataclass
-class ToolSettings:
-    """How connector tools are offered."""
+class ToolGroupSettings:
+    """One group of the agent's functions, and how they are offered."""
 
-    progressive: bool | None = None
-    """Offer each tool by a summary, the first call to it returning its full description
-    instead of running it. None when the file says nothing about it."""
+    name: str
+    tools: list[str]
+    loading: str = ""
+    """full, summary or deferred. Empty is full."""
+    output_retention: str = ""
+    """How long sessions keep what the group's tools were given and gave back: none, or a
+    duration such as 30d. Empty is as long as the session."""
 
 
 @dataclass
@@ -244,8 +256,10 @@ class Settings:
     connectors: list[ConnectorSettings] | None = None
     """Connectors the agent binds. None when the file says nothing about them, which
     leaves whatever is stored; an empty list removes them."""
-    tools: ToolSettings | None = None
-    """How connector tools are offered. None when the file says nothing about it."""
+    tools: list[ToolGroupSettings] | None = None
+    """The groups naming the functions this process provides that the agent may offer: a
+    function no group names is never offered. None when the file says nothing, which
+    leaves the groups stored."""
     channels: ChannelsSettings | None = None
     """Lines the agent answers on besides Stream Chat. The provider's credentials live on
     the router, connected once for the app; this only names the numbers."""
@@ -636,6 +650,8 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
             "required",
             "sandbox",
             "require_approval",
+            "loading",
+            "output_retention",
         }
         if extra:
             raise ValueError(f"{path} unknown connectors setting: {sorted(extra)[0]}")
@@ -676,6 +692,8 @@ def _connectors(path: Path, value: object) -> list[ConnectorSettings] | None:
                 required=required,
                 sandbox=bool(sandbox),
                 require_approval=_connector_require_approval(path, item),
+                loading=_loading(path, f'connector "{name}"', item.get("loading")),
+                output_retention=_text(item.get("output_retention")),
             )
         )
     return named
@@ -728,18 +746,55 @@ def _greeting(path: Path, value: object) -> GreetingSettings | None:
     return GreetingSettings(text=text, mode=_word(value.get("mode")))
 
 
-def _tools(path: Path, value: object) -> ToolSettings | None:
+def _tools(path: Path, value: object) -> list[ToolGroupSettings] | None:
     if value is None:
         return None
-    if not isinstance(value, dict):
-        raise ValueError(f"{path} should give tools as a mapping")
-    extra = set(value) - {"progressive"}
-    if extra:
-        raise ValueError(f"{path} unknown tools setting: {sorted(extra)[0]}")
-    progressive = value.get("progressive")
-    if progressive is not None and not isinstance(progressive, bool):
-        raise ValueError(f"{path} should give tools progressive as true or false")
-    return ToolSettings(progressive=progressive)
+    if isinstance(value, dict):
+        raise ValueError(
+            f"{path}: tools is a list of groups, each with a name and its tools, such as "
+            "- {name: booking, loading: full, tools: [lookup_booking]}; progressive: true "
+            "is now loading: summary, and output_retention moves onto each group and connector"
+        )
+    if not isinstance(value, list):
+        raise ValueError(f"{path} should give tools as a list of groups")
+    groups: list[ToolGroupSettings] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{path}: a tool group is a mapping with a name and its tools"
+            )
+        extra = set(item) - {"name", "loading", "tools", "output_retention"}
+        if extra:
+            raise ValueError(f"{path} unknown tool group setting: {sorted(extra)[0]}")
+        name = _text(item.get("name"))
+        if not name:
+            raise ValueError(f"{path}: a tool group needs a name")
+        tools = item.get("tools")
+        if not isinstance(tools, list) or not tools:
+            raise ValueError(f'{path}: tool group "{name}" names no tools')
+        if not all(isinstance(tool, str) for tool in tools):
+            raise ValueError(
+                f'{path}: tool group "{name}" should name its tools as text'
+            )
+        groups.append(
+            ToolGroupSettings(
+                name=name,
+                tools=list(tools),
+                loading=_loading(path, f'tool group "{name}"', item.get("loading")),
+                output_retention=_text(item.get("output_retention")),
+            )
+        )
+    return groups
+
+
+def _loading(path: Path, owner: str, value: object) -> str:
+    """A tool group's or connector's loading, empty when it gives none."""
+    loading = _text(value)
+    if loading and loading not in TOOL_LOADINGS:
+        raise ValueError(
+            f"{path}: {owner}: loading is {', '.join(TOOL_LOADINGS)}, not {loading!r}"
+        )
+    return loading
 
 
 def _channels(path: Path, value: object) -> ChannelsSettings | None:

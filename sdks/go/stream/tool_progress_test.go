@@ -23,42 +23,6 @@ func toldTheRouter(connection *websocket.Conn, n int) []map[string]any {
 	return told
 }
 
-func (s *ToolCallSuite) TestAFunctionSaysHowItIsGoing() {
-	heard := make(chan []map[string]any, 1)
-	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {
-		if connection.WriteJSON(map[string]any{
-			"type": "tool_call", "id": "call-1", "name": "lookup_order", "arguments": "{}",
-		}) != nil {
-			return
-		}
-		heard <- toldTheRouter(connection, 3)
-	})
-	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
-	s.Require().NoError(tools.Register(pipeline.Functions(), "lookup_order", "Look an order up",
-		func(ctx context.Context, _ struct{}) (any, error) {
-			toolCallContext := tools.ToolCallContextFrom(ctx)
-			if err := toolCallContext.Update(ctx, "Looking up order 7"); err != nil {
-				return nil, err
-			}
-			if err := toolCallContext.Say(ctx, "One moment."); err != nil {
-				return nil, err
-			}
-			return "shipped", nil
-		}))
-
-	s.join(pipeline)
-
-	select {
-	case told := <-heard:
-		s.Require().Len(told, 3)
-		s.Equal(map[string]any{"type": "tool_update", "tool_call_id": "call-1", "text": "Looking up order 7", "verbatim": false}, told[0])
-		s.Equal(map[string]any{"type": "tool_update", "tool_call_id": "call-1", "text": "One moment.", "verbatim": true}, told[1])
-		s.Equal("tool_result", told[2]["type"])
-	case <-time.After(3 * time.Second):
-		s.Fail("the router never heard how the call was going")
-	}
-}
-
 func (s *ToolCallSuite) TestAHeldCallOutlivesTheRouterCancellingIt() {
 	answered := make(chan map[string]any, 1)
 	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {

@@ -62,9 +62,8 @@ describe("Dispatch", () => {
     both.stop();
     await running;
 
-    const agent = api.agent("stream-support");
-    agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
-    const hosting = new Dispatch({ client: api }).host(agent);
+    api.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+    const hosting = new Dispatch({ client: api }).host(api);
     running = hosting.run();
     connection = await router.socket();
     assert.equal(
@@ -131,9 +130,8 @@ describe("Dispatch", () => {
     });
 
     it("tells the router again what it hosts, on the new connection", async () => {
-      const agent = api.agent("stream-support");
-      agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
-      const dispatch = new Dispatch({ client: api }).host(agent);
+      api.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+      const dispatch = new Dispatch({ client: api }).host(api);
 
       const running = dispatch.run();
       const first = await router.socket();
@@ -143,7 +141,7 @@ describe("Dispatch", () => {
 
       const offered = await second.next();
       assert.equal(offered["type"], "host_tools");
-      assert.equal(offered["agent_id"], "stream-support");
+      assert.equal(offered["every_agent"], true);
       dispatch.stop();
       await running;
     });
@@ -454,14 +452,13 @@ describe("Dispatch", () => {
   });
 
   it("declares the tools it hosts once the router is listening, and runs the calls sent down", async () => {
-    const agent = api.agent("stream-support");
-    agent.tools.register<{ sdk: string }>({
+    api.tools.register<{ sdk: string }>({
       name: "investigate_sdk",
       description: "Read SDK source",
       parameters: { type: "object", properties: { sdk: { type: "string" } } },
       run: ({ sdk }) => `read ${sdk}`,
     });
-    const dispatch = new Dispatch({ client: api }).host(agent, {
+    const dispatch = new Dispatch({ client: api }).host(api, {
       toolTimeoutMs: 60_000,
     });
 
@@ -471,7 +468,7 @@ describe("Dispatch", () => {
 
     assert.deepEqual(await connection.next(), {
       type: "host_tools",
-      agent_id: "stream-support",
+      every_agent: true,
       tools: [
         {
           name: "investigate_sdk",
@@ -482,7 +479,7 @@ describe("Dispatch", () => {
       timeout_ms: 60_000,
     });
 
-    connection.send({ type: "hosting", agent_id: "stream-support", tools: ["investigate_sdk"] });
+    connection.send({ type: "hosting", every_agent: true, tools: ["investigate_sdk"] });
     connection.send({
       type: "tool_call",
       id: "call_1",
@@ -502,9 +499,8 @@ describe("Dispatch", () => {
   });
 
   it("declares its tools again every time the router says it is listening", async () => {
-    const agent = api.agent("stream-support");
-    agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+    api.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -523,13 +519,12 @@ describe("Dispatch", () => {
 
   it("keeps reading while a hosted tool runs, and counts it as work in flight", async () => {
     const held: (() => void)[] = [];
-    const agent = api.agent("stream-support");
-    agent.tools.register({
+    api.tools.register({
       name: "slow",
       description: "Takes a while",
       run: () => new Promise<string>((resolve) => held.push(() => resolve("done"))),
     });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -552,15 +547,14 @@ describe("Dispatch", () => {
   });
 
   it("tells the router a hosted tool failed, since a model is waiting on it", async () => {
-    const agent = api.agent("stream-support");
-    agent.tools.register({
+    api.tools.register({
       name: "investigate_sdk",
       description: "Read SDK source",
       run: () => {
         throw new Error("the checkout is missing");
       },
     });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -585,8 +579,7 @@ describe("Dispatch", () => {
   });
 
   it("declares a hosted tool's policies", async () => {
-    const agent = api.agent("travel");
-    agent.tools.register({
+    api.tools.register({
       name: "book_flight",
       description: "Book a flight",
       parameters: { type: "object", properties: { flight_id: { type: "string" } } },
@@ -595,7 +588,7 @@ describe("Dispatch", () => {
       timeoutMs: 90_000,
       run: () => "booked",
     });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -611,15 +604,14 @@ describe("Dispatch", () => {
   });
 
   it("stops a hosted call the router cancels, and answers nothing for it", async () => {
-    const agent = api.agent("support");
     let release = (): void => undefined;
-    agent.tools.register({
+    api.tools.register({
       name: "investigate",
       description: "Investigate for a long time",
       run: () => new Promise((resolve) => (release = () => resolve("found it"))),
     });
-    agent.tools.register({ name: "ping", description: "Answer at once", run: () => "pong" });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+    api.tools.register({ name: "ping", description: "Answer at once", run: () => "pong" });
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -639,10 +631,9 @@ describe("Dispatch", () => {
     await running;
   });
 
-  it("hands a hosted function its call, and sends how it is going", async () => {
-    const agent = api.agent("support");
+  it("hands a hosted function its call", async () => {
     let seen: { id: string; sessionId: string; turnId: string; user: string } | undefined;
-    agent.tools.register({
+    api.tools.register({
       name: "investigate",
       description: "Investigate",
       run: (_input, toolCallContext) => {
@@ -652,11 +643,10 @@ describe("Dispatch", () => {
           turnId: toolCallContext.turnId,
           user: toolCallContext.user.id,
         };
-        toolCallContext.update("reading the logs");
         return "found it";
       },
     });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
@@ -669,38 +659,48 @@ describe("Dispatch", () => {
       user: { id: "sam" },
     });
 
-    assert.deepEqual(await connection.next(), {
-      type: "tool_update",
-      tool_call_id: "call_1",
-      text: "reading the logs",
-      verbatim: false,
-    });
     assert.equal((await connection.next())["output"], "found it");
     assert.deepEqual(seen, { id: "call_1", sessionId: "s1", turnId: "turn_3", user: "sam" });
     dispatch.stop();
     await running;
   });
 
-  it("stops waiting when the router refuses its tools, saying for which agent and why", async () => {
-    const agent = api.agent("stream-support");
-    agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
-    const dispatch = new Dispatch({ client: api }).host(agent);
+  it("stops waiting when the router refuses its tools, saying why", async () => {
+    api.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+    const dispatch = new Dispatch({ client: api }).host(api);
 
     const running = dispatch.run();
     const connection = await router.socket();
-    connection.send({
-      type: "hosting_refused",
-      agent_id: "stream-support",
-      reason: "hosting no tools is not hosting",
-    });
+    connection.send({ type: "hosting_refused", reason: "hosting no tools is not hosting" });
 
     await assert.rejects(running, (error: unknown) => {
       assert.ok(error instanceof HostingRefusedError);
-      assert.equal(error.agentId, "stream-support");
       assert.equal(error.reason, "hosting no tools is not hosting");
-      assert.match(error.message, /stream-support.*hosting no tools is not hosting/);
+      assert.match(error.message, /hosting no tools is not hosting/);
       return true;
     });
+  });
+
+  it("runs the client's tools for every agent with runDispatch, until its signal aborts", async () => {
+    api.tools.register({ name: "lookup", description: "Look up", run: () => "found" });
+    const stop = new AbortController();
+
+    const running = api.runDispatch(stop.signal);
+    const connection = await router.socket();
+    assert.equal(connection.query.get("handles"), "");
+    connection.send({ type: "ready", worker_id: "worker_1" });
+    const offered = await connection.next();
+    assert.equal(offered["type"], "host_tools");
+    assert.equal(offered["every_agent"], true);
+    assert.deepEqual(
+      (offered["tools"] as Record<string, unknown>[]).map((tool) => tool["name"]),
+      ["lookup"],
+    );
+
+    connection.send({ type: "tool_call", id: "call_1", session_id: "s1", name: "lookup", arguments: "{}" });
+    assert.equal((await connection.next())["output"], "found");
+    stop.abort();
+    await running;
   });
 
   it("answers the second message on a channel from the session that answered the first", async () => {

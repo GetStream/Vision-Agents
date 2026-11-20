@@ -133,6 +133,16 @@ type ToolApproval struct {
 	DeclineTitle   string
 }
 
+// ToolTitle is what a call of the tool called name is shown doing: title, the one its tool
+// declared, or for the runtime's own search, which has no caller to title it, "Searching the
+// web". Other untitled calls are left to the clients, which name them from the tool.
+func ToolTitle(name, title string) string {
+	if title == "" && (name == "search" || name == "web_search") {
+		return "Searching the web"
+	}
+	return title
+}
+
 // DescribeTools records the caller's tools for this session.
 func (c *Conversation) DescribeTools(tools map[string]ToolDisplay) {
 	c.mu.Lock()
@@ -191,12 +201,7 @@ func (c *Conversation) called(m *Message, e toolCall) {
 	}
 	started := e.startedAt.UTC()
 	part := Part{Type: partToolCall, V: partVersion, ID: e.id, Status: "running", Name: e.name,
-		DisplayTitle: display.Title, Executor: "server", StartedAt: &started}
-	// The runtime's own search has no caller to title it. Other untitled calls are left to
-	// the clients, which name them from the tool.
-	if part.DisplayTitle == "" && (e.name == "search" || e.name == "web_search") {
-		part.DisplayTitle = "Searching the web"
-	}
+		DisplayTitle: ToolTitle(e.name, display.Title), Executor: "server", StartedAt: &started}
 	if display.Client {
 		part.Executor = "client"
 		record := c.data.Commands[m.CommandID]

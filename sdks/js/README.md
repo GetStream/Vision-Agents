@@ -353,7 +353,6 @@ agent.tools.register<{ flight_id: string }>({
   approval: { title: "Book flight {flight_id}?" },
   timeoutMs: 20_000,
   run: async ({ flight_id }, toolCallContext) => {
-    toolCallContext.update("checking seats");
     await toolCallContext.disallowInterruptions();
     return bookings.book(flight_id, { user: toolCallContext.user.id, key: toolCallContext.id });
   },
@@ -366,7 +365,7 @@ agent.tools.register<{ flight_id: string }>({
   longer fails.
 - `concurrency` caps how many calls to the tool run at once. A call over the cap waits its
   turn, and its timeout keeps counting while it waits. Every tool's calls together are capped
-  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares an agent's
+  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares the client's
   `tools` across every session it hosts, so the cap is the worker's.
 - `approval` is asked before each call runs. In writing the call waits in `session.approvals`
   until `session.decide(id, { allowed })` answers it; a page follows the list in
@@ -409,6 +408,29 @@ it again. Only the kind of caller that opened the session may change its tools (
 and an add or a removal whose answer was lost, or was a failure other than a 4xx refusal, keeps
 the function running until the name is added or removed again. `session.fork()` runs the
 functions the session runs when it forks, which are the tools the router copies to the fork.
+
+In React, `useTool` from `@stream-io/stream-agents/react` offers a component's own function
+while it is mounted, and withdraws it when it unmounts or the session or name changes:
+
+```tsx
+import { useTool } from "@stream-io/stream-agents/react";
+
+function CheckoutPage({ session }: { session: Session | undefined }) {
+  const [cart] = useCart();
+  const failure = useTool(session, {
+    name: "read_cart",
+    description: "What is in the person's cart right now",
+    parameters: z.object({}),
+    run: async () => JSON.stringify(cart),
+  });
+  // ...
+}
+```
+
+What the model is told of the tool is sent once per session and name; each call runs the latest
+`run`, so a re-render with new state sends nothing. A removal waits for the add before it, and
+an add that was refused, such as the 409 for a name the session already has, is not followed by
+one. The hook answers the last add or removal that failed, or undefined.
 
 ## Agent dispatch
 
@@ -463,23 +485,24 @@ written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the
 it, with this worker's credential acting for the user who wrote it. The photos sent with a
 message come in `images`, by URL, and `dispatch.answer` shows them to the model.
 
-A worker can also host tools for every session opened under an agent id, including one a
-browser opened, where the session's own process cannot reach what the tool needs:
+A worker can also host the app's tools, registered once on the client for every agent, so they
+run for any session, including one a browser opened, where the session's own process cannot
+reach what the tool needs:
 
 ```ts
-const agent = client.agent("my-agent");
-agent.tools.register({ name: "lookup", description: "Look up an order", run: lookup });
-dispatch.host(agent, { toolTimeoutMs: 60_000 });
+const client = new Client();
+client.tools.register({ name: "lookup", description: "Look up an order", timeoutMs: 60_000, run: lookup });
+await client.runDispatch();
 ```
 
-The router offers them to each session naming the agent and sends every call here. A hosted
-tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a voice
-call), is handed its `toolCallContext`, and fails when the router gives up on it. `run`
-works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
-refuses them.
+The router offers a tool to a session only where a tool group of its agent's agent.yaml names
+it, and sends every call here. A hosted tool takes the same `interruptible`, `timeoutMs` and
+`approval` (asked only on a voice call), is handed its `toolCallContext`, and fails when the
+router gives up on it. `runDispatch` rejects with `HostingRefusedError` if the router refuses
+them. A worker that also answers calls or messages hosts them with `dispatch.host(client)`
+before `run`.
 
-Tool names must be unique across the agents hosted by one worker. Use separate workers when
-agents need different implementations of a tool with the same name. `stop` also cancels a
+Tool names must be unique across the clients hosted by one worker. `stop` also cancels a
 socket upgrade still in progress; work already running is drained.
 
 Server side only. A worker is offered other people's callers, so anything that can open
@@ -605,7 +628,9 @@ the socket beside `events()`, so it takes nothing from a loop reading them, and 
 `get` and `subscribe`. It is not the session's lifecycle, which is `session.created.state`.
 
 `session.conversation` is the rest of what a page shows, fed the same way: `turns`, what this
-device typed, what was transcribed on the call and the agent's replies as they were written;
+device typed, what was transcribed on the call and the agent's replies as they were written,
+each agent turn with its `steps` (every round of the model's thinking on a written reply, and
+every tool it called, by name and how it went) and `done` once nothing more of it is to come;
 `failure`, what the agent last reported going wrong, such as speech recognition on a call,
 with `failureContext` naming the part (`stt`, `llm`, `sts`, `tts`) and `failureAt` when, until
 the agent next hears, answers or speaks;
@@ -661,6 +686,14 @@ question on its way. A reply the model couldn't write shows as the AI indicator'
 with no text of the router's, so the components show their own. `chat.state` has the shape of
 `StateStore` from `@stream-io/state-store`, so `useStateStore(chat.state, selector)` reads it.
 It reads the channel with stream-chat 9 or 10, whichever `session.chat()` opens it on.
+
+An incognito session (`sessions.create({ incognito: true, tools })`) keeps no channel, and
+`AgentChat` shows it all the same: its messages are made from `session.conversation`, in the
+shape of the channel's, so the same `adapt` and `fromStreamMessage` read them. The agent's turns
+between two of the person's messages are one reply, with each round of thinking and each tool
+call as its steps, its whole thinking through `reasoningText`, and a call waiting in `approvals`
+asking the session's user, whom the approver answers for. Nothing is kept, so it can't be carried
+on, loaded again or branched: offer neither regenerate nor edit.
 
 **Regenerate, edit and ‹ i/n ›.** The transport has `switchBranch`, so the controller offers
 regenerate on every reply and edit on every message of the person's, and shows ‹ i/n › from each
@@ -974,6 +1007,6 @@ git tag sdk-js-v0.2.0 && git push origin sdk-js-v0.2.0
 ```
 
 then on npmjs.com, under the package's settings, add GitHub Actions as a trusted publisher:
-`GetStream/Vision-Agents`, workflow `release-sdk-js.yml`. From then on the version in
+`GetStream/Agents`, workflow `release-sdk-js.yml`. From then on the version in
 `package.json` is not maintained: semantic-release writes the next one into the package it
 publishes and nothing is committed back.

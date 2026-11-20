@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.tool_loading import ToolLoading
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -64,6 +65,15 @@ class AgentConnectorBinding:
                 lists that matches is pinned on that connection the first time, at the digest listed then, and a later session
                 offers it only while that digest still matches. An empty list is refused. At most 128, the same cap as tools,
                 which is also the most one session offers when more match.
+            loading (ToolLoading | Unset): How a tool is offered to the model. full sends its whole description and input
+                schema from the start. summary sends the first line of its description and its arguments without their
+                descriptions, and the first call returns the full description and schema instead of running it: one more model
+                turn for each tool a conversation uses, for less context on every turn. deferred offers nothing until the model
+                needs it: an agent with a deferred tool is offered search_tool, which finds deferred tools by what they do, and
+                load_tool, which returns their full descriptions and offers them from the model's next step on.
+            output_retention (str | Unset): How long the agent's sessions keep what the binding's tools were given and gave
+                back on the turns they record, as a tool group's output_retention. Omitted or empty, it is kept as long as the
+                session. Example: 30d.
     """
 
     connection: AgentConnectorSelection
@@ -77,6 +87,8 @@ class AgentConnectorBinding:
     sandbox: bool | Unset = UNSET
     timeout_ms: int | Unset = UNSET
     tool_patterns: list[str] | Unset = UNSET
+    loading: ToolLoading | Unset = UNSET
+    output_retention: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -116,6 +128,12 @@ class AgentConnectorBinding:
         if not isinstance(self.tool_patterns, Unset):
             tool_patterns = self.tool_patterns
 
+        loading: str | Unset = UNSET
+        if not isinstance(self.loading, Unset):
+            loading = self.loading.value
+
+        output_retention = self.output_retention
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -140,6 +158,10 @@ class AgentConnectorBinding:
             field_dict["timeout_ms"] = timeout_ms
         if tool_patterns is not UNSET:
             field_dict["tool_patterns"] = tool_patterns
+        if loading is not UNSET:
+            field_dict["loading"] = loading
+        if output_retention is not UNSET:
+            field_dict["output_retention"] = output_retention
 
         return field_dict
 
@@ -190,6 +212,15 @@ class AgentConnectorBinding:
 
         tool_patterns = cast(list[str], d.pop("tool_patterns", UNSET))
 
+        _loading = d.pop("loading", UNSET)
+        loading: ToolLoading | Unset
+        if isinstance(_loading, Unset):
+            loading = UNSET
+        else:
+            loading = ToolLoading._decode(_loading)
+
+        output_retention = d.pop("output_retention", UNSET)
+
         agent_connector_binding = cls(
             connection=connection,
             connector_id=connector_id,
@@ -202,6 +233,8 @@ class AgentConnectorBinding:
             sandbox=sandbox,
             timeout_ms=timeout_ms,
             tool_patterns=tool_patterns,
+            loading=loading,
+            output_retention=output_retention,
         )
 
         agent_connector_binding.additional_properties = d

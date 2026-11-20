@@ -355,6 +355,7 @@ func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 	s.ElementsMatch([]string{
 		"deepgram/flux-general-en",
 		"deepgram/flux-general-multi",
+		"assemblyai/assemblyai-stt-3-7-realtime-agent",
 		"cartesia/ink-2",
 		"inworld/inworld-stt-1",
 		"together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b",
@@ -362,7 +363,7 @@ func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
 		"a group is the list it names and nothing else, so a model joining the router does not join it")
 }
 
-func (s *RoutingSuite) TestTheConversationalGroupLeadsWithGemmaAndKeepsLunaToFailOverTo() {
+func (s *RoutingSuite) TestTheConversationalGroupLeadsWithGemmaAndKeepsEmberAndLunaToFailOverTo() {
 	candidates, err := s.shipped(LLM).resolveChain(s.ctx, Request{
 		Providers: []string{"llm-conversational"},
 	})
@@ -372,9 +373,10 @@ func (s *RoutingSuite) TestTheConversationalGroupLeadsWithGemmaAndKeepsLunaToFai
 		"the cheapest model that holds a short turn heads the group while it is up")
 	s.ElementsMatch([]string{
 		"gemma/gemma-4-26B-A4B-it",
+		"meta/muse-ember-1.0",
 		"openai/gpt-5.6-luna",
 	}, names(candidates),
-		"Luna stays in the group, so a turn still has a model when Gemma is down")
+		"Ember and Luna stay in the group, so a turn still has a model when Gemma is down")
 }
 
 func (s *RoutingSuite) TestTheFlowGroupLeadsWithGemmaAndLunaCatchesItBeingDown() {
@@ -389,17 +391,18 @@ func (s *RoutingSuite) TestTheFlowGroupLeadsWithGemmaAndLunaCatchesItBeingDown()
 		"the rest of the fast tier, Luna with it, still catches Gemma being down")
 }
 
-func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoice() {
+func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithScribeV3Live() {
 	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 	})
 	s.Require().NoError(err)
 
-	s.Equal("muse/muse-voice-transcribe-1.0", names(candidates)[0],
-		"a config that goes on to ask for diarize should narrow to the model this group already starts with")
+	s.Equal("elevenlabs/scribe_v3_live", names(candidates)[0],
+		"the quick model that hears best heads the group while it is up")
 	s.ElementsMatch([]string{
+		"elevenlabs/scribe_v3_live",
+		"microsoft/MAI-Transcribe-2-Streaming",
 		"muse/muse-voice-transcribe-1.0",
-		"elevenlabs/scribe_v2_realtime",
 		"cartesia/ink-2",
 		"together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b",
 	}, names(candidates))
@@ -419,7 +422,7 @@ func (s *RoutingSuite) TestABaseGroupIsALiveGroupOnly() {
 func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
 	// The whole of what these groups do not carry: naming one asks for its models, not for
 	// its options. Of the accurate group only Muse declares diarize, so a config that names
-	// the group and then asks to be told who spoke gets that one rather than all four.
+	// the group and then asks to be told who spoke gets that one rather than all five.
 	candidates, err := s.shipped(STT).resolveChain(s.ctx, Request{
 		Providers: []string{"stt-accurate"},
 	})

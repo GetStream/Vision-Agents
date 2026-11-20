@@ -21,6 +21,7 @@
       "@stream-io/stream-agents": ["./src/index.ts"],
       "@stream-io/stream-agents/chat": ["./src/chat.ts"],
       "@stream-io/stream-agents/node": ["./src/node.ts"],
+      "@stream-io/stream-agents/react": ["./src/react.ts"],
       "@stream-io/stream-agents/video": ["./src/video.ts"]
     }
   },

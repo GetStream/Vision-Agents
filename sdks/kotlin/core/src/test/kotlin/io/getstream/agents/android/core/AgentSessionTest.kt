@@ -26,6 +26,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -33,6 +34,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 private const val SESSION = """{"id":"s1","call_id":"","call_type":"default","user_id":"u1","agent_id":"a1","state":"live","modality":"text","created_at":"2026-09-24T04:03:19Z","text":true}"""
+@Serializable
+private data class WeatherLookup(val location: String)
+
 private const val ASKED = """{"id":"r1","session_id":"s1","status":"running","created_at":"2026-09-24T04:03:19Z"}"""
 
 /** Socket tests run in real time, because what they wait for is a real connection. */
@@ -176,6 +180,57 @@ class AgentSessionTest {
     }
 
     @Test
+    fun `opening a session watches it and answers its tools`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "Order A-1042: two wool throws." }
+
+        val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup)))
+
+        assertTrue(chat.isConnected.value)
+        assertEquals("/v1/agents/sessions/s1/events", router.handshakes.single().path)
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"r1","turn_id":"t1"}"""))
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("c1"), answer["tool_call_id"])
+        assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `an agent's chat with tools still answers them`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "Order A-1042: two wool throws." }
+
+        val chat = agents.agent("docs").chat(lookup)
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"","request_id":"r1","turn_id":"t1"}"""))
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertEquals(JsonPrimitive("Order A-1042: two wool throws."), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `a session opened unwatched has no socket, and its turns go through responses`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "" }
+
+        val chat = agents.agent("docs").sessions.create(SessionOptions(tools = listOf(lookup), watch = false))
+
+        val created = router.requests.single { it.path == "/v1/agents/sessions" }
+        assertFalse("tools" in Json.parseToJsonElement(created.body).jsonObject.keys)
+        assertTrue(router.handshakes.isEmpty())
+        assertFalse(chat.isConnected.value)
+        val refused = assertFailsWith<AgentsException.Configuration> { chat.say("hello") }
+        assertTrue("watch = false" in refused.message.orEmpty(), refused.message)
+        assertTrue("responses.create" in refused.message.orEmpty(), refused.message)
+        assertFailsWith<AgentsException.Configuration> { chat.addTools(listOf(lookup)) }
+
+        val asked = chat.responses.create("What are your hours?")
+        assertEquals("r1", asked.id)
+        assertEquals("POST /v1/agents/sessions/s1/responses", router.requests.last().let { "${it.method} ${it.path}" })
+
+        chat.close()
+        assertEquals("POST /v1/agents/sessions/s1/stop", router.requests.last().let { "${it.method} ${it.path}" })
+        assertTrue(router.handshakes.isEmpty())
+    }
+
+    @Test
     fun `a tool that throws tells the model it did not work, since it is mid-sentence waiting`() = runBlocking {
         val broken = AgentTool("lookup_order", "Look up an order.") { error("the orders database is down") }
         val chat = agents.chat(SessionOptions(tools = listOf(broken)))
@@ -185,6 +240,26 @@ class AgentSessionTest {
         val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
         assertEquals(JsonPrimitive("the orders database is down"), answer["error"])
         assertEquals(JsonPrimitive(""), answer["output"])
+        chat.close()
+    }
+
+    @Test
+    fun `a typed tool called without a required argument tells the model which one`() = runBlocking {
+        val ran = AtomicBoolean(false)
+        val weather = AgentTool.typed<WeatherLookup>("weather_lookup", "Look up the weather.") {
+            ran.set(true)
+            "sunny in ${it.location}"
+        }
+        val chat = agents.chat(SessionOptions(tools = listOf(weather)))
+
+        router.script.send(
+            Script.Send("""{"type":"tool_call","id":"c1","name":"weather_lookup","arguments":"{\"city\":\"Boulder\"}","request_id":"","turn_id":""}"""),
+        )
+
+        val answer = Json.parseToJsonElement(router.nextSent()).jsonObject
+        assertTrue("'location'" in answer["error"]!!.jsonPrimitive.content, answer.toString())
+        assertEquals(JsonPrimitive(""), answer["output"])
+        assertFalse(ran.get())
         chat.close()
     }
 
@@ -219,6 +294,55 @@ class AgentSessionTest {
         chat.say("still there?")
 
         assertEquals("""{"type":"say","text":"still there?"}""", router.nextSent())
+        chat.close()
+    }
+
+    @Test
+    fun `a call meant for another watcher is not run, and one already approved is not asked again`() = runBlocking {
+        val lookup = AgentTool("lookup_order", "Look up an order.") { "found" }
+        val refund = AgentTool("issue_refund", "Refund an order.", approval = AgentTool.Approval("Refund it?")) { "refunded" }
+        val chat = agents.chat(SessionOptions(tools = listOf(lookup, refund)))
+
+        router.script.send(Script.Send("""{"type":"tool_call","id":"elsewhere","name":"lookup_order","arguments":"{}","run":false}"""))
+        router.script.send(Script.Send("""{"type":"tool_call","id":"approved","name":"issue_refund","arguments":"{}","approved":true}"""))
+        router.script.send(Script.Send("""{"type":"tool_call","id":"here","name":"lookup_order","arguments":"{}"}"""))
+
+        val answered = setOf(router.nextSent(), router.nextSent())
+            .map { Json.parseToJsonElement(it).jsonObject["tool_call_id"]?.jsonPrimitive?.content }
+            .toSet()
+        assertEquals(setOf("approved", "here"), answered)
+        assertTrue(chat.approvals.value.isEmpty())
+        chat.close()
+    }
+
+    @Test
+    fun `the session keeps each call's last state, and a handler hears its kind until cancelled`() = runBlocking {
+        val chat = agents.chat()
+        val progress = CopyOnWriteArrayList<String>()
+        val finished = CopyOnWriteArrayList<String>()
+        lateinit var first: kotlinx.coroutines.Job
+        first = chat.on(AgentEvent.Kind.ToolCallProgress) {
+            progress += it.string("progress")
+            first.cancel()
+        }
+        chat.on(AgentEvent.Kind.ToolCallFinished) { finished += it.string("tool_call_id") }
+        val call = """"tool_call_id":"c1","tool":"search_flights","turn_id":"t1","started_at":"2026-11-18T12:00:00Z""""
+
+        router.script.send(Script.Send("""{"type":"tool_call.started",$call,"status":"waiting","duration_ms":0}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":100,"progress":"Searching for flights","approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.progress",$call,"status":"in_progress","duration_ms":200,"progress":"Comparing prices","approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        router.script.send(Script.Send("""{"type":"tool_call.finished",$call,"status":"success","duration_ms":300,"approved_at":"2026-11-18T12:00:00.1Z"}"""))
+        until { chat.toolCalls.value["c1"]?.status?.isFinished == true }
+
+        val last = chat.toolCalls.value.getValue("c1")
+        assertEquals(AgentEvent.ToolCallState.Status.Success, last.status)
+        assertEquals(300, last.durationMs)
+        assertEquals("", last.progress, "the finished frame carries the whole state")
+        assertEquals(Instant.parse("2026-11-18T12:00:00.1Z"), last.approvedAt)
+        assertEquals(last, chat.toolCall("c1").first())
+        until { finished.isNotEmpty() }
+        assertEquals(listOf("Searching for flights"), progress.toList())
+        assertEquals(listOf("c1"), finished.toList())
         chat.close()
     }
 
@@ -881,6 +1005,20 @@ class AgentSessionTest {
         assertEquals("not your session", refused.reason)
         assertEquals("https://getstream.io/agents/docs/api/errors/#forbidden", refused.docUrl)
         assertEquals("req-3", refused.requestId)
+    }
+
+    @Test
+    fun `a session whose socket is refused is stopped, and the refusal is what the caller hears`() = runBlocking {
+        router.refuseHandshake = Reply(403, envelope("permission", "forbidden", "not your session"))
+
+        val refused = assertFailsWith<AgentsException.Http> { agents.agent("docs").sessions.create() }
+
+        assertEquals(403, refused.status)
+        assertEquals("forbidden", refused.code)
+        assertEquals(
+            listOf("POST /v1/agents/sessions", "POST /v1/agents/sessions/s1/stop"),
+            router.requests.map { "${it.method} ${it.path}" },
+        )
     }
 
     @Test
