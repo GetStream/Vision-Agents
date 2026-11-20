@@ -489,3 +489,22 @@ func (s *TurnRecorderSuite) TestACallerTurnAnsweredByALaterLineIsTimedFromTheLas
 	s.InDelta(1000, finished.RoundtripMs, 1e-9)
 	s.InDelta(1050, finished.SpeechEndToAudioMs, 1e-9)
 }
+
+// A turn's guardrail check is stored with its timings: the row is what a call's timeline
+// reads back.
+func (s *TurnRecorderSuite) TestATurnsGuardrailCheckIsKeptOnItsRow() {
+	probability := 0.07
+	check := &live.GuardrailCheck{Kind: "decision_model", Model: "typesafe/jev-latest", Probability: &probability, Allowed: true, LatencyMs: 140, Mode: "parallel"}
+	rows := make(chan live.Turn, 2)
+	r, _ := s.slowRecorder(time.Minute, func(_ context.Context, row live.Turn) error {
+		rows <- row
+		return nil
+	})
+
+	r.Record(Turn{TurnID: "turn-1", StartedAt: time.Now().UTC(), Guardrail: check})
+	r.Record(Turn{TurnID: "turn-2", StartedAt: time.Now().UTC()})
+	r.Close()
+
+	s.Equal(check, (<-rows).Guardrail)
+	s.Nil((<-rows).Guardrail)
+}

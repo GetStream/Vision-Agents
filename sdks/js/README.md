@@ -104,7 +104,9 @@ path parameter with a `ConfigurationError`, so neither looks like something wort
 A request that is safe to send twice (GET, PUT, DELETE, and `responses.create`, which the router
 answers once per request id) is sent again after a network failure or a 429, 502, 503 or 504,
 up to `maxRetries` times (2 unless the client says), waiting longer each time and as long as
-`Retry-After` asks. To ask again yourself after a failure that may have reached the router,
+`Retry-After` asks. A router that has not started answering within `timeoutMs` (60 seconds unless
+the client says, 0 for no limit) is given up on the same way, as a request that never got an
+answer; once the answer has begun it is not timed, so an event stream runs on. To ask again yourself after a failure that may have reached the router,
 pass the same `requestId` to `responses.create`. When the router took the question and only its
 answer was lost, it answers the retry with no id, and `responses.create` looks up the turn by
 what was asked, so the response it returns still names that turn.
@@ -345,7 +347,18 @@ that call, over the agent's. Neither set sends none.
 
 The model asks for a tool over the session socket, this process runs it, and the answer
 goes back the same way. A tool that throws is reported to the model, because the model is
-mid-sentence waiting for it and can only say something useful if it is told.
+mid-sentence waiting for it and can only say something useful if it is told. What it is told is
+the error's message, cut to 1,024 characters, so a tool may throw words meant for it. The model
+may repeat them to the person and the conversation keeps them, and an error from a library a tool
+calls can name an internal host, a table or a value from a record. To pass on only the words you
+wrote, throw those as an error of your own and say something plain for anything else:
+
+```ts
+class ToolError extends Error {} // thrown with words meant for the model
+
+client.tools.setOnError((error, call) => (error instanceof ToolError ? error.message : `${call.name} failed`));
+// or, for a Tools of your own: new Tools({ onError: ... })
+```
 
 `parameters` can also be a Zod 4 schema, or any schema that implements
 [Standard JSON Schema](https://standardschema.dev), such as ArkType's or Valibot's:
@@ -564,6 +577,11 @@ agents/jean/
   simulations/lunch.yaml
   .agent_sync           written by sync: the fingerprint last synced and when
 ```
+
+Hidden files and folders (`.env`, `.git`, `.github`), `node_modules` and `__pycache__` in
+`skills/` and `knowledge/` are left behind, since knowledge is what the agent quotes. A symbolic
+link there is followed only to a file inside the agent directory; one that leads out of it is
+refused, so a link left pointing at a credentials file is never synced.
 
 ```ts
 import { Agent } from "@stream-io/stream-agents";
@@ -952,8 +970,10 @@ for await (const message of socket.messages()) {
 }
 ```
 
-Credentials go in the query string, because a browser WebSocket carries no headers of its
-own. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
+A page's credentials go in the query string, because a browser WebSocket carries no headers of
+its own. A backend holding the secret sends its credential as headers instead, so its token, which
+speaks for the whole app, is never written into an access log with the URL; `Socket.open` adds
+them. A socket never says it is a backend: `Stream-Auth-Type: server` has no query
 counterpart on purpose, and the proxy is only ever told `stream-auth-type=jwt`, which is how
 it reads a user's token.
 

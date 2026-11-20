@@ -378,8 +378,14 @@ export class Client {
         request.headers = { ...request.headers, "Content-Type": "application/json" };
         request.body = JSON.stringify(body);
       }
-      if (signal) {
-        request.signal = signal;
+      // Timed only until the answer begins: the timer is cleared once fetch resolves, so the
+      // body that follows, an event stream above all, is read for as long as it takes.
+      const { timeoutMs } = this.backend;
+      const late = timeoutMs > 0 ? new AbortController() : undefined;
+      const timer = late ? setTimeout(() => late.abort(), timeoutMs) : undefined;
+      const stops = [signal, late?.signal].filter((each): each is AbortSignal => each !== undefined);
+      if (stops.length > 0) {
+        request.signal = stops.length === 1 ? stops[0]! : AbortSignal.any(stops);
       }
       try {
         return await this.backend.request(url.toString(), request);
@@ -390,8 +396,14 @@ export class Client {
           throw signal.reason ?? cause;
         }
         // A request that never arrived is reported as such rather than as a status, because
-        // a caller retrying on a network failure and one retrying on a 500 are different.
-        throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`, { cause });
+        // a caller retrying on a network failure and one retrying on a 500 are different. One
+        // the router did not start answering in time is the same: it may never have arrived.
+        const why = late?.signal.aborted
+          ? `the router did not start answering within ${timeoutMs} ms`
+          : `could not reach the router: ${String(cause)}`;
+        throw new RouterError(0, operation, why, { cause });
+      } finally {
+        clearTimeout(timer);
       }
     };
 

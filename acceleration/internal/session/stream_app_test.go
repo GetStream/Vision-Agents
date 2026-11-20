@@ -95,7 +95,7 @@ func (s *SessionSuite) screen(customer string, stream streamapp.Identity, url st
 	}, stream)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = screening.Close() })
-	_, err = screening.Check(s.ctx, "turn-1", "hello")
+	_, err = screening.Check(s.ctx, "turn-1", "hello", "")
 	return err
 }
 

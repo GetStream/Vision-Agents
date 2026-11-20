@@ -53,6 +53,8 @@ final readonly class TimelineEntry
         // The chorus-asr model's floor-control checks about this turn, the latest 40 by when they were asked, oldest...
         /** @var list<FloorCheck>|null */
         public ?array $floorChecks = null,
+        // The guardrail's check of this turn, allowed or refused. Absent when no check ran: an agent with no guardrai...
+        public ?GuardrailCheck $guardrail = null,
     ) {
     }
 
@@ -83,6 +85,7 @@ final readonly class TimelineEntry
             ttsToAudioMs: array_key_exists('tts_to_audio_ms', $data) && $data['tts_to_audio_ms'] !== null ? Json::float($data, 'tts_to_audio_ms') : null,
             ttsTtfbMs: array_key_exists('tts_ttfb_ms', $data) && $data['tts_ttfb_ms'] !== null ? Json::float($data, 'tts_ttfb_ms') : null,
             floorChecks: array_key_exists('floor_checks', $data) && $data['floor_checks'] !== null ? array_map(FloorCheck::fromArray(...), Json::objects($data, 'floor_checks')) : null,
+            guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? GuardrailCheck::fromArray(Json::object($data, 'guardrail')) : null,
         );
     }
 
@@ -152,6 +155,9 @@ final readonly class TimelineEntry
         }
         if ($this->floorChecks !== null) {
             $out['floor_checks'] = array_map(static fn (FloorCheck $each): array => $each->toArray(), $this->floorChecks);
+        }
+        if ($this->guardrail !== null) {
+            $out['guardrail'] = $this->guardrail->toArray();
         }
         return $out;
     }

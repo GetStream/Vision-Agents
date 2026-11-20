@@ -29,15 +29,18 @@ type stubGuardrail struct {
 
 	mu    sync.Mutex
 	asked []string
+	// before is the conversation each check was given, in the order they were asked.
+	before []string
 }
 
 func (g *stubGuardrail) Policy() guardrail.Policy { return g.policy }
 
 func (g *stubGuardrail) Close() error { return nil }
 
-func (g *stubGuardrail) Check(ctx context.Context, _, text string) (guardrail.Verdict, error) {
+func (g *stubGuardrail) Check(ctx context.Context, _, text, conversation string) (guardrail.Verdict, error) {
 	g.mu.Lock()
 	g.asked = append(g.asked, text)
+	g.before = append(g.before, conversation)
 	held := g.held
 	g.mu.Unlock()
 
@@ -57,10 +60,18 @@ func (g *stubGuardrail) Check(ctx context.Context, _, text string) (guardrail.Ve
 			return guardrail.Verdict{
 				Reason:      "outside what the policy permits",
 				Probability: 0.93,
+				Model:       "stub/judge",
 			}, nil
 		}
 	}
-	return guardrail.Verdict{Allowed: true}, nil
+	return guardrail.Verdict{Allowed: true, Probability: 0.07, Model: "stub/judge"}, nil
+}
+
+// conversations is the conversation each check was given.
+func (g *stubGuardrail) conversations() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.before...)
 }
 
 func (g *stubGuardrail) screened() []string {
@@ -342,4 +353,130 @@ func (s *AgentSuite) TestAWrittenAsideIsScreenedToo() {
 	s.Equal(theRefusal, answer)
 	s.eventually(func() bool { return countOf[Blocked](s.reported()) == 1 },
 		"the aside was never reported as refused")
+}
+
+func (s *AgentSuite) TestATurnThePolicyPermitsReportsItsCheck() {
+	// An allowed turn's check is what a threshold is tuned by: without it only refusals
+	// say what the model made of a turn.
+	release := make(chan struct{})
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.guards.held = release
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return len(s.guards.screened()) == 1 }, "the check never started")
+	close(release)
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	check := turn.Guardrail
+	s.Require().NotNil(check, "the turn does not say it was screened")
+	s.Equal("decision_model", check.Kind)
+	s.Equal("parallel", check.Mode)
+	s.Equal("stub/judge", check.Model)
+	s.True(check.Allowed)
+	s.False(check.Failed)
+	s.Require().NotNil(check.Probability)
+	s.InDelta(0.07, *check.Probability, 0.001)
+	s.Require().NotNil(check.Threshold)
+	s.InDelta(guardrail.DefaultThreshold, *check.Threshold, 0.001)
+	s.Positive(check.LatencyMs)
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal(responded.TurnID, turn.TurnID)
+}
+
+func (s *AgentSuite) TestATurnThePolicyRefusesReportsItsCheck() {
+	s.screens(guardrail.ModeBlocking, "pizza")
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the turn does not say it was screened")
+	s.False(turn.Guardrail.Allowed)
+	s.Equal("blocking", turn.Guardrail.Mode)
+	s.Require().NotNil(turn.Guardrail.Probability)
+	s.InDelta(0.93, *turn.Guardrail.Probability, 0.001)
+	s.Zero(turn.Guardrail.HeldMs, "no reply waits on a check that runs before the model is asked")
+}
+
+func (s *AgentSuite) TestACheckThatCouldNotBeMadeIsReportedAsFailedAndNotAsHarmless() {
+	// A failed check lets the turn through. Reported as allowed at a probability of zero,
+	// an outage would read as a model sure of every turn.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.guards.err = errors.New("rate limited")
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the turn does not say its check failed")
+	s.True(turn.Guardrail.Failed)
+	s.True(turn.Guardrail.Allowed)
+	s.Nil(turn.Guardrail.Probability)
+	s.Empty(turn.Guardrail.Model)
+	s.Require().NotNil(turn.Guardrail.Threshold)
+}
+
+func (s *AgentSuite) TestATurnTheModelFailedStillReportsItsCheck() {
+	// The check answered beside a model that never did: the turn ends failed, and what the
+	// guardrail made of it is still on it.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+	s.model.mu.Lock()
+	s.model.refuses = errors.New("invalid api key")
+	s.model.mu.Unlock()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the failed turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Require().NotNil(turn.Guardrail, "the failed turn lost its check")
+	s.True(turn.Guardrail.Allowed)
+	s.Require().NotNil(turn.Guardrail.Probability)
+	s.InDelta(0.07, *turn.Guardrail.Probability, 0.001)
+	s.Zero(turn.Guardrail.HeldMs, "no reply was held: the model wrote none")
+}
+
+func (s *AgentSuite) TestATurnNothingScreenedReportsNoCheck() {
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I make a pizza"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+
+	turn, _ := firstOf[Turn](s.reported())
+	s.Nil(turn.Guardrail)
+}
+
+func (s *AgentSuite) TestAFollowUpIsScreenedWithWhatCameBeforeIt() {
+	// "and for my kid?" cannot be judged alone: the check is given the exchange before the
+	// turn, and not the turn again as part of it.
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+	s.model.reply = []string{"Use the MessageList component."}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I render a message list"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the first turn was never reported")
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "and in React Native?"))
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "the follow-up was never reported")
+
+	s.Equal([]string{
+		"",
+		"user: how do I render a message list\nassistant: Use the MessageList component.",
+	}, s.guards.conversations())
+}
+
+func (s *AgentSuite) TestAWrittenAsideIsScreenedWithWhatCameBeforeIt() {
+	s.screens(guardrail.ModeParallel, "pizza")
+	s.joinText()
+
+	refusal, err := s.agent.Ask(s.ctx, "how do I make a pizza")
+	s.Require().NoError(err)
+	s.Equal(theRefusal, refusal)
+	_, err = s.agent.Ask(s.ctx, "how do I render a message list")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"", "user: how do I make a pizza\nassistant: " + theRefusal}, s.guards.conversations())
 }

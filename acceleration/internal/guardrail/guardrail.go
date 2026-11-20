@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -85,6 +87,9 @@ type Policy struct {
 	URL string
 	// Refusal is what the agent says instead of the reply it did not give.
 	Refusal string
+	// Question replaces DefaultQuestion, what a decision model is asked about a turn. Empty
+	// asks the default. Only a KindDecisionModel policy takes one.
+	Question string
 	// Text is the policy itself: everything after the frontmatter.
 	Text string
 }
@@ -99,22 +104,58 @@ type Verdict struct {
 	// Probability is what a classifier or judge put on the turn violating the policy. Zero
 	// from a webhook, which does not deal in probabilities.
 	Probability float64
+	// Model is the "provider/model" that answered. Empty from a webhook, which asks no
+	// model.
+	Model string
 	// Refusal replaces the policy's own line, for a check that has something more useful
 	// to say than the policy could. Only a webhook fills it: a customer's server knows
 	// things about who is asking that a file written in advance does not.
 	Refusal string
 }
 
-// allowed is the verdict for a turn nothing objected to.
-func allowed(probability float64) Verdict {
-	return Verdict{Allowed: true, Probability: probability}
+// conversationLines and conversationChars bound the conversation a check is shown: three
+// exchanges, which is as far back as a follow-up ("and for my kid?") points, and few
+// enough characters that the check's input, and so its latency, stays near that of a turn
+// read alone.
+const (
+	conversationLines = 6
+	conversationChars = 1500
+)
+
+// Conversation is the end of what was said before a turn, one "role: words" line each, for
+// Check: the last conversationLines of history that have words (a tool's call or result has
+// nothing a person said), their words cut from the front to conversationChars in all. A line
+// cut short keeps its role, and words are put on one line, so nothing a caller said can
+// read as a line of the assistant's.
+func Conversation(history []llm.Message) string {
+	var lines []string
+	room := conversationChars
+	for at := len(history) - 1; at >= 0 && len(lines) < conversationLines && room > 0; at-- {
+		message := history[at]
+		if message.Role != llm.User && message.Role != llm.Assistant {
+			continue
+		}
+		said := []rune(strings.Join(strings.Fields(message.Content), " "))
+		if len(said) == 0 {
+			continue
+		}
+		if len(said) > room {
+			said = said[len(said)-room:]
+		}
+		room -= len(said)
+		lines = append(lines, string(message.Role)+": "+string(said))
+	}
+	slices.Reverse(lines)
+	return strings.Join(lines, "\n")
 }
 
 // Guardrail screens one agent's turns.
 type Guardrail interface {
-	// Check reports whether a turn may be answered. An error means the check could not be
-	// made, which is not the same as a refusal and is not treated as one.
-	Check(ctx context.Context, turnID, text string) (Verdict, error)
+	// Check reports whether a turn may be answered. conversation is what was said before
+	// it (Conversation), empty for a turn that opens one: a follow-up cannot be judged
+	// alone. An error means the check could not be made, which is not the same as a
+	// refusal and is not treated as one.
+	Check(ctx context.Context, turnID, text, conversation string) (Verdict, error)
 	// Policy is what this was built from, which is what tells the agent when to run the
 	// check and what to say when it fails.
 	Policy() Policy
@@ -166,7 +207,7 @@ func New(ctx context.Context, policy Policy, deps Deps) (Guardrail, error) {
 
 // Parse reads a guardrail.md: frontmatter saying how to check, then the policy itself.
 //
-// The recognised keys are type, mode, threshold, target, url and refusal. A file with no
+// The recognised keys are type, mode, threshold, target, url, refusal and question. A file with no
 // frontmatter at all is a classifier guardrail with default settings, since prose on its
 // own is the shortest thing worth writing here.
 func Parse(content string) (Policy, error) {
@@ -213,6 +254,8 @@ func Parse(content string) (Policy, error) {
 				policy.URL = value
 			case "refusal":
 				policy.Refusal = value
+			case "question":
+				policy.Question = value
 			default:
 				// An unrecognised key is refused rather than ignored: a misspelt
 				// threshold that is silently the default is a guardrail whose settings
@@ -235,10 +278,16 @@ func (p Policy) Validate() error {
 		if p.URL != "" {
 			return stack.Wrap(fmt.Errorf("guardrail: a %s guardrail calls nothing, so its url would be ignored", p.Kind))
 		}
+		if p.Kind == KindLLM && p.Question != "" {
+			return stack.Wrap(errors.New("guardrail: an llm guardrail reads the policy as prose, so its question would be ignored"))
+		}
 		if p.Threshold <= 0 || p.Threshold > 1 {
 			return stack.Wrap(fmt.Errorf("guardrail: a threshold of %v is not a probability between 0 and 1", p.Threshold))
 		}
 	case KindWebhook:
+		if p.Question != "" {
+			return stack.Wrap(errors.New("guardrail: a webhook guardrail asks a server, not a question, so its question would be ignored"))
+		}
 		if p.URL == "" {
 			return stack.Wrap(errors.New("guardrail: a webhook guardrail needs a url to ask"))
 		}

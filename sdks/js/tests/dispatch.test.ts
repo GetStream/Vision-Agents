@@ -546,6 +546,32 @@ describe("Dispatch", () => {
     await running;
   });
 
+  it("tells the router what the client's tools onError says of a hosted tool's failure", async () => {
+    api.tools
+      .setOnError((error) => ((error as Error).message.includes("://") ? "the lookup failed" : (error as Error).message))
+      .register({
+        name: "lookup_order",
+        description: "Look an order up",
+        run: () => {
+          throw new Error("GET https://internal.example/orders?sig=abc123 timed out");
+        },
+      });
+    const dispatch = new Dispatch({ client: api }).host(api);
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    connection.send({ type: "tool_call", id: "call_1", name: "lookup_order", arguments: "{}" });
+    assert.deepEqual(await connection.next(), {
+      type: "tool_result",
+      tool_call_id: "call_1",
+      id: "call_1",
+      error: "the lookup failed",
+    });
+
+    dispatch.stop();
+    await running;
+  });
+
   it("tells the router a hosted tool failed, since a model is waiting on it", async () => {
     api.tools.register({
       name: "investigate_sdk",

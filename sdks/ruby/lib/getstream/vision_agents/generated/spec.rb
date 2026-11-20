@@ -2501,6 +2501,10 @@ module GetStream
           properties: %w[mode text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
+        "GuardrailCheck" => {
+          properties: %w[allowed failed held_ms kind latency_ms mode model probability threshold].freeze,
+          required: %w[allowed kind latency_ms mode].freeze, open: false
+        }.freeze,
         "GuestUser" => {
           properties: %w[custom expires_at id name refresh_secret token].freeze,
           required: %w[id token].freeze, open: false
@@ -3210,7 +3214,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
-          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
+          properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms floor_checks guardrail heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[started_at turn_id].freeze, open: false
         }.freeze,
         "ToolApprovalAnswer" => {

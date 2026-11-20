@@ -59,20 +59,34 @@ export class Socket {
   ): Promise<Socket> {
     signal?.throwIfAborted();
     const url = await backend.socketURL(path, query);
+    const headers = await backend.socketHeaders();
     try {
-      return await Socket.open(backend, url, signal);
+      return await Socket.open(backend, url, signal, headers);
     } catch (cause) {
       signal?.throwIfAborted();
-      const carried = new URL(url).searchParams.get("token") ?? undefined;
+      const carried =
+        headers?.["Authorization"]?.replace(/^Bearer /, "") ?? new URL(url).searchParams.get("token") ?? undefined;
       if (!backend.expireToken(carried)) {
         throw cause;
       }
-      return Socket.open(backend, await backend.socketURL(path, query), signal);
+      return Socket.open(backend, await backend.socketURL(path, query), signal, await backend.socketHeaders());
     }
   }
 
-  /** Dials the router and resolves once the upgrade is through. */
-  static open(backend: Backend, url: string, signal?: AbortSignal): Promise<Socket> {
+  /**
+   * Dials the router at a URL `backend.socketURL` built, and resolves once the upgrade is
+   * through. The headers it is opened with are `headers`, or else what `backend.socketHeaders()`
+   * answers: a backend holding the secret leaves its credential out of the URL, so a socket
+   * opened from that URL alone would carry none.
+   */
+  static async open(
+    backend: Backend,
+    url: string,
+    signal?: AbortSignal,
+    headers?: Record<string, string>,
+  ): Promise<Socket> {
+    signal?.throwIfAborted();
+    const sent = headers ?? (await backend.socketHeaders());
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
         reject(signal.reason);
@@ -80,7 +94,7 @@ export class Socket {
       }
       let raw: WebSocketLike;
       try {
-        raw = backend.openSocket(url);
+        raw = backend.openSocket(url, sent);
       } catch (cause) {
         reject(cause);
         return;
