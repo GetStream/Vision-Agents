@@ -2,6 +2,10 @@
 
 ## Features
 
+### The JavaScript SDK connects a user's own accounts
+
+`api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", { userId })`, `authorize(id, { returnUrl, userId })` for the consent's launch URL, handoff token and expiry, `get(id, { userId })`, `list({ connectorId, userId })` and `delete(id, { userId })`; without `userId` they are the app's own. `Backend.actingFor` is deprecated in favour of the `userId` parameter and works as before (#2110).
+
 ### The Ruby SDK connects a user's own accounts
 
 `api.connections` creates, authorizes, reads, lists and deletes connections: `create("linear", user_id: "alice")`, then `authorize(id, return_url:, user_id:)` for the launch URL, handoff token and expiry of the consent, and `get(id, user_id:)`, `list(connector:, user_id:)`, `delete(id, user_id:)`; no `user_id` is the app's own connection. `Client#get`, `post`, `put`, `patch`, `delete` and `socket` take an optional `user_id:` sent in `X-Stream-User-Id`, and `Backend#acting_for` is deprecated in its favour (AI-3380, AI-3387).
