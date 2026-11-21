@@ -294,6 +294,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 	a.sender = routing.Caller{}
 	a.scheduled = false
 	a.lastParticipant = ready.Participant
+	a.lastWriter = writer{}
 	a.heardCaller = true
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()

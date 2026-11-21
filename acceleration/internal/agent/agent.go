@@ -586,7 +586,12 @@ type Agent struct {
 	// lastParticipant is who the agent was last talking to, so a reply prompted by
 	// delegated work coming back is attributed to the person who is waiting for it.
 	lastParticipant stt.Participant
-	lastHeardAt     time.Time
+	// lastWriter is who wrote the turn being answered in a channel of a type an agent config
+	// answers in (WithWriter), and zero for any other turn: wherever lastParticipant is set for a
+	// heard or new turn, lastWriter is cleared with it. Such a turn's lastParticipant is the
+	// typed caller, who names no user, so a tool call names the writer instead (requesterLocked).
+	lastWriter  writer
+	lastHeardAt time.Time
 	// talkedAt is when the caller last said more than a murmur (takesFloor), which is what
 	// overtakes a check-in held for the next voice.
 	talkedAt    time.Time
@@ -1870,6 +1875,7 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session, flo
 				a.mu.Lock()
 				a.lastHeardAt = time.Now()
 				a.lastParticipant = typed.Participant
+				a.lastWriter = writer{}
 				a.mu.Unlock()
 				continue
 			}
@@ -1936,6 +1942,7 @@ func (a *Agent) transcribed(typed stt.Transcript, count func(stt.Transcript)) {
 		a.talkedAt = a.lastHeardAt
 	}
 	a.lastParticipant = typed.Participant
+	a.lastWriter = writer{}
 	a.mu.Unlock()
 	if typed.Interim {
 		// Words of a turn still going on, from a transcriber that will say when it
@@ -2477,6 +2484,7 @@ func (a *Agent) respondTurn(
 	a.sender = sender
 	a.scheduled = scheduled
 	a.lastParticipant = participant
+	a.lastWriter = listened.writer
 	if !listened.typed {
 		a.heardCaller = true
 	}
