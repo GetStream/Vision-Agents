@@ -587,8 +587,8 @@ type Agent struct {
 	// delegated work coming back is attributed to the person who is waiting for it.
 	lastParticipant stt.Participant
 	// lastWriter is who wrote the turn being answered in a channel of a type an agent config
-	// answers in (WithWriter), and zero for any other turn: lastParticipant is then the typed
-	// caller, so a tool call names the writer (requesterLocked).
+	// answers in (WithWriter), and zero for any other turn. Such a turn's lastParticipant is the
+	// typed caller, who names no user, so a tool call names the writer instead (requesterLocked).
 	lastWriter  writer
 	lastHeardAt time.Time
 	// talkedAt is when the caller last said more than a murmur (takesFloor), which is what
