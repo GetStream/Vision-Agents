@@ -13813,6 +13813,9 @@ pub struct ToolCallState {
     ///When a person allowed the call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub approved_at: ::std::option::Option<::std::string::String>,
+    ///The data whoever runs the call last sent with a tool_update, such as what a card under the message shows. Each update with custom replaces it whole, and it is kept once the call finishes.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ///What the call is doing, in words for the people in the conversation, such as "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's own search. Absent when the tool declared none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub display_title: ::std::option::Option<::std::string::String>,

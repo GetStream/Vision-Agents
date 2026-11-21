@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"io"
@@ -421,6 +422,255 @@ func (s *EgressSuite) TestCloseIdleConnectionsClosesThemThroughAWrapper() {
 	s.Eventually(func() bool { return closed.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
 }
 
+// An HTTP/1.1 origin may close a connection it kept alive just as the client sends its next request on it. Go
+// sends a GET again on a new connection, but not a POST, whose body it cannot send twice; so a POST never rides a
+// connection that has carried a request before.
+func (s *EgressSuite) TestAPostNeverRidesAConnectionTheOriginMayBeClosing() {
+	origin := s.startOrigin(closeAtReuse, 0, false)
+	defer origin.close()
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
+	_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+	s.Require().NoError(err)
+
+	status, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":2}`))
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, status)
+	s.Equal(int32(2), origin.read.Load())
+}
+
+// Go itself sends a GET again when the connection it reused turns out closed, so GETs keep sharing connections.
+func (s *EgressSuite) TestAGetOnAConnectionTheOriginClosesIsSentAgainByGo() {
+	origin := s.startOrigin(closeAtReuse, 0, false)
+	defer origin.close()
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
+	_, err := s.send(client, http.MethodGet, nil)
+	s.Require().NoError(err)
+
+	status, err := s.send(client, http.MethodGet, nil)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, status)
+	s.Equal(int32(2), origin.read.Load())
+	s.Equal(int32(2), origin.conns.Load())
+}
+
+// A POST the origin read and then dropped without an answer may have been applied, so it is never sent again.
+func (s *EgressSuite) TestAPostTheOriginReadAndDroppedIsNotSentAgain() {
+	origin := s.startOrigin(0, dropAfterRead, false)
+	defer origin.close()
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
+	_, err := s.send(client, http.MethodGet, nil)
+	s.Require().NoError(err)
+
+	_, err = s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+
+	s.Require().Error(err)
+	s.Equal(int32(2), origin.read.Load(), "the GET, and the POST once")
+}
+
+// GETs to an HTTP/1.1 origin share one connection.
+func (s *EgressSuite) TestGetsShareOneConnection() {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
+
+	for range 3 {
+		_, err := s.send(client, http.MethodGet, nil)
+		s.Require().NoError(err)
+	}
+
+	s.Equal(int32(1), origin.conns.Load())
+}
+
+// Go sends again what it can replay, so those requests keep sharing a connection.
+func (s *EgressSuite) TestRequestsGoCanSendAgainShareAConnection() {
+	for _, method := range []string{"", http.MethodHead, http.MethodOptions, http.MethodTrace} {
+		s.True(s.reusesAConnection(&http.Request{Method: method, Header: http.Header{}}), "method %q", method)
+	}
+	s.True(s.reusesAConnection(&http.Request{Method: http.MethodGet, Header: http.Header{}, Body: http.NoBody}), "no body")
+	for _, key := range []string{"Idempotency-Key", "X-Idempotency-Key"} {
+		request := &http.Request{Method: http.MethodPost, Header: http.Header{key: {"k"}}}
+		request.Body, request.GetBody = io.NopCloser(strings.NewReader("{}")), func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("{}")), nil
+		}
+		s.True(s.reusesAConnection(request), key)
+	}
+}
+
+// Go sends nothing again whose body it cannot send twice, such as the body the sandbox proxy forwards.
+func (s *EgressSuite) TestARequestWithABodyGoCannotSendTwiceRidesANewConnection() {
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		request := &http.Request{Method: method, Header: http.Header{"Idempotency-Key": {"k"}}}
+		request.Body = io.NopCloser(strings.NewReader("{}"))
+		s.False(s.reusesAConnection(request), method)
+	}
+}
+
+// An HTTP/2 origin closes a connection with GOAWAY, which tells the client what it did not process, so POSTs to
+// it share one connection.
+func (s *EgressSuite) TestPostsToAnHTTP2OriginShareOneConnection() {
+	origin := s.startOrigin(0, 0, true)
+	defer origin.close()
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
+
+	for range 3 {
+		_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+
+	s.Equal(int32(1), origin.conns.Load())
+	client.CloseIdleConnections()
+	s.Eventually(func() bool { return origin.closed.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// A client from NewClient keeps every caller's pooling: two POSTs to an HTTP/1.1 origin share one connection, as on
+// base 8e68a6c5c, so only the sandbox egress proxy pays a handshake per POST.
+func (s *EgressSuite) TestTheDefaultClientSendsPostsOnOneConnection() {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	client := testPolicy(origin.server, publicAnswers()).client(5*time.Second, nil)
+
+	for range 3 {
+		_, err := s.send(client, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+
+	s.Equal(int32(1), origin.conns.Load())
+}
+
+// NewUnpooledClient is the opt-in: the same policy as NewClient, with POSTs on a connection each. The test swaps
+// defaultPolicy for one that dials the test origin.
+func (s *EgressSuite) TestNewUnpooledClientSendsEachPostOnANewConnectionAndNewClientDoesNot() {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	saved := defaultPolicy
+	defaultPolicy = testPolicy(origin.server, publicAnswers())
+	defer func() { defaultPolicy = saved }()
+
+	for range 2 {
+		_, err := s.send(NewUnpooledClient(5*time.Second, nil), http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(2), origin.conns.Load(), "each unpooled client sends on its own connection")
+	unpooled := NewUnpooledClient(5*time.Second, nil)
+	for range 3 {
+		_, err := s.send(unpooled, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(5), origin.conns.Load(), "three POSTs of one unpooled client: three connections")
+	pooled := NewClient(5*time.Second, nil)
+	for range 3 {
+		_, err := s.send(pooled, http.MethodPost, strings.NewReader(`{"id":1}`))
+		s.Require().NoError(err)
+	}
+	s.Equal(int32(6), origin.conns.Load(), "three POSTs of one NewClient client: one connection")
+}
+
+// reusesAConnection sends a GET and then request to a fresh HTTP/1.1 origin, and reports whether request went on
+// the GET's connection.
+func (s *EgressSuite) reusesAConnection(request *http.Request) bool {
+	origin := s.startOrigin(0, 0, false)
+	defer origin.close()
+	client := unpooledPolicy(origin.server).client(5*time.Second, nil)
+	_, err := s.send(client, http.MethodGet, nil)
+	s.Require().NoError(err)
+	request.URL = mustURL("https://api.example.com/mcp")
+	response, err := client.Do(request)
+	s.Require().NoError(err)
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	return origin.conns.Load() == 1
+}
+
+const (
+	// closeAtReuse is an origin that closes a kept-alive connection as the next request on it arrives, unread: its
+	// keep-alive timer fired as the client reused the connection.
+	closeAtReuse = iota + 1
+	// dropAfterRead is an origin that reads the second request in full and closes the connection without an answer.
+	dropAfterRead
+)
+
+// origin is an origin that answers "ok". read counts the requests it read in full, conns its connections and
+// closed those it closed.
+type origin struct {
+	server              *httptest.Server
+	read, conns, closed atomic.Int32
+	mu                  sync.Mutex
+	held                []net.Conn
+}
+
+// startOrigin starts an HTTP/1.1 origin, or an HTTP/2 one with http2. With reuse set, the first connection answers
+// its first request and then does what reuse names with the next request on it. With second set, the second
+// request the origin gets is read in full and the connection closed without an answer.
+func (s *EgressSuite) startOrigin(reuse, second int, http2 bool) *origin {
+	o := &origin{}
+	var first atomic.Bool
+	o.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		n := o.read.Add(1)
+		switch {
+		case reuse == closeAtReuse && first.CompareAndSwap(false, true):
+			conn, buffered := o.hijack(w)
+			_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+			// The next request's first bytes are on the connection: the client is reusing it.
+			_, _ = buffered.Peek(1)
+			_ = conn.Close()
+		case second == dropAfterRead && n == 2:
+			conn, _ := o.hijack(w)
+			_ = conn.Close()
+		default:
+			_, _ = io.WriteString(w, "ok")
+		}
+	}))
+	o.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			o.conns.Add(1)
+		case http.StateClosed:
+			o.closed.Add(1)
+		}
+	}
+	o.server.EnableHTTP2 = http2
+	o.server.StartTLS()
+	return o
+}
+
+func (o *origin) hijack(w http.ResponseWriter) (net.Conn, *bufio.Reader) {
+	conn, buffered, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	o.mu.Lock()
+	o.held = append(o.held, conn)
+	o.mu.Unlock()
+	return conn, buffered.Reader
+}
+
+// close stops the origin and the connections it took over, which the server no longer tracks.
+func (o *origin) close() {
+	o.server.Close()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, conn := range o.held {
+		_ = conn.Close()
+	}
+}
+
+// send sends one request to the origin and reads its answer to the end, which returns an HTTP/1.1 connection to
+// the pool.
+func (s *EgressSuite) send(client *http.Client, method string, body io.Reader) (int, error) {
+	request, err := http.NewRequest(method, "https://api.example.com/mcp", body)
+	s.Require().NoError(err)
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	_, err = io.Copy(io.Discard, response.Body)
+	return response.StatusCode, err
+}
+
 // A generic or empty User-Agent is what hosts such as Wikimedia refuse; theirs asks for a
 // client name and a way to reach whoever runs it.
 func (s *EgressSuite) TestTheUserAgentNamesTheRouterAndWhereToReachIt() {
@@ -490,6 +740,12 @@ func testPolicy(server *httptest.Server, resolver lookup) policy {
 	}
 }
 
+func unpooledPolicy(server *httptest.Server) policy {
+	policy := testPolicy(server, publicAnswers())
+	policy.unpooled = true
+	return policy
+}
+
 func publicAnswers() *answers {
 	return &answers{byHost: map[string][]string{"api.example.com": {"8.8.8.8"}, "other.example.com": {"8.8.4.4"}}}
 }
@@ -530,4 +786,71 @@ func mustURL(raw string) *url.URL {
 		panic(err)
 	}
 	return parsed
+}
+
+// the unpooled route dials only a checked public address.
+func (s *EgressSuite) TestAPostOnTheUnpooledRouteNeverDialsALoopbackAddress() {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer server.Close()
+	policy := testPolicy(server, &answers{byHost: map[string][]string{"api.example.com": {"127.0.0.1"}}})
+	policy.unpooled = true
+
+	_, err := policy.client(5*time.Second, nil).Post("https://api.example.com/mcp", "application/json", strings.NewReader(`{"id":1}`))
+
+	s.ErrorContains(err, "non-public address")
+	s.Zero(hits.Load())
+}
+
+// the URL check after the wrapper runs before the unpooled route.
+func (s *EgressSuite) TestAWrapperRewriteToPlainHTTPIsRefusedOnTheUnpooledRoute() {
+	var hits atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer server.Close()
+	policy := testPolicy(server, publicAnswers())
+	policy.unpooled = true
+	downgrade := func(next http.RoundTripper) http.RoundTripper {
+		return roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			request = request.Clone(request.Context())
+			request.URL.Scheme = "http"
+			return next.RoundTrip(request)
+		})
+	}
+
+	_, err := policy.client(5*time.Second, downgrade).Post("https://api.example.com/mcp", "application/json", strings.NewReader(`{"id":1}`))
+
+	s.ErrorContains(err, "only HTTPS")
+	s.Zero(hits.Load())
+}
+
+// a client from NewUnpooledClient keeps the redirect policy.
+func (s *EgressSuite) TestNewUnpooledClientRefusesARedirectOutOfTheOrigin() {
+	var stolen atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host == "other.example.com" {
+			stolen.Add(1)
+			return
+		}
+		http.Redirect(w, r, "https://other.example.com/stolen", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	saved := defaultPolicy
+	defaultPolicy = testPolicy(server, publicAnswers())
+	defer func() { defaultPolicy = saved }()
+
+	_, err := NewUnpooledClient(5*time.Second, nil).Post("https://api.example.com/mcp", "application/json", strings.NewReader(`{"id":1}`))
+
+	s.ErrorIs(err, errCrossHostRedirect)
+	s.Zero(stolen.Load())
+}
+
+// neither route uses an environment proxy: net/http would dial the proxy's address, so dialPublic
+// would check the proxy and never the origin (transport.go connectMethod.addr).
+// The field is read directly: the test is in package egress.
+func (s *EgressSuite) TestNeitherRouteUsesAnEnvironmentProxy() {
+	pooled := NewClient(5*time.Second, nil).Transport.(clientRoundTripper)
+	unpooled := NewUnpooledClient(5*time.Second, nil).Transport.(clientRoundTripper)
+
+	s.Nil(pooled.transport.Proxy)
+	s.Nil(unpooled.unpooled.Proxy)
 }

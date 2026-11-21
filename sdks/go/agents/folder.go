@@ -544,8 +544,40 @@ type ChannelSettings struct {
 type GreetingSettings struct {
 	Text string `yaml:"text"`
 	// Mode is exact, said word for word, or variation, which the model rewords on every
-	// call. Empty is exact.
+	// call. agent.yaml leaving it out is variation; empty in a GreetingSettings built in
+	// code is exact.
 	Mode string `yaml:"mode"`
+}
+
+// UnmarshalYAML reads greeting as its text alone, such as `greeting: Hello`, or as a mapping
+// of text and mode. Either way a greeting that names no mode is a variation.
+func (g *GreetingSettings) UnmarshalYAML(node *yaml.Node) error {
+	read := GreetingSettings{Mode: "variation"}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		read.Text = node.Value
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, value := node.Content[i].Value, node.Content[i+1]
+			if value.Kind != yaml.ScalarNode {
+				return fmt.Errorf("greeting.%s must be a string", key)
+			}
+			switch key {
+			case "text":
+				read.Text = value.Value
+			case "mode":
+				if value.Value != "" {
+					read.Mode = value.Value
+				}
+			default:
+				return fmt.Errorf("%q is not a greeting setting; text and mode are", key)
+			}
+		}
+	default:
+		return errors.New("greeting is its text, or a mapping of text and mode")
+	}
+	*g = read
+	return nil
 }
 
 type VideoSettings struct {

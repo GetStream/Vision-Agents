@@ -10,7 +10,7 @@ import (
 func (s *AgentSuite) TestANativeModelTellsTheCallerHowAnOpenCallIsGoing() {
 	peer, runner := s.nativeRunningAHeldTool()
 
-	s.agent.ToolUpdate("call1", "searching 3 airlines", false)
+	s.agent.ToolUpdate("call1", "searching 3 airlines", false, nil)
 
 	update := s.nativeFrame(peer, "response.create")
 	s.Contains(string(update["response"]), "searching 3 airlines")
@@ -19,7 +19,7 @@ func (s *AgentSuite) TestANativeModelTellsTheCallerHowAnOpenCallIsGoing() {
 
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
 	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
-	s.agent.ToolUpdate("call1", "found two seats", false)
+	s.agent.ToolUpdate("call1", "found two seats", false, nil)
 	s.Contains(string(s.nativeFrame(peer, "response.create")["response"]), "found two seats",
 		"the line stayed taken after the update was said")
 	runner.finish()
@@ -28,7 +28,7 @@ func (s *AgentSuite) TestANativeModelTellsTheCallerHowAnOpenCallIsGoing() {
 func (s *AgentSuite) TestANativeModelIsAskedForTheWordsAToolWantsSaid() {
 	peer, runner := s.nativeRunningAHeldTool()
 
-	s.agent.ToolUpdate("call1", "Got a seat, moving your booking now.", true)
+	s.agent.ToolUpdate("call1", "Got a seat, moving your booking now.", true, nil)
 
 	update := s.nativeFrame(peer, "response.create")
 	s.Contains(string(update["response"]), "in these words or close to them")

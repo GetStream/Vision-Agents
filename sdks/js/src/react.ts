@@ -2,7 +2,7 @@
  * React hooks over a session's stores, opted into by importing this entry:
  *
  * ```ts
- * import { useToolCall, useToolCalls } from "@stream-io/stream-agents/react";
+ * import { useToolCall, useToolCalls, useTurnToolCalls } from "@stream-io/stream-agents/react";
  * ```
  *
  * Its own entry point so `react` is resolved only for an app that asked for it.
@@ -22,6 +22,15 @@ export function useToolCalls(session: Session): ReadonlyMap<string, ToolCallStat
 /** One tool call as it was last reported, or undefined before the session said anything of it. */
 export function useToolCall(session: Session, id: string): ToolCallState | undefined {
   const read = useCallback(() => session.toolCalls.get().get(id), [session, id]);
+  return useSyncExternalStore(session.toolCalls.subscribe, read, read);
+}
+
+/**
+ * The tool calls one agent turn made, in the order they started, re-rendering as one of them
+ * changes: the ones to show under that turn's message.
+ */
+export function useTurnToolCalls(session: Session, turnId: string): readonly ToolCallState[] {
+  const read = useCallback(() => session.toolCalls.forTurn(turnId), [session, turnId]);
   return useSyncExternalStore(session.toolCalls.subscribe, read, read);
 }
 

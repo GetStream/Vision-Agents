@@ -271,7 +271,7 @@ describe("render", () => {
   });
 
   it("holds a call on its line, and rejects for a call stopped before it was held", async () => {
-    const line = (holds: boolean) => ({ hold: async () => holds });
+    const line = (holds: boolean) => ({ hold: async () => holds, update: () => undefined });
 
     await new ToolCallContext({ id: "call_1" }, line(true)).disallowInterruptions();
     await assert.rejects(

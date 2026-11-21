@@ -17,6 +17,24 @@ func (s *SessionEventsSuite) TestAStatusForARunningCallReachesEveryWatcher() {
 	s.Equal(false, shown["verbatim"])
 }
 
+func (s *SessionEventsSuite) TestARunningCallsDataReachesEveryWatcherInItsState() {
+	opened, backend, browser := s.backendsToolWatchedByItsUser("")
+	s.respondFor(opened.Id)
+	asked := s.await(backend, "tool_call")
+
+	s.Require().NoError(backend.WriteJSON(map[string]any{
+		"type": "tool_update", "tool_call_id": asked["id"], "custom": map[string]any{"cheapest": 129},
+	}))
+
+	for {
+		state := s.await(browser, "tool_call.progress")
+		if state["custom"] != nil {
+			s.Equal(map[string]any{"cheapest": float64(129)}, state["custom"])
+			return
+		}
+	}
+}
+
 func (s *SessionEventsSuite) TestWordsARunningCallAsksToSayArePostedInWriting() {
 	opened := s.withATool()
 	watching := s.watch(opened.Id)

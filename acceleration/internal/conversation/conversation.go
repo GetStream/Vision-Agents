@@ -1900,7 +1900,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		}
 		unsaved, stored = true, true
 	case agent.ToolUpdated:
-		if e.Verbatim || !c.acceptTurn(e.TurnID, false) || !reported(m, e.ID, e.Text) {
+		if e.Verbatim || e.Text == "" || !c.acceptTurn(e.TurnID, false) || !reported(m, e.ID, e.Text) {
 			return
 		}
 	case agent.ToolRan:

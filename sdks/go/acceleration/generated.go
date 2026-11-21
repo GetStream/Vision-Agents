@@ -10689,6 +10689,9 @@ type ToolCallState struct {
 	// ApprovedAt When a person allowed the call.
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 
+	// Custom The data whoever runs the call last sent with a tool_update, such as what a card under the message shows. Each update with custom replaces it whole, and it is kept once the call finishes.
+	Custom *map[string]interface{} `json:"custom,omitempty"`
+
 	// DisplayTitle What the call is doing, in words for the people in the conversation, such as "Checking the weather": the display_title its tool was declared with, or "Searching the web" for the router's own search. Absent when the tool declared none.
 	DisplayTitle *string `json:"display_title,omitempty"`
 

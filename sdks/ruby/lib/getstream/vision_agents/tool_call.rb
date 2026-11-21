@@ -87,6 +87,24 @@ module GetStream
         nil
       end
 
+      # Tells the people in the conversation how the call is going. Outside a call it does
+      # nothing.
+      #
+      # @param title [String, nil] replaces the call's display title while it runs, such as
+      #   "Comparing 40 flights", and on a voice call the agent tells the caller about it in its
+      #   own words. Nil leaves the title as it was.
+      # @param custom [Hash, nil] replaces the call's data whole, for their app to show, such as
+      #   a card under the message. It is kept once the call finishes. Nil leaves it as it was.
+      def update(title = nil, custom: nil)
+        return nil unless @send && !id.empty?
+
+        frame = { type: "tool_update", tool_call_id: id }
+        frame[:text] = title unless title.nil? || title.empty?
+        frame[:custom] = custom unless custom.nil?
+        @send.call(frame)
+        nil
+      end
+
       # The router kept the call going. Called by the socket.
       def held!
         @lock.synchronize do

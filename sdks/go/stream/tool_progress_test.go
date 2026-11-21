@@ -23,6 +23,47 @@ func toldTheRouter(connection *websocket.Conn, n int) []map[string]any {
 	return told
 }
 
+func (s *ToolCallSuite) TestAnUpdateReachesTheRouterBeforeTheResult() {
+	told := make(chan []map[string]any, 1)
+	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {
+		if connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-1", "name": "search_flights", "arguments": "{}",
+		}) != nil {
+			return
+		}
+		told <- toldTheRouter(connection, 4)
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	s.Require().NoError(tools.Register(pipeline.Functions(), "search_flights", "Search for flights",
+		func(ctx context.Context, _ struct{}) (any, error) {
+			call := tools.ToolCallContextFrom(ctx)
+			if err := call.Update(ctx, "Comparing 40 flights"); err != nil {
+				return nil, err
+			}
+			if err := call.SendUpdate(ctx, tools.Update{Title: "Booking the cheapest", Custom: map[string]any{"cheapest": 129}}); err != nil {
+				return nil, err
+			}
+			if err := call.SendUpdate(ctx, tools.Update{Custom: map[string]any{"seat": "12A"}}); err != nil {
+				return nil, err
+			}
+			return "found 3", nil
+		}))
+
+	s.join(pipeline)
+
+	select {
+	case frames := <-told:
+		s.Require().Len(frames, 4)
+		s.Equal(map[string]any{"type": "tool_update", "tool_call_id": "call-1", "text": "Comparing 40 flights"}, frames[0])
+		s.Equal(map[string]any{"type": "tool_update", "tool_call_id": "call-1", "text": "Booking the cheapest",
+			"custom": map[string]any{"cheapest": float64(129)}}, frames[1])
+		s.Equal(map[string]any{"type": "tool_update", "tool_call_id": "call-1", "custom": map[string]any{"seat": "12A"}}, frames[2])
+		s.Equal("found 3", frames[3]["output"])
+	case <-time.After(3 * time.Second):
+		s.Fail("the router never heard the update and the result")
+	}
+}
+
 func (s *ToolCallSuite) TestAHeldCallOutlivesTheRouterCancellingIt() {
 	answered := make(chan map[string]any, 1)
 	backend := newRouter(s.T(), func(t *testing.T, connection *websocket.Conn) {

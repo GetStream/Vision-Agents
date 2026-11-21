@@ -350,6 +350,40 @@ public sealed class ToolCallTests
     }
 
     [Fact]
+    public async Task AHostedCallsUpdatesReachTheRouterBeforeItsResult()
+    {
+        await using var router = await TestRouter.StartAsync();
+        var sent = new List<JsonObject>();
+        router.OnSocket("/v1/dispatch", async peer =>
+        {
+            await peer.SendAsync(new { type = "ready", worker_id = "worker-1" });
+            await peer.ReceiveAsync("host_tools");
+            await peer.SendAsync(new { type = "tool_call", id = "c1", session_id = "s1", name = "search_flights", arguments = "{}" });
+            for (var i = 0; i < 3; i++)
+            {
+                sent.Add(await peer.ReceiveAsync("tool_update"));
+            }
+            sent.Add(await peer.ReceiveAsync("tool_result"));
+        });
+        using var client = Fixtures.Client(router);
+        client.Tools.Register("search_flights", "Searches", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
+        {
+            await toolCallContext.UpdateAsync("Comparing 40 flights", cancellationToken);
+            await toolCallContext.UpdateAsync(new ToolCallUpdate("Booking the cheapest", new JsonObject { ["cheapest"] = 129 }), cancellationToken);
+            await toolCallContext.UpdateAsync(new ToolCallUpdate(Custom: new JsonObject { ["seat"] = "12A" }), cancellationToken);
+            return (object?)"found 3";
+        });
+
+        await new Dispatch(new DispatchOptions { Client = client }).Host(client, TimeSpan.FromMinutes(1))
+            .RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("""{"type":"tool_update","tool_call_id":"c1","text":"Comparing 40 flights"}""", sent[0].ToJsonString());
+        Assert.Equal("""{"type":"tool_update","tool_call_id":"c1","text":"Booking the cheapest","custom":{"cheapest":129}}""", sent[1].ToJsonString());
+        Assert.Equal("""{"type":"tool_update","tool_call_id":"c1","custom":{"seat":"12A"}}""", sent[2].ToJsonString());
+        Assert.Equal("found 3", sent[3].Text("output"));
+    }
+
+    [Fact]
     public async Task AToolAddedWhileTheSessionRunsIsDeclaredAndAnsweredHere()
     {
         await using var router = await TestRouter.StartAsync();

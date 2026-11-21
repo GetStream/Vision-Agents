@@ -165,7 +165,9 @@ extension AgentEvent {
             durationMS: Int(self["duration_ms"].numberValue ?? 0),
             approvedAt: date("approved_at"),
             rejectedAt: date("rejected_at"),
-            error: string("error"))
+            error: string("error"),
+            displayTitle: string("display_title"),
+            custom: self["custom"].dictionaryValue ?? [:])
     }
 }
 
@@ -188,6 +190,19 @@ public struct ToolCallState: Sendable, Hashable, Identifiable {
     public let rejectedAt: Date?
     /// Why a failed call failed, or what a declined one shows. Empty for none.
     public let error: String
+    /// What the call is doing, such as "Checking the weather", as its tool was declared with.
+    /// Empty for none.
+    public let displayTitle: String
+    /// What the tool last sent for the app to show, such as a card under the message. Kept once
+    /// the call finishes. Empty for none.
+    public let custom: [String: RawJSON]
+
+    /// What to call the call in the conversation: `progress` while it runs or waits, otherwise
+    /// `displayTitle`, or `tool` for a tool declared without one.
+    public var title: String {
+        if !status.isFinished, !progress.isEmpty { return progress }
+        return displayTitle.isEmpty ? tool : displayTitle
+    }
 
     /// Where a call stands. A value the router added after this SDK shipped is kept as it came.
     public struct Status: RawRepresentable, Sendable, Hashable {

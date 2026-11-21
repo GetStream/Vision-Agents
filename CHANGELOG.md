@@ -719,9 +719,14 @@ A `Backend` holding the API secret put its token on every socket's URL, as `toke
 
 An agent handle no longer has tools to host: Go `client.Agent.Tools()`, Python `Agent.register` and `Agent.functions`, JavaScript `AgentHandle.tools`, Rust `AgentRef.tools` and PHP `AgentHandle::$tools` are gone. Register the tools on the client and run them with its `run_dispatch` (see above), and name each one in a tool group of the agents that use it. `Dispatch.host` takes the client in place of an agent in every SDK, and the hosting refusal no longer names an agent: JavaScript's `HostingRefusedError` and PHP's `HostingRefusedException` lose `agentId`, and PHP's `Dispatch::$hosting` is a boolean. A session's own tools stay: Go `SessionOptions.Tools`, Python `SessionOptions(tools=...)`, and the in-process `Agent`'s tools in JavaScript, .NET, Ruby and Go's `agents` package.
 
-### A tool call no longer has update or say
+### A tool call no longer has say
 
-A tool call's update and say are gone from every SDK: Go `tools.Call.Update`/`Say` (and `tools.Line` has only `Hold`), JavaScript `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), Python `ToolCallContext.update`/`say` (and `ToolLine` has only `hold`), .NET `UpdateAsync`/`SayAsync`, Ruby `update`/`say`, Rust `update`/`say` and PHP `update()`/`say()`. A session's own `say` stays. A tool says nothing while it runs: the agent tells a waiting caller the work is still going, and a tool's `display_title` is what its call shows. The router still takes `tool_update` from an older SDK, so a released app keeps working.
+A tool call's say is gone from every SDK: Go `tools.Call.Say`, JavaScript and Python `ToolCallContext.say`, .NET `SayAsync`, and Ruby, Rust and PHP `say`. A session's own `say` stays. A tool call's update stays in every server SDK, with a title shortcut and a full update that can carry `custom` data: Go `Update(ctx, title)` and `SendUpdate(ctx, tools.Update{Title, Custom})`, JavaScript `update(title)` and `update({ title, custom })`, Python `update(title, custom=...)`, .NET `UpdateAsync(title)` and `UpdateAsync(new ToolCallUpdate(Title, Custom))`, Ruby `update(title, custom: ...)`, Rust `update(title)` and `send_update(ToolCallUpdate { .. })`, and PHP `update($title, custom: ...)`. The title is the call's title while it runs, in place of its `display_title`, and a voice agent tells the caller about it in its own words. `custom` replaces the call's `custom` whole and stays once the call finishes, so an app can draw a card from it; the client SDKs read it as `ToolCallState.custom`. An update with only `custom` leaves the title alone and is not spoken. The router still takes `tool_update` with `verbatim` from an older SDK, so a released app keeps working.
+
+### A greeting in agent.yaml is its text, and is reworded unless it says exact
+
+`greeting: Thanks for calling Acme. How can I help?` is the greeting's text, which the agent rewords on every call. The mapping still works for saying it word for word: `greeting: {text: ..., mode: exact}`. A mapping that names no mode is now a variation too, where it was exact. Go reads both forms; the other SDKs' folder loaders still need a mapping.
+
 ### `agents.DefineSkills` takes the id of the agent config the skills belong to
 
 `agents.DefineSkills(ctx, backend, configID, skills)` stores skills under that config and edits only that config's own skill of each name. Without a config the router refuses a skill, so the old form never worked against it (#2074).
@@ -847,6 +852,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A POST through the sandbox proxy no longer fails when the host closes an idle connection
+
+The sandbox egress proxy reused a kept-alive connection for every request. A host that closes idle connections sooner than the router's 90 s (Apache after 5 s by default) could close one just as a POST went out on it: the call failed, and the sandbox got a 502. The proxy now sends a request it cannot safely send twice, such as a POST, on a new HTTP/1.1 connection; HTTP/2 connections and GETs are still shared. Other outbound callers keep their connection pooling (#2160).
 
 ### A guardrail is no longer shown a tool's output as the caller's words
 

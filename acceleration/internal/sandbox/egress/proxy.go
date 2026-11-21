@@ -148,7 +148,8 @@ func New(options Options) (*Proxy, error) {
 	}
 	transport := options.Transport
 	if transport == nil {
-		transport = publicegress.NewClient(0, nil).Transport
+		// Unpooled: the bodies this proxy forwards are never replayable, so a POST must not ride a connection the origin is closing.
+		transport = publicegress.NewUnpooledClient(0, nil).Transport
 	}
 	dial := options.Dial
 	if dial == nil {

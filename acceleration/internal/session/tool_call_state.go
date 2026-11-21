@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -53,6 +54,9 @@ type ToolCallState struct {
 	RejectedAt time.Time
 	// Error is why a call failed, or what a declined one shows, such as "Not allowed in time".
 	Error string
+	// Custom is the data whoever runs the call last sent with an update, kept once it
+	// finishes. Each update with data replaces it whole, so it is never changed in place.
+	Custom map[string]any
 }
 
 // ToolCallChanged is one change to a tool call's state, sent to every watcher.
@@ -121,7 +125,14 @@ func (t *toolCalls) observe(event agent.Event) (ToolCallChanged, bool) {
 			}
 		})
 	case agent.ToolUpdated:
-		return t.changeLocked(typed.ID, now, func(state *ToolCallState) { state.Progress = typed.Text })
+		return t.changeLocked(typed.ID, now, func(state *ToolCallState) {
+			if typed.Text != "" {
+				state.Progress = typed.Text
+			}
+			if typed.Custom != nil {
+				state.Custom = typed.Custom
+			}
+		})
 	case agent.ToolApprovalDecided:
 		if !typed.Allowed {
 			return t.finishLocked(typed.ID, now, ToolCallCancelled, typed.Summary)
@@ -166,7 +177,7 @@ func (t *toolCalls) changeLocked(id string, now time.Time, change func(*ToolCall
 	}
 	before := *state
 	change(state)
-	if *state == before {
+	if reflect.DeepEqual(*state, before) {
 		return ToolCallChanged{}, false
 	}
 	state.Duration = now.Sub(state.StartedAt)
