@@ -513,8 +513,8 @@ func servesProxy(address string) bool {
 
 // TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout is the router proxy's keep-alive
 // limit: a sandbox connection that sends no next request is closed, where base held it open for
-// ever, and not at the tunnels' shorter idle timeout. The wait is bounded by 5 s, past the 1 s
-// keep-alive timeout and short of the 10 s header timeout.
+// ever. The wait is bounded by 5 s, past the 1 s keep-alive timeout and short of the 10 s header
+// timeout.
 //
 // The wait counts from the moment the server sets the connection idle, which net/http does just
 // before it arms the idle deadline (conn.serve in net/http/server.go). The client's own clock,
@@ -523,8 +523,8 @@ func servesProxy(address string) bool {
 func TestTheProxyServerIdlesOutAfterTheProxysKeepAliveTimeout(t *testing.T) {
 	const keepAlive = time.Second
 	caCert, caKey := newCA(t)
-	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), IdleTimeout: keepAlive / 5,
-		KeepAliveTimeout: keepAlive, Logger: slog.New(slog.DiscardHandler)})
+	proxy, err := egress.New(egress.Options{CACert: []byte(caCert), CAKey: []byte(caKey), KeepAliveTimeout: keepAlive,
+		Logger: slog.New(slog.DiscardHandler)})
 	require.NoError(t, err)
 	address := freeAddress(t)
 	// idleSince is when the server set each connection idle, by the client's address.

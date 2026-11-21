@@ -23,9 +23,9 @@ func TestDefaultsSuite(t *testing.T) {
 	suite.Run(t, new(DefaultsSuite))
 }
 
-// TestTheDefaultLimitsAreTheDocumentedOnes: the blind tunnel's idle limit is 90 s (Go's
-// http.DefaultTransport IdleConnTimeout), a kept connection's is 4 min (twice libcurl's 118 s,
-// see keepAliveTimeout). A changed default must change this test too.
+// TestTheDefaultLimitsAreTheDocumentedOnes: a kept connection's limit, and a blind tunnel's idle
+// limit, is 4 min (twice libcurl's 118 s, see keepAliveTimeout); the sandbox's TLS tunnel waits as
+// long for a proxy that stays silent. A changed default must change this test too.
 func (s *DefaultsSuite) TestTheDefaultLimitsAreTheDocumentedOnes() {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	s.Require().NoError(err)
@@ -43,8 +43,8 @@ func (s *DefaultsSuite) TestTheDefaultLimitsAreTheDocumentedOnes() {
 	})
 	s.Require().NoError(err)
 
-	s.Equal(90*time.Second, proxy.idleTimeout)
 	s.Equal(4*time.Minute, proxy.keepAliveTimeout)
+	s.Contains(string(forwarder), `IDLE_AFTER_EOF = float(os.environ.get("VA_TUNNEL_IDLE_AFTER_EOF", 240))`)
 }
 
 // the proxy's default transport is NewUnpooledClient's, whose unpooled route closes

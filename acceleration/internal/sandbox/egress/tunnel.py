@@ -24,9 +24,10 @@ CONNECT_TIMEOUT = 10
 # default of 100, so a burst of parallel clients is not refused.
 BACKLOG = 128
 # Seconds the proxy may stay silent once a client has stopped sending: the proxy's own idle
-# timeout for a tunnel, http.DefaultTransport's IdleConnTimeout (egress/proxy.go idleTimeout).
-# A test shortens it with VA_TUNNEL_IDLE_AFTER_EOF, which the router never sets.
-IDLE_AFTER_EOF = float(os.environ.get("VA_TUNNEL_IDLE_AFTER_EOF", 90))
+# timeout for a tunnel, 4 min (egress/proxy.go keepAliveTimeout), so the forwarder cuts no answer
+# the proxy would still pass on. A test shortens it with VA_TUNNEL_IDLE_AFTER_EOF, which the
+# router never sets.
+IDLE_AFTER_EOF = float(os.environ.get("VA_TUNNEL_IDLE_AFTER_EOF", 240))
 
 LISTEN, HOST, PORT, CA, PID = sys.argv[1:6]
 CONTEXT = ssl.create_default_context(cafile=CA)

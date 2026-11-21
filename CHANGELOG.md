@@ -853,6 +853,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A POST from a sandbox through a tunnel to an allowed domain no longer fails after a pause
+
+The router's sandbox proxy closed a tunnel to an allowed domain after 90 s with no traffic. That is also how long a Go client keeps a pooled connection, and the proxy's clock starts first. So a POST that a Go client sent on a kept connection near that limit could fail with `EOF`. The proxy now keeps such a tunnel for 4 min, as it keeps a connection to the proxy, so the client closes it first. The sandbox's TLS forwarder waits as long for a silent proxy (#2161, AI-2346).
+
 ### A POST through the sandbox proxy no longer fails when the host closes an idle connection
 
 The sandbox egress proxy reused a kept-alive connection for every request. A host that closes idle connections sooner than the router's 90 s (Apache after 5 s by default) could close one just as a POST went out on it: the call failed, and the sandbox got a 502. The proxy now sends a request it cannot safely send twice, such as a POST, on a new HTTP/1.1 connection; HTTP/2 connections and GETs are still shared. Other outbound callers keep their connection pooling (#2160).
