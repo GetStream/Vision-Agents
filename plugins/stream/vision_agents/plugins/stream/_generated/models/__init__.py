@@ -14,6 +14,8 @@ from .activity_meter import ActivityMeter
 from .activity_session import ActivitySession
 from .activity_sessions import ActivitySessions
 from .activity_step import ActivityStep
+from .activity_step_day import ActivityStepDay
+from .activity_step_day_step import ActivityStepDayStep
 from .add_contacts_request import AddContactsRequest
 from .add_contacts_response import AddContactsResponse
 from .add_session_tools_request import AddSessionToolsRequest
@@ -682,6 +684,8 @@ __all__ = (
     "ActivitySession",
     "ActivitySessions",
     "ActivityStep",
+    "ActivityStepDay",
+    "ActivityStepDayStep",
     "AddContactsRequest",
     "AddContactsResponse",
     "AddSessionToolsRequest",

@@ -990,7 +990,8 @@ func withTrace(mux *chi.Mux, next http.Handler) http.Handler {
 // It sits inside withCustomer so it can name the caller, and outside withServerSide so a
 // refusal is a logged 403 rather than a request that appears not to have arrived. It is
 // inside withCORS, which means a preflight goes unlogged: it carries nothing worth routing
-// and doubling the volume to record that a browser asked permission is a poor trade.
+// and doubling the volume to record that a browser asked permission is a poor trade. What
+// withCustomer refuses itself is logged through it all the same (refuseLogged).
 //
 // The path is logged without the query, because a socket names its customer there and a
 // vendor names a token, and an access log is the last place either should end up.
@@ -1016,7 +1017,8 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		started := time.Now()
 		recorder := &loggedResponse{ResponseWriter: w}
 		failure := &requestFailure{}
-		r = r.WithContext(context.WithValue(r.Context(), requestFailureContextKey{}, failure))
+		ctx, note := activity.WithNote(context.WithValue(r.Context(), requestFailureContextKey{}, failure))
+		r = r.WithContext(ctx)
 		defer func() {
 			recovered := recover()
 			if recovered == nil {
@@ -1024,9 +1026,8 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			}
 			// ErrAbortHandler is net/http's own way of dropping a connection, not a bug.
 			if recovered != http.ErrAbortHandler {
-				customer, _ := CustomerFrom(r.Context())
 				s.logger.ErrorContext(failure.loggedContext(r.Context()), "a request panicked",
-					"method", r.Method, "path", loggedPath(routes, r), "customer", customer,
+					"method", r.Method, "path", loggedPath(routes, r), "customer", loggedCustomer(r, note),
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
@@ -1036,12 +1037,11 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			panic(recovered)
 		}()
 		next.ServeHTTP(recorder, r)
-		s.recordActivity(routes, r, recorder, started)
+		s.recordActivity(routes, r, recorder, note, started)
 		if answeredHealthy(routes, r, recorder.status(), failure) {
 			return
 		}
 
-		customer, _ := CustomerFrom(r.Context())
 		// A socket reports the life of the connection rather than a time to respond,
 		// since it is logged once it has closed.
 		fields := []any{
@@ -1049,7 +1049,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			"path", loggedPath(routes, r),
 			"status", recorder.status(),
 			"duration", time.Since(started).Round(time.Millisecond),
-			"customer", customer,
+			"customer", loggedCustomer(r, note),
 			"request_id", RequestIDFrom(r.Context()),
 		}
 		if recorder.written > 0 {
@@ -1069,6 +1069,24 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		}
 		s.logger.InfoContext(logged, "served a request", fields...)
 	})
+}
+
+// loggedCustomer is the customer the request's access line names: the one its credential names,
+// or, for a hook, which no credential names, the app its handler noted once it checked the hook
+// (activity.NoteCustomer). A hook it did not check names none.
+func loggedCustomer(r *http.Request, note *activity.Note) string {
+	if customer, ok := CustomerFrom(r.Context()); ok {
+		return customer
+	}
+	return note.AppID
+}
+
+// refuseLogged answers r with failure through withRequestLog, for a refusal made before the
+// request reaches it, so the refusal has its access line and its code like any other.
+func (s *Server) refuseLogged(w http.ResponseWriter, r *http.Request, failure APIError) {
+	s.withRequestLog(s.mux, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, failure)
+	})).ServeHTTP(w, r)
 }
 
 // answeredHealthy is whether r is a health probe the router answered below 400 with no error
@@ -1311,14 +1329,17 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
 				"method", r.Method, "path", loggedPath(s.mux, r), "kind", principal.Kind)
-			writeError(w, forbidden("this app does not accept "+
+			// The caller proved which app it is of, so its lines name the app, though it is
+			// no customer here: nothing it asked for is counted under the app.
+			r = r.WithContext(WithLoggedApp(r.Context(), principal.AppID, principal.APIKey))
+			s.refuseLogged(w, r, forbidden("this app does not accept "+
 				"requests from this level of user"))
 			return
 		}
 		// The categories are what the request's usage is counted under, so a request naming
 		// ones that break the rule is refused rather than counted under fewer.
 		if errors.Is(err, auth.ErrInvalidUsageCategories) {
-			writeError(w, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
+			s.refuseLogged(w, r, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidUsageCategories,
 				Message: strings.TrimPrefix(err.Error(), "auth: ")})
 			return
 		}

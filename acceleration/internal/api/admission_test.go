@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
@@ -1002,4 +1003,56 @@ func (s *AdmissionSuite) finalFailure(err error) bool {
 	var failure *scheduling.Failure
 	s.Require().ErrorAs(err, &failure)
 	return failure.Final
+}
+
+// Defect: a socket session refused for money, in a frame after the 101, counted as answered, or
+// without the code it was refused with.
+func (s *AdmissionSuite) TestASocketSessionRefusedForASpentLimitIsCountedAsRefused() {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.limitApp(usage.Daily, 10_000)
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "spends the limit"})
+
+	connection := s.serverClient.with(clientHeader, store.AuditSourceSDK).opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(frame{"type": "start",
+		"session": frame{"config_id": s.config("echo/local-model")}}))
+	s.Equal(codeSpendLimitReached, s.await(connection, "error")["code"])
+
+	row := s.countedOnce(activity.AreaConversations, store.AuditSourceSDK)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeSpendLimitReached, row.code)
+}
+
+// Defect: a call Telnyx signed to a number of an organization that may not pay, rejected in a
+// 200 plan, counted as answered or without the code it was refused with.
+func (s *AdmissionSuite) TestATelnyxCallRefusedForMoneyIsCountedRefused() {
+	e164 := s.utils.number()
+	s.line.attach(e164, "sip:"+e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	status, _, body := s.line.deliver(s.line.call(e164), true)
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Contains(body, "<Reject")
+
+	row := s.countedOnce(activity.AreaPhoneSMS, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeInsufficientCredits, row.code)
+}
+
+// Defect: a call Stream signed to a number of an organization that may not pay, refused and
+// ended but answered 200, counted as answered or without the code it was refused with.
+func (s *AdmissionSuite) TestAStreamCallRefusedForMoneyIsCountedRefused() {
+	e164, callID := s.utils.number(), "phone-"+s.utils.uuid()
+	ctx := context.Background()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	s.Require().NoError(s.store.AttachNumber(ctx, s.customerID(), e164,
+		store.NumberAttachment{TrunkID: "trunk-" + s.utils.uuid(), CallType: "default", CallID: callID}))
+	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCall("default:"+callID)))
+
+	row := s.countedOnce(activity.AreaHooksIn, store.AuditSourceAPI)
+	s.Equal(int64(1), row.refused)
+	s.Equal(codeInsufficientCredits, row.code)
 }

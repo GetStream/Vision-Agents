@@ -5,6 +5,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -713,5 +714,67 @@ func TestActingForAUserKeepsTheServersToken(t *testing.T) {
 	}
 	if got := credentials.Get(UserHeader); got != "anya" {
 		t.Errorf("%s was %q, want anya", UserHeader, got)
+	}
+}
+
+func TestEveryRequestAndSocketNamesTheGoSDKAndItsRelease(t *testing.T) {
+	// The router's request log and its activity count read these two headers. Left out, a
+	// call is logged as Go's own client with no release, and counted as the API's.
+	want := "stream-agents-go/" + Version
+	seen := make(chan http.Header, 2)
+	upgrader := websocket.Upgrader{}
+	router := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Clone()
+		if websocket.IsWebSocketUpgrade(r) {
+			connection, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer connection.Close()
+			_, _, _ = connection.ReadMessage()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer router.Close()
+
+	for name, backend := range map[string]Backend{
+		"a local router":    {URL: router.URL, CustomerID: "acme"},
+		"through the proxy": {URL: router.URL, Authenticate: true, APIKey: "ntv9", APISecret: "shh"},
+	} {
+		client, err := backend.Client()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.ListSkillsWithResponse(t.Context(), nil); err != nil {
+			t.Fatal(err)
+		}
+		credentials, err := backend.Credentials()
+		if err != nil {
+			t.Fatal(err)
+		}
+		socket := NewSocket(backend.SocketURL("/v1/dispatch"), credentials, nil, slog.New(slog.DiscardHandler))
+		if err := socket.Open(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range []string{"request", "socket handshake"} {
+			header := <-seen
+			if got := header.Get("User-Agent"); got != want {
+				t.Errorf("%s: the %s says User-Agent %q, want %q", name, call, got, want)
+			}
+			if got := header.Get(ClientHeader); got != ClientSDK {
+				t.Errorf("%s: the %s says %s %q, want %q", name, call, ClientHeader, got, ClientSDK)
+			}
+		}
+		socket.Close()
+	}
+}
+
+func TestTheVersionIsAReleaseNumber(t *testing.T) {
+	// A version read from build info is (devel) on any build not fetched by tag, and one
+	// copied from the tag keeps its v: neither is what the release is called on the log.
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(Version) {
+		t.Errorf("Version %q is not X.Y.Z", Version)
 	}
 }

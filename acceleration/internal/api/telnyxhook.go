@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	phonetelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -86,6 +87,8 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bridge, err := s.phone.InboundBridge(r.Context(), "telnyx", to)
+	// InboundBridge notes the number's app once the number resolves, before it refuses one.
+	logger = logger.With("customer", activity.NotedCustomer(r.Context()))
 	if errors.Is(err, phone.ErrNoSealer) {
 		hangUp(w, logger, "hung up a telnyx call: this router has no key to open trunk passwords: "+
 			"set ROUTER_DEV_KEK (local), or ROUTER_AUTH_KEK_V1_WRAPPED with ROUTER_AUTH_KMS_KEY (hosted), then attach the number again", "to", to)
@@ -95,11 +98,15 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 		hangUp(w, logger, "hung up a telnyx call to a number that is unknown, released or not attached", "to", to)
 		return
 	}
+	// A refusal past InboundBridge, which noted the number's app, is answered 200 as Telnyx
+	// wants it; its code is noted for the activity record, which would count it answered.
 	if errors.Is(err, phone.ErrSuspended) {
+		noteRefusal(w, codeTelephonySuspended)
 		reject(w, logger, "rejected a telnyx call to a number of an app whose telephony is suspended", "to", to)
 		return
 	}
 	if answer, refused := moneyError(err); refused {
+		noteRefusal(w, answer.Code)
 		reject(w, logger, "rejected a telnyx call to a number of an organization that may not pay for it",
 			"to", to, "code", answer.Code)
 		return
@@ -109,12 +116,15 @@ func (s *Server) receiveTelnyxCall(w http.ResponseWriter, r *http.Request) {
 			"attach the number again", "to", to)
 		return
 	}
+	// The router's own failure, which an API route answers 500: refused, once noted.
 	if err != nil {
+		noteRefusal(w, internalError().Code)
 		hangUp(w, logger, "hung up a telnyx call: could not find its trunk", "to", to, "error", err)
 		return
 	}
 	plan, err := phonetelnyx.RenderInbound(bridge)
 	if err != nil {
+		noteRefusal(w, internalError().Code)
 		hangUp(w, logger, "hung up a telnyx call: could not render its trunk", "to", to, "error", err)
 		return
 	}
@@ -127,8 +137,9 @@ func hangUp(w http.ResponseWriter, logger *slog.Logger, why string, attributes .
 }
 
 // reject refuses a call without answering it, for a refusal the customer is billed nothing for.
+// It is a warning all the same: the person calling the customer's number reached nobody.
 func reject(w http.ResponseWriter, logger *slog.Logger, why string, attributes ...any) {
-	logger.Info(why, attributes...)
+	logger.Warn(why, attributes...)
 	writePlan(w, logger, phonetelnyx.RenderReject())
 }
 

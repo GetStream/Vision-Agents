@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -147,6 +148,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	if err := provider.Verify(line, header, body, time.Now()); err != nil {
 		return Answer{Status: http.StatusUnauthorized, Body: failure(err.Error())}
 	}
+	activity.NoteCustomer(ctx, account.CustomerID, activity.AreaPhoneSMS)
 
 	delivered, err := provider.Parse(body)
 	if err != nil {
@@ -376,18 +378,19 @@ func (s *Service) line(ctx context.Context, token string) (Account, store.Channe
 func (s *Service) answer(account store.ChannelAccount, line Account, provider Provider, message Message) {
 	ctx, cancel := context.WithTimeout(s.ctx, runTimeout)
 	defer cancel()
+	logger := s.logger.With("customer", account.CustomerID)
 
 	if s.keyword(ctx, account, line, provider, message) {
 		return
 	}
 	config, found, err := s.store.ConfigOnChannel(ctx, account.CustomerID, account.Kind, account.E164)
 	if err != nil {
-		s.logger.Error("could not find the agent on a channel", "channel", account.Kind,
+		logger.Error("could not find the agent on a channel", "channel", account.Kind,
 			"number", account.E164, "error", err)
 		return
 	}
 	if !found {
-		s.logger.Warn("a message arrived on a line no agent answers on", "channel", account.Kind,
+		logger.Warn("a message arrived on a line no agent answers on", "channel", account.Kind,
 			"number", account.E164, "hint", "name it under channels in the agent's config")
 		return
 	}
@@ -428,7 +431,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
-		s.logger.Error("could not open a conversation for a channel message", "channel", account.Kind,
+		logger.Error("could not open a conversation for a channel message", "channel", account.Kind,
 			"agent", config.Name, "error", err)
 		return
 	}
@@ -436,7 +439,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	// the next message reopens it by its id rather than starting over.
 	defer func() {
 		if _, err := s.sessions.Close(created.ID(), session.OwnerOf(created.Spec())); err != nil {
-			s.logger.Debug("could not close a channel conversation", "session", created.ID(), "error", err)
+			logger.Debug("could not close a channel conversation", "session", created.ID(), "error", err)
 		}
 	}()
 	events, detach := created.Watch()
@@ -448,7 +451,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	if identity.ConversationID == "" {
 		identity.ConversationID = created.Spec().ConversationID
 		if err := s.store.SaveChannelIdentity(ctx, &identity); err != nil {
-			s.logger.Error("could not record a channel conversation", "agent", config.Name, "error", err)
+			logger.Error("could not record a channel conversation", "agent", config.Name, "error", err)
 		}
 	}
 
@@ -460,7 +463,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	// The provider's own message id is the command id, so the durable conversation refuses a
 	// repeat for the same reason the delivery table does.
 	if _, _, err := created.RespondCommand(ctx, message.ID, message.Text, "", nil, options.LLM{}); err != nil {
-		s.logger.Error("the agent could not take a channel message", "session", created.ID(), "error", err)
+		logger.Error("the agent could not take a channel message", "session", created.ID(), "error", err)
 	}
 	<-sending
 }

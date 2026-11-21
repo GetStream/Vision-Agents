@@ -3,6 +3,7 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"math"
@@ -148,6 +149,44 @@ func (s *StoreSuite) TestEachAppAreaClientAndDayIsARowOfItsOwn() {
 	s.Equal(int64(1), s.activityOf("app", "agent_setup", AuditSourceCLI).requests)
 }
 
+// Defect: a hook's or a forward's row, which names only its app, written with no organization
+// when app_organizations holds the app's, so the day's digest leaves it out.
+func (s *StoreSuite) TestADeltaNamingNoOrganizationIsTheOneItsAppJoined() {
+	app, organization := "app-"+rand.Text(), "org-"+rand.Text()
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, app, organization))
+	hook := s.served(app, 1, s.base)
+	hook.OrganizationID = ""
+
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{hook}))
+
+	s.Equal(organization, s.activityOf(app, "agent_setup", AuditSourceCLI).organizationID)
+}
+
+// Defect: the organization app_organizations last saw the app under read over the one the
+// request named, which is the newer.
+func (s *StoreSuite) TestADeltaNamingAnOrganizationKeepsIt() {
+	app := "app-" + rand.Text()
+	s.Require().NoError(s.store.JoinOrganization(s.ctx, app, "org-"+rand.Text()))
+	named := s.served(app, 1, s.base)
+	named.OrganizationID = "org-" + rand.Text()
+
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{named}))
+
+	s.Equal(named.OrganizationID, s.activityOf(app, "agent_setup", AuditSourceCLI).organizationID)
+}
+
+// Defect: an app no request has named an organization for read as NULL, which the column
+// refuses, failing the whole write.
+func (s *StoreSuite) TestADeltaOfAnAppWithNoKnownOrganizationIsWrittenWithNone() {
+	app := "app-" + rand.Text()
+	hook := s.served(app, 1, s.base)
+	hook.OrganizationID = ""
+
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{hook}))
+
+	s.Empty(s.activityOf(app, "agent_setup", AuditSourceCLI).organizationID)
+}
+
 // Defect: rows past the first statement's thousand dropped, or one written twice, at the
 // boundary between two statements.
 func (s *StoreSuite) TestAWriteOfMoreRowsThanOneStatementTakesWritesEveryOne() {
@@ -281,6 +320,30 @@ func (s *StoreSuite) TestTheCodeOfAnAreaIsItsLatestRefusals() {
 	s.Equal(int64(2), areas[0].Refused)
 	s.Equal("refused-"+s.base.Add(24*time.Hour).Format(time.DateOnly), areas[0].LastRefusalCode)
 	s.Empty(areas[1].LastRefusalCode)
+}
+
+// Defect: the first answered day of an area read off its first day of any request, refusals
+// only included, or its last answered day, or only from a day onward, or of another app, or the
+// day of the client read last rather than the earliest of every client.
+func (s *StoreSuite) TestTheFirstAnsweredDayOfAnAreaIsItsFirstDayEverWithARequestAnswered() {
+	day := func(n int) time.Time {
+		return s.base.UTC().Truncate(24 * time.Hour).Add(time.Duration(n) * 24 * time.Hour)
+	}
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{
+		s.day("one", "agent_setup", AuditSourceCLI, day(-40).Add(time.Hour), 2, 2),
+		s.day("one", "agent_setup", AuditSourceCLI, day(-30).Add(time.Hour), 7, 0),
+		s.day("one", "agent_setup", AuditSourceCLI, day(1).Add(time.Hour), 3, 0),
+		s.day("one", "agent_setup", AuditSourceSDK, day(-20).Add(time.Hour), 1, 0),
+		s.day("one", "conversations", AuditSourceSDK, day(0).Add(time.Hour), 1, 1),
+		s.day("two", "conversations", AuditSourceSDK, day(-50).Add(time.Hour), 1, 0),
+	}))
+
+	days, err := s.store.ActivityFirstAnswered(s.ctx, []string{"one"})
+	s.Require().NoError(err)
+
+	s.Require().Len(days, 1, "%+v", days)
+	s.Equal("agent_setup", days[0].Area)
+	s.True(day(-30).Equal(days[0].Day), "first answered %s", days[0].Day)
 }
 
 // Defect: a day counted twice for two areas, a day of refusals only counted, or a day of another

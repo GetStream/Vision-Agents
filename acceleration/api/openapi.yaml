@@ -394,14 +394,37 @@ components:
         - latest
       type: object
     ActivityStep:
-      description: 'The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
+      description: 'The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
       enum:
         - none
         - dashboard_reads
         - agent_setup
+        - workers
         - conversations
+        - voice_video
+        - phone_sms
         - steady_use
       type: string
+    ActivityStepDay:
+      properties:
+        first_answered:
+          description: The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
+          format: date
+          type: string
+        step:
+          description: The step, one of furthest_step's but none and steady_use.
+          enum:
+            - dashboard_reads
+            - agent_setup
+            - workers
+            - conversations
+            - voice_video
+            - phone_sms
+          type: string
+      required:
+        - step
+        - first_answered
+      type: object
     AddContactsRequest:
       properties:
         contacts:
@@ -7016,10 +7039,17 @@ components:
           description: The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
           format: date-time
           type: string
+        steps:
+          description: Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+          items:
+            $ref: '#/components/schemas/ActivityStepDay'
+          nullable: true
+          type: array
       required:
         - organization_id
         - since
         - furthest_step
+        - steps
         - areas
         - meters
         - shards
@@ -23535,7 +23565,7 @@ paths:
   /v1/ops/orgs/{org_id}/activity:
     get:
       description: |-
-        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names, with the sessions they opened, how those ended and how long their turns took. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
+        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names, with the sessions they opened, how those ended and how long their turns took. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen, furthest_step and steps come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use. steps lists every step reached, not only the furthest, with the UTC day each was first answered: an organization that only texts reaches conversations and never voice_video.
 
         Stream staff only: it needs the ops key.
       operationId: getOrganizationActivity

@@ -147,6 +147,7 @@ func (s *OrganizationActivitySuite) TestAnOrganizationWithNothingRecordedHasEmpt
 	s.JSONEq(`[]`, string(raw["areas"]))
 	s.JSONEq(`[]`, string(raw["meters"]))
 	s.JSONEq(`"none"`, string(raw["furthest_step"]))
+	s.JSONEq(`[]`, string(raw["steps"]))
 	s.NotContains(raw, "first_seen")
 	s.NotContains(raw, "last_seen")
 }
@@ -232,6 +233,63 @@ func (s *OrganizationActivitySuite) TestModelCallsOnThreeDaysAreSteadyUse() {
 	s.Require().NoError(s.store.RecordActivity(context.Background(), deltas))
 
 	s.Equal(activityStepSteadyUse, s.read(s.app.organization.ID, time.Time{}).FurthestStep)
+}
+
+// answeredOn is a day of requests of the suite's app in area from client on day, refused of
+// them refused.
+func (s *OrganizationActivitySuite) answeredOn(area, client string, day time.Time, requests, refused int64) store.ActivityDelta {
+	at := day.Add(time.Hour)
+	return store.ActivityDelta{
+		OrganizationID: s.app.organization.ID, AppID: s.customerID(), Area: area, Client: client,
+		Day: day, Requests: requests, Refused: refused, FirstAt: at, LastAt: at,
+	}
+}
+
+// Defect: steps lists only the furthest step, a step whose every request was refused, a step
+// in the order areas come in (by name) rather than the ladder's, or the day of a later client
+// or a later answer rather than the first.
+func (s *OrganizationActivitySuite) TestStepsListEveryStepAnsweredWithItsFirstDayInLadderOrder() {
+	d := time.Now().UTC().Truncate(24 * time.Hour).Add(-10 * 24 * time.Hour)
+	on := func(n int) time.Time { return d.Add(time.Duration(n) * 24 * time.Hour) }
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.answeredOn(activity.AreaDashboardReads, store.AuditSourceDashboard, on(0), 3, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, on(1), 1, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, on(4), 2, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, on(3), 2, 2),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, on(8), 5, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceAPI, on(6), 1, 0),
+		s.answeredOn(activity.AreaVoiceVideo, store.AuditSourceSDK, on(7), 4, 4),
+		s.answeredOn(activity.AreaModelAPI, store.AuditSourceSDK, on(0), 9, 0),
+	}))
+
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Equal([]ActivityStepDay{
+		{Step: activity.AreaDashboardReads, FirstAnswered: on(0).Format(time.DateOnly)},
+		{Step: activity.AreaAgentSetup, FirstAnswered: on(1).Format(time.DateOnly)},
+		{Step: activity.AreaConversations, FirstAnswered: on(6).Format(time.DateOnly)},
+	}, answer.Steps)
+}
+
+// Defect: a step's first day, or the step itself, bounded by since, so an organization older than
+// the window reads as first answered inside it, or a step it only took before the window is lost.
+func (s *OrganizationActivitySuite) TestAStepsFirstDayAndTheStepsListedReachBeyondSince() {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	ago := func(n int) time.Time { return today.Add(-time.Duration(n) * 24 * time.Hour) }
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, ago(45), 1, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, ago(1), 1, 0),
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, ago(45), 1, 0),
+	}))
+
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Equal([]ActivityStepDay{
+		{Step: activity.AreaAgentSetup, FirstAnswered: ago(45).Format(time.DateOnly)},
+		{Step: activity.AreaConversations, FirstAnswered: ago(45).Format(time.DateOnly)},
+	}, answer.Steps)
+	s.Equal(activityStepConversations, answer.FurthestStep, "the window still decides the furthest step")
+	s.Equal([]string{activity.AreaConversations}, areaNames(answer), "the window still decides the areas")
 }
 
 // Defect: an app of another organization whose id equals this organization's id is summed into
@@ -380,7 +438,7 @@ func (s *OrganizationActivitySuite) TestTheFieldsTheAnswerHadBeforeSessionsAndLa
 	s.Require().NoError(json.Unmarshal(payload, &raw))
 	before := map[string]json.RawMessage{}
 	for key, value := range raw {
-		if key != "sessions" && key != "latency" {
+		if key != "sessions" && key != "latency" && key != "steps" {
 			before[key] = value
 		}
 	}
@@ -545,4 +603,30 @@ func (s *OrganizationActivitySuite) TestAnEndingWithNoReasonAndARunningSessionNa
 	s.JSONEq(`"`+ended+`"`, string(raw.Sessions.Latest[1]["id"]))
 	s.NotContains(raw.Sessions.Latest[1], "end_reason")
 	s.Contains(raw.Sessions.Latest[1], "closed_at")
+}
+
+// Defect: steps read off one app of the organization rather than every app, or off an app of
+// another organization.
+func (s *OrganizationActivitySuite) TestStepsAreTheEarliestOfEveryAppOfTheOrganization() {
+	second := s.appOf()
+	stranger := s.data.createApp()
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	ago := func(n int) time.Time { return today.Add(-time.Duration(n) * 24 * time.Hour) }
+	other := ago(9).Add(time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.answeredOn(activity.AreaAgentSetup, store.AuditSourceCLI, ago(6), 1, 0),
+		s.answeredOn(activity.AreaConversations, store.AuditSourceSDK, ago(2), 1, 0),
+		{OrganizationID: s.app.organization.ID, AppID: second, Area: activity.AreaConversations,
+			Client: store.AuditSourceSDK, Day: ago(5), Requests: 1, FirstAt: ago(5).Add(time.Hour), LastAt: ago(5).Add(time.Hour)},
+		{OrganizationID: s.app.organization.ID, AppID: second, Area: activity.AreaWorkers,
+			Client: store.AuditSourceSDK, Day: ago(3), Requests: 1, FirstAt: ago(3).Add(time.Hour), LastAt: ago(3).Add(time.Hour)},
+		{OrganizationID: stranger.organization.ID, AppID: stranger.app.ID, Area: activity.AreaDashboardReads,
+			Client: store.AuditSourceDashboard, Day: ago(9), Requests: 1, FirstAt: other, LastAt: other},
+	}))
+
+	s.Equal([]ActivityStepDay{
+		{Step: activity.AreaAgentSetup, FirstAnswered: ago(6).Format(time.DateOnly)},
+		{Step: activity.AreaWorkers, FirstAnswered: ago(3).Format(time.DateOnly)},
+		{Step: activity.AreaConversations, FirstAnswered: ago(5).Format(time.DateOnly)},
+	}, s.read(s.app.organization.ID, time.Time{}).Steps)
 }

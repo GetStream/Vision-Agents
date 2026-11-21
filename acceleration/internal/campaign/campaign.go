@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -115,8 +116,10 @@ type Options struct {
 	// Now is the clock. Nil is time.Now.
 	Now func() time.Time
 	// Tick is how often to look for work. Zero is 2 seconds.
-	Tick   time.Duration
-	Logger *slog.Logger
+	Tick time.Duration
+	// Activity counts each dial under its campaign's app, as area phone_sms. Nil counts none.
+	Activity *activity.Recorder
+	Logger   *slog.Logger
 }
 
 // Runner places the calls of every running campaign that this router claims.
@@ -128,6 +131,7 @@ type Runner struct {
 	owner       string
 	now         func() time.Time
 	every       time.Duration
+	activity    *activity.Recorder
 	logger      *slog.Logger
 
 	// calls is what calls are placed under. Close cancels it only once the calls in flight
@@ -179,6 +183,7 @@ func New(options Options) (*Runner, error) {
 		owner:       options.Owner,
 		now:         options.Now,
 		every:       cmp.Or(options.Tick, defaultTick),
+		activity:    options.Activity,
 		logger:      cmp.Or(options.Logger, slog.Default()),
 		calls:       calls,
 		cancelCalls: cancelCalls,
@@ -441,11 +446,14 @@ func (r *Runner) ring(ctx context.Context, campaign store.Campaign, contact stor
 		dialed, err = r.dialer.Dial(ctx, Dial{Campaign: campaign, Contact: contact, Step: step, Number: number, SessionID: sessionID})
 	}
 	if err != nil {
-		r.logger.Warn("a campaign dial failed", "campaign", campaign.ID, "contact", contact.ID, "error", err)
+		r.logger.Warn("a campaign dial failed", "campaign", campaign.ID, "contact", contact.ID,
+			"customer", campaign.CustomerID, "error", err)
 		if dialed.Result == "" && dialed.Outcome == "" {
 			dialed = resultOf(err)
 		}
 	}
+
+	r.countDial(campaign, dialed, err)
 
 	written, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
@@ -459,6 +467,29 @@ func (r *Runner) ring(ctx context.Context, campaign store.Campaign, contact stor
 		return Dialed{}, err
 	}
 	return dialed, nil
+}
+
+// codeDialFailed is the code a dial that could not be tried, and gave no reason, is counted
+// refused under.
+const codeDialFailed = "dial_failed"
+
+// countDial counts a dial in the activity record, refused when it could not be tried or placed
+// no call, with its reason. A dial a shutdown cut off rang nobody and leaves the contact to be
+// rung again, so it is counted when that dial is.
+func (r *Runner) countDial(campaign store.Campaign, dialed Dialed, err error) {
+	if dialed.Result == NotPlaced {
+		return
+	}
+	request := activity.Request{
+		AppID:  campaign.CustomerID,
+		Area:   activity.AreaPhoneSMS,
+		Client: activity.ClientRouter,
+		At:     r.now(),
+	}
+	if err != nil || dialed.Result != "" && dialed.Result != Voicemail {
+		request.Refused, request.Code = true, cmp.Or(dialed.Reason, string(dialed.Result), codeDialFailed)
+	}
+	r.activity.Record(request)
 }
 
 // takeOver settles the contacts whose router died mid-call, from the call it placed. None is

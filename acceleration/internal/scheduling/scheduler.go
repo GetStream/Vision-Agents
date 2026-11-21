@@ -1,6 +1,7 @@
 package scheduling
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -188,6 +190,8 @@ type Scheduler struct {
 	store   *store.Store
 	deliver DeliverFunc
 	logger  *slog.Logger
+	// activity counts each occurrence settled under its task's app. Nil counts none.
+	activity *activity.Recorder
 
 	now        func() time.Time
 	lease      time.Duration
@@ -223,6 +227,12 @@ func NewScheduler(db *store.Store, deliver DeliverFunc, logger *slog.Logger) *Sc
 		ctx:        ctx,
 		cancel:     cancel,
 	}
+}
+
+// SetActivity has each occurrence the worker settles counted in record, as area scheduling. Call
+// it before Start.
+func (s *Scheduler) SetActivity(record *activity.Recorder) {
+	s.activity = record
 }
 
 // Start runs the worker until ctx ends or Close: it looks at start, when Kick
@@ -601,8 +611,33 @@ func (s *Scheduler) finish(claim store.ClaimedScheduledTask, outcome store.Sched
 	log := s.logger.With("task", claim.Task.ID, "run", claim.Run.ID, "customer", claim.Task.CustomerID)
 	switch {
 	case err != nil:
+		// The run is left running, and whoever takes it up again settles and counts it. A
+		// run this claim failed itself, its workers lost, is not running: the next claim
+		// finds it settled by somebody else, and it is never counted.
 		log.Error("could not record a scheduled task run", "error", err)
+		return
 	case !applied:
 		log.Info("a scheduled task changed under its run; the schedule was left alone")
 	}
+	s.count(claim, outcome)
+}
+
+// count counts an occurrence settled under claim in the activity record, once and not per
+// attempt: delivered, or refused with the reason its run failed under, or missed. A run settled
+// before claim took it was counted by whoever settled it, unless the claim itself failed it, its
+// workers having been lost.
+func (s *Scheduler) count(claim store.ClaimedScheduledTask, outcome store.ScheduledTaskOutcome) {
+	if claim.AlreadySettled && !claim.WorkersLost {
+		return
+	}
+	request := activity.Request{
+		AppID:  claim.Task.CustomerID,
+		Area:   activity.AreaScheduling,
+		Client: activity.ClientRouter,
+		At:     s.now(),
+	}
+	if outcome.RunState != store.ScheduledTaskRunDelivered {
+		request.Refused, request.Code = true, cmp.Or(outcome.Error, outcome.RunState)
+	}
+	s.activity.Record(request)
 }

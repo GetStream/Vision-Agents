@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -593,7 +594,8 @@ func (s *Service) owners(configs []store.AgentConfig, connection store.Connector
 
 // Receive answers one delivery to a subscription's callback: the challenge a server checks the
 // callback with, or an event, which opens a conversation. A delivery not signed with the
-// subscription's own secret is refused before its body is read.
+// subscription's own secret is refused before its body is read, and counted for nobody: a signed
+// one is the subscription's app's hook, whatever is answered.
 func (s *Service) Receive(ctx context.Context, token string, header http.Header, body []byte) Reply {
 	sub, err := s.store.ConnectionEventSubscriptionByToken(ctx, token)
 	if errors.Is(err, store.ErrNoConnectionEventSubscription) {
@@ -610,6 +612,7 @@ func (s *Service) Receive(ctx context.Context, token string, header http.Header,
 	if err := webhook.Verify(secret, header, body, time.Now()); err != nil {
 		return Reply{Status: http.StatusUnauthorized, Body: failure("the delivery is not signed with the subscription's secret")}
 	}
+	activity.NoteCustomer(ctx, sub.CustomerID, activity.AreaHooksIn)
 
 	var delivered webhook.Event
 	if err := json.Unmarshal(body, &delivered); err != nil {

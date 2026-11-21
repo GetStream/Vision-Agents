@@ -40,6 +40,16 @@ var errSocketSampleRate = invalidRequest(fmt.Sprintf(
 // was its call, and stopping voice hung that call up.
 var errSocketVoiceEnded = invalidRequest("voice on a socket session cannot be started again once stopped: open a new socket")
 
+// refusalCode is the code of the APIError err is, and for any other error the code of the
+// internal error an operation returning it is answered with.
+func refusalCode(err error) string {
+	var failure APIError
+	if errors.As(err, &failure) {
+		return failure.Code
+	}
+	return internalError().Code
+}
+
 // openSocketSession holds a voice conversation over the socket itself rather than a call.
 //
 // The caller sends a `start` frame naming the session, the way POST /v1/agents/sessions
@@ -91,14 +101,18 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		return stack.Wrap(write(websocket.TextMessage, payload))
 	}
 	// A refusal ends the socket with closeSocket: nothing else reads it yet, and the caller
-	// is held to answer the close so the error frame before it is not lost.
-	refuse := func(message string) {
+	// is held to answer the close so the error frame before it is not lost. Its code is
+	// noted for the activity record, which would count the 101 as answered; the frame says
+	// only the message, as it always has.
+	refuse := func(code, message string) {
+		noteRefusal(w, code)
 		_ = writeFrame(frame{"type": "error", "error": message})
 		closeSocket(connection, websocket.ClosePolicyViolation, "")
 	}
 	// refuseWith also names the failure's code and type, which are what
 	// POST /v1/agents/sessions answers the same failure with.
 	refuseWith := func(failure APIError) {
+		noteRefusal(w, failure.Code)
 		_ = writeFrame(frame{"type": "error", "error": failure.Message, "code": failure.Code, "error_type": failure.Type})
 		closeSocket(connection, websocket.ClosePolicyViolation, "")
 	}
@@ -106,7 +120,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	_ = connection.SetReadDeadline(time.Now().Add(startWait))
 	var start socketStart
 	if err := connection.ReadJSON(&start); err != nil || start.Type != "start" {
-		refuse("the first frame must be a start frame naming the session")
+		refuse(invalidRequest("").Code, "the first frame must be a start frame naming the session")
 		return
 	}
 	_ = connection.SetReadDeadline(time.Time{})
@@ -135,7 +149,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 
 	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
 	if failure != nil {
-		refuse(store.RedactLogText(failure.Error()))
+		refuse(refusalCode(failure), store.RedactLogText(failure.Error()))
 		return
 	}
 	if failure, refused := s.sessionFloorRefusal(ctx, start.Session); refused {
@@ -160,8 +174,13 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuseWith(internalError())
 		return
 	}
-	if errors.Is(err, session.ErrSessionExists) || err != nil {
-		refuse(store.RedactLogText(err.Error()))
+	// Noted with the codes POST /v1/agents/sessions answers the same failures with.
+	if errors.Is(err, session.ErrSessionExists) {
+		refuse(conflict("").Code, store.RedactLogText(err.Error()))
+		return
+	}
+	if err != nil {
+		refuse(invalidRequest("").Code, store.RedactLogText(err.Error()))
 		return
 	}
 	s.rememberTimezone(ctx, customerID, spec)

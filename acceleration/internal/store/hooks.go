@@ -56,7 +56,8 @@ var ErrAmbiguousHook = errors.New("store: more than one customer holds what that
 // in one app. A routing rule names the call its callers are put in, which is what an
 // arriving call is recognised by; a number attached before its call was stored is found by
 // the name the call is given after it. A call's id is only unique within its app, so each
-// lookup is made there.
+// lookup is made there. A call that no number reaches and that is not named for a number,
+// most often a video call, matches ErrNoNumber.
 func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType, callID string) (PhoneNumber, error) {
 	if callID == "" {
 		return PhoneNumber{}, errors.New("store: a call id is required")
@@ -73,7 +74,7 @@ func (s *Store) NumberByCallInApp(ctx context.Context, scope AppScope, callType,
 	if len(held) == 0 {
 		e164, named := strings.CutPrefix(callID, "phone-")
 		if !named {
-			return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+			return PhoneNumber{}, numberNotHeld{fmt.Sprintf("store: no number reaches call %s:%s", callType, callID)}
 		}
 		if err := s.db.NewSelect().Model(&held).
 			Where("e164 = ?", e164).Where("stream_trunk_id IS NOT NULL").

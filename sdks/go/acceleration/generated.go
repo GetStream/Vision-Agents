@@ -103,7 +103,10 @@ const (
 	ActivityStepConversations  ActivityStep = "conversations"
 	ActivityStepDashboardReads ActivityStep = "dashboard_reads"
 	ActivityStepNone           ActivityStep = "none"
+	ActivityStepPhoneSms       ActivityStep = "phone_sms"
 	ActivityStepSteadyUse      ActivityStep = "steady_use"
+	ActivityStepVoiceVideo     ActivityStep = "voice_video"
+	ActivityStepWorkers        ActivityStep = "workers"
 )
 
 // Valid indicates whether the value is a known member of the ActivityStep enum.
@@ -117,7 +120,43 @@ func (e ActivityStep) Valid() bool {
 		return true
 	case ActivityStepNone:
 		return true
+	case ActivityStepPhoneSms:
+		return true
 	case ActivityStepSteadyUse:
+		return true
+	case ActivityStepVoiceVideo:
+		return true
+	case ActivityStepWorkers:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ActivityStepDayStep.
+const (
+	ActivityStepDayStepAgentSetup     ActivityStepDayStep = "agent_setup"
+	ActivityStepDayStepConversations  ActivityStepDayStep = "conversations"
+	ActivityStepDayStepDashboardReads ActivityStepDayStep = "dashboard_reads"
+	ActivityStepDayStepPhoneSms       ActivityStepDayStep = "phone_sms"
+	ActivityStepDayStepVoiceVideo     ActivityStepDayStep = "voice_video"
+	ActivityStepDayStepWorkers        ActivityStepDayStep = "workers"
+)
+
+// Valid indicates whether the value is a known member of the ActivityStepDayStep enum.
+func (e ActivityStepDayStep) Valid() bool {
+	switch e {
+	case ActivityStepDayStepAgentSetup:
+		return true
+	case ActivityStepDayStepConversations:
+		return true
+	case ActivityStepDayStepDashboardReads:
+		return true
+	case ActivityStepDayStepPhoneSms:
+		return true
+	case ActivityStepDayStepVoiceVideo:
+		return true
+	case ActivityStepDayStepWorkers:
 		return true
 	default:
 		return false
@@ -3656,8 +3695,20 @@ type ActivitySessions struct {
 	Running int64 `json:"running"`
 }
 
-// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 type ActivityStep string
+
+// ActivityStepDay defines model for ActivityStepDay.
+type ActivityStepDay struct {
+	// FirstAnswered The UTC day, YYYY-MM-DD, of the first request answered in the step's area, over every day recorded, not only from since on.
+	FirstAnswered openapi_types.Date `json:"first_answered"`
+
+	// Step The step, one of furthest_step's but none and steady_use.
+	Step ActivityStepDayStep `json:"step"`
+}
+
+// ActivityStepDayStep The step, one of furthest_step's but none and steady_use.
+type ActivityStepDayStep string
 
 // AddContactsRequest defines model for AddContactsRequest.
 type AddContactsRequest struct {
@@ -7937,7 +7988,7 @@ type OrganizationActivity struct {
 	// FirstSeen When the first request of any area arrived, absent when none did.
 	FirstSeen *time.Time `json:"first_seen,omitempty"`
 
-	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, workers, conversations, voice_video, phone_sms, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 	FurthestStep ActivityStep `json:"furthest_step"`
 
 	// LastSeen When the last request of any area arrived, absent when none did.
@@ -7958,6 +8009,9 @@ type OrganizationActivity struct {
 
 	// Since The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
 	Since time.Time `json:"since"`
+
+	// Steps Every step the organization's apps ever had a request answered in, whenever, not only from since on, in furthest_step's order, with the day of the first. A step skipped, such as voice_video by an organization that only texts, is absent, and so is one whose every request was refused.
+	Steps *[]ActivityStepDay `json:"steps"`
 }
 
 // PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.

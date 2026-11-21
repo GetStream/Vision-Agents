@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
@@ -98,6 +99,19 @@ const rotationOverlap = 24 * time.Hour
 // to a private, loopback or otherwise not public address.
 var errNotPublic = errors.New("eventforward: the destination is not a public https URL")
 
+// errRefused is a destination answering a forward with a status that is not sent again: a 3xx
+// or a 4xx other than 429.
+var errRefused = errors.New("eventforward: the destination refused the forward")
+
+// The codes a forward given up is counted under in the activity record, by why it was: the
+// destination said no, it never took one of the attempts, or it was never sent, such as a
+// signing secret that does not open.
+const (
+	codeRefused     = "destination_refused"
+	codeUnavailable = "destination_unavailable"
+	codeNotSent     = "forward_failed"
+)
+
 // Options configures a Forwarder. Store and Secrets are required.
 type Options struct {
 	Store *store.Store
@@ -117,8 +131,11 @@ type Options struct {
 	Poll time.Duration
 	// Lease is how far a claim pushes a delivery's next attempt, and the longest wait between
 	// looks. Zero is lease. Tests shorten it.
-	Lease  time.Duration
-	Logger *slog.Logger
+	Lease time.Duration
+	// Activity counts each forward sent or given up under its app, as area webhooks_out. Nil
+	// counts none.
+	Activity *activity.Recorder
+	Logger   *slog.Logger
 }
 
 // Forwarder queues provider deliveries for the customer's event destinations and sends them.
@@ -130,6 +147,7 @@ type Forwarder struct {
 	retries   []time.Duration
 	poll      time.Duration
 	lease     time.Duration
+	activity  *activity.Recorder
 	logger    *slog.Logger
 
 	// kick wakes the worker: a delivery was queued, or a slot freed.
@@ -213,6 +231,7 @@ func New(options Options) (*Forwarder, error) {
 		retries:   retries,
 		poll:      poll,
 		lease:     leaseFor,
+		activity:  options.Activity,
 		logger:    logger,
 		kick:      make(chan struct{}, 1),
 		slots:     make(chan struct{}, inFlight),
@@ -500,16 +519,47 @@ func (f *Forwarder) attempt(delivery store.ClaimedEventDelivery) {
 	attempts := delivery.Attempts + 1
 	switch {
 	case err == nil:
+		f.count(delivery, "")
 		err = f.store.FinishEventDelivery(writing, delivery.DestinationID, delivery.ID)
 	case errors.As(err, &again) && attempts <= len(f.retries):
 		log.Info("an event forward failed and is sent again", "attempts", attempts, "error", err)
 		err = f.store.RetryEventDelivery(writing, delivery.DestinationID, delivery.ID, attempts, time.Now().Add(f.retries[attempts-1]))
 	default:
 		log.Warn("gave up an event forward", "attempts", attempts, "error", err)
+		f.count(delivery, givenUpCode(err))
 		err = f.store.FinishEventDelivery(writing, delivery.DestinationID, delivery.ID)
 	}
 	if err != nil {
 		log.Error("could not record an event forward's attempt", "error", err)
+	}
+}
+
+// count counts a forward that ended in the activity record, once and not per attempt: sent, or
+// refused with code when it was given up.
+func (f *Forwarder) count(delivery store.ClaimedEventDelivery, code string) {
+	if f.activity == nil {
+		return
+	}
+	f.activity.Record(activity.Request{
+		AppID:   delivery.CustomerID,
+		Area:    activity.AreaWebhooksOut,
+		Client:  activity.ClientRouter,
+		At:      time.Now(),
+		Refused: code != "",
+		Code:    code,
+	})
+}
+
+// givenUpCode is the code a forward given up after err is counted under.
+func givenUpCode(err error) string {
+	var again retryable
+	switch {
+	case errors.Is(err, errRefused):
+		return codeRefused
+	case errors.As(err, &again):
+		return codeUnavailable
+	default:
+		return codeNotSent
 	}
 }
 
@@ -559,7 +609,7 @@ func (f *Forwarder) send(ctx context.Context, delivery store.ClaimedEventDeliver
 	case response.StatusCode >= http.StatusInternalServerError || response.StatusCode == http.StatusTooManyRequests:
 		return retryable{stack.Wrap(fmt.Errorf("eventforward: the destination answered %d", response.StatusCode))}
 	default:
-		return stack.Wrap(fmt.Errorf("eventforward: the destination refused the forward with %d", response.StatusCode))
+		return stack.Wrap(fmt.Errorf("%w with %d", errRefused, response.StatusCode))
 	}
 }
 

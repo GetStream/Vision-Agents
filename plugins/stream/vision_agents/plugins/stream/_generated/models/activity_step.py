@@ -6,7 +6,10 @@ class ActivityStep(StrEnum):
     CONVERSATIONS = "conversations"
     DASHBOARD_READS = "dashboard_reads"
     NONE = "none"
+    PHONE_SMS = "phone_sms"
     STEADY_USE = "steady_use"
+    VOICE_VIDEO = "voice_video"
+    WORKERS = "workers"
 
     def __str__(self) -> str:
         return str(self.value)

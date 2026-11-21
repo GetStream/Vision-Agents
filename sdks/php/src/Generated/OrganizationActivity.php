@@ -30,6 +30,9 @@ final readonly class OrganizationActivity
         public array $latency,
         // The sessions the organization's apps opened from since on, from the shards listed in shards.
         public ActivitySessions $sessions,
+        // Every step the organization's apps ever had a request answered in, whenever, not only from since on, in fur...
+        /** @var list<ActivityStepDay> */
+        public array $steps,
         // When the first request of any area arrived, absent when none did.
         public ?\DateTimeImmutable $firstSeen = null,
         // When the last request of any area arrived, absent when none did.
@@ -51,6 +54,7 @@ final readonly class OrganizationActivity
             shards: Json::strings($data, 'shards'),
             latency: array_map(ActivityLatency::fromArray(...), Json::objects($data, 'latency')),
             sessions: ActivitySessions::fromArray(Json::object($data, 'sessions')),
+            steps: array_map(ActivityStepDay::fromArray(...), Json::objects($data, 'steps')),
             firstSeen: array_key_exists('first_seen', $data) && $data['first_seen'] !== null ? Json::date($data, 'first_seen') : null,
             lastSeen: array_key_exists('last_seen', $data) && $data['last_seen'] !== null ? Json::date($data, 'last_seen') : null,
         );
@@ -72,6 +76,7 @@ final readonly class OrganizationActivity
         $out['shards'] = $this->shards;
         $out['latency'] = array_map(static fn (ActivityLatency $each): array => $each->toArray(), $this->latency);
         $out['sessions'] = $this->sessions->toArray();
+        $out['steps'] = array_map(static fn (ActivityStepDay $each): array => $each->toArray(), $this->steps);
         if ($this->firstSeen !== null) {
             $out['first_seen'] = Json::dateValue($this->firstSeen);
         }

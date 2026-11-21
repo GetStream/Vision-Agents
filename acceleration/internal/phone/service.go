@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -935,6 +936,8 @@ func (s *Service) InboundBridge(ctx context.Context, vendor, e164 string) (Bridg
 	if err != nil {
 		return Bridge{}, err
 	}
+	// The vendor's hook asking is the number's app's, however it is answered below.
+	activity.NoteCustomer(ctx, stored.CustomerID, activity.AreaPhoneSMS)
 	if err := s.Suspended(ctx, stored.CustomerID); err != nil {
 		return Bridge{}, err
 	}
@@ -1451,6 +1454,7 @@ func (s *Service) Answer(ctx context.Context, token string) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	activity.NoteCustomer(ctx, bridge.CustomerID, activity.AreaPhoneSMS)
 	provider, err := s.registry.Open(bridge.Vendor)
 	if err != nil {
 		return Plan{}, err
@@ -1514,6 +1518,9 @@ func (s *Service) callOfToken(ctx context.Context, token string) (outcome.Call, 
 	call, err := s.outcomes.ByToken(ctx, token)
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	if err == nil {
+		activity.NoteCustomer(ctx, call.CustomerID, activity.AreaPhoneSMS)
 	}
 	return call, err
 }

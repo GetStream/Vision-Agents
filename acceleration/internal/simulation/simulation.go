@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -70,9 +71,11 @@ type Options struct {
 	LLM      *llmrouter.Router
 	// TTS and STT give the simulated caller a voice and ears. Absent means text
 	// simulations only, and an audio one is refused rather than quietly held in writing.
-	TTS    *ttsrouter.Router
-	STT    *sttrouter.Router
-	Logger *slog.Logger
+	TTS *ttsrouter.Router
+	STT *sttrouter.Router
+	// Activity counts each run that ends under its app, as area evals. Nil counts none.
+	Activity *activity.Recorder
+	Logger   *slog.Logger
 }
 
 // Runner works through the simulation runs that have been started.
@@ -82,6 +85,7 @@ type Runner struct {
 	llm      *llmrouter.Router
 	tts      *ttsrouter.Router
 	stt      *sttrouter.Router
+	activity *activity.Recorder
 	logger   *slog.Logger
 
 	mu sync.Mutex
@@ -118,6 +122,7 @@ func New(options Options) (*Runner, error) {
 		llm:         options.LLM,
 		tts:         options.TTS,
 		stt:         options.STT,
+		activity:    options.Activity,
 		logger:      options.Logger,
 		running:     map[string]context.CancelFunc{},
 		stopKeeping: stop,
@@ -461,7 +466,9 @@ func (r *Runner) finish(ctx context.Context, kase store.SimulationCase) {
 	}
 }
 
-// settle records how the run as a whole came out.
+// settle records how the run as a whole came out, and counts it in the activity record: refused
+// when it errored, which is the router not getting a ruling on every conversation. A run the judge
+// failed is still a ruling, and one cancelled was stopped before it had them all.
 func (r *Runner) settle(ctx context.Context, run store.SimulationRun) {
 	written, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
@@ -469,6 +476,11 @@ func (r *Runner) settle(ctx context.Context, run store.SimulationRun) {
 	if err := r.store.FinishSimulationRun(written, run); err != nil {
 		r.logger.Error("could not record how a run ended", "run", run.ID, "error", err)
 	}
+	request := activity.Request{AppID: run.CustomerID, Area: activity.AreaEvals, Client: activity.ClientRouter, At: time.Now()}
+	if run.State == store.SimulationErrored {
+		request.Refused, request.Code = true, store.SimulationErrored
+	}
+	r.activity.Record(request)
 }
 
 // keep renews the runs this router holds, stops the ones it was asked to stop from

@@ -61,7 +61,7 @@ worker (every router)                       off the request
 ## Open
 
 - **Interactivity on a managed app.** An app the router creates (`slackapps`, T54) has no `settings.interactivity.request_url`, and its bot events do not list `reaction_added`. A customer's own app sets them at Slack. Until T54 adds them, a managed app sends no button click to forward.
-- **No delivery log.** A forward given up is logged only. The spec recommends telling the customer by other means and disabling a destination that fails for days.
+- **No delivery log.** A forward given up is logged, and counted in the activity record (`webhooks_out`, refused, with why as its code), and nothing more. The spec recommends telling the customer by other means and disabling a destination that fails for days.
 - **No jitter and no Retry-After.** The spec recommends both.
 - **A failing destination keeps the full timeout.** Each attempt to a URL that never answers waits the whole 15 s, so its own backlog drains at 2 forwards per 15 s on each router. A shorter timeout after a failed attempt would drain it faster.
 - **The cap is per router.** With N routers a destination can hold 2 × N sends. Each router's own slots are what it protects.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -622,6 +624,14 @@ func (s *Server) deliverManualRun(task store.ScheduledTask, run store.ScheduledT
 		s.logger.Error("could not record a scheduled task run by hand",
 			"task", task.ID, "run", run.ID, "error", err)
 	}
+	// Counted here whether or not its run was written: no worker takes a run by hand up again.
+	request := activity.Request{
+		AppID: task.CustomerID, Area: activity.AreaScheduling, Client: activity.ClientRouter, At: time.Now(),
+	}
+	if state != store.ScheduledTaskRunDelivered {
+		request.Refused, request.Code = true, cmp.Or(failure, state)
+	}
+	s.activity.Record(request)
 }
 
 func (s *Server) deleteScheduledTask(ctx context.Context, request *deleteScheduledTaskRequest) (*struct{}, error) {

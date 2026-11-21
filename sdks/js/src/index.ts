@@ -20,6 +20,7 @@ export {
   REGION_ENV,
   URL_ENV,
   USAGE_CATEGORIES_HEADER,
+  VERSION,
   regionUrl,
   signToken,
   type BackendOptions,

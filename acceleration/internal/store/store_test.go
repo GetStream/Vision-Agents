@@ -892,6 +892,7 @@ func (s *StoreSuite) TestACallNoNumberReachesIsNotAttributedToAnybody() {
 	_, err := s.store.NumberByCallInApp(s.ctx, AppScope{Unpinned: true}, "default", "some-video-call")
 
 	s.ErrorContains(err, "no number reaches call default:some-video-call")
+	s.ErrorIs(err, ErrNoNumber, "a video call is told from a call to a number")
 }
 
 func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() {

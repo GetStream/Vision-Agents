@@ -38,7 +38,8 @@ const (
 	anomalyTimeout = 2 * time.Minute
 )
 
-// AnomalyOptions configure Anomalies. Store and Poster are required.
+// AnomalyOptions configure Anomalies. Store is required. Without a Poster the check posts and
+// notes nothing and only deletes the activity past its keep.
 type AnomalyOptions struct {
 	Store  *store.Store
 	Poster Poster
@@ -51,12 +52,16 @@ type AnomalyOptions struct {
 	Every time.Duration
 	// Now is the time the check runs at; defaults to time.Now.
 	Now func() time.Time
+	// Digest has the check also post the activity digest of the day before, once per UTC day
+	// (postDigest).
+	Digest bool
 }
 
 // Anomalies tells the operator, in the money limit notices' channel, of each organization whose
 // spend today is anomalyFactor times its median day of the anomalyDays before, once per
 // organization and day. Every router runs one, and the one holding the deployment's cost anomaly
-// lock does the check; the others try the lock again at the next tick.
+// lock does the check; the others try the lock again at the next tick. The holder also deletes
+// the activity past its keep, once a day (prune).
 type Anomalies struct {
 	store       *store.Store
 	lock        *store.ShipLock
@@ -66,11 +71,15 @@ type Anomalies struct {
 	logger      *slog.Logger
 	every       time.Duration
 	now         func() time.Time
+	digest      bool
 
 	// baselines is each organization's median day before baselineDay, read once per day. Only
 	// the checking goroutine uses them.
 	baselines   map[string]int64
 	baselineDay time.Time
+	// prunedDay is the UTC day this router last deleted the activity past its keep. Only the
+	// checking goroutine uses it.
+	prunedDay time.Time
 
 	stop context.CancelFunc
 	done chan struct{}
@@ -93,6 +102,7 @@ func NewAnomalies(options AnomalyOptions) *Anomalies {
 	return &Anomalies{
 		store: options.Store, lock: options.Store.CostAnomalyLock(), poster: options.Poster,
 		environment: options.Environment, links: options.Links, logger: logger, every: every, now: now,
+		digest: options.Digest,
 	}
 }
 
@@ -146,6 +156,13 @@ func (a *Anomalies) check(ctx context.Context) {
 	if !held {
 		return
 	}
+	if a.digest && a.poster != nil {
+		a.postDigest(checking, now)
+	}
+	a.prune(checking, now)
+	if a.poster == nil {
+		return
+	}
 	if err := a.note(checking, now); err != nil {
 		a.lock.Release()
 		if ctx.Err() == nil {
@@ -162,6 +179,27 @@ func (a *Anomalies) check(ctx context.Context) {
 	}
 	for _, anomaly := range anomalies {
 		a.post(checking, anomaly)
+	}
+}
+
+// prune deletes the activity past its keep (store.PruneActivity) once per UTC day: the rows
+// age out a day at a time, so one delete a day keeps up. One that failed is tried again at the
+// next check. A router that takes the lock later the same day deletes again, and finds nothing.
+func (a *Anomalies) prune(ctx context.Context, now time.Time) {
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if a.prunedDay.Equal(today) {
+		return
+	}
+	pruned, err := a.store.PruneActivity(ctx, now)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.logger.Error("could not delete the activity past its keep, trying again", "in", a.every, "error", err)
+		}
+		return
+	}
+	a.prunedDay = today
+	if pruned > 0 {
+		a.logger.Info("deleted the activity past its keep", "rows", pruned)
 	}
 }
 

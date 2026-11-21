@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/schema"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -37,16 +38,17 @@ type activityKey struct {
 	appID, area, client, day string
 }
 
-// activityBatch is how many rows one statement writes. Each takes 11 parameters, and a
+// activityBatch is how many rows one statement writes. Each takes 12 parameters, and a
 // statement may carry at most 65535 (PostgreSQL's Bind message counts them in an Int16:
 // https://www.postgresql.org/docs/current/protocol-message-formats.html), so a thousand
 // leave room to spare.
 const activityBatch = 1000
 
 // RecordActivity adds deltas to the rows they name, making the ones that are not there yet.
-// Counts are added, the first and last times widen, and a refusal later than the one the
-// row holds replaces it. Deltas naming the same row are summed first: one statement cannot
-// update a row twice.
+// A delta naming no organization, such as a hook's or a forward's, which name only the app, is
+// the organization app_organizations holds for its app, when it holds one. Counts are added,
+// the first and last times widen, and a refusal later than the one the row holds replaces it.
+// Deltas naming the same row are summed first: one statement cannot update a row twice.
 func (s *Store) RecordActivity(ctx context.Context, deltas []ActivityDelta) error {
 	folded := make(map[activityKey]*ActivityDelta, len(deltas))
 	order := make([]activityKey, 0, len(deltas))
@@ -88,17 +90,29 @@ func (s *Store) RecordActivity(ctx context.Context, deltas []ActivityDelta) erro
 type activityUpsert struct {
 	bun.BaseModel `bun:"table:customer_activity,alias:act"`
 
-	OrganizationID  string    `bun:"organization_id,notnull"`
-	AppID           string    `bun:"app_id,pk"`
-	Area            string    `bun:"area,pk"`
-	Client          string    `bun:"client,pk"`
-	Day             string    `bun:"day,pk"`
-	Requests        int64     `bun:"requests,notnull"`
-	Refused         int64     `bun:"refused,notnull"`
-	LastRefusalCode string    `bun:"last_refusal_code,nullzero"`
-	LastRefusalAt   time.Time `bun:"last_refusal_at,nullzero"`
-	FirstAt         time.Time `bun:"first_at,notnull"`
-	LastAt          time.Time `bun:"last_at,notnull"`
+	OrganizationID  activityOrganization `bun:"organization_id,notnull"`
+	AppID           string               `bun:"app_id,pk"`
+	Area            string               `bun:"area,pk"`
+	Client          string               `bun:"client,pk"`
+	Day             string               `bun:"day,pk"`
+	Requests        int64                `bun:"requests,notnull"`
+	Refused         int64                `bun:"refused,notnull"`
+	LastRefusalCode string               `bun:"last_refusal_code,nullzero"`
+	LastRefusalAt   time.Time            `bun:"last_refusal_at,nullzero"`
+	FirstAt         time.Time            `bun:"first_at,notnull"`
+	LastAt          time.Time            `bun:"last_at,notnull"`
+}
+
+// activityOrganization is the organization a row is written with: the one its delta names, or,
+// when it names none, the one app_organizations holds for its app, or none.
+type activityOrganization struct {
+	named, appID string
+}
+
+// AppendQuery writes o as the SQL expression that picks it, so bun puts it in the row's VALUES.
+func (o activityOrganization) AppendQuery(gen schema.QueryGen, b []byte) ([]byte, error) {
+	return gen.AppendQuery(b, "COALESCE(NULLIF(?, ''), (SELECT organization_id FROM app_organizations WHERE app_id = ?), '')",
+		o.named, o.appID), nil
 }
 
 // writeActivity upserts the rows of keys in one statement.
@@ -107,7 +121,8 @@ func writeActivity(ctx context.Context, tx bun.Tx, folded map[activityKey]*Activ
 	for _, key := range keys {
 		delta := folded[key]
 		rows = append(rows, activityUpsert{
-			OrganizationID: delta.OrganizationID, AppID: key.appID, Area: key.area, Client: key.client, Day: key.day,
+			OrganizationID: activityOrganization{delta.OrganizationID, key.appID},
+			AppID:          key.appID, Area: key.area, Client: key.client, Day: key.day,
 			Requests: delta.Requests, Refused: delta.Refused, LastRefusalCode: delta.LastRefusalCode,
 			LastRefusalAt: delta.LastRefusalAt, FirstAt: delta.FirstAt, LastAt: delta.LastAt,
 		})
@@ -155,6 +170,30 @@ type ActivityArea struct {
 	Refused  int64     `bun:"refused"`
 	// LastRefusalCode is the code of the latest refusal, empty when there was none.
 	LastRefusalCode string `bun:"last_refusal_code"`
+}
+
+// ActivityAreaDay is the first UTC day some apps had a request answered, not refused, in an area.
+type ActivityAreaDay struct {
+	Area string    `bun:"area"`
+	Day  time.Time `bun:"day"`
+}
+
+// ActivityFirstAnswered is, by area, the first UTC day apps, at least one, had a request
+// answered, not refused, over every day recorded. An area with no request answered is absent.
+func (s *Store) ActivityFirstAnswered(ctx context.Context, apps []string) ([]ActivityAreaDay, error) {
+	var days []ActivityAreaDay
+	err := s.db.NewSelect().
+		TableExpr("customer_activity").
+		ColumnExpr("area, MIN(day) AS day").
+		Where("app_id IN (?)", bun.In(apps)).
+		Where("requests > refused").
+		Group("area").
+		Order("area").
+		Scan(ctx, &days)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: activity first answered: %w", err))
+	}
+	return days, nil
 }
 
 // ActivityAreas sums the activity of apps, at least one, from the UTC day of since on, by area

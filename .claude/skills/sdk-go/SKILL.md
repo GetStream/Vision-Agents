@@ -109,9 +109,11 @@ Every identifier in a code block exists; the quickstart is the example file verb
 `@main` and pkg.go.dev see it. A version is a tag `sdks/go/vX.Y.Z` on a `main` commit; nothing
 is copied. While 0.x, a minor may break a signature; a patch only fixes.
 
-1. Land the change on `main` by a pull request, with the `CHANGELOG.md` entry. The `Go SDK`
-   steps of the `CI (SDKs)` workflow (`.github/workflows/ci-sdks.yml`) check `sdks/go` alone
-   on Go 1.25, as a consumer gets it.
+1. Land the change on `main` by a pull request, with the `CHANGELOG.md` entry and `Version` in
+   `stream/backend.go` set to `X.Y.Z`: it is the `User-Agent` every request sends
+   (`stream-agents-go/X.Y.Z`), and nothing else sets it. `release-sdk-go.yml` fails a tag
+   whose `Version` differs. The `Go SDK` steps of the `CI (SDKs)` workflow
+   (`.github/workflows/ci-sdks.yml`) check `sdks/go` alone on Go 1.25, as a consumer gets it.
 2. Check out the commit to tag (`git switch --detach <the main commit>`), run the smoke set
    from `sdks/go` with `E2E_REQUIRED=1`, as above, and keep its output, so the result is the
    tagged commit's.
