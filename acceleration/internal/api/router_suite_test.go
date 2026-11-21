@@ -1056,9 +1056,7 @@ func (s *RouterSuite) registrations(listener *httptest.Server, logger *slog.Logg
 func (s *RouterSuite) telephonyRecorder(logger *slog.Logger) *routing.Recorder {
 	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), logger)
 	s.Require().NoError(err)
-	recorder := routing.NewRecorder(routing.Phone, s.store, s.live, list, logger)
-	s.T().Cleanup(recorder.Close)
-	return recorder
+	return routing.NewRecorderOn(routing.Phone, s.routerWriter(s.store, s.live, nil, logger), list, logger)
 }
 
 // vendorPriced is what used of a phone item costs at the vendor list's rates, as
@@ -1166,6 +1164,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	hearing.Probe()
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: heard, Registry: hearing, Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Writer: s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
@@ -1319,7 +1318,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	}
 	speaker, err := ttsrouter.New(ttsrouter.Options{
 		Config: ttsConfig, Registry: speaking, Store: s.store, Live: s.live, Voices: s.ttsVoices, Gate: gate,
-		Logger: logger,
+		Logger: logger, Writer: s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
@@ -1333,6 +1332,7 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Live:         s.live,
 		Gate:         gate,
 		Logger:       logger,
+		Writer:       s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriptions.Close)
@@ -1345,42 +1345,47 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 		Voices:    s.ttsVoices,
 		Gate:      gate,
 		Logger:    logger,
+		Writer:    s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(recordings.Close)
 
 	finding, err := searchrouter.New(searchrouter.Options{
 		Config: searchConfig(), Registry: searchRegistry(), Store: s.store, Live: s.live, Gate: gate,
-		Logger: logger,
+		Logger: logger, Writer: s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(finding.Close)
 
 	judging, err := decisionrouter.New(decisionrouter.Options{
 		Config: classifyConfig(), Registry: classifierRegistry(), Logger: logger,
+		Writer: s.routerWriter(nil, nil, nil, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(judging.Close)
 
 	imaging, err := imagerouter.New(imagerouter.Options{
 		Config: imageConfig(), Registry: painterRegistry(), Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Writer: s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(imaging.Close)
 
 	detecting, err := detectionrouter.New(detectionrouter.Options{
 		Config: detectionConfig(), Registry: detectorRegistry(), Gate: gate, Logger: logger,
+		Writer: s.routerWriter(nil, nil, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(detecting.Close)
 
 	reading, err := ocrrouter.New(ocrrouter.Options{
 		Config: ocrConfig(), Registry: ocrRegistry(), Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+		Writer: s.routerWriter(s.store, s.live, gate, logger),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reading.Close)
 
-	conversing, err := stsrouterStub()
+	conversing, err := stsrouterStub(s.routerWriter(nil, nil, nil, logger))
 	s.Require().NoError(err)
 	s.T().Cleanup(conversing.Close)
 
@@ -1511,6 +1516,7 @@ func (s *RouterSuite) sessionManager(
 		Directory:     directory,
 		Connectors:    connectors,
 		Logger:        logger,
+		Writer:        s.routerWriter(s.store, s.live, nil, logger),
 		// The policies a session's resume_history falls back to, as cmd/router passes them.
 		ResumeHistories: policies,
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
@@ -1555,11 +1561,36 @@ func (s *RouterSuite) assertEveryRowNamesAKey() {
 	}
 }
 
+// suiteQueueSize is how many rows each writer of the suite holds, where a deployment's holds
+// 20,000 (internal/routing/writer.go). A finished suite's routers and writers stay in memory
+// to the end of the package: goroutines of its nodes that never end, such as
+// Server.expireProxies, hold its Server. At 20,000 rows a writer, the package needed more
+// memory than CI's runner has (AI-3471). A writer drains its queue in batches of 200 as rows
+// arrive, and 1,000 is five such batches.
+const suiteQueueSize = 1_000
+
+// routerWriter is the writer a router or recorder builds for itself when given none
+// (routing.newRecorder), over pgStore and liveClient, with room for suiteQueueSize rows. It
+// writes what it holds when the suite ends, as the router's Close would.
+func (s *RouterSuite) routerWriter(pgStore *store.Store, liveClient *live.Client, gate routing.Gate, logger *slog.Logger) *routing.Writer {
+	options := routing.WriterOptions{Store: pgStore, Live: liveClient, Logger: logger, QueueSize: suiteQueueSize}
+	if counter, ok := gate.(interface{ Counted([]routing.Acked) }); ok {
+		options.Counted = counter.Counted
+	}
+	writer := routing.NewWriter(options)
+	s.T().Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		writer.Close(ctx)
+	})
+	return writer
+}
+
 // shippingWriter is the writer the conversation model records through when the suite ships,
-// and nil, a writer of the router's own, when it does not.
+// and routerWriter's, the one the router would build for itself, when it does not.
 func (s *RouterSuite) shippingWriter(gate routing.Gate, logger *slog.Logger) *routing.Writer {
 	if !s.shipping {
-		return nil
+		return s.routerWriter(s.store, s.live, gate, logger)
 	}
 	if s.usage == nil {
 		s.usage = usagetest.Start(s.T(), usagetest.Options{Logger: logger})
@@ -1570,7 +1601,7 @@ func (s *RouterSuite) shippingWriter(gate routing.Gate, logger *slog.Logger) *ro
 	}
 	writer := routing.NewWriter(routing.WriterOptions{
 		Store: s.store, Live: s.live, Logger: logger, Gate: gate, Usage: s.usage.Client, Source: "router/suite/" + s.utils.uuid(),
-		Shipped: shipped,
+		Shipped: shipped, QueueSize: suiteQueueSize,
 	})
 	s.T().Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1666,9 +1697,7 @@ func (s *RouterSuite) meteringRecorder(logger *slog.Logger) *routing.Recorder {
 	if s.prices != nil {
 		pricer = s.prices
 	}
-	recorder := routing.NewRecorder(routing.Knowledge, s.store, s.live, pricer, logger)
-	s.T().Cleanup(recorder.Close)
-	return recorder
+	return routing.NewRecorderOn(routing.Knowledge, s.routerWriter(s.store, s.live, nil, logger), pricer, logger)
 }
 
 func (s *RouterSuite) knowledgeWriter(gate routing.Gate) *metered.Knowledge {
@@ -1811,6 +1840,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		Configs:       s.configs,
 		Directory:     directory,
 		Logger:        logger,
+		Writer:        s.routerWriter(s.store, s.live, nil, logger),
 		Edge: func(context.Context, session.Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
