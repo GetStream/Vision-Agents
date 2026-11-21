@@ -80,3 +80,41 @@ func (s *AgentSuite) toolAskedIn(ctx context.Context, runner *requesterTool) Req
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == answered+2 }, "the turn was never answered")
 	return requester
 }
+
+// renamingTool is requesterTool that has the model's next call carry an id and arguments of its
+// own, because a repeat of the same call is answered from the first instead of run again.
+type renamingTool struct {
+	requesterTool
+	s *AgentSuite
+}
+
+func (r *renamingTool) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	r.s.model.mu.Lock()
+	r.s.model.calls[0].ID = call.ID + "-next"
+	r.s.model.calls[0].Arguments = `{"order":"13"}`
+	r.s.model.mu.Unlock()
+	return r.requesterTool.Run(ctx, call)
+}
+
+// AI-3464: a writer's turn that calls a second tool, once the first one's result is in (look up,
+// then act), is still the writer's: the later round is not a turn of its own.
+func (s *AgentSuite) TestEveryToolRoundOfAWrittenTurnIsForWhoeverWroteIt() {
+	s.ownsTools("")
+	s.joinText()
+	runner := &renamingTool{requesterTool: requesterTool{seen: make(chan Requester, 2)}, s: s}
+	s.agent.options.ToolRunner = runner
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	s.model.mu.Lock()
+	s.model.keepCalling, s.model.callsUntil = true, 3
+	s.model.mu.Unlock()
+	_, err := s.agent.RespondTo(WithWriter(s.ctx, "anya-1", "Anya"), "where is my order", nil, options.LLM{})
+	s.Require().NoError(err)
+	for round := 1; round <= 2; round++ {
+		select {
+		case requester := <-runner.seen:
+			s.Equal(Requester{UserID: "anya-1", Name: "Anya"}, requester, "round %d", round)
+		case <-time.After(settleFor):
+			s.Failf("the tool never ran", "round %d", round)
+		}
+	}
+}
