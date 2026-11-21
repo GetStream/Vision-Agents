@@ -52,6 +52,8 @@ func (s *AppHooksSuite) SetupSuite() {
 		s.approvalWait = 10 * time.Second
 	}
 	s.RouterSuite.SetupSuite()
+	// Sessions offer what the app's workers host, as cmd/router has them (chat_channels_hosted_test.go).
+	s.manager.HostTools(s.dispatch)
 	s.token = issuedToken(&s.RouterSuite, s.provider)
 }
 
