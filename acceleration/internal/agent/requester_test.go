@@ -118,3 +118,26 @@ func (s *AgentSuite) TestEveryToolRoundOfAWrittenTurnIsForWhoeverWroteIt() {
 		}
 	}
 }
+
+// AI-3464: a turn answered with a reply started for it is not the written turn before it, so its
+// tool calls do not name that turn's writer.
+func (s *AgentSuite) TestAnAdoptedSpeculationDoesNotKeepTheLastWriter() {
+	s.onFakeClock(func() {
+		s.speculates = true
+		s.ownsTools("")
+		s.join(false)
+		s.model.reply = []string{"It ships tomorrow morning."}
+		s.agent.mu.Lock()
+		s.agent.lastWriter = writer{id: "anya-1", name: "Anya"}
+		s.agent.mu.Unlock()
+		ready := candidate{ID: "next-question", Text: "What time tomorrow?", ReadyAt: time.Now()}
+
+		s.agent.speculate(s.agent.harness, ready, false, false, noOpinion)
+		s.Require().True(s.agent.adoptSpeculation(ready, ""))
+
+		s.agent.mu.Lock()
+		requester := s.agent.requesterLocked()
+		s.agent.mu.Unlock()
+		s.Equal(Requester{}, requester, "the heard turn named the writer of the turn before it")
+	})
+}
