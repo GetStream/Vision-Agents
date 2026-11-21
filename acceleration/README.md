@@ -2229,7 +2229,7 @@ To see why an organization's requests are refused, list its refusals by code fro
 log. The router writes one `served a request` line per request, with `error_code` on every refused
 request. That includes a call hook or a socket that is refused with status 200 or 101, so the query
 keeps those lines too. The line names the app in `customer`, or in `app_id` when the request was
-turned away before it was accepted (for example a caller refused for its user level).
+turned away before it was accepted (for example a caller refused for its user level). A request refused for its usage categories names no app, so this query does not list it.
 ClickHouse holds these lines in `logs.agent_access_logs`. It takes `app_id` from the line's
 `app_id`, and from `customer` when that is missing. The status is `response`. It keeps 14 days.
 Each cluster has its own ClickHouse: staging is `us-east1-acceleration`, and prod has three clusters, so run the query on
