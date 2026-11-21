@@ -84,7 +84,7 @@ agent = Agent(
     agent_user=User(name="Virtual Wardrobe", id="agent"),
     instructions="You are a playful virtual wardrobe assistant...",
     llm=llm,
-    tts=elevenlabs.TTS(voice_id="N2lVS1w4EtoT3dr4eOWO"),
+    tts=elevenlabs.TTS(voice_id="fs2OqxduwXgp9foh2xjK"),
     stt=deepgram.STT(),
     processors=[processor],
 )

@@ -54,7 +54,7 @@ async def create_agent(**kwargs) -> Agent:
             "[sigh], [excited], [pause], [rushed], or [tired]"
         ),
         llm=llm,
-        tts=elevenlabs.TTS(voice_id="N2lVS1w4EtoT3dr4eOWO"),
+        tts=elevenlabs.TTS(voice_id="fs2OqxduwXgp9foh2xjK"),
         stt=deepgram.STT(),
         processors=[processor],
     )
