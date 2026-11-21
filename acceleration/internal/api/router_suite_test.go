@@ -1562,11 +1562,11 @@ func (s *RouterSuite) assertEveryRowNamesAKey() {
 }
 
 // suiteQueueSize is how many rows each writer of the suite holds, where a deployment's holds
-// 20,000 (internal/routing/writer.go). runSuite's suites run in parallel, and testing keeps a
-// finished parallel test, the cleanups it ran included, until every one has ended. So each
-// suite's closed routers and their writers stay in memory to the end of the package, and at
-// 20,000 rows a writer they took the package to 7-9 GB, more than CI's runner holds (AI-3471).
-// A writer drains its queue in batches of 200 as rows arrive; 1,000 is five such batches.
+// 20,000 (internal/routing/writer.go). A finished suite's routers and writers stay in memory
+// to the end of the package: goroutines of its nodes that never end, such as
+// Server.expireProxies, hold its Server. At 20,000 rows a writer, the package needed more
+// memory than CI's runner has (AI-3471). A writer drains its queue in batches of 200 as rows
+// arrive, and 1,000 is five such batches.
 const suiteQueueSize = 1_000
 
 // routerWriter is the writer a router or recorder builds for itself when given none
